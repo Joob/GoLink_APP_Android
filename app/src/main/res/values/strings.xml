@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GoLink.co</string>
+
+    <!-- Auth -->
+    <string name="sign_in_title">Entrar</string>
+    <string name="sign_in_subtitle">Bem-vindo de volta</string>
+    <string name="email">Email</string>
+    <string name="password">Password</string>
+    <string name="enter">Entrar</string>
+    <string name="forgot_password">Esqueceu-se da password?</string>
+    <string name="no_account">Não tem conta?</string>
+    <string name="register">Registar</string>
+    <string name="or">ou</string>
+    <string name="continue_with_google">Continuar com Google</string>
+    <string name="continue_with_microsoft">Continuar com Microsoft</string>
+    <string name="continue_with_github">Continuar com GitHub</string>
+
+    <string name="otp_title">Verificação</string>
+    <string name="otp_subtitle">Introduz o código de 6 dígitos que enviámos para o teu email</string>
+    <string name="otp_code">Código</string>
+    <string name="validate">Validar</string>
+    <string name="resend_code">Reenviar</string>
+    <string name="sending">A enviar…</string>
+    <string name="code_not_received">Não recebeu o código?</string>
+
+    <!-- Browse -->
+    <string name="my_files">Os meus ficheiros</string>
+    <string name="recent">Recentes</string>
+    <string name="shared_with_me">Partilhado comigo</string>
+    <string name="favourites">Favoritos</string>
+    <string name="trash">Lixo</string>
+    <string name="settings">Definições</string>
+    <string name="logout">Terminar sessão</string>
+    <string name="search_placeholder">Pesquisar ficheiros e pastas</string>
+    <string name="refresh">Atualizar</string>
+    <string name="menu">Menu</string>
+    <string name="notifications">Notificações</string>
+    <string name="empty_folder">Esta pasta está vazia</string>
+    <string name="no_content">Sem conteúdo</string>
+    <string name="search_no_results">Sem resultados para \"%1$s\"</string>
+    <string name="load_failed">Não foi possível carregar</string>
+
+    <!-- Actions -->
+    <string name="download">Descarregar</string>
+    <string name="share">Partilhar</string>
+    <string name="rename">Renomear</string>
+    <string name="move">Mover</string>
+    <string name="move_to_trash">Mover para o lixo</string>
+    <string name="delete_permanently">Eliminar permanentemente</string>
+    <string name="restore">Restaurar</string>
+    <string name="add_to_favourites">Adicionar aos favoritos</string>
+    <string name="remove_from_favourites">Remover dos favoritos</string>
+    <string name="empty_trash">Esvaziar lixo</string>
+    <string name="new_folder">Nova pasta</string>
+    <string name="upload_file">Carregar ficheiro</string>
+    <string name="cancel">Cancelar</string>
+    <string name="save">Guardar</string>
+    <string name="ok">OK</string>
+    <string name="confirm">Confirmar</string>
+
+    <!-- Share -->
+    <string name="share_dialog_title">Partilhar</string>
+    <string name="protect_with_password">Proteger com password</string>
+    <string name="permission">Permissão</string>
+    <string name="perm_view">Apenas ver</string>
+    <string name="perm_edit">Pode editar</string>
+    <string name="expires_after_days">Expira após (dias)</string>
+    <string name="number_of_days">Número de dias</string>
+    <string name="create_share_link">Criar link de partilha</string>
+    <string name="public_link">Link público</string>
+    <string name="view_qr_code">Ver QR code</string>
+    <string name="update_qr_code">Atualizar QR code</string>
+    <string name="send_by_email">Enviar por email</string>
+    <string name="revoke_share">Revogar partilha</string>
+    <string name="recipients">Destinatários</string>
+    <string name="emails_hint">a@b.com, c@d.com</string>
+    <string name="email_separator_help">Indica os emails separados por vírgula</string>
+
+    <!-- Settings -->
+    <string name="settings_profile">Perfil</string>
+    <string name="settings_storage">Armazenamento</string>
+    <string name="settings_security">Segurança</string>
+    <string name="settings_sessions">Sessões activas</string>
+    <string name="change_password">Alterar password</string>
+    <string name="current_password">Password actual</string>
+    <string name="new_password">Nova password</string>
+    <string name="confirm_new_password">Confirmar nova password</string>
+    <string name="passwords_dont_match">Não coincide</string>
+    <string name="revoke_other_sessions">Terminar outras sessões</string>
+    <string name="revoke">Revogar</string>
+    <string name="this_device">este dispositivo</string>
+</resources>

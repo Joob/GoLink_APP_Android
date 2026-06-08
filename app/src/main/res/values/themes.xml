@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.VueFileManager" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:statusBarColor">@color/brand_green</item>
+        <item name="android:navigationBarColor">@android:color/white</item>
+    </style>
+
+    <style name="Theme.VueFileManager.Splash" parent="Theme.VueFileManager">
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+</resources>

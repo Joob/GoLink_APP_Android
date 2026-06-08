@@ -1,0 +1,45 @@
+# Build outputs
+/build/
+**/build/
+/captures/
+
+# Gradle
+.gradle/
+/.gradle/
+
+# Local configuration
+local.properties
+/local.properties
+keystore.properties
+
+# IDE
+/.idea/
+/.vscode/
+*.iml
+
+# Native build
+.externalNativeBuild/
+/.externalNativeBuild/
+.cxx/
+/.cxx/
+
+# Kotlin
+.kotlin/
+
+# Keystores & signing
+*.keystore
+*.jks
+!debug.keystore
+
+# Release artifacts
+**/*.apk
+**/*.aab
+
+# Sensitive config
+google-services.json
+*.env
+.env
+
+# Logs & OS
+*.log
+.DS_Store
