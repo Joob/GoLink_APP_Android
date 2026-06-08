@@ -86,16 +86,16 @@ class SettingsViewModel @Inject constructor(
             it.copy(
                 biometricEnabled = securityPrefs.biometricEnabled,
                 pinEnabled = securityPrefs.pinEnabled,
-                twoFactorEnabled = securityPrefs.twoFactorEnabled,
             )
+        }
+        viewModelScope.launch {
+            user.collect { u ->
+                _state.update { it.copy(twoFactorEnabled = u?.twoFactorEnabled == true) }
+            }
         }
     }
 
-    fun setTwoFactorEnabled(enabled: Boolean) {
-        securityPrefs.twoFactorEnabled = enabled
-        logger.log("Security", if (enabled) "2FA activado" else "2FA desactivado")
-        _state.update { it.copy(twoFactorEnabled = enabled, toast = if (enabled) "Autenticação de dois factores activada" else "Autenticação de dois factores desactivada") }
-    }
+    fun refreshUser() = viewModelScope.launch { sessionManager.refreshUser() }
 
     fun resetCsrf() {
         viewModelScope.launch {
@@ -123,8 +123,15 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun revokeSession(id: String) = viewModelScope.launch {
+        val wasCurrent = _state.value.sessions.firstOrNull { it.id == id }?.is_current == true
         repository.revokeSession(id)
-            .onSuccess { _state.update { it.copy(toast = "Sessão revogada", sessions = it.sessions.filterNot { s -> s.id == id }) } }
+            .onSuccess {
+                if (wasCurrent) {
+                    authRepository.logout()
+                } else {
+                    _state.update { it.copy(toast = "Sessão revogada", sessions = it.sessions.filterNot { s -> s.id == id }) }
+                }
+            }
             .onFailure { t -> _state.update { it.copy(toast = t.message) } }
     }
 

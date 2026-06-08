@@ -18,11 +18,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -67,6 +69,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -127,7 +130,6 @@ private sealed interface SettingsRoute {
     data object Password : SettingsRoute
     data object Storage : SettingsRoute
     data object Sessions : SettingsRoute
-    data object Privacy : SettingsRoute
     data object Billing : SettingsRoute
     data object AppSecurity : SettingsRoute
 }
@@ -185,7 +187,6 @@ fun SettingsScreen(
         SettingsRoute.Password -> "Password"
         SettingsRoute.Storage -> "Armazenamento"
         SettingsRoute.Sessions -> "Sessões"
-        SettingsRoute.Privacy -> "Privacidade"
         SettingsRoute.Billing -> "Faturação"
         SettingsRoute.AppSecurity -> "Segurança da app"
     }
@@ -227,7 +228,8 @@ fun SettingsScreen(
                     onDeleteToken = viewModel::deleteToken,
                     onConsumeNewToken = viewModel::consumeNewToken,
                     twoFactorEnabled = state.twoFactorEnabled,
-                    onToggleTwoFactor = viewModel::setTwoFactorEnabled,
+                    backendUrl = backendUrl,
+                    onRefreshUser = viewModel::refreshUser,
                     onResetCsrf = viewModel::resetCsrf,
                 )
                 SettingsRoute.Storage -> StoragePane(
@@ -242,7 +244,6 @@ fun SettingsScreen(
                     onRevokeAll = viewModel::revokeAllSessions,
                     onRefresh = viewModel::loadSessions,
                 )
-                SettingsRoute.Privacy -> PrivacyPane()
                 SettingsRoute.Billing -> BillingPane(
                     user = user,
                     transactions = state.transactions,
@@ -363,8 +364,6 @@ private fun MenuPane(
         Spacer(Modifier.height(16.dp))
 
         MenuGroup {
-            MenuRow(Icons.Outlined.Security, "Privacidade", "Cookies e preferências") { onNavigate(SettingsRoute.Privacy) }
-            MenuDivider()
             MenuRow(Icons.Outlined.Receipt, "Faturação", "Histórico de transações") { onNavigate(SettingsRoute.Billing) }
             MenuDivider()
             MenuRow(Icons.Outlined.ShieldMoon, "Segurança da app", "Biométrico e PIN") { onNavigate(SettingsRoute.AppSecurity) }
@@ -501,7 +500,7 @@ private fun ProfilePane(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        SectionLabel("Conta")
+        SectionLabel("Email")
         Surface(
             shape = RoundedCornerShape(14.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
@@ -527,50 +526,39 @@ private fun ProfilePane(
         }
 
         Spacer(Modifier.height(20.dp))
-        SectionLabel("Detalhes pessoais")
+        SectionLabel("Definições da conta")
         Surface(
             shape = RoundedCornerShape(14.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = firstName,
-                    onValueChange = { firstName = it },
-                    label = { Text("Primeiro nome") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = lastName,
-                    onValueChange = { lastName = it },
-                    label = { Text("Apelido") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = phoneNumber,
-                    onValueChange = { phoneNumber = it },
-                    label = { Text("Telefone") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = firstName,
+                        onValueChange = { firstName = it },
+                        label = { Text("Primeiro nome") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = lastName,
+                        onValueChange = { lastName = it },
+                        label = { Text("Apelido") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                TimezoneDropdown(
                     value = timezone,
                     onValueChange = { timezone = it },
-                    label = { Text("Fuso horário") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
                 )
                 Button(
                     onClick = {
                         if (firstName.isNotBlank()) onUpdateField("first_name", firstName.trim())
                         if (lastName.isNotBlank()) onUpdateField("last_name", lastName.trim())
-                        if (phoneNumber.isNotBlank()) onUpdateField("phone_number", phoneNumber.trim())
                         if (timezone.isNotBlank()) onUpdateField("timezone", timezone.trim())
                     },
                     enabled = !isUpdating,
@@ -586,13 +574,13 @@ private fun ProfilePane(
                         )
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text("Guardar detalhes pessoais", fontWeight = FontWeight.SemiBold)
+                    Text("Guardar definições", fontWeight = FontWeight.SemiBold)
                 }
             }
         }
 
         Spacer(Modifier.height(20.dp))
-        SectionLabel("Morada de faturação")
+        SectionLabel("Informações de faturação")
         Surface(
             shape = RoundedCornerShape(14.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
@@ -625,24 +613,24 @@ private fun ProfilePane(
                         modifier = Modifier.weight(1f),
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = state,
-                        onValueChange = { state = it },
-                        label = { Text("Estado/Região") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f),
-                    )
-                    OutlinedTextField(
-                        value = country,
-                        onValueChange = { country = it },
-                        label = { Text("País (ISO)") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+                CountryDropdown(value = country, onValueChange = { country = it })
+                OutlinedTextField(
+                    value = state,
+                    onValueChange = { state = it },
+                    label = { Text("Estado/Região") },
+                    placeholder = { Text("Se aplicável, ex.: Lisboa") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = phoneNumber,
+                    onValueChange = { phoneNumber = it },
+                    label = { Text("Telefone") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 Button(
                     onClick = {
                         if (address.isNotBlank()) onUpdateField("address", address.trim())
@@ -650,6 +638,7 @@ private fun ProfilePane(
                         if (postalCode.isNotBlank()) onUpdateField("postal_code", postalCode.trim())
                         if (state.isNotBlank()) onUpdateField("state", state.trim())
                         if (country.isNotBlank()) onUpdateField("country", country.trim())
+                        if (phoneNumber.isNotBlank()) onUpdateField("phone_number", phoneNumber.trim())
                     },
                     enabled = !isUpdating,
                     shape = RoundedCornerShape(12.dp),
@@ -664,12 +653,144 @@ private fun ProfilePane(
                         )
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text("Guardar morada", fontWeight = FontWeight.SemiBold)
+                    Text("Guardar informações", fontWeight = FontWeight.SemiBold)
                 }
             }
         }
 
         Spacer(Modifier.height(16.dp))
+    }
+}
+
+private val TIMEZONES = listOf(
+    "-12.0" to "(GMT -12:00) Eniwetok, Kwajalein",
+    "-11.0" to "(GMT -11:00) Midway Island, Samoa",
+    "-10.0" to "(GMT -10:00) Hawaii",
+    "-9.0" to "(GMT -9:00) Alaska",
+    "-8.0" to "(GMT -8:00) Pacific Time (US & Canada)",
+    "-7.0" to "(GMT -7:00) Mountain Time (US & Canada)",
+    "-6.0" to "(GMT -6:00) Central Time (US & Canada), Mexico City",
+    "-5.0" to "(GMT -5:00) Eastern Time (US & Canada), Bogota, Lima",
+    "-4.0" to "(GMT -4:00) Atlantic Time (Canada), Caracas, La Paz",
+    "-3.5" to "(GMT -3:30) Newfoundland",
+    "-3.0" to "(GMT -3:00) Brazil, Buenos Aires, Georgetown",
+    "-2.0" to "(GMT -2:00) Mid-Atlantic",
+    "-1.0" to "(GMT -1:00) Azores, Cape Verde Islands",
+    "0.0" to "(GMT) Western Europe Time, London, Lisbon, Casablanca",
+    "1.0" to "(GMT +1:00) Brussels, Copenhagen, Madrid, Paris",
+    "2.0" to "(GMT +2:00) Kaliningrad, South Africa",
+    "3.0" to "(GMT +3:00) Baghdad, Riyadh, Moscow, St. Petersburg",
+    "3.5" to "(GMT +3:30) Tehran",
+    "4.0" to "(GMT +4:00) Abu Dhabi, Muscat, Baku, Tbilisi",
+    "4.5" to "(GMT +4:30) Kabul",
+    "5.0" to "(GMT +5:00) Ekaterinburg, Islamabad, Karachi, Tashkent",
+    "5.5" to "(GMT +5:30) Bombay, Calcutta, Madras, New Delhi",
+    "5.75" to "(GMT +5:45) Kathmandu",
+    "6.0" to "(GMT +6:00) Almaty, Dhaka, Colombo",
+    "7.0" to "(GMT +7:00) Bangkok, Hanoi, Jakarta",
+    "8.0" to "(GMT +8:00) Beijing, Perth, Singapore, Hong Kong",
+    "9.0" to "(GMT +9:00) Tokyo, Seoul, Osaka, Sapporo, Yakutsk",
+    "9.5" to "(GMT +9:30) Adelaide, Darwin",
+    "10.0" to "(GMT +10:00) Eastern Australia, Guam, Vladivostok",
+    "11.0" to "(GMT +11:00) Magadan, Solomon Islands, New Caledonia",
+    "12.0" to "(GMT +12:00) Auckland, Wellington, Fiji, Kamchatka",
+)
+
+private val COUNTRIES = listOf(
+    "PT" to "Portugal", "ES" to "Spain", "FR" to "France", "DE" to "Germany",
+    "IT" to "Italy", "GB" to "United Kingdom", "IE" to "Ireland", "NL" to "Netherlands",
+    "BE" to "Belgium", "LU" to "Luxembourg", "CH" to "Switzerland", "AT" to "Austria",
+    "DK" to "Denmark", "SE" to "Sweden", "NO" to "Norway", "FI" to "Finland",
+    "PL" to "Poland", "CZ" to "Czech Republic", "SK" to "Slovakia", "HU" to "Hungary",
+    "RO" to "Romania", "BG" to "Bulgaria", "GR" to "Greece", "HR" to "Croatia",
+    "SI" to "Slovenia", "EE" to "Estonia", "LV" to "Latvia", "LT" to "Lithuania",
+    "US" to "United States", "CA" to "Canada", "MX" to "Mexico", "BR" to "Brazil",
+    "AR" to "Argentina", "CL" to "Chile", "CO" to "Colombia", "PE" to "Peru",
+    "AU" to "Australia", "NZ" to "New Zealand", "JP" to "Japan", "KR" to "South Korea",
+    "CN" to "China", "HK" to "Hong Kong", "TW" to "Taiwan", "SG" to "Singapore",
+    "IN" to "India", "ID" to "Indonesia", "TH" to "Thailand", "VN" to "Vietnam",
+    "PH" to "Philippines", "MY" to "Malaysia", "AE" to "United Arab Emirates",
+    "SA" to "Saudi Arabia", "IL" to "Israel", "TR" to "Turkey", "EG" to "Egypt",
+    "ZA" to "South Africa", "NG" to "Nigeria", "KE" to "Kenya", "MA" to "Morocco",
+    "AO" to "Angola", "MZ" to "Mozambique", "CV" to "Cape Verde",
+    "RU" to "Russia", "UA" to "Ukraine",
+)
+
+@Composable
+private fun TimezoneDropdown(value: String, onValueChange: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedLabel = TIMEZONES.firstOrNull { it.first == value }?.second ?: value.ifBlank { "" }
+    Box(modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = selectedLabel,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Fuso horário (GMT)") },
+            trailingIcon = {
+                Icon(
+                    if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = null,
+                )
+            },
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clickable { expanded = true },
+        )
+        androidx.compose.material3.DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.heightIn(max = 320.dp),
+        ) {
+            TIMEZONES.forEach { (v, label) ->
+                DropdownMenuItem(
+                    text = { Text(label) },
+                    onClick = { onValueChange(v); expanded = false },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CountryDropdown(value: String, onValueChange: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedLabel = COUNTRIES.firstOrNull { it.first.equals(value, ignoreCase = true) }?.second ?: value
+    Box(modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = selectedLabel,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("País") },
+            trailingIcon = {
+                Icon(
+                    if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = null,
+                )
+            },
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clickable { expanded = true },
+        )
+        androidx.compose.material3.DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.heightIn(max = 320.dp),
+        ) {
+            COUNTRIES.forEach { (v, label) ->
+                DropdownMenuItem(
+                    text = { Text(label) },
+                    onClick = { onValueChange(v); expanded = false },
+                )
+            }
+        }
     }
 }
 
@@ -684,9 +805,37 @@ private fun PasswordPane(
     onDeleteToken: (Long) -> Unit,
     onConsumeNewToken: () -> Unit,
     twoFactorEnabled: Boolean,
-    onToggleTwoFactor: (Boolean) -> Unit,
+    backendUrl: String,
+    onRefreshUser: () -> Unit,
     onResetCsrf: () -> Unit,
 ) {
+    val uriHandler = LocalUriHandler.current
+    var show2faInfo by remember { mutableStateOf(false) }
+    if (show2faInfo) {
+        AlertDialog(
+            onDismissRequest = { show2faInfo = false },
+            title = { Text("Gerir 2FA") },
+            text = {
+                Text(
+                    if (twoFactorEnabled)
+                        "A autenticação de dois fatores está activa nesta conta.\n\nPara desactivar ou ver os códigos de recuperação, abre as definições da conta no browser."
+                    else
+                        "Por questões de segurança, a configuração inicial do 2FA (leitura do código QR e códigos de recuperação) é feita no browser. Após activar, esta sessão móvel reflectirá o estado actualizado.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val url = backendUrl.trimEnd('/') + "/user/settings/password"
+                    uriHandler.openUri(url)
+                    show2faInfo = false
+                }) { Text("Abrir no browser") }
+            },
+            dismissButton = {
+                TextButton(onClick = { onRefreshUser(); show2faInfo = false }) { Text("Actualizar estado") }
+            },
+        )
+    }
     var current by remember { mutableStateOf("") }
     var newPassword by remember { mutableStateOf("") }
     var confirmation by remember { mutableStateOf("") }
@@ -737,12 +886,22 @@ private fun PasswordPane(
         // 2FA Card
         InfoCard(
             icon = Icons.Outlined.Security,
-            iconTint = MaterialTheme.colorScheme.primary,
-            iconBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+            iconTint = if (twoFactorEnabled) Color(0xFF16A34A) else MaterialTheme.colorScheme.primary,
+            iconBg = (if (twoFactorEnabled) Color(0xFF16A34A) else MaterialTheme.colorScheme.primary).copy(alpha = 0.12f),
             title = "Autenticação de Dois Fatores",
-            description = "Adicione uma camada extra de segurança à sua conta.",
+            description = if (twoFactorEnabled)
+                "Activa nesta conta — toca em \"Gerir\" para abrir as definições no browser."
+            else
+                "Adicione uma camada extra de segurança. Configura no browser.",
             trailing = {
-                Switch(checked = twoFactorEnabled, onCheckedChange = onToggleTwoFactor)
+                Button(
+                    onClick = { show2faInfo = true },
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (twoFactorEnabled) Color(0xFF16A34A) else MaterialTheme.colorScheme.primary,
+                    ),
+                ) { Text(if (twoFactorEnabled) "Gerir" else "Activar", fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
             },
         )
 
@@ -971,6 +1130,18 @@ private fun StoragePane(
     isLoading: Boolean,
     onRefresh: () -> Unit,
 ) {
+    val rangeOptions = remember {
+        listOf(
+            "1 semana" to 7,
+            "2 semanas" to 14,
+            "3 semanas" to 21,
+            "1 mês" to 30,
+            "45 dias" to 45,
+        )
+    }
+    var rangeIndex by remember { mutableStateOf(rangeOptions.lastIndex) }
+    val (rangeLabel, rangeDays) = rangeOptions[rangeIndex]
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -991,6 +1162,29 @@ private fun StoragePane(
         }
 
         if (storage != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                rangeOptions.forEachIndexed { i, (label, _) ->
+                    val selected = i == rangeIndex
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                        modifier = Modifier.clickable { rangeIndex = i },
+                    ) {
+                        Text(
+                            label,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
             val isLow = storage.percentage >= 90f
             val accentColor = if (isLow) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
             StorageFeatureCard(
@@ -1014,7 +1208,7 @@ private fun StoragePane(
                     icon = Icons.Outlined.Upload,
                     iconColor = Color(0xFF2196F3),
                     title = "Upload",
-                    subtitle = "Últimos 45 dias",
+                    subtitle = "Últimos $rangeLabel",
                     trailing = {
                         Text(
                             up,
@@ -1023,7 +1217,7 @@ private fun StoragePane(
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                     },
-                    chartData = storage.trafficChartUpload?.mapNotNull { it.percentage },
+                    chartData = storage.trafficChartUpload?.mapNotNull { it.percentage }?.takeLast(rangeDays),
                 )
             }
 
@@ -1032,7 +1226,7 @@ private fun StoragePane(
                     icon = Icons.Outlined.Download,
                     iconColor = Color(0xFF4CAF50),
                     title = "Download",
-                    subtitle = "Últimos 45 dias",
+                    subtitle = "Últimos $rangeLabel",
                     trailing = {
                         Text(
                             down,
@@ -1041,7 +1235,7 @@ private fun StoragePane(
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                     },
-                    chartData = storage.trafficChartDownload?.mapNotNull { it.percentage },
+                    chartData = storage.trafficChartDownload?.mapNotNull { it.percentage }?.takeLast(rangeDays),
                 )
             }
 
@@ -1131,10 +1325,23 @@ private fun StoragePane(
 
         OutlinedButton(
             onClick = onRefresh,
+            enabled = !isLoading,
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("Atualizar")
+            if (isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("A actualizar…")
+            } else {
+                Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Atualizar")
+            }
         }
 
         Spacer(Modifier.height(6.dp))
@@ -1223,161 +1430,223 @@ private fun SessionsPane(
     onRevokeAll: () -> Unit,
     onRefresh: () -> Unit,
 ) {
+    var pendingRevoke by remember { mutableStateOf<SessionItem?>(null) }
+    var showRevokeAll by remember { mutableStateOf(false) }
+
+    pendingRevoke?.let { s ->
+        co.golink.tester.ui.components.dialogs.ConfirmDialog(
+            title = if (s.is_current) "Revogar sessão actual?" else "Revogar esta sessão?",
+            message = if (s.is_current)
+                "Vais ser desconectado deste dispositivo imediatamente."
+            else "A sessão será terminada e o dispositivo terá de iniciar sessão novamente.",
+            confirmText = "Revogar",
+            destructive = true,
+            onDismiss = { pendingRevoke = null },
+            onConfirm = { onRevoke(s.id); pendingRevoke = null },
+        )
+    }
+    if (showRevokeAll) {
+        co.golink.tester.ui.components.dialogs.ConfirmDialog(
+            title = "Terminar outras sessões?",
+            message = "Todas as outras sessões serão revogadas. Continuarás autenticado neste dispositivo.",
+            confirmText = "Terminar todas",
+            destructive = true,
+            onDismiss = { showRevokeAll = false },
+            onConfirm = { onRevokeAll(); showRevokeAll = false },
+        )
+    }
+
+    val webSessions = sessions.filter { (it.platform ?: "").lowercase() == "web" }
+    val mobileSessions = sessions.filter { (it.platform ?: "").lowercase() != "web" }
+    val hasOthers = sessions.any { !it.is_current }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
-            SectionLabel("Sessões activas")
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = onRefresh) { Text("Atualizar") }
+        if (isLoading && sessions.isEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
         }
+
+        SessionsGroup(
+            title = "Sessões Web",
+            icon = Icons.Outlined.Devices,
+            description = "Dispositivos com sessão iniciada via browser.",
+            sessions = webSessions,
+            emptyText = "Sem sessões web activas.",
+            onRevoke = { pendingRevoke = it },
+        )
+
+        SessionsGroup(
+            title = "Sessões Mobile",
+            icon = Icons.Filled.Smartphone,
+            description = "Dispositivos móveis com sessão iniciada.",
+            sessions = mobileSessions,
+            emptyText = "Sem sessões móveis activas.",
+            onRevoke = { pendingRevoke = it },
+        )
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(
+                onClick = onRefresh,
+                enabled = !isLoading,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.weight(1f),
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("A actualizar…")
+                } else {
+                    Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Atualizar")
+                }
+            }
+        }
+
+        if (hasOthers) {
+            Button(
+                onClick = { showRevokeAll = true },
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Terminar todas as outras sessões")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionsGroup(
+    title: String,
+    icon: ImageVector,
+    description: String,
+    sessions: List<SessionItem>,
+    emptyText: String,
+    onRevoke: (SessionItem) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+        }
+        Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Surface(
             shape = RoundedCornerShape(14.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column {
-                if (isLoading && sessions.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
-                } else if (sessions.isEmpty()) {
+                if (sessions.isEmpty()) {
                     Text(
-                        "Sem sessões registadas",
+                        emptyText,
                         modifier = Modifier.padding(16.dp),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
                     sessions.forEachIndexed { i, s ->
-                        SessionRow(s, onRevoke = { onRevoke(s.id) })
+                        SessionRow(s, onRevoke = { onRevoke(s) })
                         if (i < sessions.lastIndex) HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
                     }
                 }
             }
-        }
-
-        if (sessions.any { !it.is_current }) {
-            Spacer(Modifier.height(12.dp))
-            OutlinedButton(
-                onClick = onRevokeAll,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Terminar todas as outras sessões") }
         }
     }
 }
 
 @Composable
 private fun SessionRow(s: SessionItem, onRevoke: () -> Unit) {
+    val accent = if (s.is_current) Color(0xFF16A34A) else MaterialTheme.colorScheme.primary
+    val isMobile = (s.platform ?: "").lowercase() != "web"
     Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        verticalAlignment = Alignment.Top,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(14.dp),
     ) {
-        Icon(Icons.Filled.Smartphone, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(accent.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (isMobile) Icons.Filled.Smartphone else Icons.Outlined.Devices,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(20.dp),
+            )
+        }
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            val label = listOfNotNull(s.browser, s.platform).joinToString(" · ").ifBlank { "Dispositivo desconhecido" }
-            Text(
-                label + if (s.is_current) " (este dispositivo)" else "",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = if (s.is_current) FontWeight.SemiBold else FontWeight.Normal,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            val meta = listOfNotNull(s.ip_address, s.location).joinToString(" · ")
-            if (meta.isNotBlank()) {
-                Text(meta, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    s.device ?: s.browser ?: "Dispositivo desconhecido",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (s.is_current) {
+                    Spacer(Modifier.width(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = Color(0xFF16A34A).copy(alpha = 0.15f),
+                    ) {
+                        Text(
+                            "ACTUAL",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF15803D),
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
             }
-            s.last_activity_at?.let {
+            Spacer(Modifier.height(4.dp))
+            s.login_at?.let {
+                Text("Iniciada: $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            val ipLine = listOfNotNull(s.ip_address, s.location).joinToString(" · ")
+            if (ipLine.isNotBlank()) {
+                Text(ipLine, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            s.browser?.takeIf { it.isNotBlank() && it != s.device }?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            s.last_activity_at?.takeIf { it != s.login_at }?.let {
                 Text("Última actividade: $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        if (!s.is_current) {
-            TextButton(onClick = onRevoke) { Text("Revogar") }
-        }
-    }
-}
-
-@Composable
-private fun PrivacyPane() {
-    var necessary by remember { mutableStateOf(true) }
-    var performance by remember { mutableStateOf(true) }
-    var functional by remember { mutableStateOf(false) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-    ) {
-        SectionLabel("Preferências de cookies")
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-            modifier = Modifier.fillMaxWidth(),
+        Spacer(Modifier.width(8.dp))
+        OutlinedButton(
+            onClick = onRevoke,
+            shape = RoundedCornerShape(8.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)),
         ) {
-            Column {
-                CookieRow(
-                    title = "Necessários",
-                    description = "Indispensáveis ao funcionamento da app — não podem ser desactivados.",
-                    checked = necessary,
-                    enabled = false,
-                    onCheckedChange = { necessary = it },
-                )
-                MenuDivider()
-                CookieRow(
-                    title = "Desempenho",
-                    description = "Permitem-nos medir e melhorar a performance.",
-                    checked = performance,
-                    onCheckedChange = { performance = it },
-                )
-                MenuDivider()
-                CookieRow(
-                    title = "Funcionais",
-                    description = "Lembram preferências para uma experiência personalizada.",
-                    checked = functional,
-                    onCheckedChange = { functional = it },
-                )
-            }
+            Text("Revogar", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
         }
-
-        Spacer(Modifier.height(16.dp))
-        Text(
-            "As preferências são guardadas localmente neste dispositivo.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
-    }
-}
-
-@Composable
-private fun CookieRow(
-    title: String,
-    description: String,
-    checked: Boolean,
-    enabled: Boolean = true,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(16.dp),
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-            Spacer(Modifier.height(2.dp))
-            Text(
-                description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
 }
 

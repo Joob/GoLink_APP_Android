@@ -189,7 +189,7 @@ class BrowseShellViewModel @Inject constructor(
     init { refreshStorage() }
 }
 
-private enum class ActionDialog { None, CreateFolder, Rename, Move, Delete, Share, PermanentDelete, EmptyTrash, RemoteUpload, Details, CreateTeamFolder, ConvertToTeamFolder, FileRequest }
+private enum class ActionDialog { None, CreateFolder, Rename, Move, Delete, Share, PermanentDelete, EmptyTrash, RemoteUpload, Details, CreateTeamFolder, ConvertToTeamFolder, FileRequest, Logout }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -383,7 +383,7 @@ fun BrowseScreen(
                 }
                 DrawerEntry(Icons.AutoMirrored.Filled.Logout, "Sair da Conta", false) {
                     scope.launch { drawerState.close() }
-                    shell.logout()
+                    activeDialog = ActionDialog.Logout
                 }
                 Spacer(Modifier.height(8.dp))
               }
@@ -923,6 +923,14 @@ fun BrowseScreen(
             destructive = true,
             onDismiss = { activeDialog = ActionDialog.None },
             onConfirm = viewModel::emptyTrash,
+        )
+        ActionDialog.Logout -> ConfirmDialog(
+            title = "Sair da Conta?",
+            message = "Tens a certeza que queres sair da tua conta?",
+            confirmText = "Sair",
+            destructive = true,
+            onDismiss = { activeDialog = ActionDialog.None },
+            onConfirm = { shell.logout() },
         )
         ActionDialog.Details -> actionTarget?.let { target ->
             BrowseItemDetailsSheet(

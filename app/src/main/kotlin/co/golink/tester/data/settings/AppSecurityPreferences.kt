@@ -33,10 +33,6 @@ class AppSecurityPreferences @Inject constructor(
         get() = prefs.getBoolean("pin_enabled", false)
         set(value) = prefs.edit { putBoolean("pin_enabled", value) }
 
-    var twoFactorEnabled: Boolean
-        get() = prefs.getBoolean("two_factor_enabled", false)
-        set(value) = prefs.edit { putBoolean("two_factor_enabled", value) }
-
     val hasPinSet: Boolean
         get() = encryptedPrefs.getString("pin_hash", null) != null
 
