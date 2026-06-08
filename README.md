@@ -1,10 +1,6 @@
 <<<<<<< HEAD
-# GoLink_APP_Android
-GoLink APP Android
-=======
-# VueFileManager — Android (Native)
 
-App Android nativa para a instância VueFileManager em `tester.golink.co`.
+# Android (Native)
 
 Stack: Kotlin · Jetpack Compose · Hilt · Retrofit · DataStore · Material 3.
 
