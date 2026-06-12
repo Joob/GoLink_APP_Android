@@ -91,6 +91,11 @@ data class UpdateProfileFieldRequest(
 )
 
 @Serializable
+data class MobileBackupSettingRequest(
+    val enabled: Boolean,
+)
+
+@Serializable
 data class AccessToken(
     val id: Long,
     val name: String,

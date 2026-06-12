@@ -30,6 +30,10 @@ data class UploadTask(
     val state: State,
     val sizeBytes: Long = 0L,
     val errorMessage: String? = null,
+    // Tags uploads queued by the auto-backup worker so the global UI banner
+    // can exclude them — those uploads belong inside the Backups Automáticos
+    // screen, not the browser's bottom bar.
+    val mobileBackup: Boolean = false,
 ) {
     enum class State { Queued, Uploading, Completed, Failed, Cancelled, Conflict }
 }
@@ -48,11 +52,23 @@ class UploadManager @Inject constructor(
     private val _completed = MutableStateFlow<Long>(0)
     val completedTick: StateFlow<Long> = _completed.asStateFlow()
 
-    private data class Source(val uri: Uri, val parentId: String?)
+    private data class Source(
+        val uri: Uri,
+        val parentId: String?,
+        val mobileBackup: Boolean = false,
+        val backupFolder: String? = null,
+    )
     private val sources = mutableMapOf<String, Source>()
     private val jobs = mutableMapOf<String, Job>()
 
-    fun enqueue(uri: Uri, parentId: String?): Job {
+    fun enqueue(uri: Uri, parentId: String?): Job = enqueueWithId(uri, parentId).second
+
+    fun enqueueWithId(
+        uri: Uri,
+        parentId: String?,
+        mobileBackup: Boolean = false,
+        backupFolder: String? = null,
+    ): Pair<String, Job> {
         val metadata = readMetadata(uri)
         val task = UploadTask(
             id = UUID.randomUUID().toString(),
@@ -60,22 +76,23 @@ class UploadManager @Inject constructor(
             progress = 0f,
             state = UploadTask.State.Queued,
             sizeBytes = metadata.size,
+            mobileBackup = mobileBackup,
         )
-        sources[task.id] = Source(uri, parentId)
+        sources[task.id] = Source(uri, parentId, mobileBackup, backupFolder)
         update { list -> list + task }
-        return runTask(task.id, uri, metadata, parentId)
+        return task.id to runTask(task.id, uri, metadata, parentId, mobileBackup = mobileBackup, backupFolder = backupFolder)
     }
 
     private class ConflictException : RuntimeException("conflict")
 
-    private fun runTask(taskId: String, uri: Uri, metadata: FileMetadata, parentId: String?, overwrite: Boolean = false): Job {
+    private fun runTask(taskId: String, uri: Uri, metadata: FileMetadata, parentId: String?, overwrite: Boolean = false, mobileBackup: Boolean = false, backupFolder: String? = null): Job {
         val job = scope.launch {
             try {
-                // Chunked path also covers unknown size (size <= 0): some content
-                // providers (Google Photos, Drive) don't expose OpenableColumns.SIZE
-                // and a single multipart request of an unknown-size body trips PHP's
-                // upload_max_filesize / memory_limit on large videos.
-                if (metadata.size in 1..CHUNK_THRESHOLD) {
+                // Mobile backup uploads always go through the dedicated single-shot
+                // endpoint so the server tags them with source=mobile_backup.
+                if (mobileBackup) {
+                    uploadMobileBackupSingle(taskId, uri, metadata, overwrite, backupFolder)
+                } else if (metadata.size in 1..CHUNK_THRESHOLD) {
                     uploadSingle(taskId, uri, metadata, parentId, overwrite)
                 } else {
                     uploadChunked(taskId, uri, metadata, parentId, overwrite)
@@ -85,7 +102,14 @@ class UploadManager @Inject constructor(
             } catch (t: Throwable) {
                 if (t is kotlinx.coroutines.CancellationException) throw t
                 if (t is ConflictException) {
-                    update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Conflict, errorMessage = null) else it } }
+                    if (overwrite) {
+                        // O utilizador pediu "Substituir" e o servidor voltou a
+                        // responder 409 — voltar a Conflict fazia o botão parecer
+                        // morto. Mostrar a falha com causa.
+                        update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Failed, errorMessage = "O servidor recusou substituir o ficheiro (409)") else it } }
+                    } else {
+                        update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Conflict, errorMessage = null) else it } }
+                    }
                 } else {
                     update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Failed, errorMessage = t.message) else it } }
                 }
@@ -103,7 +127,10 @@ class UploadManager @Inject constructor(
         if (current.state != UploadTask.State.Conflict) return
         val metadata = readMetadata(source.uri).copy(displayName = current.name)
         update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Queued, progress = 0f, errorMessage = null) else it } }
-        runTask(taskId, source.uri, metadata, source.parentId, overwrite = true)
+        // mobileBackup tem de ser propagado: sem isto o reenvio ia para o
+        // endpoint normal (raiz) e voltava a dar 409 — o botão "Substituir"
+        // parecia não fazer nada.
+        runTask(taskId, source.uri, metadata, source.parentId, overwrite = true, mobileBackup = source.mobileBackup, backupFolder = source.backupFolder)
     }
 
     fun skipConflict(taskId: String) {
@@ -123,7 +150,7 @@ class UploadManager @Inject constructor(
         if (current.state != UploadTask.State.Failed) return
         val metadata = readMetadata(source.uri).copy(displayName = current.name)
         update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Queued, progress = 0f, errorMessage = null) else it } }
-        runTask(taskId, source.uri, metadata, source.parentId)
+        runTask(taskId, source.uri, metadata, source.parentId, mobileBackup = source.mobileBackup, backupFolder = source.backupFolder)
     }
 
     fun retryFailed() {
@@ -134,6 +161,29 @@ class UploadManager @Inject constructor(
         val keptIds = _tasks.value.filter { it.state == UploadTask.State.Queued || it.state == UploadTask.State.Uploading }.map { it.id }.toSet()
         sources.keys.retainAll(keptIds)
         update { list -> list.filter { it.id in keptIds } }
+    }
+
+    // O worker de backup chama isto após cada lote: um backup completo da
+    // galeria pode ter milhares de itens e manter todas as linhas terminadas
+    // em memória degrada a UI e acaba em OOM. Só toca em tarefas mobileBackup;
+    // uploads do browser ficam intactos.
+    fun pruneFinishedBackups(keepLast: Int = 0) {
+        val finished = setOf(UploadTask.State.Completed, UploadTask.State.Cancelled)
+        val done = _tasks.value.filter { it.mobileBackup && it.state in finished }
+        if (done.size <= keepLast) return
+        val removeIds = done.dropLast(keepLast).map { it.id }.toSet()
+        sources.keys.removeAll(removeIds)
+        update { list -> list.filterNot { it.id in removeIds } }
+    }
+
+    // Cancela e remove todos os uploads de backup, em curso ou não. Chamado ao
+    // desactivar o backup automático: os jobs vivem num scope próprio e não
+    // morrem com o worker.
+    fun cancelBackups() {
+        val ids = _tasks.value.filter { it.mobileBackup }.map { it.id }.toSet()
+        ids.forEach { jobs.remove(it)?.cancel() }
+        sources.keys.removeAll(ids)
+        update { list -> list.filterNot { it.id in ids } }
     }
 
     fun clearAll() {
@@ -151,13 +201,39 @@ class UploadManager @Inject constructor(
         overwrite: Boolean,
     ) {
         markUploading(taskId)
-        val fileBody = streamingRequestBody(uri, metadata.mimeType, metadata.size)
+        val fileBody = streamingRequestBody(uri, metadata.mimeType, metadata.size) { p ->
+            updateProgress(taskId, p)
+        }
         val filePart = MultipartBody.Part.createFormData("file", metadata.displayName, fileBody)
         val response = api.upload(
             name = textPart(metadata.baseName),
             extension = textPart(metadata.extension),
             parentId = parentId?.let { textPart(it) },
             overwriteExisting = if (overwrite) textPart("1") else null,
+            file = filePart,
+        )
+        if (response.code() == 409) throw ConflictException()
+        if (!response.isSuccessful) error(httpErrorMessage(response.code(), response.errorBody()?.string()))
+        updateProgress(taskId, 1f)
+    }
+
+    private suspend fun uploadMobileBackupSingle(
+        taskId: String,
+        uri: Uri,
+        metadata: FileMetadata,
+        overwrite: Boolean,
+        backupFolder: String?,
+    ) {
+        markUploading(taskId)
+        val fileBody = streamingRequestBody(uri, metadata.mimeType, metadata.size) { p ->
+            updateProgress(taskId, p)
+        }
+        val filePart = MultipartBody.Part.createFormData("file", metadata.displayName, fileBody)
+        val response = api.uploadMobileBackup(
+            name = textPart(metadata.baseName),
+            extension = textPart(metadata.extension),
+            overwriteExisting = if (overwrite) textPart("1") else null,
+            folder = backupFolder?.takeIf { it.isNotBlank() }?.let { textPart(it) },
             file = filePart,
         )
         if (response.code() == 409) throw ConflictException()
@@ -224,7 +300,14 @@ class UploadManager @Inject constructor(
     }
 
     // Streams directly from the content URI without loading the whole file into memory.
-    private fun streamingRequestBody(uri: Uri, mimeType: String, size: Long): RequestBody =
+    // onProgress recebe a fracção enviada (0..1) — só é chamado quando o
+    // percentil inteiro muda, para não martelar o StateFlow a cada buffer.
+    private fun streamingRequestBody(
+        uri: Uri,
+        mimeType: String,
+        size: Long,
+        onProgress: ((Float) -> Unit)? = null,
+    ): RequestBody =
         object : RequestBody() {
             override fun contentType() = mimeType.toMediaTypeOrNull()
             override fun contentLength() = if (size > 0L) size else -1L
@@ -233,9 +316,23 @@ class UploadManager @Inject constructor(
             override fun isOneShot() = true
             override fun writeTo(sink: BufferedSink) {
                 resolver.openInputStream(uri)?.use { input ->
-                    val buf = ByteArray(8 * 1024)
+                    // 256 KB buffer keeps the syscall count low on modern devices and
+                    // matches a typical TLS record / OkHttp segment size.
+                    val buf = ByteArray(256 * 1024)
                     var n: Int
-                    while (input.read(buf).also { n = it } != -1) sink.write(buf, 0, n)
+                    var sent = 0L
+                    var lastPct = -1
+                    while (input.read(buf).also { n = it } != -1) {
+                        sink.write(buf, 0, n)
+                        sent += n
+                        if (onProgress != null && size > 0L) {
+                            val pct = ((sent * 100) / size).toInt()
+                            if (pct != lastPct) {
+                                lastPct = pct
+                                onProgress(sent.toFloat() / size)
+                            }
+                        }
+                    }
                 } ?: error("Não foi possível ler o ficheiro")
             }
         }
@@ -257,6 +354,10 @@ class UploadManager @Inject constructor(
     private fun updateProgress(taskId: String, value: Float) =
         update { list -> list.map { if (it.id == taskId) it.copy(progress = value.coerceIn(0f, 1f)) else it } }
 
+    // Synchronized: com PARALLEL uploads + progresso por bytes há escritas
+    // concorrentes — um read-modify-write sem lock perdia actualizações
+    // (tarefas presas em estados antigos).
+    @Synchronized
     private fun update(transform: (List<UploadTask>) -> List<UploadTask>) {
         _tasks.value = transform(_tasks.value)
     }

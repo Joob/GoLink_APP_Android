@@ -166,6 +166,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -173,6 +174,7 @@ import kotlinx.coroutines.launch
 class BrowseShellViewModel @Inject constructor(
     userRepository: UserRepository,
     notificationsRepository: NotificationsRepository,
+    autoBackupPreferences: co.golink.tester.data.backup.AutoBackupPreferences,
     private val authRepository: AuthRepository,
     private val settingsRepository: SettingsRepository,
 ) : ViewModel() {
@@ -180,6 +182,9 @@ class BrowseShellViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val unreadNotifications: StateFlow<Int> = notificationsRepository.unreadCount
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+    val autoBackupEnabled: StateFlow<Boolean> = autoBackupPreferences.state
+        .map { it.enabled }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     private val _storage = kotlinx.coroutines.flow.MutableStateFlow<StorageUsage?>(null)
     val storage: StateFlow<StorageUsage?> = _storage
     fun logout() = viewModelScope.launch { authRepository.logout() }
@@ -197,6 +202,7 @@ fun BrowseScreen(
     onOpenNotifications: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     onOpenBilling: () -> Unit = {},
+    onOpenAutoBackup: () -> Unit = {},
     onOpenFile: (String) -> Unit = {},
     viewModel: BrowseViewModel = hiltViewModel(),
     shell: BrowseShellViewModel = hiltViewModel(),
@@ -211,6 +217,7 @@ fun BrowseScreen(
     val user by shell.user.collectAsStateWithLifecycle()
     val unread by shell.unreadNotifications.collectAsStateWithLifecycle()
     val storage by shell.storage.collectAsStateWithLifecycle()
+    val autoBackupEnabled by shell.autoBackupEnabled.collectAsStateWithLifecycle()
     val favourites by viewModel.favouriteFolders.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -377,6 +384,10 @@ fun BrowseScreen(
                 Spacer(Modifier.height(8.dp))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), modifier = Modifier.padding(horizontal = 16.dp))
                 Spacer(Modifier.height(8.dp))
+                DrawerEntry(Icons.Outlined.CloudUpload, "Backups Automáticos", autoBackupEnabled) {
+                    scope.launch { drawerState.close() }
+                    onOpenAutoBackup()
+                }
                 DrawerEntry(Icons.Outlined.Settings, "Definições", false) {
                     scope.launch { drawerState.close() }
                     onOpenSettings()
@@ -731,8 +742,12 @@ fun BrowseScreen(
                     }
                 }
                 Box(modifier = Modifier.fillMaxWidth()) {
+                    // Auto-backup uploads are surfaced inside the Backups
+                    // Automáticos screen, not in this global banner, so the
+                    // browser only sees user-initiated uploads here.
+                    val browserUploads = uploads.filterNot { it.mobileBackup }
                     UploadProgressBanner(
-                        tasks = uploads,
+                        tasks = browserUploads,
                         onDismiss = viewModel::clearAllUploads,
                         onCancelTask = viewModel::cancelUpload,
                         onRetryTask = viewModel::retryUpload,
@@ -1730,7 +1745,7 @@ private fun EmptyState(title: String, subtitle: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BrowseItemDetailsSheet(item: BrowseItem, onDismiss: () -> Unit) {
+internal fun BrowseItemDetailsSheet(item: BrowseItem, onDismiss: () -> Unit) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
         onDismissRequest = onDismiss,

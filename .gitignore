@@ -43,3 +43,9 @@ google-services.json
 # Logs & OS
 *.log
 .DS_Store
+
+# Claude
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+.mcp.json

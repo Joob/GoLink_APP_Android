@@ -87,6 +87,10 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
+    implementation(libs.androidx.hilt.work)
+    ksp(libs.androidx.hilt.compiler)
+
+    implementation(libs.androidx.work.runtime.ktx)
 
     implementation(libs.retrofit)
     implementation(libs.retrofit.kotlinx.serialization)
@@ -97,6 +101,7 @@ dependencies {
 
     implementation(libs.coil.compose)
     implementation(libs.coil.svg)
+    implementation(libs.coil.video)
 
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)

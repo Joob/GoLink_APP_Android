@@ -30,6 +30,13 @@ interface BrowseApi {
         @Query("per_page") perPage: Int? = null,
     ): Response<BrowseListResponse>
 
+    @GET("api/browse/mobile-backup")
+    suspend fun mobileBackup(
+        @Query("type") type: String,
+        @Query("page") page: String = "all",
+        @Query("per_page") perPage: Int? = null,
+    ): Response<BrowseListResponse>
+
     @GET("api/search")
     suspend fun search(
         @Query("query") query: String,

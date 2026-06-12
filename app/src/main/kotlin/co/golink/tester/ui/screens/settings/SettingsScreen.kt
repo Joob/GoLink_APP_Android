@@ -44,6 +44,7 @@ import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.CloudQueue
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Devices
@@ -139,6 +140,7 @@ private sealed interface SettingsRoute {
 fun SettingsScreen(
     onBack: () -> Unit,
     initialRoute: String? = null,
+    onOpenAutoBackup: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val user by viewModel.user.collectAsStateWithLifecycle()
@@ -211,6 +213,7 @@ fun SettingsScreen(
                 SettingsRoute.Menu -> MenuPane(
                     user = user,
                     onNavigate = { route = it },
+                    onOpenAutoBackup = onOpenAutoBackup,
                     onLogout = viewModel::logout,
                 )
                 SettingsRoute.Profile -> ProfilePane(
@@ -275,6 +278,7 @@ fun SettingsScreen(
 private fun MenuPane(
     user: User?,
     onNavigate: (SettingsRoute) -> Unit,
+    onOpenAutoBackup: () -> Unit,
     onLogout: () -> Unit,
 ) {
     Column(
@@ -350,6 +354,10 @@ private fun MenuPane(
         }
 
         Spacer(Modifier.height(20.dp))
+
+        AutoBackupFeaturedRow(onClick = onOpenAutoBackup)
+
+        Spacer(Modifier.height(16.dp))
 
         MenuGroup {
             MenuRow(Icons.Outlined.AccountCircle, "Perfil", "Nome e detalhes da conta") { onNavigate(SettingsRoute.Profile) }
@@ -458,6 +466,78 @@ private fun MenuDivider() {
         color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
         modifier = Modifier.padding(start = 62.dp),
     )
+}
+
+@Composable
+private fun AutoBackupFeaturedRow(onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = Color.Transparent,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                androidx.compose.ui.graphics.Brush.linearGradient(
+                    listOf(co.golink.tester.ui.theme.BrandGreen, co.golink.tester.ui.theme.BrandGreenDark),
+                ),
+            )
+            .clickable(onClick = onClick),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color.White.copy(alpha = 0.22f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Outlined.CloudUpload,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(26.dp),
+                )
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Backups Automáticos",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = Color.White.copy(alpha = 0.22f),
+                    ) {
+                        Text(
+                            "NOVO",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "Copia as tuas fotos e vídeos automaticamente.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.9f),
+                )
+            }
+            Icon(
+                Icons.Filled.ChevronRight,
+                contentDescription = null,
+                tint = Color.White,
+            )
+        }
+    }
 }
 
 @Composable

@@ -44,6 +44,18 @@ interface FilesApi {
     ): Response<BrowseEntryEnvelope>
 
     @Multipart
+    @POST("api/upload/mobile-backup")
+    suspend fun uploadMobileBackup(
+        @Part("name") name: RequestBody,
+        @Part("extension") extension: RequestBody,
+        @Part("overwrite_existing") overwriteExisting: RequestBody?,
+        // Pasta de origem no dispositivo ("Camera", "Screenshots", …) — o
+        // backend usa-a para organizar o backup em subpastas por origem.
+        @Part("folder") folder: RequestBody?,
+        @Part file: MultipartBody.Part,
+    ): Response<BrowseEntryEnvelope>
+
+    @Multipart
     @POST("api/upload/chunks")
     suspend fun uploadChunk(
         @Part("name") name: RequestBody,

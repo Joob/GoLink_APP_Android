@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -37,7 +38,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,10 +53,82 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Dp
 import coil.compose.AsyncImage
+import coil.compose.AsyncImagePainter
 import coil.request.ImageRequest
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.TeamMember
+
+// Candidatos a preview, por ordem: thumbnail do servidor e, como fallback, o
+// próprio ficheiro. Logo após um upload o thumbnail ainda não foi gerado
+// (null ou 404) — sem o fallback o ícone ficava genérico até nova visita.
+// Para vídeos o VideoFrameDecoder do Coil extrai um frame do ficheiro.
+private fun previewCandidates(item: BrowseItem.File): List<String> = when (item.type) {
+    "image", "video" -> listOfNotNull(
+        item.thumbnailUrl?.takeIf { it.isNotBlank() },
+        item.fileUrl?.takeIf { it.isNotBlank() },
+    )
+    else -> emptyList()
+}
+
+// Preview de imagem/vídeo com fallback: se um candidato falhar (thumbnail
+// ainda por gerar, URL assinado expirado), tenta o seguinte; esgotados todos,
+// volta ao ícone genérico do tipo.
+@Composable
+private fun FilePreview(
+    item: BrowseItem.File,
+    iconSize: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val candidates = remember(item.id, item.thumbnailUrl, item.fileUrl) { previewCandidates(item) }
+    var index by remember(candidates) { mutableIntStateOf(0) }
+    if (index >= candidates.size) {
+        val (icon, tint) = fileIcon(item.type)
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(iconSize))
+        }
+    } else {
+        Box(modifier = modifier) {
+            val ctx = LocalContext.current
+            val url = candidates[index]
+            val req = remember(url) {
+                ImageRequest.Builder(ctx)
+                    .data(url)
+                    .setHeader("Accept", "*/*")
+                    .crossfade(true)
+                    .build()
+            }
+            AsyncImage(
+                model = req,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                onState = { state -> if (state is AsyncImagePainter.State.Error) index++ },
+                modifier = Modifier.fillMaxSize(),
+            )
+            if (item.type == "video") {
+                PlayBadge(Modifier.align(Alignment.Center))
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayBadge(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(24.dp)
+            .background(Color.Black.copy(alpha = 0.45f), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Filled.PlayArrow,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(16.dp),
+        )
+    }
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -198,30 +274,11 @@ fun BrowseItemGridCard(
                         }
                     }
                     is BrowseItem.File -> {
-                        if (!item.thumbnailUrl.isNullOrBlank() && item.type == "image") {
-                            val ctx = LocalContext.current
-                            val req = remember(item.thumbnailUrl) {
-                                ImageRequest.Builder(ctx)
-                                    .data(item.thumbnailUrl)
-                                    .setHeader("Accept", "*/*")
-                                    .crossfade(true)
-                                    .build()
-                            }
-                            AsyncImage(
-                                model = req,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        } else {
-                            val (icon, tint) = fileIcon(item.type)
-                            Icon(
-                                icon,
-                                contentDescription = null,
-                                tint = tint,
-                                modifier = Modifier.size(56.dp),
-                            )
-                        }
+                        FilePreview(
+                            item = item,
+                            iconSize = 56.dp,
+                            modifier = Modifier.fillMaxSize(),
+                        )
                     }
                 }
                 if (item.share != null) {
@@ -384,27 +441,15 @@ private fun Leading(item: BrowseItem) {
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (!item.thumbnailUrl.isNullOrBlank() && item.type == "image") {
-                        Box(
+                    val hasPreview = previewCandidates(item).isNotEmpty()
+                    if (hasPreview) {
+                        FilePreview(
+                            item = item,
+                            iconSize = iconSize,
                             modifier = Modifier
                                 .size(boxSize)
                                 .clip(RoundedCornerShape(8.dp)),
-                        ) {
-                            val ctx = LocalContext.current
-                            val req = remember(item.thumbnailUrl) {
-                                ImageRequest.Builder(ctx)
-                                    .data(item.thumbnailUrl)
-                                    .setHeader("Accept", "*/*")
-                                    .crossfade(true)
-                                    .build()
-                            }
-                            AsyncImage(
-                                model = req,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
+                        )
                     } else {
                         Icon(
                             icon,

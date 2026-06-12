@@ -34,6 +34,7 @@ import co.golink.tester.data.auth.AuthState
 import co.golink.tester.data.auth.SessionManager
 import co.golink.tester.data.settings.AppLockManager
 import co.golink.tester.ui.screens.browse.BrowseScreen
+import co.golink.tester.ui.screens.backup.AutoBackupScreen
 import co.golink.tester.ui.screens.lock.LockScreen
 import androidx.navigation.compose.currentBackStackEntryAsState
 import co.golink.tester.ui.screens.error.BootstrapErrorScreen
@@ -65,6 +66,8 @@ object Routes {
     const val NOTIFICATIONS = "notifications"
     const val SETTINGS = "settings?initial={initial}"
     fun settings(initial: String? = null) = if (initial == null) "settings" else "settings?initial=$initial"
+    const val AUTO_BACKUP = "auto_backup"
+    const val MOBILE_BACKUPS = "mobile_backups"
     const val BOOTSTRAP_ERROR = "bootstrap_error"
     const val SOCIALITE = "socialite/{provider}"
     fun socialite(provider: String) = "socialite/$provider"
@@ -203,6 +206,7 @@ fun AppNavHost(
                 onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
                 onOpenSettings = { navController.navigate(Routes.settings()) },
                 onOpenBilling = { navController.navigate(Routes.settings("billing")) },
+                onOpenAutoBackup = { navController.navigate(Routes.MOBILE_BACKUPS) },
                 onOpenFile = { fileId -> navController.navigate(Routes.viewer(fileId)) },
             )
         }
@@ -227,6 +231,17 @@ fun AppNavHost(
             SettingsScreen(
                 onBack = { navController.popBackStack() },
                 initialRoute = initial,
+                onOpenAutoBackup = { navController.navigate(Routes.MOBILE_BACKUPS) },
+            )
+        }
+        composable(Routes.AUTO_BACKUP) {
+            AutoBackupScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Routes.MOBILE_BACKUPS) {
+            co.golink.tester.ui.screens.backup.MobileBackupsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenSettings = { navController.navigate(Routes.AUTO_BACKUP) },
+                onOpenFile = { fileId -> navController.navigate(Routes.viewer(fileId)) },
             )
         }
         composable(Routes.BOOTSTRAP_ERROR) {
