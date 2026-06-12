@@ -150,6 +150,7 @@ import co.golink.tester.domain.user.User
 import co.golink.tester.ui.components.BrowseItemGridCard
 import co.golink.tester.ui.components.BrowseItemRow
 import co.golink.tester.ui.components.MemberAvatar
+import co.golink.tester.ui.components.NewsBanner
 import co.golink.tester.ui.components.FileListSkeleton
 import co.golink.tester.ui.components.ItemActionsSheet
 import co.golink.tester.ui.components.UploadProgressBanner
@@ -597,6 +598,7 @@ fun BrowseScreen(
                         onUpgrade = onOpenBilling,
                     )
                 }
+                NewsBanner()
                 SearchRow(
                     query = state.searchQuery,
                     onQueryChange = viewModel::setSearchQuery,

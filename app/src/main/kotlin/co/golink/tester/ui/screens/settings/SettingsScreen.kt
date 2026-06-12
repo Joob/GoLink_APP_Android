@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.outlined.AudioFile
+import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.DeleteSweep
@@ -133,6 +134,7 @@ private sealed interface SettingsRoute {
     data object Sessions : SettingsRoute
     data object Billing : SettingsRoute
     data object AppSecurity : SettingsRoute
+    data object News : SettingsRoute
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -191,6 +193,7 @@ fun SettingsScreen(
         SettingsRoute.Sessions -> "Sessões"
         SettingsRoute.Billing -> "Faturação"
         SettingsRoute.AppSecurity -> "Segurança da app"
+        SettingsRoute.News -> "Notícias"
     }
 
     Scaffold(
@@ -257,6 +260,7 @@ fun SettingsScreen(
                     onUpgrade = viewModel::startStripeCheckout,
                     onRefresh = viewModel::loadTransactions,
                 )
+                SettingsRoute.News -> NewsAdminPane()
                 SettingsRoute.AppSecurity -> AppSecurityPane(
                     biometricEnabled = state.biometricEnabled,
                     pinEnabled = state.pinEnabled,
@@ -375,6 +379,13 @@ private fun MenuPane(
             MenuRow(Icons.Outlined.Receipt, "Faturação", "Histórico de transações") { onNavigate(SettingsRoute.Billing) }
             MenuDivider()
             MenuRow(Icons.Outlined.ShieldMoon, "Segurança da app", "Biométrico e PIN") { onNavigate(SettingsRoute.AppSecurity) }
+        }
+
+        if (user?.role == "admin") {
+            Spacer(Modifier.height(16.dp))
+            MenuGroup {
+                MenuRow(Icons.Outlined.Campaign, "Notícias", "Notícia importante na zona de files") { onNavigate(SettingsRoute.News) }
+            }
         }
 
         Spacer(Modifier.height(24.dp))

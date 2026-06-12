@@ -6,6 +6,7 @@ import co.golink.tester.network.BrowseApi
 import co.golink.tester.network.ConfigApi
 import co.golink.tester.network.FavouritesApi
 import co.golink.tester.network.FilesApi
+import co.golink.tester.network.NewsApi
 import co.golink.tester.network.NotificationsApi
 import co.golink.tester.network.SettingsApi
 import co.golink.tester.network.ShareApi
@@ -36,6 +37,10 @@ object ApiModule {
     @Provides
     @Singleton
     fun provideConfigApi(retrofit: Retrofit): ConfigApi = retrofit.create(ConfigApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideNewsApi(retrofit: Retrofit): NewsApi = retrofit.create(NewsApi::class.java)
 
     @Provides
     @Singleton
