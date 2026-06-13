@@ -48,7 +48,7 @@ sealed interface BrowseMode {
 }
 
 enum class ViewMode { LIST, GRID }
-enum class SortMode { ALPHA_ASC, DATE_DESC }
+enum class SortMode { ALPHA_ASC, ALPHA_DESC, DATE_DESC, DATE_ASC }
 
 data class BrowseUiState(
     val mode: BrowseMode = BrowseMode.Folder(id = null, name = "Os meus ficheiros"),
@@ -708,7 +708,9 @@ class BrowseViewModel @Inject constructor(
         val foldersFirst = compareBy<BrowseItem> { it !is BrowseItem.Folder }
         val secondary: Comparator<BrowseItem> = when (mode) {
             SortMode.ALPHA_ASC -> compareBy { it.name.lowercase() }
+            SortMode.ALPHA_DESC -> compareByDescending { it.name.lowercase() }
             SortMode.DATE_DESC -> compareByDescending { it.createdAt ?: it.updatedAt ?: "" }
+            SortMode.DATE_ASC -> compareBy { it.createdAt ?: it.updatedAt ?: "" }
         }
         return items.sortedWith(foldersFirst.then(secondary))
     }

@@ -42,6 +42,8 @@ data class MobileBackupsState(
     val navigationTree: List<NavigationSection> = emptyList(),
     // Totais por separador, mostrados por baixo de Fotos/Vídeos/Ficheiros.
     val counts: Map<MobileBackupTab, Int> = emptyMap(),
+    val selectMode: Boolean = false,
+    val selectedIds: Set<String> = emptySet(),
 )
 
 @HiltViewModel
@@ -52,10 +54,14 @@ class MobileBackupsViewModel @Inject constructor(
     private val downloader: FileDownloader,
     private val backupPreferences: AutoBackupPreferences,
     private val fileViewerSession: FileViewerSession,
+    notificationsRepository: co.golink.tester.data.notifications.NotificationsRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(MobileBackupsState())
     val state: StateFlow<MobileBackupsState> = _state.asStateFlow()
+
+    val unreadNotifications: StateFlow<Int> = notificationsRepository.unreadCount
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
     private val _shareState = MutableStateFlow<ShareDialogUiState?>(null)
     val shareState: StateFlow<ShareDialogUiState?> = _shareState.asStateFlow()
@@ -70,21 +76,65 @@ class MobileBackupsViewModel @Inject constructor(
     }
 
     fun selectTab(tab: MobileBackupTab) {
-        _state.update { it.copy(tab = tab, items = emptyList(), error = null, folderStack = emptyList()) }
+        _state.update { it.copy(tab = tab, items = emptyList(), error = null, folderStack = emptyList(), selectMode = false, selectedIds = emptySet()) }
         load()
     }
 
     fun openFolder(folder: BrowseItem.Folder) {
-        _state.update { it.copy(folderStack = it.folderStack + folder, items = emptyList(), error = null) }
+        _state.update { it.copy(folderStack = it.folderStack + folder, items = emptyList(), error = null, selectMode = false, selectedIds = emptySet()) }
         load()
     }
 
     /** Sobe um nível na pilha de pastas; devolve false se já está na raiz. */
     fun navigateUp(): Boolean {
         if (_state.value.folderStack.isEmpty()) return false
-        _state.update { it.copy(folderStack = it.folderStack.dropLast(1), items = emptyList(), error = null) }
+        _state.update { it.copy(folderStack = it.folderStack.dropLast(1), items = emptyList(), error = null, selectMode = false, selectedIds = emptySet()) }
         load()
         return true
+    }
+
+    // ---- Selecção múltipla (espelha o BrowseViewModel) ----
+
+    fun enterSelectMode() = _state.update { it.copy(selectMode = true) }
+    fun exitSelectMode() = _state.update { it.copy(selectMode = false, selectedIds = emptySet()) }
+    fun selectAll() = _state.update { it.copy(selectedIds = it.items.map { item -> item.id }.toSet()) }
+    fun toggleSelect(id: String) = _state.update {
+        it.copy(selectedIds = if (id in it.selectedIds) it.selectedIds - id else it.selectedIds + id)
+    }
+    fun selectedItems(): List<BrowseItem> = _state.value.items.filter { _state.value.selectedIds.contains(it.id) }
+
+    fun downloadSelected() {
+        val files = selectedItems().filterIsInstance<BrowseItem.File>()
+        exitSelectMode()
+        files.forEach { download(it) }
+    }
+
+    fun moveSelected(destinationId: String?) {
+        val targets = selectedItems()
+        if (targets.isEmpty()) return
+        exitSelectMode()
+        viewModelScope.launch {
+            filesRepository.move(targets, destinationId)
+                .onSuccess {
+                    _state.update { it.copy(toast = "Movido") }
+                    load()
+                }
+                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message ?: "erro"}") } }
+        }
+    }
+
+    fun deleteSelected() {
+        val targets = selectedItems()
+        if (targets.isEmpty()) return
+        exitSelectMode()
+        viewModelScope.launch {
+            filesRepository.delete(targets, permanent = false)
+                .onSuccess {
+                    _state.update { it.copy(toast = "Movido para o lixo") }
+                    load()
+                }
+                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message ?: "erro"}") } }
+        }
     }
 
     fun refresh() {

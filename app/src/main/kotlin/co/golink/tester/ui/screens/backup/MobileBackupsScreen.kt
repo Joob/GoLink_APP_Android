@@ -20,12 +20,19 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsNone
+import androidx.compose.material.icons.outlined.CheckBox
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.VideoLibrary
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -59,6 +66,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.ui.components.BrowseItemRow
 import co.golink.tester.ui.components.ItemActionsSheet
+import co.golink.tester.ui.components.SelectionActionBar
 import co.golink.tester.ui.components.dialogs.ConfirmDialog
 import co.golink.tester.ui.components.dialogs.MoveDestinationDialog
 import co.golink.tester.ui.components.dialogs.ShareDialog
@@ -77,14 +85,22 @@ fun MobileBackupsScreen(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenFile: (String) -> Unit,
+    onOpenNotifications: () -> Unit = {},
     viewModel: MobileBackupsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val backupEnabled by viewModel.backupEnabled.collectAsStateWithLifecycle()
     val shareState by viewModel.shareState.collectAsStateWithLifecycle()
+    val unread by viewModel.unreadNotifications.collectAsStateWithLifecycle()
 
-    // Dentro de uma subpasta o back sobe um nível; na raiz sai do ecrã.
-    BackHandler { if (!viewModel.navigateUp()) onBack() }
+    // Em modo de selecção o back cancela a selecção; dentro de uma subpasta
+    // sobe um nível; na raiz sai do ecrã.
+    BackHandler {
+        when {
+            state.selectMode -> viewModel.exitSelectMode()
+            !viewModel.navigateUp() -> onBack()
+        }
+    }
 
     var sheetItem by remember { mutableStateOf<BrowseItem.File?>(null) }
     var dialogTarget by remember { mutableStateOf<BrowseItem.File?>(null) }
@@ -112,26 +128,72 @@ fun MobileBackupsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(state.folderStack.lastOrNull()?.name ?: "Backups Automáticos") },
+                title = {
+                    Text(
+                        if (state.selectMode) "${state.selectedIds.size} selecionado"
+                        else state.folderStack.lastOrNull()?.name ?: "Backups Automáticos",
+                    )
+                },
                 navigationIcon = {
-                    IconButton(onClick = { if (!viewModel.navigateUp()) onBack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
+                    if (state.selectMode) {
+                        IconButton(onClick = { viewModel.exitSelectMode() }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Limpar selecção")
+                        }
+                    } else {
+                        IconButton(onClick = { if (!viewModel.navigateUp()) onBack() }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
+                        }
                     }
                 },
                 actions = {
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Outlined.Settings, contentDescription = "Definições")
+                    if (state.selectMode) {
+                        IconButton(onClick = { viewModel.selectAll() }) {
+                            Icon(Icons.Outlined.SelectAll, contentDescription = "Selecionar tudo")
+                        }
+                    } else {
+                        IconButton(onClick = onOpenNotifications) {
+                            BadgedBox(badge = {
+                                if (unread > 0) Badge { Text(if (unread > 99) "99+" else unread.toString()) }
+                            }) {
+                                Icon(
+                                    if (unread > 0) Icons.Filled.Notifications else Icons.Filled.NotificationsNone,
+                                    contentDescription = "Notificações",
+                                )
+                            }
+                        }
+                        IconButton(onClick = { viewModel.enterSelectMode() }) {
+                            Icon(Icons.Outlined.CheckBox, contentDescription = "Selecionar")
+                        }
+                        IconButton(onClick = onOpenSettings) {
+                            Icon(Icons.Outlined.Settings, contentDescription = "Definições")
+                        }
                     }
                 },
             )
         },
         snackbarHost = { SnackbarHost(snackbarHost) },
         bottomBar = {
-            // When the backup feature is off we keep the file list visible —
-            // those uploads still exist server-side — and surface a small
-            // banner so the user knows new files won't be added until they
-            // turn it back on. Matches the reference design.
-            if (!backupEnabled) BackupDisabledBanner(onTurnOn = onOpenSettings)
+            Column {
+                if (state.selectMode && state.selectedIds.isNotEmpty()) {
+                    SelectionActionBar(
+                        onDownload = { viewModel.downloadSelected() },
+                        onMove = {
+                            viewModel.loadNavigationTree()
+                            dialogTarget = null
+                            activeDialog = BackupItemDialog.Move
+                        },
+                        onDelete = {
+                            dialogTarget = null
+                            activeDialog = BackupItemDialog.Delete
+                        },
+                    )
+                }
+                // When the backup feature is off we keep the file list visible —
+                // those uploads still exist server-side — and surface a small
+                // banner so the user knows new files won't be added until they
+                // turn it back on. Matches the reference design.
+                if (!backupEnabled) BackupDisabledBanner(onTurnOn = onOpenSettings)
+            }
         },
     ) { padding ->
         Column(
@@ -172,14 +234,24 @@ fun MobileBackupsScreen(
                         when (item) {
                             is BrowseItem.Folder -> BrowseItemRow(
                                 item = item,
-                                onClick = { viewModel.openFolder(item) },
-                                onLongClick = { viewModel.openFolder(item) },
+                                onClick = {
+                                    if (state.selectMode) viewModel.toggleSelect(item.id)
+                                    else viewModel.openFolder(item)
+                                },
+                                onLongClick = {
+                                    if (!state.selectMode) viewModel.enterSelectMode()
+                                    viewModel.toggleSelect(item.id)
+                                },
                                 onMoreClick = { viewModel.openFolder(item) },
+                                selected = item.id in state.selectedIds,
+                                selectionMode = state.selectMode,
                             )
                             is BrowseItem.File -> BrowseItemRow(
                                 item = item,
                                 onClick = {
-                                    if (item.isViewable()) {
+                                    if (state.selectMode) {
+                                        viewModel.toggleSelect(item.id)
+                                    } else if (item.isViewable()) {
                                         // Sem isto o viewer abria com a sessão
                                         // antiga do browser (ou vazia).
                                         viewModel.prepareViewer(item)
@@ -188,8 +260,16 @@ fun MobileBackupsScreen(
                                         sheetItem = item
                                     }
                                 },
-                                onLongClick = { sheetItem = item },
+                                onLongClick = {
+                                    if (state.selectMode) {
+                                        viewModel.toggleSelect(item.id)
+                                    } else {
+                                        sheetItem = item
+                                    }
+                                },
                                 onMoreClick = { sheetItem = item },
+                                selected = item.id in state.selectedIds,
+                                selectionMode = state.selectMode,
                             )
                         }
                     }
@@ -257,31 +337,41 @@ fun MobileBackupsScreen(
                 },
             )
         }
-        BackupItemDialog.Delete -> dialogTarget?.let { target ->
-            ConfirmDialog(
-                title = "Eliminar ficheiro",
-                message = "Mover \"${target.name}\" para o lixo?",
-                confirmText = "Eliminar",
-                destructive = true,
-                onDismiss = { activeDialog = BackupItemDialog.None; dialogTarget = null },
-                onConfirm = {
-                    viewModel.delete(target)
-                    activeDialog = BackupItemDialog.None
-                    dialogTarget = null
-                },
-            )
+        BackupItemDialog.Delete -> {
+            val target = dialogTarget
+            val count = if (target == null) state.selectedIds.size else 1
+            if (count > 0) {
+                ConfirmDialog(
+                    title = "Eliminar ficheiro",
+                    message = if (target == null) "Mover $count itens para o lixo?"
+                              else "Mover \"${target.name}\" para o lixo?",
+                    confirmText = "Eliminar",
+                    destructive = true,
+                    onDismiss = { activeDialog = BackupItemDialog.None; dialogTarget = null },
+                    onConfirm = {
+                        if (target == null) viewModel.deleteSelected() else viewModel.delete(target)
+                        activeDialog = BackupItemDialog.None
+                        dialogTarget = null
+                    },
+                )
+            }
         }
-        BackupItemDialog.Move -> dialogTarget?.let { target ->
-            MoveDestinationDialog(
-                sections = state.navigationTree,
-                excludeId = target.id,
-                onDismiss = { activeDialog = BackupItemDialog.None; dialogTarget = null },
-                onConfirm = { destinationId ->
-                    viewModel.move(target, destinationId)
-                    activeDialog = BackupItemDialog.None
-                    dialogTarget = null
-                },
-            )
+        BackupItemDialog.Move -> {
+            val target = dialogTarget
+            val count = if (target == null) state.selectedIds.size else 1
+            if (count > 0) {
+                MoveDestinationDialog(
+                    sections = state.navigationTree,
+                    excludeId = target?.id,
+                    onDismiss = { activeDialog = BackupItemDialog.None; dialogTarget = null },
+                    onConfirm = { destinationId ->
+                        if (target == null) viewModel.moveSelected(destinationId)
+                        else viewModel.move(target, destinationId)
+                        activeDialog = BackupItemDialog.None
+                        dialogTarget = null
+                    },
+                )
+            }
         }
         BackupItemDialog.Details -> dialogTarget?.let { target ->
             BrowseItemDetailsSheet(

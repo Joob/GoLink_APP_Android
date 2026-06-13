@@ -242,6 +242,7 @@ fun AppNavHost(
                 onBack = { navController.popBackStack() },
                 onOpenSettings = { navController.navigate(Routes.AUTO_BACKUP) },
                 onOpenFile = { fileId -> navController.navigate(Routes.viewer(fileId)) },
+                onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
             )
         }
         composable(Routes.BOOTSTRAP_ERROR) {

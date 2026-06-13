@@ -151,6 +151,8 @@ import co.golink.tester.ui.components.BrowseItemGridCard
 import co.golink.tester.ui.components.BrowseItemRow
 import co.golink.tester.ui.components.MemberAvatar
 import co.golink.tester.ui.components.NewsBanner
+import co.golink.tester.ui.components.SelectionAction
+import co.golink.tester.ui.components.SelectionActionBar
 import co.golink.tester.ui.components.FileListSkeleton
 import co.golink.tester.ui.components.ItemActionsSheet
 import co.golink.tester.ui.components.UploadProgressBanner
@@ -434,6 +436,11 @@ fun BrowseScreen(
             actionTarget = if (sel.size == 1) sel.first() else null
             if (sel.isNotEmpty()) activeDialog = ActionDialog.Delete
         }
+        val permanentDeleteSelectedConfirm: () -> Unit = {
+            val sel = viewModel.selectedItems()
+            actionTarget = if (sel.size == 1) sel.first() else null
+            if (sel.isNotEmpty()) activeDialog = ActionDialog.PermanentDelete
+        }
         val openSelected: () -> Unit = {
             viewModel.selectedItems().firstOrNull()?.let { item ->
                 when (item) {
@@ -468,18 +475,17 @@ fun BrowseScreen(
                                 )
                             }
                         }
+                        if (!state.selectMode) {
+                            IconButton(onClick = { viewModel.enterSelectMode() }) {
+                                Icon(Icons.Outlined.CheckBox, contentDescription = "Selecionar")
+                            }
+                        }
                         if (state.mode == BrowseMode.Trash) {
                             IconButton(
                                 onClick = { activeDialog = ActionDialog.EmptyTrash },
                                 enabled = state.processing == null && state.items.isNotEmpty(),
                             ) {
                                 Icon(Icons.Filled.DeleteSweep, contentDescription = "Esvaziar lixo")
-                            }
-                        }
-                        val showSelect = state.mode != BrowseMode.Trash
-                        if (showSelect && !state.selectMode) {
-                            IconButton(onClick = { viewModel.enterSelectMode() }) {
-                                Icon(Icons.Outlined.CheckBox, contentDescription = "Selecionar")
                             }
                         }
                         if (state.mode is BrowseMode.Folder) {
@@ -576,7 +582,8 @@ fun BrowseScreen(
                         SelectionActionBar(
                             onDownload = downloadSelected,
                             onMove = moveSelected,
-                            onDelete = deleteSelectedConfirm,
+                            onDelete = if (state.mode == BrowseMode.Trash) permanentDeleteSelectedConfirm else deleteSelectedConfirm,
+                            trashMode = state.mode == BrowseMode.Trash,
                         )
                     }
                     BrowseBottomBar(
@@ -912,15 +919,23 @@ fun BrowseScreen(
                 )
             }
         }
-        ActionDialog.PermanentDelete -> actionTarget?.let { target ->
-            ConfirmDialog(
-                title = "Eliminar permanentemente?",
-                message = "${target.name} será removido para sempre. Esta acção não pode ser desfeita.",
-                confirmText = "Eliminar permanentemente",
-                destructive = true,
-                onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
-                onConfirm = { viewModel.delete(target, permanent = true) },
-            )
+        ActionDialog.PermanentDelete -> {
+            val multi = actionTarget == null
+            val count = if (multi) viewModel.selectedItems().size else 1
+            if (count > 0) {
+                ConfirmDialog(
+                    title = "Eliminar permanentemente?",
+                    message = if (multi) "$count itens serão removidos para sempre. Esta acção não pode ser desfeita."
+                              else "${actionTarget?.name} será removido para sempre. Esta acção não pode ser desfeita.",
+                    confirmText = "Eliminar permanentemente",
+                    destructive = true,
+                    onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
+                    onConfirm = {
+                        if (multi) viewModel.deleteSelected(permanent = true)
+                        else actionTarget?.let { viewModel.delete(it, permanent = true) }
+                    },
+                )
+            }
         }
         ActionDialog.RemoteUpload -> TextInputDialog(
             title = "Carregamento remoto",
@@ -1136,42 +1151,6 @@ private fun DrawerEntry(icon: androidx.compose.ui.graphics.vector.ImageVector, l
     )
 }
 
-@Composable
-private fun SelectionActionBar(
-    onDownload: () -> Unit,
-    onMove: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-    ) {
-        Surface(
-            color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(16.dp),
-            border = androidx.compose.foundation.BorderStroke(
-                1.dp,
-                MaterialTheme.colorScheme.outline.copy(alpha = 0.25f),
-            ),
-            shadowElevation = 1.dp,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceAround,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                SelectionAction(Icons.Outlined.Download, "Descarregar", onDownload)
-                SelectionAction(Icons.Outlined.DriveFileMove, "Mover", onMove)
-                SelectionAction(Icons.Outlined.DeleteOutline, "Eliminar", onDelete)
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SelectionTopBar(
@@ -1212,25 +1191,6 @@ private fun SelectionTopBar(
             SelectionAction(Icons.Outlined.Delete, "Eliminar", onDelete)
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
-    }
-}
-
-@Composable
-private fun SelectionAction(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    onClick: () -> Unit,
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .clickable { onClick() }
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-    ) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp))
-        Spacer(Modifier.height(2.dp))
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 
@@ -1445,31 +1405,34 @@ private fun ViewSortMenu(
             letterSpacing = androidx.compose.ui.unit.TextUnit(0.8f, androidx.compose.ui.unit.TextUnitType.Sp),
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 2.dp),
         )
+        val dateActive = sortMode == SortMode.DATE_DESC || sortMode == SortMode.DATE_ASC
+        val alphaActive = sortMode == SortMode.ALPHA_ASC || sortMode == SortMode.ALPHA_DESC
         DropdownMenuItem(
-            text = { Text("Ordenar por data", style = MaterialTheme.typography.bodyMedium, color = if (sortMode == SortMode.DATE_DESC) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
+            text = { Text("Ordenar por data", style = MaterialTheme.typography.bodyMedium, color = if (dateActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
             leadingIcon = {
                 Box(
-                    modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(if (sortMode == SortMode.DATE_DESC) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant),
+                    modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(if (dateActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant),
                     contentAlignment = Alignment.Center,
-                ) { Icon(Icons.Outlined.CalendarMonth, contentDescription = null, tint = if (sortMode == SortMode.DATE_DESC) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp)) }
+                ) { Icon(Icons.Outlined.CalendarMonth, contentDescription = null, tint = if (dateActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp)) }
             },
-            trailingIcon = if (sortMode == SortMode.DATE_DESC) {
-                { Icon(Icons.Filled.ExpandLess, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
+            trailingIcon = if (dateActive) {
+                { Icon(if (sortMode == SortMode.DATE_ASC) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
             } else null,
-            onClick = { onSetSortMode(SortMode.DATE_DESC) },
+            // Voltar a escolher o mesmo critério inverte o sentido da ordenação
+            onClick = { onSetSortMode(if (sortMode == SortMode.DATE_DESC) SortMode.DATE_ASC else SortMode.DATE_DESC) },
         )
         DropdownMenuItem(
-            text = { Text("Ordenar alfabeticamente", style = MaterialTheme.typography.bodyMedium, color = if (sortMode == SortMode.ALPHA_ASC) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
+            text = { Text("Ordenar alfabeticamente", style = MaterialTheme.typography.bodyMedium, color = if (alphaActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
             leadingIcon = {
                 Box(
-                    modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(if (sortMode == SortMode.ALPHA_ASC) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant),
+                    modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(if (alphaActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant),
                     contentAlignment = Alignment.Center,
-                ) { Icon(Icons.Outlined.SortByAlpha, contentDescription = null, tint = if (sortMode == SortMode.ALPHA_ASC) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp)) }
+                ) { Icon(Icons.Outlined.SortByAlpha, contentDescription = null, tint = if (alphaActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp)) }
             },
-            trailingIcon = if (sortMode == SortMode.ALPHA_ASC) {
-                { Icon(Icons.Filled.ExpandLess, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
+            trailingIcon = if (alphaActive) {
+                { Icon(if (sortMode == SortMode.ALPHA_ASC) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
             } else null,
-            onClick = { onSetSortMode(SortMode.ALPHA_ASC) },
+            onClick = { onSetSortMode(if (sortMode == SortMode.ALPHA_ASC) SortMode.ALPHA_DESC else SortMode.ALPHA_ASC) },
         )
         Spacer(Modifier.height(4.dp))
     }
