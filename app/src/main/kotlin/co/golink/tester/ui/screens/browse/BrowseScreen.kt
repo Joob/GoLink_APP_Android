@@ -387,7 +387,12 @@ fun BrowseScreen(
                 Spacer(Modifier.height(8.dp))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), modifier = Modifier.padding(horizontal = 16.dp))
                 Spacer(Modifier.height(8.dp))
-                DrawerEntry(Icons.Outlined.CloudUpload, "Backups Automáticos", autoBackupEnabled) {
+                DrawerEntry(
+                    Icons.Outlined.CloudUpload,
+                    "Backups Automáticos",
+                    selected = false,
+                    badge = { OnOffBadge(on = autoBackupEnabled) },
+                ) {
                     scope.launch { drawerState.close() }
                     onOpenAutoBackup()
                 }
@@ -395,7 +400,7 @@ fun BrowseScreen(
                     scope.launch { drawerState.close() }
                     onOpenSettings()
                 }
-                DrawerEntry(Icons.AutoMirrored.Filled.Logout, "Sair da Conta", false) {
+                DrawerEntry(Icons.AutoMirrored.Filled.Logout, "Sair da Conta", false, destructive = true) {
                     scope.launch { drawerState.close() }
                     activeDialog = ActionDialog.Logout
                 }
@@ -1127,7 +1132,15 @@ private fun DrawerHint(text: String) {
 }
 
 @Composable
-private fun DrawerEntry(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
+private fun DrawerEntry(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    selected: Boolean,
+    destructive: Boolean = false,
+    badge: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit,
+) {
+    val unselectedContent = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
     NavigationDrawerItem(
         icon = { Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp)) },
         label = {
@@ -1137,6 +1150,7 @@ private fun DrawerEntry(icon: androidx.compose.ui.graphics.vector.ImageVector, l
                 fontWeight = FontWeight.SemiBold,
             )
         },
+        badge = badge,
         selected = selected,
         onClick = onClick,
         modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
@@ -1145,10 +1159,29 @@ private fun DrawerEntry(icon: androidx.compose.ui.graphics.vector.ImageVector, l
             selectedIconColor = MaterialTheme.colorScheme.primary,
             selectedTextColor = MaterialTheme.colorScheme.primary,
             unselectedContainerColor = MaterialTheme.colorScheme.surface,
-            unselectedIconColor = MaterialTheme.colorScheme.onSurface,
-            unselectedTextColor = MaterialTheme.colorScheme.onSurface,
+            unselectedIconColor = unselectedContent,
+            unselectedTextColor = unselectedContent,
         ),
     )
+}
+
+/** Pill "On"/"Off" para indicar o estado de uma funcionalidade no menu. */
+@Composable
+private fun OnOffBadge(on: Boolean) {
+    val color = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(color.copy(alpha = 0.15f))
+            .padding(horizontal = 10.dp, vertical = 3.dp),
+    ) {
+        Text(
+            if (on) "On" else "Off",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = color,
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

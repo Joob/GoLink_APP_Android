@@ -242,4 +242,16 @@ fun BrowseItem.File.isVideoLike(): Boolean {
         nm.endsWith(".avi") || nm.endsWith(".webm") || nm.endsWith(".3gp")
 }
 
-fun BrowseItem.File.isViewable(): Boolean = isImageLike() || isPdfLike() || isTextLike() || isVideoLike()
+fun BrowseItem.File.isAudioLike(): Boolean {
+    val mt = mimetype?.lowercase().orEmpty()
+    val nm = name.lowercase()
+    // O backend devolve type == "audio" (getFileType) e o mimetype tanto pode vir
+    // como "audio/mpeg" como num token curto ("mpeg", "mp3", …).
+    return type == "audio" || mt.startsWith("audio/") ||
+        mt in setOf("mp3", "mpeg", "wav", "flac", "aac", "ogg", "oga", "m4a") ||
+        nm.endsWith(".mp3") || nm.endsWith(".wav") || nm.endsWith(".flac") ||
+        nm.endsWith(".aac") || nm.endsWith(".ogg") || nm.endsWith(".m4a")
+}
+
+fun BrowseItem.File.isViewable(): Boolean =
+    isImageLike() || isPdfLike() || isTextLike() || isVideoLike() || isAudioLike()

@@ -45,6 +45,12 @@ class AutoBackupViewModel @Inject constructor(
         }.onFailure {
             preferences.lastError = "Não foi possível activar o backup: ${it.message ?: it::class.simpleName}"
         }
+        // Marca a flag como activa no servidor. Antes era o worker que enviava
+        // true a cada execução, mas isso sobrepunha-se ao pause remoto da Web.
+        // Agora o ligar é da responsabilidade exclusiva do dispositivo, aqui.
+        viewModelScope.launch {
+            runCatching { settingsApi.setMobileBackupEnabled(MobileBackupSettingRequest(true)) }
+        }
     }
 
     fun disable() {

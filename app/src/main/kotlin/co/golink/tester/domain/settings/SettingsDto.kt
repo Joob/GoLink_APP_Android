@@ -96,6 +96,11 @@ data class MobileBackupSettingRequest(
 )
 
 @Serializable
+data class MobileBackupSettingResponse(
+    val mobile_backup_enabled: Boolean = false,
+)
+
+@Serializable
 data class AccessToken(
     val id: Long,
     val name: String,

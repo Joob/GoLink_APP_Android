@@ -285,6 +285,19 @@ private fun MenuPane(
     onOpenAutoBackup: () -> Unit,
     onLogout: () -> Unit,
 ) {
+    var showLogoutConfirm by remember { mutableStateOf(false) }
+
+    if (showLogoutConfirm) {
+        co.golink.tester.ui.components.dialogs.ConfirmDialog(
+            title = "Sair da Conta?",
+            message = "Tens a certeza que queres sair da tua conta?",
+            confirmText = "Sair",
+            destructive = true,
+            onDismiss = { showLogoutConfirm = false },
+            onConfirm = onLogout,
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -391,10 +404,12 @@ private fun MenuPane(
         Spacer(Modifier.height(24.dp))
 
         OutlinedButton(
-            onClick = onLogout,
+            onClick = { showLogoutConfirm = true },
             shape = RoundedCornerShape(12.dp),
             contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
             modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
         ) {
             Icon(Icons.Filled.Logout, contentDescription = null)
             Spacer(Modifier.width(8.dp))

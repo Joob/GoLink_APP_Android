@@ -15,7 +15,6 @@ import co.golink.tester.data.AppLogger
 import co.golink.tester.data.auth.TokenStore
 import co.golink.tester.data.upload.UploadManager
 import co.golink.tester.data.upload.UploadTask
-import co.golink.tester.domain.settings.MobileBackupSettingRequest
 import co.golink.tester.network.SettingsApi
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -99,8 +98,10 @@ class AutoBackupWorker @AssistedInject constructor(
             logger.log("AutoBackup", "Sem acesso a todos os ficheiros — Downloads/Documentos limitados a multimédia")
         }
 
-        // Sync backend flag once per run. If this fails we surface the cause to
-        // the UI and bail out rather than hammering the upload endpoint.
+        // Honra a flag remota: a app web pode PAUSAR o backup automático
+        // (mobile_backup_enabled=false). Ligar continua a ser exclusivo do
+        // dispositivo. Lemos a flag uma vez por execução; se o servidor disser
+        // que está desactivado, desligamos localmente e terminamos sem enviar.
         //
         // CRITICAL: runCatching catches every Throwable, including CancellationException.
         // If the worker is cancelled (REPLACE policy, user toggled off, Doze stop,
@@ -108,29 +109,37 @@ class AutoBackupWorker @AssistedInject constructor(
         // the outer try/catch in doWork can't tell the difference between "user
         // cancelled" and "network failed", and we end up showing "Sem ligação ao
         // servidor: Job was cancelled" with the work in a retry loop.
-        val syncOk = try {
-            val response = settingsApi.setMobileBackupEnabled(MobileBackupSettingRequest(true))
+        val serverEnabled = try {
+            val response = settingsApi.getMobileBackupSetting()
             when {
-                response.isSuccessful -> true
+                // Falha de leitura é tratada como "manter ligado" para não
+                // interromper backups por um corpo malformado.
+                response.isSuccessful -> response.body()?.mobile_backup_enabled ?: true
                 response.code() == 401 -> {
                     preferences.lastError = "Sessão expirou — volta a iniciar sessão."
-                    false
+                    return Result.retry()
                 }
                 else -> {
                     val body = response.errorBody()?.string()?.take(200)
-                    preferences.lastError = "Backend rejeitou activação (HTTP ${response.code()}): ${body ?: "?"}"
-                    logger.log("AutoBackup", "Sync backend falhou: ${response.code()}")
-                    false
+                    preferences.lastError = "Backend rejeitou pedido (HTTP ${response.code()}): ${body ?: "?"}"
+                    logger.log("AutoBackup", "Leitura backend falhou: ${response.code()}")
+                    return Result.retry()
                 }
             }
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
             preferences.lastError = "Sem ligação ao servidor: ${t.message ?: t::class.simpleName}"
-            logger.log("AutoBackup", "Sync backend erro: ${t.message}")
-            false
+            logger.log("AutoBackup", "Leitura backend erro: ${t.message}")
+            return Result.retry()
         }
-        if (!syncOk) return Result.retry()
+
+        if (!serverEnabled) {
+            logger.log("AutoBackup", "Backup pausado a partir da Web — a desactivar localmente")
+            preferences.lastError = "Backups automáticos pausados a partir da Web."
+            manager.disable()
+            return Result.success()
+        }
 
         // Snapshot total work for accurate "X of N" progress. Cancellation must
         // still propagate; only treat genuine MediaStore errors as "0 pending".

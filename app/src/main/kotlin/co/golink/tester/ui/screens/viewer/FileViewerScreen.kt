@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -156,6 +157,7 @@ fun FileViewerScreen(
                             imageVector = when {
                                 current.isImageLike() -> Icons.Filled.Image
                                 current.isPdfLike() -> Icons.Filled.PictureAsPdf
+                                current.isAudioLike() -> Icons.Filled.MusicNote
                                 current.isVideoLike() -> Icons.Filled.PlayCircle
                                 else -> Icons.Filled.Description
                             },
@@ -273,6 +275,13 @@ fun FileViewerScreen(
                             if (page == state.currentIndex) state.textContent else null,
                             if (page == state.currentIndex) state.textLoading else false,
                             if (page == state.currentIndex) state.textError else null,
+                        )
+                        file.isAudioLike() -> AudioViewer(
+                            file = file,
+                            url = viewModel.authedUrlFor(file),
+                            token = viewModel.authToken(),
+                            fileKey = file.id,
+                            isActive = page == state.currentIndex,
                         )
                         file.isVideoLike() -> VideoViewer(
                             url = viewModel.authedUrlFor(file),
@@ -553,6 +562,98 @@ private fun VideoViewer(url: String, token: String?, fileKey: String, isActive: 
                 }
             },
             modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
+private fun AudioViewer(
+    file: BrowseItem.File,
+    url: String,
+    token: String?,
+    fileKey: String,
+    isActive: Boolean,
+) {
+    val context = LocalContext.current
+
+    val player = remember(fileKey) {
+        val headers = if (!token.isNullOrBlank()) mapOf("Authorization" to "Bearer $token") else emptyMap()
+        val dataSourceFactory = DefaultHttpDataSource.Factory()
+            .setDefaultRequestProperties(headers)
+            .setConnectTimeoutMs(20_000)
+            .setReadTimeoutMs(60_000)
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+            .build().apply {
+                setMediaItem(MediaItem.fromUri(url))
+                playWhenReady = false
+                prepare()
+            }
+    }
+
+    DisposableEffect(fileKey) {
+        onDispose { player.release() }
+    }
+
+    LaunchedEffect(isActive) {
+        if (isActive) player.play() else player.pause()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        // Moldura do áudio: a capa embebida (frame do mp3) é mostrada contida
+        // (ARTWORK_DISPLAY_MODE_FIT) — não ocupa o ecrã todo como um vídeo. Sem
+        // capa, o fundo é transparente e deixa ver o ícone musical por trás.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.85f)
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(16.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.MusicNote,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.35f),
+                modifier = Modifier.size(96.dp),
+            )
+            androidx.compose.ui.viewinterop.AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        this.player = player
+                        useController = true
+                        controllerShowTimeoutMs = 0
+                        controllerHideOnTouch = false
+                        setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
+                        setArtworkDisplayMode(PlayerView.ARTWORK_DISPLAY_MODE_FIT)
+                        // Fundo/obturador transparentes: quando não há capa
+                        // embebida, vê-se o ícone musical por trás.
+                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                        setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        Text(
+            text = file.name,
+            color = Color.White,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
     }
 }
@@ -845,6 +946,7 @@ private fun ViewerSheetHeader(file: BrowseItem.File) {
                 imageVector = when {
                     file.isImageLike() -> Icons.Filled.Image
                     file.isPdfLike() -> Icons.Filled.PictureAsPdf
+                    file.isAudioLike() -> Icons.Filled.MusicNote
                     file.isVideoLike() -> Icons.Filled.PlayCircle
                     else -> Icons.Filled.Description
                 },

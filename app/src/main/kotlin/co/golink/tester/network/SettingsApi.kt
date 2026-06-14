@@ -36,6 +36,9 @@ interface SettingsApi {
     @PATCH("api/user/settings")
     suspend fun updateProfileField(@Body body: UpdateProfileFieldRequest): Response<ApiEnvelope<Unit>>
 
+    @GET("api/user/mobile-backup/setting")
+    suspend fun getMobileBackupSetting(): Response<co.golink.tester.domain.settings.MobileBackupSettingResponse>
+
     @POST("api/user/mobile-backup/setting")
     suspend fun setMobileBackupEnabled(
         @Body body: co.golink.tester.domain.settings.MobileBackupSettingRequest,
