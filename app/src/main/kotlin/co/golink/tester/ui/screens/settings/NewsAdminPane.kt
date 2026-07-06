@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.settings
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -63,7 +64,7 @@ class NewsAdminViewModel @Inject constructor(
                     isLoading = false,
                 )
             }.onFailure {
-                _state.value = _state.value.copy(isLoading = false, feedback = "Não foi possível carregar")
+                _state.value = _state.value.copy(isLoading = false, feedback = "Não foi possível carregar".tr())
             }
         }
     }
@@ -81,7 +82,7 @@ class NewsAdminViewModel @Inject constructor(
         _state.value = s.copy(isSaving = true, feedback = null)
         viewModelScope.launch {
             repository.save(s.message.trim(), s.allowed)
-                .onSuccess { _state.value = _state.value.copy(isSaving = false, feedback = "Notícia guardada") }
+                .onSuccess { _state.value = _state.value.copy(isSaving = false, feedback = "Notícia guardada".tr()) }
                 .onFailure { _state.value = _state.value.copy(isSaving = false, feedback = "Erro ao guardar: ${it.message}") }
         }
     }
@@ -100,13 +101,13 @@ fun NewsAdminPane(
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         Text(
-            "Notícia importante",
+            "Notícia importante".tr(),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
         )
         Spacer(Modifier.height(4.dp))
         Text(
-            "Aparece num retângulo laranja no topo dos files, na app e no site.",
+            "Aparece num retângulo laranja no topo dos files, na app e no site.".tr(),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -117,7 +118,7 @@ fun NewsAdminPane(
             value = state.message,
             onValueChange = viewModel::setMessage,
             label = { Text("Mensagem") },
-            placeholder = { Text("Escreve aqui a notícia importante...") },
+            placeholder = { Text("Escreve aqui a notícia importante...".tr()) },
             minLines = 4,
             enabled = !state.isLoading,
             modifier = Modifier.fillMaxWidth(),
@@ -130,9 +131,9 @@ fun NewsAdminPane(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Permitir notícia", style = MaterialTheme.typography.bodyLarge)
+                Text("Permitir notícia".tr(), style = MaterialTheme.typography.bodyLarge)
                 Text(
-                    "Mostrar o banner aos utilizadores",
+                    "Mostrar o banner aos utilizadores".tr(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -147,7 +148,7 @@ fun NewsAdminPane(
         if (state.message.isNotBlank()) {
             Spacer(Modifier.height(16.dp))
             Text(
-                "Pré-visualização",
+                "Pré-visualização".tr(),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -181,7 +182,7 @@ fun NewsAdminPane(
                     modifier = Modifier.height(18.dp),
                 )
             } else {
-                Text("Guardar")
+                Text("Guardar".tr())
             }
         }
 

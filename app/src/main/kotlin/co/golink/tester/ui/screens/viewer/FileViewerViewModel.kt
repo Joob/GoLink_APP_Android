@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.viewer
 
+import co.golink.tester.ui.i18n.tr
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import co.golink.tester.data.auth.TokenStore
@@ -7,8 +8,11 @@ import co.golink.tester.data.browse.BrowseRepository
 import co.golink.tester.data.config.BackendUrlHolder
 import co.golink.tester.data.download.FileDownloader
 import co.golink.tester.data.files.FilesRepository
+import co.golink.tester.data.share.ShareRepository
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.NavigationSection
+import co.golink.tester.domain.browse.ShareInfo
+import co.golink.tester.ui.screens.browse.ShareDialogUiState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import javax.inject.Named
@@ -31,6 +35,7 @@ class FileViewerViewModel @Inject constructor(
     private val downloader: FileDownloader,
     private val filesRepository: FilesRepository,
     private val browseRepository: BrowseRepository,
+    private val shareRepository: ShareRepository,
 ) : ViewModel() {
 
     data class UiState(
@@ -53,6 +58,9 @@ class FileViewerViewModel @Inject constructor(
         )
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    private val _shareState = MutableStateFlow<ShareDialogUiState?>(null)
+    val shareState: StateFlow<ShareDialogUiState?> = _shareState.asStateFlow()
 
     init {
         maybeLoadText()
@@ -109,6 +117,112 @@ class FileViewerViewModel @Inject constructor(
         }
     }
 
+    // ----- Sharing -----
+
+    fun openShareDialog() {
+        val file = current ?: return
+        _shareState.value = ShareDialogUiState(item = file, share = file.share)
+    }
+
+    fun closeShareDialog() {
+        _shareState.value = null
+    }
+
+    fun createShare(password: String?, permission: String?, expirationDays: Int?) {
+        val cur = _shareState.value ?: return
+        _shareState.value = cur.copy(isWorking = true)
+        viewModelScope.launch {
+            shareRepository.create(cur.item, password, permission, expirationDays, null)
+                .onSuccess { info ->
+                    _shareState.update { it?.copy(share = info, isWorking = false) }
+                    applyShareToCurrent(info)
+                    _state.update { it.copy(toast = "Partilha criada".tr()) }
+                }
+                .onFailure { t ->
+                    _shareState.update { it?.copy(isWorking = false) }
+                    _state.update { it.copy(toast = "Falha: ${t.message}") }
+                }
+        }
+    }
+
+    fun updateCurrentShare(password: String?, permission: String?, expirationDays: Int?) {
+        val cur = _shareState.value ?: return
+        val token = cur.share?.token ?: return
+        _shareState.value = cur.copy(isWorking = true)
+        viewModelScope.launch {
+            shareRepository.update(
+                token = token,
+                protected = !password.isNullOrBlank(),
+                password = password?.takeIf { it.isNotBlank() },
+                permission = permission,
+                expirationDays = expirationDays,
+            )
+                .onSuccess { info ->
+                    _shareState.update { it?.copy(share = info, isWorking = false) }
+                    applyShareToCurrent(info)
+                    _state.update { it.copy(toast = "Partilha actualizada".tr()) }
+                }
+                .onFailure { t ->
+                    _shareState.update { it?.copy(isWorking = false) }
+                    _state.update { it.copy(toast = "Falha: ${t.message}") }
+                }
+        }
+    }
+
+    fun revokeCurrentShare() {
+        val cur = _shareState.value ?: return
+        val token = cur.share?.token ?: return
+        _shareState.value = cur.copy(isWorking = true)
+        viewModelScope.launch {
+            shareRepository.revoke(token)
+                .onSuccess {
+                    _shareState.value = null
+                    applyShareToCurrent(null)
+                    _state.update { it.copy(toast = "Partilha revogada".tr()) }
+                }
+                .onFailure { t ->
+                    _shareState.update { it?.copy(isWorking = false) }
+                    _state.update { it.copy(toast = "Falha: ${t.message}") }
+                }
+        }
+    }
+
+    fun fetchQrCode() {
+        val token = _shareState.value?.share?.token ?: return
+        _shareState.update { it?.copy(loadingQr = true) }
+        viewModelScope.launch {
+            shareRepository.qrCode(token)
+                .onSuccess { svg -> _shareState.update { it?.copy(qrSvg = svg, loadingQr = false) } }
+                .onFailure { _shareState.update { it?.copy(loadingQr = false) } }
+        }
+    }
+
+    fun setEmailDialogVisible(visible: Boolean) {
+        _shareState.update { it?.copy(emailDialogVisible = visible) }
+    }
+
+    fun sendShareEmail(emails: List<String>) {
+        val token = _shareState.value?.share?.token ?: return
+        if (emails.isEmpty()) return
+        _shareState.update { it?.copy(sendingEmail = true, emailDialogVisible = false) }
+        viewModelScope.launch {
+            shareRepository.sendByEmail(token, emails)
+                .onSuccess { _state.update { it.copy(toast = "Email enviado".tr()) } }
+                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+            _shareState.update { it?.copy(sendingEmail = false) }
+        }
+    }
+
+    /** Keep the open file's share state in sync so the menu label updates. */
+    private fun applyShareToCurrent(info: ShareInfo?) {
+        val idx = _state.value.currentIndex
+        val file = _state.value.files.getOrNull(idx) ?: return
+        val newList = _state.value.files.toMutableList()
+        newList[idx] = file.copy(share = info)
+        session.files = newList
+        _state.update { it.copy(files = newList) }
+    }
+
     fun loadNavigationTree() {
         viewModelScope.launch {
             browseRepository.navigation()
@@ -138,7 +252,7 @@ class FileViewerViewModel @Inject constructor(
     fun createFolderIn(name: String, parentId: String?) {
         viewModelScope.launch {
             filesRepository.createFolder(name.trim(), parentId)
-                .onSuccess { _state.update { it.copy(toast = "Pasta criada") }; loadNavigationTree() }
+                .onSuccess { _state.update { it.copy(toast = "Pasta criada".tr()) }; loadNavigationTree() }
                 .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
         }
     }
@@ -169,10 +283,10 @@ class FileViewerViewModel @Inject constructor(
                     val newList = _state.value.files.toMutableList().also { it.removeAt(_state.value.currentIndex) }
                     session.files = newList
                     if (newList.isEmpty()) {
-                        _state.update { it.copy(files = newList, toast = "Movido para o lixo", closeRequested = true) }
+                        _state.update { it.copy(files = newList, toast = "Movido para o lixo".tr(), closeRequested = true) }
                     } else {
                         val newIdx = _state.value.currentIndex.coerceAtMost(newList.lastIndex)
-                        _state.update { it.copy(files = newList, currentIndex = newIdx, toast = "Movido para o lixo", zoom = 1f, rotation = 0f, textContent = null) }
+                        _state.update { it.copy(files = newList, currentIndex = newIdx, toast = "Movido para o lixo".tr(), zoom = 1f, rotation = 0f, textContent = null) }
                         maybeLoadText()
                     }
                 }

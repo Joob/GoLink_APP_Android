@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.backup
 
+import co.golink.tester.ui.i18n.tr
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import co.golink.tester.data.backup.AutoBackupPreferences
@@ -7,9 +8,16 @@ import co.golink.tester.data.browse.BrowseRepository
 import co.golink.tester.data.download.FileDownloader
 import co.golink.tester.data.files.FilesRepository
 import co.golink.tester.data.share.ShareRepository
+import co.golink.tester.data.upload.UploadManager
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.sample
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.NavigationSection
 import co.golink.tester.ui.screens.browse.ShareDialogUiState
+import co.golink.tester.ui.screens.browse.SortMode
+import co.golink.tester.ui.screens.browse.ViewMode
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import co.golink.tester.ui.screens.viewer.FileViewerSession
 import co.golink.tester.ui.screens.viewer.isViewable
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -20,23 +28,28 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 enum class MobileBackupTab(val apiKey: String) {
-    Photos("photos"),
+    Images("photos"),
     Videos("videos"),
+    // 4 divisões reais no servidor (pastas separadas por tipo): já não é preciso
+    // separar áudios/ficheiros no cliente.
+    Audios("audios"),
     Files("files"),
 }
 
 data class MobileBackupsState(
-    val tab: MobileBackupTab = MobileBackupTab.Photos,
+    val tab: MobileBackupTab = MobileBackupTab.Images,
     // Pode conter pastas (Camera, Screenshots, …) e ficheiros — o backend
     // organiza o backup em subpastas por origem e devolve ambos na listagem.
     val items: List<BrowseItem> = emptyList(),
     // Pilha de navegação dentro do separador (drill-down nas subpastas).
     val folderStack: List<BrowseItem.Folder> = emptyList(),
     val isLoading: Boolean = false,
+    val isRefreshing: Boolean = false,
     val error: String? = null,
     val toast: String? = null,
     val navigationTree: List<NavigationSection> = emptyList(),
@@ -44,6 +57,12 @@ data class MobileBackupsState(
     val counts: Map<MobileBackupTab, Int> = emptyMap(),
     val selectMode: Boolean = false,
     val selectedIds: Set<String> = emptySet(),
+    // Mensagem do overlay de progresso (eliminar/mover). null = sem overlay.
+    val processing: String? = null,
+    // Vista (grelha/lista) e ordenação, iguais ao browser. Por omissão os
+    // uploads aparecem do mais recente para o mais antigo (DATE_DESC).
+    val viewMode: ViewMode = ViewMode.LIST,
+    val sortMode: SortMode = SortMode.DATE_DESC,
 )
 
 @HiltViewModel
@@ -54,11 +73,18 @@ class MobileBackupsViewModel @Inject constructor(
     private val downloader: FileDownloader,
     private val backupPreferences: AutoBackupPreferences,
     private val fileViewerSession: FileViewerSession,
+    private val uploadManager: UploadManager,
+    private val viewPreferences: co.golink.tester.data.settings.ViewPreferences,
     notificationsRepository: co.golink.tester.data.notifications.NotificationsRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(MobileBackupsState())
     val state: StateFlow<MobileBackupsState> = _state.asStateFlow()
+
+    // The in-flight list request. Tracked so that repeated refreshes (the
+    // screen calls refresh() on every ON_RESUME) don't stack/restart the heavy
+    // page="all" request in a loop, which left the spinner spinning forever.
+    private var loadJob: Job? = null
 
     val unreadNotifications: StateFlow<Int> = notificationsRepository.unreadCount
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
@@ -71,8 +97,31 @@ class MobileBackupsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, backupPreferences.enabled)
 
     init {
-        selectTab(MobileBackupTab.Photos)
+        // Restaura vista/ordenação guardadas (predefinição: lista + mais recente).
+        _state.update {
+            it.copy(
+                viewMode = viewPreferences.viewMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, ViewMode.LIST),
+                sortMode = viewPreferences.sortMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, SortMode.DATE_DESC),
+            )
+        }
+        selectTab(MobileBackupTab.Images)
         loadCounts()
+        observeUploadsForCounts()
+    }
+
+    // Contagens (e lista) quase instantâneas: assim que cada upload de backup
+    // termina, o completedTick dispara e recarregamos. Amostrado a 2 s para não
+    // martelar a rede durante um backup grande.
+    @OptIn(FlowPreview::class)
+    private fun observeUploadsForCounts() {
+        viewModelScope.launch {
+            uploadManager.completedTick.sample(2000).collect { t ->
+                if (t > 0) {
+                    loadCounts()
+                    load()
+                }
+            }
+        }
     }
 
     fun selectTab(tab: MobileBackupTab) {
@@ -95,6 +144,21 @@ class MobileBackupsViewModel @Inject constructor(
 
     // ---- Selecção múltipla (espelha o BrowseViewModel) ----
 
+    // ---- Vista / ordenação (persistidas) ----
+    fun toggleViewMode() = _state.update {
+        val next = if (it.viewMode == ViewMode.GRID) ViewMode.LIST else ViewMode.GRID
+        viewPreferences.setViewMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, next)
+        it.copy(viewMode = next)
+    }
+    fun setViewMode(mode: ViewMode) {
+        viewPreferences.setViewMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, mode)
+        _state.update { it.copy(viewMode = mode) }
+    }
+    fun setSortMode(mode: SortMode) {
+        viewPreferences.setSortMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, mode)
+        _state.update { it.copy(sortMode = mode) }
+    }
+
     fun enterSelectMode() = _state.update { it.copy(selectMode = true) }
     fun exitSelectMode() = _state.update { it.copy(selectMode = false, selectedIds = emptySet()) }
     fun selectAll() = _state.update { it.copy(selectedIds = it.items.map { item -> item.id }.toSet()) }
@@ -113,13 +177,14 @@ class MobileBackupsViewModel @Inject constructor(
         val targets = selectedItems()
         if (targets.isEmpty()) return
         exitSelectMode()
+        _state.update { it.copy(processing = "A mover…".tr()) }
         viewModelScope.launch {
             filesRepository.move(targets, destinationId)
                 .onSuccess {
-                    _state.update { it.copy(toast = "Movido") }
+                    _state.update { it.copy(processing = null, toast = "Movido") }
                     load()
                 }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message ?: "erro"}") } }
+                .onFailure { t -> _state.update { it.copy(processing = null, toast = "Falha: ${t.message ?: "erro"}") } }
         }
     }
 
@@ -127,30 +192,30 @@ class MobileBackupsViewModel @Inject constructor(
         val targets = selectedItems()
         if (targets.isEmpty()) return
         exitSelectMode()
+        _state.update { it.copy(processing = "A eliminar…".tr()) }
         viewModelScope.launch {
             filesRepository.delete(targets, permanent = false)
                 .onSuccess {
-                    _state.update { it.copy(toast = "Movido para o lixo") }
+                    _state.update { it.copy(processing = null, toast = "Movido para o lixo".tr()) }
                     load()
                 }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message ?: "erro"}") } }
+                .onFailure { t -> _state.update { it.copy(processing = null, toast = "Falha: ${t.message ?: "erro"}") } }
         }
     }
 
     fun refresh() {
-        load()
+        // Called on every ON_RESUME. If a list load is already running, don't
+        // start another — just let it finish (avoids the resume->reload loop).
+        if (loadJob?.isActive != true) load()
         loadCounts()
     }
 
-    // Uma chamada leve por separador (per_page=1) só para ler meta.paginate.total.
     private fun loadCounts() {
+        // Um total por separador (count_only) — barato, sem transferir a lista.
         MobileBackupTab.entries.forEach { tab ->
             viewModelScope.launch {
-                repository.listMobileBackup(tab.apiKey, page = 1, perPage = 1)
-                    .onSuccess { paged ->
-                        val total = paged.total ?: return@onSuccess
-                        _state.update { it.copy(counts = it.counts + (tab to total)) }
-                    }
+                repository.countMobileBackup(tab.apiKey)
+                    .onSuccess { total -> _state.update { it.copy(counts = it.counts + (tab to total)) } }
             }
         }
     }
@@ -173,7 +238,17 @@ class MobileBackupsViewModel @Inject constructor(
             .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
     }
 
-    fun rename(item: BrowseItem.File, newName: String) {
+    // Download genérico (ficheiro ou pasta) — usado pelo menu "…" das pastas.
+    fun downloadItem(item: BrowseItem) {
+        when (item) {
+            is BrowseItem.File -> download(item)
+            is BrowseItem.Folder -> downloader.downloadFolder(item)
+                .onSuccess { _state.update { it.copy(toast = "A preparar zip: ${item.name}") } }
+                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+        }
+    }
+
+    fun rename(item: BrowseItem, newName: String) {
         val trimmed = newName.trim()
         if (trimmed.isEmpty() || trimmed == item.name) return
         viewModelScope.launch {
@@ -186,14 +261,15 @@ class MobileBackupsViewModel @Inject constructor(
         }
     }
 
-    fun delete(item: BrowseItem.File) {
+    fun delete(item: BrowseItem) {
+        _state.update { it.copy(processing = "A eliminar…".tr()) }
         viewModelScope.launch {
             filesRepository.delete(listOf(item), permanent = false)
                 .onSuccess {
-                    _state.update { it.copy(toast = "Movido para o lixo") }
+                    _state.update { it.copy(processing = null, toast = "Movido para o lixo".tr()) }
                     load()
                 }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message ?: "erro"}") } }
+                .onFailure { t -> _state.update { it.copy(processing = null, toast = "Falha: ${t.message ?: "erro"}") } }
         }
     }
 
@@ -205,14 +281,15 @@ class MobileBackupsViewModel @Inject constructor(
         }
     }
 
-    fun move(item: BrowseItem.File, destinationId: String?) {
+    fun move(item: BrowseItem, destinationId: String?) {
+        _state.update { it.copy(processing = "A mover…".tr()) }
         viewModelScope.launch {
             filesRepository.move(listOf(item), destinationId)
                 .onSuccess {
-                    _state.update { it.copy(toast = "Movido") }
+                    _state.update { it.copy(processing = null, toast = "Movido") }
                     load()
                 }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message ?: "erro"}") } }
+                .onFailure { t -> _state.update { it.copy(processing = null, toast = "Falha: ${t.message ?: "erro"}") } }
         }
     }
 
@@ -233,7 +310,7 @@ class MobileBackupsViewModel @Inject constructor(
             shareRepository.create(current.item, password, permission, expirationDays, null)
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
-                    _state.update { it.copy(toast = "Partilha criada") }
+                    _state.update { it.copy(toast = "Partilha criada".tr()) }
                     load()
                 }
                 .onFailure { t ->
@@ -257,7 +334,7 @@ class MobileBackupsViewModel @Inject constructor(
             )
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
-                    _state.update { it.copy(toast = "Partilha actualizada") }
+                    _state.update { it.copy(toast = "Partilha actualizada".tr()) }
                     load()
                 }
                 .onFailure { t ->
@@ -275,7 +352,7 @@ class MobileBackupsViewModel @Inject constructor(
             shareRepository.revoke(token)
                 .onSuccess {
                     _shareState.value = null
-                    _state.update { it.copy(toast = "Partilha revogada") }
+                    _state.update { it.copy(toast = "Partilha revogada".tr()) }
                     load()
                 }
                 .onFailure { t ->
@@ -310,7 +387,7 @@ class MobileBackupsViewModel @Inject constructor(
         _shareState.value = current.copy(sendingEmail = true, emailDialogVisible = false)
         viewModelScope.launch {
             shareRepository.sendByEmail(token, emails)
-                .onSuccess { _state.update { it.copy(toast = "Email enviado") } }
+                .onSuccess { _state.update { it.copy(toast = "Email enviado".tr()) } }
                 .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
             _shareState.update { it?.copy(sendingEmail = false) }
         }
@@ -319,28 +396,41 @@ class MobileBackupsViewModel @Inject constructor(
     private fun load() {
         val current = _state.value.tab
         val folder = _state.value.folderStack.lastOrNull()
-        _state.update { it.copy(isLoading = true, error = null) }
-        viewModelScope.launch {
-            val result = if (folder == null) repository.listAllMobileBackup(current.apiKey)
-            else repository.listAllFolder(folder.id)
-            result
+        // Cancel any previous in-flight load (e.g. when switching tabs) so we
+        // never have two list requests racing.
+        loadJob?.cancel()
+        // Only show the full-screen spinner on the first load (nothing to show
+        // yet). On a refresh with data already on screen, reload silently and
+        // keep the list visible — no flicker back to a spinner.
+        _state.update { it.copy(isLoading = it.items.isEmpty(), error = null) }
+        loadJob = viewModelScope.launch {
+            // Devolve as pastas de backup + ficheiros do nível (raiz ou pasta),
+            // já filtrados por tipo no servidor. As contagens dos separadores
+            // vêm de loadCounts (globais), por isso aqui não mexemos nelas.
+            repository.listMobileBackupTree(current.apiKey, folder?.id)
                 .onSuccess { items ->
                     // distinctBy: ids repetidos vindos do servidor rebentavam o
-                    // LazyColumn ("Key was already used") e a app ia abaixo.
-                    // Pastas primeiro, como no browser.
-                    val deduped = items.distinctBy { it.id }
-                        .sortedBy { it is BrowseItem.File }
-                    _state.update {
-                        it.copy(
-                            items = deduped,
-                            isLoading = false,
-                            counts = if (folder == null) it.counts + (current to deduped.size) else it.counts,
-                        )
-                    }
+                    // LazyColumn ("Key was already used") e a app ia abaixo. Corre
+                    // fora do main thread para não bloquear a UI em listas grandes;
+                    // a ordenação final é feita na composição consoante o sortMode.
+                    val deduped = withContext(Dispatchers.Default) { items.distinctBy { it.id } }
+                    _state.update { it.copy(items = deduped, isLoading = false, isRefreshing = false) }
                 }
                 .onFailure { t ->
-                    _state.update { it.copy(isLoading = false, error = t.message) }
+                    // Cancelamento (troca de aba, navegar para o viewer e voltar,
+                    // novo load a substituir este) não é um erro — não o mostres.
+                    // O runCatching do repositório embrulha a CancellationException
+                    // num Result.failure, daí este guard aqui.
+                    if (t is kotlinx.coroutines.CancellationException) return@onFailure
+                    _state.update { it.copy(isLoading = false, isRefreshing = false, error = t.message) }
                 }
         }
+    }
+
+    /** Puxar para baixo em cada aba: recarrega lista + contagens dessa aba. */
+    fun pullRefresh() {
+        _state.update { it.copy(isRefreshing = true) }
+        loadCounts()
+        load()
     }
 }

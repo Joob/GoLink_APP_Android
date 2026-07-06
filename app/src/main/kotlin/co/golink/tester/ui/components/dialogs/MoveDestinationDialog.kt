@@ -1,5 +1,6 @@
 package co.golink.tester.ui.components.dialogs
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -99,12 +100,12 @@ fun MoveDestinationDialog(
                     Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "Mover para",
+                            "Mover para".tr(),
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                         )
                         Text(
-                            "Escolhe a pasta de destino",
+                            "Escolhe a pasta de destino".tr(),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -121,7 +122,7 @@ fun MoveDestinationDialog(
                         ) {
                             Icon(
                                 Icons.Filled.Add,
-                                contentDescription = "Criar pasta aqui",
+                                contentDescription = "Criar pasta aqui".tr(),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(20.dp),
                             )
@@ -173,7 +174,7 @@ fun MoveDestinationDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Cancelar".tr(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Spacer(Modifier.width(8.dp))
                     Button(
@@ -182,7 +183,7 @@ fun MoveDestinationDialog(
                         contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     ) {
-                        Text("Mover", fontWeight = FontWeight.SemiBold)
+                        Text("Mover".tr(), fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -245,7 +246,7 @@ private fun RootRow(selected: Boolean, onClick: () -> Unit) {
                 modifier = Modifier.size(20.dp),
             )
         },
-        label = "Os meus ficheiros (raiz)",
+        label = "Os meus ficheiros (raiz)".tr(),
         selected = selected,
         onClick = onClick,
     )

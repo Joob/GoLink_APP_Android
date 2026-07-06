@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.notifications
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -61,18 +62,18 @@ fun NotificationsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Notificações") },
+                title = { Text("Notificações".tr()) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar".tr())
                     }
                 },
                 actions = {
                     IconButton(onClick = viewModel::markAllRead, enabled = items.any { !it.isRead }) {
-                        Icon(Icons.Filled.DoneAll, contentDescription = "Marcar todas lidas")
+                        Icon(Icons.Filled.DoneAll, contentDescription = "Marcar todas lidas".tr())
                     }
                     IconButton(onClick = viewModel::flushAll, enabled = items.isNotEmpty()) {
-                        Icon(Icons.Filled.DeleteSweep, contentDescription = "Apagar todas")
+                        Icon(Icons.Filled.DeleteSweep, contentDescription = "Apagar todas".tr())
                     }
                 },
             )
@@ -90,10 +91,10 @@ fun NotificationsScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
-                    Text("Sem notificações", style = MaterialTheme.typography.titleMedium)
+                    Text("Sem notificações".tr(), style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Quando houver actividade, aparecerá aqui.",
+                        "Quando houver actividade, aparecerá aqui.".tr(),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -109,6 +110,10 @@ fun NotificationsScreen(
                     }
                 }
             }
+            co.golink.tester.ui.components.E2EEncryptedFlash(
+                trigger = Unit,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
     }
 }
@@ -138,7 +143,7 @@ private fun NotificationRow(
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                notification.title.ifBlank { notification.category ?: "Notificação" },
+                notification.title.ifBlank { notification.category ?: "Notificação".tr() },
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = if (notification.isRead) FontWeight.Normal else FontWeight.SemiBold,
                 maxLines = 2,

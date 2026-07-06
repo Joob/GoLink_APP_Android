@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.config
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,12 +60,12 @@ fun BackendConfigScreen(
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "Configurar servidor",
+                    text = "Configurar servidor".tr(),
                     style = MaterialTheme.typography.headlineMedium,
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Indica o URL da tua instância VueFileManager",
+                    text = "Indica o URL da tua instância VueFileManager".tr(),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -73,7 +74,7 @@ fun BackendConfigScreen(
                 OutlinedTextField(
                     value = state.url,
                     onValueChange = viewModel::onUrlChange,
-                    label = { Text("URL do servidor") },
+                    label = { Text("URL do servidor".tr()) },
                     placeholder = { Text("https://tester.golink.co") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
@@ -95,7 +96,7 @@ fun BackendConfigScreen(
                     contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Testar ligação")
+                    Text("Testar ligação".tr())
                 }
 
                 Spacer(Modifier.height(12.dp))
@@ -107,7 +108,7 @@ fun BackendConfigScreen(
                     contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Guardar e continuar")
+                    Text("Guardar e continuar".tr())
                 }
             }
         }
@@ -129,7 +130,7 @@ private fun StatusRow(state: BackendConfigUiState) {
         }
         ConnectionStatus.Ok -> StatusLine(
             icon = { Icon(Icons.Filled.CheckCircle, null, tint = MaterialTheme.colorScheme.primary) },
-            text = "Ligação OK",
+            text = "Ligação OK".tr(),
             color = MaterialTheme.colorScheme.primary,
         )
         ConnectionStatus.Failed -> StatusLine(

@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.register
 
+import co.golink.tester.ui.i18n.tr
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import co.golink.tester.data.auth.AuthRepository
@@ -54,10 +55,10 @@ class RegisterViewModel @Inject constructor(
     fun submit() {
         val s = _state.value
         val errors = mutableMapOf<String, String>()
-        if (s.name.isBlank()) errors["name"] = "Nome obrigatório"
-        if (s.email.isBlank()) errors["email"] = "Email obrigatório"
-        if (s.password.length < 8) errors["password"] = "Mínimo 8 caracteres"
-        if (s.password != s.passwordConfirmation) errors["password_confirmation"] = "Não coincide"
+        if (s.name.isBlank()) errors["name"] = "Nome obrigatório".tr()
+        if (s.email.isBlank()) errors["email"] = "Email obrigatório".tr()
+        if (s.password.length < 8) errors["password"] = "Mínimo 8 caracteres".tr()
+        if (s.password != s.passwordConfirmation) errors["password_confirmation"] = "Não coincide".tr()
         if (errors.isNotEmpty()) {
             _state.update { it.copy(fieldErrors = errors) }
             return

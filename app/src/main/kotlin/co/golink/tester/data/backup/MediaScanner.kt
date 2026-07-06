@@ -33,22 +33,76 @@ data class BackupItem(
     val isVideo: Boolean get() = collection == BackupCollection.VIDEOS
 }
 
+/** Uma pasta do dispositivo dentro de uma colecção, com o nº de ficheiros. */
+data class BackupFolder(val name: String, val count: Int)
+
 @Singleton
 class MediaScanner @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
-    fun scanNew(collection: BackupCollection, sinceId: Long, limit: Int): List<BackupItem> =
-        query(collection, sinceId, limit)
+    fun scanNew(
+        collection: BackupCollection,
+        sinceId: Long,
+        limit: Int,
+        folders: Set<String>? = null,
+    ): List<BackupItem> = query(collection, sinceId, limit, folders)
 
-    fun countNew(collection: BackupCollection, sinceId: Long): Int {
+    fun countNew(collection: BackupCollection, sinceId: Long, folders: Set<String>? = null): Int {
         val projection = arrayOf(MediaStore.MediaColumns._ID)
-        val (selection, args) = selectionFor(collection, sinceId)
+        val (selection, args) = selectionFor(collection, sinceId, folders)
         return runCatching {
             context.contentResolver.query(contentUri(collection), projection, selection, args, null)
                 ?.use { it.count }
                 ?: 0
         }.getOrDefault(0)
     }
+
+    /** Soma o tamanho (bytes) de tudo o que falta enviar — para o "X MB de Y MB". */
+    fun sumNewBytes(collection: BackupCollection, sinceId: Long, folders: Set<String>? = null): Long {
+        val projection = arrayOf(MediaStore.MediaColumns.SIZE)
+        val (selection, args) = selectionFor(collection, sinceId, folders)
+        return runCatching {
+            context.contentResolver.query(contentUri(collection), projection, selection, args, null)?.use { c ->
+                val idx = c.getColumnIndex(MediaStore.MediaColumns.SIZE)
+                var sum = 0L
+                while (c.moveToNext()) {
+                    if (idx >= 0 && !c.isNull(idx)) sum += c.getLong(idx).coerceAtLeast(0L)
+                }
+                sum
+            } ?: 0L
+        }.getOrDefault(0L)
+    }
+
+    /**
+     * Lista as pastas (BUCKET_DISPLAY_NAME) existentes numa colecção, com o nº
+     * de ficheiros em cada, ordenadas por contagem decrescente. Usado para o
+     * utilizador escolher que pastas entram no backup. Pastas sem nome caem no
+     * nome por omissão da colecção.
+     */
+    @Suppress("DEPRECATION")
+    fun listFolders(collection: BackupCollection): List<BackupFolder> = runCatching {
+        val hasBucketColumn = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
+            (collection != BackupCollection.DOCUMENTS && collection != BackupCollection.DOWNLOADS)
+        val projection = buildList {
+            add(MediaStore.MediaColumns._ID)
+            if (hasBucketColumn) add(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) add(MediaStore.MediaColumns.DATA)
+        }.toTypedArray()
+        // sinceId=0 → toda a colecção (não só o que falta enviar).
+        val (selection, args) = selectionFor(collection, sinceId = 0L, folders = null)
+        val counts = LinkedHashMap<String, Int>()
+        context.contentResolver.query(contentUri(collection), projection, selection, args, null)?.use { c ->
+            val bucketIdx = c.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
+            val dataIdx = c.getColumnIndex(MediaStore.MediaColumns.DATA)
+            while (c.moveToNext()) {
+                val name = bucketNameFrom(c, bucketIdx, dataIdx) ?: collection.defaultFolder
+                counts[name] = (counts[name] ?: 0) + 1
+            }
+        }
+        counts.entries
+            .map { BackupFolder(it.key, it.value) }
+            .sortedWith(compareByDescending<BackupFolder> { it.count }.thenBy { it.name.lowercase() })
+    }.getOrDefault(emptyList())
 
     private fun contentUri(collection: BackupCollection): Uri = when (collection) {
         BackupCollection.IMAGES -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
@@ -62,7 +116,11 @@ class MediaScanner @Inject constructor(
     }
 
     @Suppress("DEPRECATION")
-    private fun selectionFor(collection: BackupCollection, sinceId: Long): Pair<String, Array<String>> {
+    private fun selectionFor(
+        collection: BackupCollection,
+        sinceId: Long,
+        folders: Set<String>?,
+    ): Pair<String, Array<String>> {
         val base = "${MediaStore.MediaColumns._ID} > ?"
         val args = mutableListOf(sinceId.toString())
         val extra = when (collection) {
@@ -82,11 +140,32 @@ class MediaScanner @Inject constructor(
             }
             else -> ""
         }
-        return (base + extra) to args.toTypedArray()
+        // Filtro por pastas seleccionadas (opt-in). Só aplicável onde a coluna
+        // BUCKET_DISPLAY_NAME existe: colecções de média em qualquer versão e
+        // Files a partir do Android 10. Fora disso o filtro é ignorado.
+        val bucketFilter = if (!folders.isNullOrEmpty() && bucketColumnAvailable(collection)) {
+            val placeholders = folders.joinToString(",") { "?" }
+            args += folders
+            " AND ${MediaStore.MediaColumns.BUCKET_DISPLAY_NAME} IN ($placeholders)"
+        } else ""
+        return (base + extra + bucketFilter) to args.toTypedArray()
     }
 
+    private fun bucketColumnAvailable(collection: BackupCollection): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
+            (collection != BackupCollection.DOCUMENTS && collection != BackupCollection.DOWNLOADS)
+
+    // Extrai o nome da pasta do cursor: coluna BUCKET_DISPLAY_NAME quando existe,
+    // caso contrário o penúltimo segmento do caminho (DATA), como no query().
+    private fun bucketNameFrom(c: android.database.Cursor, bucketIdx: Int, dataIdx: Int): String? = when {
+        bucketIdx >= 0 && !c.isNull(bucketIdx) -> c.getString(bucketIdx)
+        dataIdx >= 0 && !c.isNull(dataIdx) ->
+            c.getString(dataIdx)?.substringBeforeLast('/')?.substringAfterLast('/')
+        else -> null
+    }?.takeIf { it.isNotBlank() }
+
     @Suppress("DEPRECATION")
-    private fun query(collection: BackupCollection, sinceId: Long, limit: Int): List<BackupItem> {
+    private fun query(collection: BackupCollection, sinceId: Long, limit: Int, folders: Set<String>?): List<BackupItem> {
         val out = mutableListOf<BackupItem>()
         // BUCKET_DISPLAY_NAME só existe na colecção Files a partir do Android 10;
         // nas colecções de média existe desde sempre. Fallback: extrai do DATA.
@@ -99,7 +178,7 @@ class MediaScanner @Inject constructor(
             if (hasBucketColumn) add(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) add(MediaStore.MediaColumns.DATA)
         }.toTypedArray()
-        val (selection, selectionArgs) = selectionFor(collection, sinceId)
+        val (selection, selectionArgs) = selectionFor(collection, sinceId, folders)
         val sortOrder = "${MediaStore.MediaColumns._ID} ASC"
         val contentUri = contentUri(collection)
 
@@ -136,12 +215,7 @@ class MediaScanner @Inject constructor(
                 val id = c.getLong(idIdx)
                 val name = c.getString(nameIdx) ?: "media-$id"
                 val size = if (sizeIdx >= 0 && !c.isNull(sizeIdx)) c.getLong(sizeIdx) else 0L
-                val bucket = when {
-                    bucketIdx >= 0 && !c.isNull(bucketIdx) -> c.getString(bucketIdx)
-                    dataIdx >= 0 && !c.isNull(dataIdx) ->
-                        c.getString(dataIdx)?.substringBeforeLast('/')?.substringAfterLast('/')
-                    else -> null
-                }?.takeIf { it.isNotBlank() }
+                val bucket = bucketNameFrom(c, bucketIdx, dataIdx)
                 out += BackupItem(
                     mediaStoreId = id,
                     uri = ContentUris.withAppendedId(contentUri, id),

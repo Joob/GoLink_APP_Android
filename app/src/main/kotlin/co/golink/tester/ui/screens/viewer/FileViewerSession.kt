@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.viewer
 
+import co.golink.tester.ui.i18n.tr
 import co.golink.tester.domain.browse.BrowseItem
 import javax.inject.Inject
 import javax.inject.Singleton

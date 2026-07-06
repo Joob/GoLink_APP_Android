@@ -1,5 +1,6 @@
 package co.golink.tester.ui.components.dialogs
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -59,8 +60,8 @@ fun CreateTeamFolderDialog(
     var name by remember { mutableStateOf("") }
     val invitations = remember { mutableStateListOf<InviteEntry>() }
 
-    val title = if (isConvert) "Converter em pasta de equipa" else "Criar pasta de equipa"
-    val confirmText = if (isConvert) "Converter" else "Criar"
+    val title = if (isConvert) "Converter em pasta de equipa".tr() else "Criar pasta de equipa".tr()
+    val confirmText = if (isConvert) "Converter" else "Criar".tr()
 
     val canConfirm = (isConvert || name.isNotBlank()) &&
         invitations.all { it.email.isNotBlank() }
@@ -116,7 +117,7 @@ fun CreateTeamFolderDialog(
                         OutlinedTextField(
                             value = name,
                             onValueChange = { name = it },
-                            label = { Text("Nome da pasta") },
+                            label = { Text("Nome da pasta".tr()) },
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth(),
@@ -124,7 +125,7 @@ fun CreateTeamFolderDialog(
                     }
 
                     Text(
-                        "Membros (opcional)",
+                        "Membros (opcional)".tr(),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.SemiBold,
@@ -197,7 +198,7 @@ fun CreateTeamFolderDialog(
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text("Adicionar membro")
+                        Text("Adicionar membro".tr())
                     }
                 }
 
@@ -211,7 +212,7 @@ fun CreateTeamFolderDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Cancelar".tr(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Spacer(Modifier.width(8.dp))
                     Button(

@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.signin
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
@@ -59,8 +60,8 @@ fun SignInScreen(
         if (state.loginSucceeded) onLoginSucceeded()
     }
 
-    AuthScaffold(title = "Entrar", subtitle = "Bem-vindo de volta", onBack = onBack) {
-        FieldLabel("Email")
+    AuthScaffold(title = "Entrar".tr(), subtitle = "Bem-vindo de volta".tr(), onBack = onBack) {
+        FieldLabel("Email".tr())
         OutlinedTextField(
             value = state.email,
             onValueChange = viewModel::onEmail,
@@ -78,11 +79,11 @@ fun SignInScreen(
         )
         Spacer(Modifier.height(14.dp))
 
-        FieldLabel("Password")
+        FieldLabel("Password".tr())
         OutlinedTextField(
             value = state.password,
             onValueChange = viewModel::onPassword,
-            placeholder = { Text("A tua password") },
+            placeholder = { Text("A tua password".tr()) },
             singleLine = true,
             isError = state.passwordError != null,
             supportingText = state.passwordError?.let { { Text(it) } },
@@ -106,7 +107,7 @@ fun SignInScreen(
             horizontalArrangement = Arrangement.End,
         ) {
             TextButton(onClick = onForgotPassword, contentPadding = PaddingValues(horizontal = 4.dp)) {
-                Text("Esqueceu-se da password?", fontSize = 13.sp)
+                Text("Esqueceu-se da password?".tr(), fontSize = 13.sp)
             }
         }
 
@@ -133,7 +134,7 @@ fun SignInScreen(
                 )
                 Spacer(Modifier.width(8.dp))
             }
-            Text("Entrar", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            Text("Entrar".tr(), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
         }
 
         if (state.socialLogins.any) {
@@ -141,21 +142,21 @@ fun SignInScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 HorizontalDivider(modifier = Modifier.weight(1f))
                 Text(
-                    "ou",
+                    "ou".tr(),
                     modifier = Modifier.padding(horizontal = 12.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 HorizontalDivider(modifier = Modifier.weight(1f))
             }
             Spacer(Modifier.height(16.dp))
-            if (state.socialLogins.google) SocialButton("Continuar com Google") { onSocialite("google") }
+            if (state.socialLogins.google) SocialButton("Continuar com Google".tr()) { onSocialite("google") }
             if (state.socialLogins.microsoft) {
                 Spacer(Modifier.height(8.dp))
-                SocialButton("Continuar com Microsoft") { onSocialite("microsoft") }
+                SocialButton("Continuar com Microsoft".tr()) { onSocialite("microsoft") }
             }
             if (state.socialLogins.github) {
                 Spacer(Modifier.height(8.dp))
-                SocialButton("Continuar com GitHub") { onSocialite("github") }
+                SocialButton("Continuar com GitHub".tr()) { onSocialite("github") }
             }
         }
 
@@ -166,8 +167,8 @@ fun SignInScreen(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("Não tem conta?", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick = onRegister) { Text("Registar", fontWeight = FontWeight.SemiBold) }
+                Text("Não tem conta?".tr(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = onRegister) { Text("Registar".tr(), fontWeight = FontWeight.SemiBold) }
             }
         }
     }

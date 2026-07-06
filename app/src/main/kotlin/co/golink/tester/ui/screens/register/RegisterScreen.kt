@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.register
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -48,10 +49,10 @@ fun RegisterScreen(
         if (state.success) onRegistered(state.requiresVerification)
     }
 
-    AuthScaffold(title = "Criar conta", subtitle = "Junta-te ao GoLink", onBack = onBack) {
+    AuthScaffold(title = "Criar conta".tr(), subtitle = "Junta-te ao GoLink".tr(), onBack = onBack) {
         Field(
-            label = "Nome",
-            placeholder = "O teu nome",
+            label = "Nome".tr(),
+            placeholder = "O teu nome".tr(),
             value = state.name,
             onChange = viewModel::onName,
             error = state.fieldErrors["name"],
@@ -60,7 +61,7 @@ fun RegisterScreen(
         )
         Spacer(Modifier.height(14.dp))
         Field(
-            label = "Email",
+            label = "Email".tr(),
             placeholder = "o.teu.email@exemplo.com",
             value = state.email,
             onChange = viewModel::onEmail,
@@ -70,8 +71,8 @@ fun RegisterScreen(
         )
         Spacer(Modifier.height(14.dp))
         Field(
-            label = "Password",
-            placeholder = "Mínimo 6 caracteres",
+            label = "Password".tr(),
+            placeholder = "Mínimo 6 caracteres".tr(),
             value = state.password,
             onChange = viewModel::onPassword,
             error = state.fieldErrors["password"],
@@ -81,8 +82,8 @@ fun RegisterScreen(
         )
         Spacer(Modifier.height(14.dp))
         Field(
-            label = "Confirmar password",
-            placeholder = "Repete a password",
+            label = "Confirmar password".tr(),
+            placeholder = "Repete a password".tr(),
             value = state.passwordConfirmation,
             onChange = viewModel::onPasswordConfirmation,
             error = state.fieldErrors["password_confirmation"],
@@ -92,8 +93,8 @@ fun RegisterScreen(
         )
         Spacer(Modifier.height(14.dp))
         Field(
-            label = "Código de convite (opcional)",
-            placeholder = "Código de convite",
+            label = "Código de convite (opcional)".tr(),
+            placeholder = "Código de convite".tr(),
             value = state.invitationToken,
             onChange = viewModel::onInvitationToken,
             error = state.fieldErrors["invitation_token"],
@@ -121,7 +122,7 @@ fun RegisterScreen(
                 )
                 Spacer(Modifier.width(8.dp))
             }
-            Text("Criar conta", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            Text("Criar conta".tr(), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
         }
     }
 }

@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.notifications
 
+import co.golink.tester.ui.i18n.tr
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import co.golink.tester.data.notifications.NotificationsRepository

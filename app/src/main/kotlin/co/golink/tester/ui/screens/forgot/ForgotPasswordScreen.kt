@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.forgot
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,13 +31,13 @@ fun ForgotPasswordScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     AuthScaffold(
-        title = "Recuperar password",
-        subtitle = "Indica o teu email e enviar-te-emos as instruções",
+        title = "Recuperar password".tr(),
+        subtitle = "Indica o teu email e enviar-te-emos as instruções".tr(),
         onBack = onBack,
     ) {
         if (state.sent) {
             Text(
-                "Verifica o teu email. Se a conta existir, receberás um link para repor a password.",
+                "Verifica o teu email. Se a conta existir, receberás um link para repor a password.".tr(),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -46,14 +47,14 @@ fun ForgotPasswordScreen(
                 shape = RoundedCornerShape(12.dp),
                 contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Voltar ao login") }
+            ) { Text("Voltar ao login".tr()) }
             return@AuthScaffold
         }
 
         OutlinedTextField(
             value = state.email,
             onValueChange = viewModel::onEmail,
-            label = { Text("Email") },
+            label = { Text("Email".tr()) },
             singleLine = true,
             isError = state.emailError != null,
             supportingText = state.emailError?.let { { Text(it) } },
@@ -84,7 +85,7 @@ fun ForgotPasswordScreen(
                 )
                 Spacer(Modifier.width(8.dp))
             }
-            Text("Enviar link")
+            Text("Enviar link".tr())
         }
     }
 }

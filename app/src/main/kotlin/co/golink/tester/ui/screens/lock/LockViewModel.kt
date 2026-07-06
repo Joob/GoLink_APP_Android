@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.lock
 
+import co.golink.tester.ui.i18n.tr
 import androidx.lifecycle.ViewModel
 import co.golink.tester.data.AppLogger
 import co.golink.tester.data.settings.AppLockManager
@@ -30,7 +31,7 @@ class LockViewModel @Inject constructor(
             lockManager.unlock()
             true
         } else {
-            _error.value = "PIN incorrecto"
+            _error.value = "PIN incorrecto".tr()
             false
         }
     }

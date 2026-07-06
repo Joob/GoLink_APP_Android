@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.otp
 
+import co.golink.tester.ui.i18n.tr
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import co.golink.tester.data.auth.AuthRepository
@@ -48,13 +49,13 @@ class OtpViewModel @Inject constructor(
                     _state.update {
                         it.copy(
                             sending = false,
-                            info = if (initial) "Enviámos um código para o teu email" else "Novo código enviado",
+                            info = if (initial) "Enviámos um código para o teu email".tr() else "Novo código enviado".tr(),
                             codeSentOnce = true,
                         )
                     }
                 }
                 .onFailure { t ->
-                    _state.update { it.copy(sending = false, error = t.message ?: "Erro ao enviar código", codeSentOnce = true) }
+                    _state.update { it.copy(sending = false, error = t.message ?: "Erro ao enviar código".tr(), codeSentOnce = true) }
                 }
         }
     }
@@ -67,7 +68,7 @@ class OtpViewModel @Inject constructor(
             authRepository.validateOtp(s.code)
                 .onSuccess { _state.update { it.copy(isLoading = false, validated = true) } }
                 .onFailure { t ->
-                    val msg = if (t is AuthError.OtpInvalid) "Código inválido ou expirado" else t.message
+                    val msg = if (t is AuthError.OtpInvalid) "Código inválido ou expirado".tr() else t.message
                     _state.update { it.copy(isLoading = false, error = msg, code = "") }
                 }
         }

@@ -1,5 +1,6 @@
 package co.golink.tester.ui.components.dialogs
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -77,12 +78,12 @@ fun CreateFileRequestDialog(
                     Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "Pedido de ficheiros",
+                            "Pedido de ficheiros".tr(),
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                         )
                         Text(
-                            "A pasta atual será o destino dos uploads",
+                            "A pasta atual será o destino dos uploads".tr(),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -97,7 +98,7 @@ fun CreateFileRequestDialog(
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
-                        label = { Text("Nome do pedido (opcional)") },
+                        label = { Text("Nome do pedido (opcional)".tr()) },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth(),
@@ -105,7 +106,7 @@ fun CreateFileRequestDialog(
                     OutlinedTextField(
                         value = email,
                         onValueChange = { email = it },
-                        label = { Text("Notificar por email (opcional)") },
+                        label = { Text("Notificar por email (opcional)".tr()) },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth(),
@@ -113,7 +114,7 @@ fun CreateFileRequestDialog(
                     OutlinedTextField(
                         value = notes,
                         onValueChange = { notes = it },
-                        label = { Text("Notas (opcional)") },
+                        label = { Text("Notas (opcional)".tr()) },
                         singleLine = false,
                         maxLines = 3,
                         shape = RoundedCornerShape(12.dp),
@@ -131,7 +132,7 @@ fun CreateFileRequestDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Cancelar".tr(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Spacer(Modifier.width(8.dp))
                     Button(
@@ -146,7 +147,7 @@ fun CreateFileRequestDialog(
                         shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                     ) {
-                        Text("Criar pedido", fontWeight = FontWeight.SemiBold)
+                        Text("Criar pedido".tr(), fontWeight = FontWeight.SemiBold)
                     }
                 }
             }

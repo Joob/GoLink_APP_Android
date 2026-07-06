@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.config
 
+import co.golink.tester.ui.i18n.tr
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import co.golink.tester.data.config.BackendConfigRepository
@@ -49,7 +50,7 @@ class BackendConfigViewModel @Inject constructor(
     fun testConnection() {
         val raw = _state.value.url
         if (raw.isBlank()) {
-            _state.update { it.copy(status = ConnectionStatus.Failed, errorMessage = "URL vazio") }
+            _state.update { it.copy(status = ConnectionStatus.Failed, errorMessage = "URL vazio".tr()) }
             return
         }
         val normalized = BackendConfigRepository.normalize(raw)
@@ -84,7 +85,7 @@ class BackendConfigViewModel @Inject constructor(
     fun save(onSaved: () -> Unit) {
         val raw = _state.value.url
         if (raw.isBlank()) {
-            _state.update { it.copy(errorMessage = "URL vazio") }
+            _state.update { it.copy(errorMessage = "URL vazio".tr()) }
             return
         }
         viewModelScope.launch {

@@ -1,7 +1,11 @@
 package co.golink.tester.ui.screens.backup
 
+import co.golink.tester.ui.i18n.tr
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,6 +32,7 @@ import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.VideoLibrary
@@ -74,6 +79,23 @@ import co.golink.tester.ui.components.dialogs.ShareDialogState
 import co.golink.tester.ui.components.dialogs.TextInputDialog
 import co.golink.tester.ui.screens.browse.BrowseItemDetailsSheet
 import co.golink.tester.ui.screens.viewer.isViewable
+import co.golink.tester.ui.components.BrowseItemGridCard
+import co.golink.tester.ui.screens.browse.SortMode
+import co.golink.tester.ui.screens.browse.ViewMode
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.SortByAlpha
+import androidx.compose.material.icons.outlined.ViewList
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.draw.clip
 
 private val AccentGreen = Color(0xFF16A34A)
 
@@ -102,10 +124,35 @@ fun MobileBackupsScreen(
         }
     }
 
-    var sheetItem by remember { mutableStateOf<BrowseItem.File?>(null) }
-    var dialogTarget by remember { mutableStateOf<BrowseItem.File?>(null) }
+    // BrowseItem (não só File): as pastas de backup também têm o menu "…".
+    var sheetItem by remember { mutableStateOf<BrowseItem?>(null) }
+    var dialogTarget by remember { mutableStateOf<BrowseItem?>(null) }
     var activeDialog by remember { mutableStateOf(BackupItemDialog.None) }
+    var viewSortOpen by remember { mutableStateOf(false) }
     val snackbarHost = remember { SnackbarHostState() }
+
+    // Cliques partilhados por lista e grelha (mesmo comportamento).
+    val onItemClick: (BrowseItem) -> Unit = { item ->
+        when (item) {
+            is BrowseItem.Folder ->
+                if (state.selectMode) viewModel.toggleSelect(item.id) else viewModel.openFolder(item)
+            is BrowseItem.File -> when {
+                state.selectMode -> viewModel.toggleSelect(item.id)
+                item.isViewable() -> { viewModel.prepareViewer(item); onOpenFile(item.id) }
+                else -> sheetItem = item
+            }
+        }
+    }
+    val onItemLongClick: (BrowseItem) -> Unit = { item ->
+        when (item) {
+            is BrowseItem.Folder -> {
+                if (!state.selectMode) viewModel.enterSelectMode()
+                viewModel.toggleSelect(item.id)
+            }
+            is BrowseItem.File ->
+                if (state.selectMode) viewModel.toggleSelect(item.id) else { sheetItem = item }
+        }
+    }
 
     // Refresh the list whenever the user returns to this screen — newly
     // backed-up items uploaded since they last visited will then show up.
@@ -130,25 +177,27 @@ fun MobileBackupsScreen(
             TopAppBar(
                 title = {
                     Text(
-                        if (state.selectMode) "${state.selectedIds.size} selecionado"
-                        else state.folderStack.lastOrNull()?.name ?: "Backups Automáticos",
+                        if (state.selectMode) {
+                            if (state.selectedIds.size == 1) "1 ${"selecionado".tr()}"
+                            else "${state.selectedIds.size} ${"selecionados".tr()}"
+                        } else state.folderStack.lastOrNull()?.name ?: "Backups Automáticos".tr(),
                     )
                 },
                 navigationIcon = {
                     if (state.selectMode) {
                         IconButton(onClick = { viewModel.exitSelectMode() }) {
-                            Icon(Icons.Filled.Close, contentDescription = "Limpar selecção")
+                            Icon(Icons.Filled.Close, contentDescription = "Limpar selecção".tr())
                         }
                     } else {
                         IconButton(onClick = { if (!viewModel.navigateUp()) onBack() }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar".tr())
                         }
                     }
                 },
                 actions = {
                     if (state.selectMode) {
                         IconButton(onClick = { viewModel.selectAll() }) {
-                            Icon(Icons.Outlined.SelectAll, contentDescription = "Selecionar tudo")
+                            Icon(Icons.Outlined.SelectAll, contentDescription = "Selecionar tudo".tr())
                         }
                     } else {
                         IconButton(onClick = onOpenNotifications) {
@@ -157,15 +206,31 @@ fun MobileBackupsScreen(
                             }) {
                                 Icon(
                                     if (unread > 0) Icons.Filled.Notifications else Icons.Filled.NotificationsNone,
-                                    contentDescription = "Notificações",
+                                    contentDescription = "Notificações".tr(),
                                 )
                             }
                         }
+                        Box {
+                            IconButton(onClick = { viewSortOpen = true }) {
+                                Icon(
+                                    if (state.viewMode == ViewMode.GRID) Icons.Outlined.ViewList else Icons.Outlined.GridView,
+                                    contentDescription = "Vista e ordenação".tr(),
+                                )
+                            }
+                            MobileViewSortMenu(
+                                expanded = viewSortOpen,
+                                onDismiss = { viewSortOpen = false },
+                                viewMode = state.viewMode,
+                                sortMode = state.sortMode,
+                                onSetViewMode = { viewModel.setViewMode(it); viewSortOpen = false },
+                                onSetSortMode = { viewModel.setSortMode(it); viewSortOpen = false },
+                            )
+                        }
                         IconButton(onClick = { viewModel.enterSelectMode() }) {
-                            Icon(Icons.Outlined.CheckBox, contentDescription = "Selecionar")
+                            Icon(Icons.Outlined.CheckBox, contentDescription = "Selecionar".tr())
                         }
                         IconButton(onClick = onOpenSettings) {
-                            Icon(Icons.Outlined.Settings, contentDescription = "Definições")
+                            Icon(Icons.Outlined.Settings, contentDescription = "Definições".tr())
                         }
                     }
                 },
@@ -186,6 +251,7 @@ fun MobileBackupsScreen(
                             dialogTarget = null
                             activeDialog = BackupItemDialog.Delete
                         },
+                        selectedCount = state.selectedIds.size,
                     )
                 }
                 // When the backup feature is off we keep the file list visible —
@@ -196,10 +262,13 @@ fun MobileBackupsScreen(
             }
         },
     ) { padding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
+        ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
         ) {
             // Tabs só na raiz — dentro de uma subpasta a navegação é da pasta.
             if (state.folderStack.isEmpty()) {
@@ -210,6 +279,11 @@ fun MobileBackupsScreen(
                 )
             }
 
+            androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+                isRefreshing = state.isRefreshing,
+                onRefresh = viewModel::pullRefresh,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+            ) {
             when {
                 state.isLoading -> Box(
                     modifier = Modifier.fillMaxSize(),
@@ -217,56 +291,37 @@ fun MobileBackupsScreen(
                 ) { CircularProgressIndicator() }
 
                 state.error != null -> Box(
-                    modifier = Modifier.fillMaxSize().padding(24.dp),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(24.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(state.error ?: "", color = MaterialTheme.colorScheme.error)
                 }
 
-                state.items.isEmpty() -> EmptyDivisionState(state.tab)
+                state.items.isEmpty() -> Box(
+                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                ) { EmptyDivisionState(state.tab) }
 
-                else -> LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(state.items, key = { it.id }) { item ->
-                        when (item) {
-                            is BrowseItem.Folder -> BrowseItemRow(
+                state.viewMode == ViewMode.GRID -> {
+                    // Grelha (galeria): lista plana ordenada, do mais recente
+                    // para o mais antigo por omissão (DATE_DESC).
+                    val gridData = remember(state.items, state.sortMode) {
+                        sortBackupItems(state.items, state.sortMode)
+                    }
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(2),
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        gridItems(gridData, key = { it.id }) { item ->
+                            BrowseItemGridCard(
                                 item = item,
-                                onClick = {
-                                    if (state.selectMode) viewModel.toggleSelect(item.id)
-                                    else viewModel.openFolder(item)
-                                },
-                                onLongClick = {
-                                    if (!state.selectMode) viewModel.enterSelectMode()
-                                    viewModel.toggleSelect(item.id)
-                                },
-                                onMoreClick = { viewModel.openFolder(item) },
-                                selected = item.id in state.selectedIds,
-                                selectionMode = state.selectMode,
-                            )
-                            is BrowseItem.File -> BrowseItemRow(
-                                item = item,
-                                onClick = {
-                                    if (state.selectMode) {
-                                        viewModel.toggleSelect(item.id)
-                                    } else if (item.isViewable()) {
-                                        // Sem isto o viewer abria com a sessão
-                                        // antiga do browser (ou vazia).
-                                        viewModel.prepareViewer(item)
-                                        onOpenFile(item.id)
-                                    } else {
-                                        sheetItem = item
-                                    }
-                                },
-                                onLongClick = {
-                                    if (state.selectMode) {
-                                        viewModel.toggleSelect(item.id)
-                                    } else {
-                                        sheetItem = item
-                                    }
-                                },
+                                onClick = { onItemClick(item) },
+                                onLongClick = { onItemLongClick(item) },
                                 onMoreClick = { sheetItem = item },
                                 selected = item.id in state.selectedIds,
                                 selectionMode = state.selectMode,
@@ -274,7 +329,75 @@ fun MobileBackupsScreen(
                         }
                     }
                 }
+
+                else -> {
+                    // Lista: por data agrupa por dia (cabeçalho); por nome fica
+                    // plana. Ordem por omissão: mais recente → mais antigo.
+                    val rows = remember(state.items, state.sortMode) {
+                        buildDayGroupedRows(state.items, state.sortMode)
+                    }
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        rows.forEach { row ->
+                            when (row) {
+                                is BackupRow.Header -> item(key = "hdr_${row.label}") {
+                                    BackupDateHeader(row.label)
+                                }
+                                is BackupRow.Entry -> item(key = row.item.id) {
+                                    val item = row.item
+                                    BrowseItemRow(
+                                        item = item,
+                                        onClick = { onItemClick(item) },
+                                        onLongClick = { onItemLongClick(item) },
+                                        onMoreClick = { sheetItem = item },
+                                        selected = item.id in state.selectedIds,
+                                        selectionMode = state.selectMode,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
+            }
+        }
+        // Selo fixo "End-to-end encrypted" no fundo, visível em todas as abas.
+        co.golink.tester.ui.components.E2EEncryptedBadge(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 8.dp),
+        )
+        // Overlay de progresso ao eliminar/mover.
+        if (state.processing != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.25f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 3.dp,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                    ) {
+                        CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(14.dp))
+                        Text(
+                            state.processing ?: "",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+        }
         }
     }
 
@@ -285,7 +408,7 @@ fun MobileBackupsScreen(
             isShared = target.share != null,
             inTrash = false,
             onDismiss = { sheetItem = null },
-            onDownload = { viewModel.download(target) },
+            onDownload = { viewModel.downloadItem(target) },
             onShare = { viewModel.openShareDialog(target) },
             onToggleFavourite = { /* file favourites not supported */ },
             onRename = { dialogTarget = target; activeDialog = BackupItemDialog.Rename },
@@ -325,10 +448,10 @@ fun MobileBackupsScreen(
     when (activeDialog) {
         BackupItemDialog.Rename -> dialogTarget?.let { target ->
             TextInputDialog(
-                title = "Renomear",
-                label = "Novo nome",
+                title = "Renomear".tr(),
+                label = "Novo nome".tr(),
                 initialValue = target.name,
-                confirmText = "Guardar",
+                confirmText = "Guardar".tr(),
                 onDismiss = { activeDialog = BackupItemDialog.None; dialogTarget = null },
                 onConfirm = { newName ->
                     viewModel.rename(target, newName)
@@ -342,10 +465,10 @@ fun MobileBackupsScreen(
             val count = if (target == null) state.selectedIds.size else 1
             if (count > 0) {
                 ConfirmDialog(
-                    title = "Eliminar ficheiro",
+                    title = "Eliminar ficheiro".tr(),
                     message = if (target == null) "Mover $count itens para o lixo?"
                               else "Mover \"${target.name}\" para o lixo?",
-                    confirmText = "Eliminar",
+                    confirmText = "Eliminar".tr(),
                     destructive = true,
                     onDismiss = { activeDialog = BackupItemDialog.None; dialogTarget = null },
                     onConfirm = {
@@ -403,13 +526,13 @@ private fun BackupDisabledBanner(onTurnOn: () -> Unit) {
             )
             Spacer(Modifier.width(10.dp))
             Text(
-                "Backup desactivado.",
+                "Backup desactivado.".tr(),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
             )
             TextButton(onClick = onTurnOn) {
-                Text("Activar", color = AccentGreen, fontWeight = FontWeight.SemiBold)
+                Text("Activar".tr(), color = AccentGreen, fontWeight = FontWeight.SemiBold)
             }
         }
     }
@@ -421,15 +544,19 @@ private fun DivisionTabs(
     counts: Map<MobileBackupTab, Int>,
     onSelect: (MobileBackupTab) -> Unit,
 ) {
+    // Scroll horizontal: com 4 separadores já não cabem à largura do ecrã, e
+    // assim o utilizador desliza para o lado para escolher.
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        DivisionChip("Fotos", Icons.Outlined.Image, MobileBackupTab.Photos, selected, counts[MobileBackupTab.Photos], onSelect, Modifier.weight(1f))
-        DivisionChip("Vídeos", Icons.Outlined.VideoLibrary, MobileBackupTab.Videos, selected, counts[MobileBackupTab.Videos], onSelect, Modifier.weight(1f))
-        DivisionChip("Ficheiros", Icons.Outlined.Description, MobileBackupTab.Files, selected, counts[MobileBackupTab.Files], onSelect, Modifier.weight(1f))
+        DivisionChip("Imagens".tr(), Icons.Outlined.Image, MobileBackupTab.Images, selected, counts[MobileBackupTab.Images], onSelect)
+        DivisionChip("Vídeos".tr(), Icons.Outlined.VideoLibrary, MobileBackupTab.Videos, selected, counts[MobileBackupTab.Videos], onSelect)
+        DivisionChip("Áudios".tr(), Icons.Outlined.MusicNote, MobileBackupTab.Audios, selected, counts[MobileBackupTab.Audios], onSelect)
+        DivisionChip("Ficheiros".tr(), Icons.Outlined.Description, MobileBackupTab.Files, selected, counts[MobileBackupTab.Files], onSelect)
     }
 }
 
@@ -487,9 +614,10 @@ private fun DivisionChip(
 @Composable
 private fun EmptyDivisionState(tab: MobileBackupTab) {
     val msg = when (tab) {
-        MobileBackupTab.Photos -> "Sem fotos enviadas ainda."
-        MobileBackupTab.Videos -> "Sem vídeos enviados ainda."
-        MobileBackupTab.Files -> "Sem outros ficheiros enviados ainda."
+        MobileBackupTab.Images -> "Sem imagens enviadas ainda.".tr()
+        MobileBackupTab.Videos -> "Sem vídeos enviados ainda.".tr()
+        MobileBackupTab.Audios -> "Sem áudios enviados ainda.".tr()
+        MobileBackupTab.Files -> "Sem outros ficheiros enviados ainda.".tr()
     }
     Box(
         modifier = Modifier.fillMaxSize().padding(32.dp),
@@ -508,4 +636,165 @@ private fun EmptyDivisionState(tab: MobileBackupTab) {
             Text(msg, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+}
+
+// --- Agrupamento por dia da lista de backups --------------------------------
+
+private sealed interface BackupRow {
+    data class Header(val label: String) : BackupRow
+    data class Entry(val item: BrowseItem) : BackupRow
+}
+
+private val BACKUP_ISO_DATE = Regex("""(\d{4})-(\d{2})-(\d{2})""")
+private val BACKUP_PT_MONTHS = arrayOf(
+    "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez",
+)
+
+// Extrai a data (yyyy-MM-dd) do createdAt, seja ISO ("…T…") ou "yyyy-MM-dd …".
+// Devolve null se o servidor mandar um texto relativo — nesse caso o item fica
+// sem cabeçalho, para a lista degradar de forma limpa.
+private fun backupDayKey(raw: String?): String? {
+    if (raw.isNullOrBlank()) return null
+    return BACKUP_ISO_DATE.find(raw)?.value
+}
+
+private fun backupDayLabel(key: String): String {
+    val parts = key.split("-")
+    if (parts.size != 3) return key
+    val month = parts[1].toIntOrNull() ?: return key
+    val day = parts[2].toIntOrNull() ?: return key
+    val name = BACKUP_PT_MONTHS.getOrNull(month - 1) ?: return key
+    return "$day de $name de ${parts[0]}"
+}
+
+// Ordena a lista plana consoante o modo escolhido (usado na grelha e na lista
+// alfabética). DATE_DESC = mais recente primeiro.
+private fun sortBackupItems(items: List<BrowseItem>, sort: SortMode): List<BrowseItem> = when (sort) {
+    SortMode.ALPHA_ASC -> items.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+    SortMode.ALPHA_DESC -> items.sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.name })
+    SortMode.DATE_DESC -> items.sortedByDescending { it.createdAt ?: it.updatedAt ?: "" }
+    SortMode.DATE_ASC -> items.sortedBy { it.createdAt ?: it.updatedAt ?: "" }
+}
+
+private fun buildDayGroupedRows(items: List<BrowseItem>, sort: SortMode): List<BackupRow> {
+    // Ordenação alfabética: lista plana, sem cabeçalhos de dia.
+    if (sort == SortMode.ALPHA_ASC || sort == SortMode.ALPHA_DESC) {
+        return sortBackupItems(items, sort).map { BackupRow.Entry(it) }
+    }
+    val asc = sort == SortMode.DATE_ASC
+    val rows = mutableListOf<BackupRow>()
+    val dated = items.filter { backupDayKey(it.createdAt ?: it.updatedAt) != null }
+        .groupBy { backupDayKey(it.createdAt ?: it.updatedAt)!! }
+    val keys = if (asc) dated.keys.sorted() else dated.keys.sortedDescending()
+    keys.forEach { key ->
+        rows += BackupRow.Header(backupDayLabel(key))
+        val group = dated.getValue(key)
+        val ordered = if (asc) group.sortedBy { it.createdAt ?: it.updatedAt ?: "" }
+                      else group.sortedByDescending { it.createdAt ?: it.updatedAt ?: "" }
+        ordered.forEach { rows += BackupRow.Entry(it) }
+    }
+    // Itens sem data reconhecível ficam no fim, sem cabeçalho.
+    items.filter { backupDayKey(it.createdAt ?: it.updatedAt) == null }
+        .forEach { rows += BackupRow.Entry(it) }
+    return rows
+}
+
+// Menu de Vista/Ordenação (igual ao browser, mas com cabeçalhos traduzidos).
+@Composable
+private fun MobileViewSortMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    viewMode: ViewMode,
+    sortMode: SortMode,
+    onSetViewMode: (ViewMode) -> Unit,
+    onSetSortMode: (SortMode) -> Unit,
+) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(20.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp,
+        shadowElevation = 16.dp,
+        modifier = Modifier.widthIn(min = 250.dp).padding(vertical = 4.dp),
+    ) {
+        MenuSectionHeader("Visualizar".tr().uppercase())
+        val targetView = if (viewMode == ViewMode.GRID) ViewMode.LIST else ViewMode.GRID
+        DropdownMenuItem(
+            text = { Text(if (targetView == ViewMode.GRID) "Vista em grelha".tr() else "Vista em lista".tr(), style = MaterialTheme.typography.bodyMedium) },
+            leadingIcon = {
+                MenuIconBox(active = false) {
+                    Icon(
+                        if (targetView == ViewMode.GRID) Icons.Outlined.GridView else Icons.Outlined.ViewList,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            },
+            onClick = { onSetViewMode(targetView) },
+        )
+        HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        MenuSectionHeader("Ordenação".tr().uppercase())
+        val dateActive = sortMode == SortMode.DATE_DESC || sortMode == SortMode.DATE_ASC
+        val alphaActive = sortMode == SortMode.ALPHA_ASC || sortMode == SortMode.ALPHA_DESC
+        DropdownMenuItem(
+            text = { Text("Ordenar por data".tr(), style = MaterialTheme.typography.bodyMedium, color = if (dateActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
+            leadingIcon = {
+                MenuIconBox(active = dateActive) {
+                    Icon(Icons.Outlined.CalendarMonth, contentDescription = null, tint = if (dateActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                }
+            },
+            trailingIcon = if (dateActive) {
+                { Icon(if (sortMode == SortMode.DATE_ASC) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
+            } else null,
+            onClick = { onSetSortMode(if (sortMode == SortMode.DATE_DESC) SortMode.DATE_ASC else SortMode.DATE_DESC) },
+        )
+        DropdownMenuItem(
+            text = { Text("Ordenar alfabeticamente".tr(), style = MaterialTheme.typography.bodyMedium, color = if (alphaActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
+            leadingIcon = {
+                MenuIconBox(active = alphaActive) {
+                    Icon(Icons.Outlined.SortByAlpha, contentDescription = null, tint = if (alphaActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                }
+            },
+            trailingIcon = if (alphaActive) {
+                { Icon(if (sortMode == SortMode.ALPHA_ASC) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
+            } else null,
+            onClick = { onSetSortMode(if (sortMode == SortMode.ALPHA_ASC) SortMode.ALPHA_DESC else SortMode.ALPHA_ASC) },
+        )
+        Spacer(Modifier.height(4.dp))
+    }
+}
+
+@Composable
+private fun MenuSectionHeader(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.primary,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 2.dp),
+    )
+}
+
+@Composable
+private fun MenuIconBox(active: Boolean, content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(RoundedCornerShape(9.dp))
+            .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) { content() }
+}
+
+@Composable
+private fun BackupDateHeader(label: String) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
+    )
 }

@@ -66,6 +66,53 @@ class AutoBackupPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_INCLUDE_DOWNLOADS, false)
         set(value) { prefs.edit { putBoolean(KEY_INCLUDE_DOWNLOADS, value) }; refresh() }
 
+    // --- Pastas seleccionadas por colecção (opt-in) -------------------------
+    // O backup de cada colecção inclui apenas as pastas aqui guardadas. Vazio =
+    // nada dessa colecção é enviado.
+
+    fun selectedFolders(collection: BackupCollection): Set<String> =
+        prefs.getStringSet(folderKey(collection), emptySet())?.toSet() ?: emptySet()
+
+    fun setFolderSelected(collection: BackupCollection, folder: String, selected: Boolean) {
+        val next = selectedFolders(collection).toMutableSet()
+        if (selected) next.add(folder) else next.remove(folder)
+        prefs.edit { putStringSet(folderKey(collection), next) }
+        refresh()
+    }
+
+    fun setFolders(collection: BackupCollection, folders: Set<String>) {
+        prefs.edit { putStringSet(folderKey(collection), folders) }
+        refresh()
+    }
+
+    private fun folderKey(collection: BackupCollection): String = when (collection) {
+        BackupCollection.IMAGES -> KEY_FOLDERS_IMAGES
+        BackupCollection.VIDEOS -> KEY_FOLDERS_VIDEOS
+        BackupCollection.AUDIOS -> KEY_FOLDERS_AUDIOS
+        BackupCollection.DOCUMENTS -> KEY_FOLDERS_DOCUMENTS
+        BackupCollection.DOWNLOADS -> KEY_FOLDERS_DOWNLOADS
+    }
+
+    private fun allSelectedFolders(): Map<BackupCollection, Set<String>> =
+        BackupCollection.entries.associateWith { selectedFolders(it) }
+
+    // --- Cursor por pasta ----------------------------------------------------
+    // O cursor de "já enviado" é por pasta, não por colecção. Antes era por
+    // colecção: ao adicionar uma pasta nova mais tarde, os ficheiros dela com id
+    // abaixo do cursor da colecção eram saltados (o "9 de 34"). Por pasta, cada
+    // pasta nova arranca do zero e é enviada por inteiro.
+
+    fun folderCursor(collection: BackupCollection, folder: String): Long =
+        prefs.getLong(folderCursorKey(collection, folder), 0L)
+
+    fun setFolderCursor(collection: BackupCollection, folder: String, value: Long) {
+        prefs.edit { putLong(folderCursorKey(collection, folder), value) }
+        refresh()
+    }
+
+    private fun folderCursorKey(collection: BackupCollection, folder: String): String =
+        "$FOLDER_CURSOR_PREFIX${collection.name}|$folder"
+
     var lastImageId: Long
         get() = prefs.getLong(KEY_LAST_IMAGE_ID, 0L)
         set(value) { prefs.edit { putLong(KEY_LAST_IMAGE_ID, value) }; refresh() }
@@ -129,6 +176,8 @@ class AutoBackupPreferences @Inject constructor(
             putLong(KEY_LAST_AUDIO_ID, 0L)
             putLong(KEY_LAST_DOCUMENT_ID, 0L)
             putLong(KEY_LAST_DOWNLOAD_ID, 0L)
+            // Também os cursores por pasta, para "Voltar a verificar" reenviar tudo.
+            prefs.all.keys.filter { it.startsWith(FOLDER_CURSOR_PREFIX) }.forEach { remove(it) }
         }
         refresh()
     }
@@ -152,6 +201,7 @@ class AutoBackupPreferences @Inject constructor(
         includeAudios = prefs.getBoolean(KEY_INCLUDE_AUDIOS, false),
         includeDocuments = prefs.getBoolean(KEY_INCLUDE_DOCUMENTS, false),
         includeDownloads = prefs.getBoolean(KEY_INCLUDE_DOWNLOADS, false),
+        selectedFolders = allSelectedFolders(),
         lastBackupAt = prefs.getLong(KEY_LAST_BACKUP_AT, 0L),
         backedUpCount = prefs.getInt(KEY_BACKED_UP_COUNT, 0),
         photosCount = prefs.getInt(KEY_PHOTOS_COUNT, 0),
@@ -172,6 +222,12 @@ class AutoBackupPreferences @Inject constructor(
         const val KEY_INCLUDE_AUDIOS = "include_audios"
         const val KEY_INCLUDE_DOCUMENTS = "include_documents"
         const val KEY_INCLUDE_DOWNLOADS = "include_downloads"
+        const val KEY_FOLDERS_IMAGES = "folders_images"
+        const val KEY_FOLDERS_VIDEOS = "folders_videos"
+        const val KEY_FOLDERS_AUDIOS = "folders_audios"
+        const val KEY_FOLDERS_DOCUMENTS = "folders_documents"
+        const val KEY_FOLDERS_DOWNLOADS = "folders_downloads"
+        const val FOLDER_CURSOR_PREFIX = "fcursor|"
         const val KEY_LAST_IMAGE_ID = "last_image_id"
         const val KEY_LAST_VIDEO_ID = "last_video_id"
         const val KEY_LAST_AUDIO_ID = "last_audio_id"
@@ -199,6 +255,7 @@ data class AutoBackupState(
     val includeAudios: Boolean = false,
     val includeDocuments: Boolean = false,
     val includeDownloads: Boolean = false,
+    val selectedFolders: Map<BackupCollection, Set<String>> = emptyMap(),
     val lastBackupAt: Long,
     val backedUpCount: Int,
     val photosCount: Int = 0,

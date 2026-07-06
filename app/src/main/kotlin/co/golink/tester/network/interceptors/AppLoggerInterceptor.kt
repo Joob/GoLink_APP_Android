@@ -1,6 +1,7 @@
 package co.golink.tester.network.interceptors
 
 import co.golink.tester.data.AppLogger
+import co.golink.tester.data.LogSanitizer
 import javax.inject.Inject
 import javax.inject.Singleton
 import okhttp3.Interceptor
@@ -13,14 +14,17 @@ class AppLoggerInterceptor @Inject constructor(
     override fun intercept(chain: Interceptor.Chain): Response {
         val req = chain.request()
         val start = System.nanoTime()
+        // O caminho pode conter ids de ficheiros/pastas e tokens de partilha —
+        // sanitizamos antes de guardar, pois o log é visível ao utilizador.
+        val path = LogSanitizer.redact(req.url.encodedPath)
         return try {
             val res = chain.proceed(req)
             val ms = (System.nanoTime() - start) / 1_000_000
-            logger.log("Http", "${res.code} (n ${ms}ms) -> ${req.method} ${req.url.encodedPath}")
+            logger.log("Http", "${res.code} (n ${ms}ms) -> ${req.method} $path")
             res
         } catch (e: Exception) {
             val ms = (System.nanoTime() - start) / 1_000_000
-            logger.log("Http", "ERR (n ${ms}ms) -> ${req.method} ${req.url.encodedPath}: ${e.message}")
+            logger.log("Http", "ERR (n ${ms}ms) -> ${req.method} $path: ${LogSanitizer.redact(e.message ?: "")}")
             throw e
         }
     }

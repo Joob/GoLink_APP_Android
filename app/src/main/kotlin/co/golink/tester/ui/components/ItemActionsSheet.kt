@@ -1,5 +1,6 @@
 package co.golink.tester.ui.components
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -93,7 +94,7 @@ fun ItemActionsSheet(
                 ActionGroup {
                     ActionItem(
                         icon = Icons.Outlined.RestoreFromTrash,
-                        label = "Restaurar",
+                        label = "Restaurar".tr(),
                         iconBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
                         iconTint = MaterialTheme.colorScheme.primary,
                     ) { onRestore(); onDismiss() }
@@ -102,7 +103,7 @@ fun ItemActionsSheet(
                 ActionGroup {
                     ActionItem(
                         icon = Icons.Outlined.DeleteForever,
-                        label = "Eliminar permanentemente",
+                        label = "Eliminar permanentemente".tr(),
                         iconBg = MaterialTheme.colorScheme.error.copy(alpha = 0.10f),
                         iconTint = MaterialTheme.colorScheme.error,
                         labelColor = MaterialTheme.colorScheme.error,
@@ -113,21 +114,21 @@ fun ItemActionsSheet(
                 ActionGroup {
                     ActionItem(
                         icon = Icons.Outlined.Edit,
-                        label = "Editar item",
+                        label = "Editar item".tr(),
                         iconBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
                         iconTint = MaterialTheme.colorScheme.primary,
                     ) { onRename(); onDismiss() }
                     SheetDivider()
                     ActionItem(
                         icon = Icons.AutoMirrored.Outlined.DriveFileMove,
-                        label = "Mover",
+                        label = "Mover".tr(),
                         iconBg = MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f),
                         iconTint = MaterialTheme.colorScheme.secondary,
                     ) { onMove(); onDismiss() }
                     SheetDivider()
                     ActionItem(
                         icon = Icons.Outlined.DeleteOutline,
-                        label = "Eliminar",
+                        label = "Eliminar".tr(),
                         iconBg = MaterialTheme.colorScheme.error.copy(alpha = 0.10f),
                         iconTint = MaterialTheme.colorScheme.error,
                         labelColor = MaterialTheme.colorScheme.error,
@@ -137,14 +138,14 @@ fun ItemActionsSheet(
                 ActionGroup {
                     ActionItem(
                         icon = Icons.Outlined.Download,
-                        label = "Descarregar",
+                        label = "Descarregar".tr(),
                         iconBg = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f),
                         iconTint = MaterialTheme.colorScheme.tertiary,
                     ) { onDownload(); onDismiss() }
                     SheetDivider()
                     ActionItem(
                         icon = Icons.Outlined.Share,
-                        label = if (isShared) "Editar partilha" else "Partilhar",
+                        label = if (isShared) "Editar partilha".tr() else "Partilhar".tr(),
                         iconBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
                         iconTint = MaterialTheme.colorScheme.primary,
                     ) { onShare(); onDismiss() }
@@ -152,7 +153,7 @@ fun ItemActionsSheet(
                         SheetDivider()
                         ActionItem(
                             icon = Icons.Outlined.Info,
-                            label = "Detalhes",
+                            label = "Detalhes".tr(),
                             iconBg = MaterialTheme.colorScheme.surfaceVariant,
                             iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
                         ) { onDetails(); onDismiss() }
@@ -161,21 +162,21 @@ fun ItemActionsSheet(
                         SheetDivider()
                         ActionItem(
                             icon = if (isFavourite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
-                            label = if (isFavourite) "Remover dos favoritos" else "Adicionar aos favoritos",
+                            label = if (isFavourite) "Remover dos favoritos".tr() else "Adicionar aos favoritos".tr(),
                             iconBg = Color(0xFFFFF3E0),
                             iconTint = Color(0xFFFF8F00),
                         ) { onToggleFavourite(); onDismiss() }
                         SheetDivider()
                         ActionItem(
                             icon = Icons.Outlined.Groups,
-                            label = "Converter em pasta de equipa",
+                            label = "Converter em pasta de equipa".tr(),
                             iconBg = MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f),
                             iconTint = MaterialTheme.colorScheme.secondary,
                         ) { onConvertToTeamFolder(); onDismiss() }
                         SheetDivider()
                         ActionItem(
                             icon = Icons.Outlined.NoteAdd,
-                            label = "Pedido de ficheiros",
+                            label = "Pedido de ficheiros".tr(),
                             iconBg = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f),
                             iconTint = MaterialTheme.colorScheme.tertiary,
                         ) { onComingSoon(); onDismiss() }

@@ -57,6 +57,28 @@ class BrowseRepository @Inject constructor(
         body.data.map { it.data.toItem() }
     }
 
+    // Contagem por tipo para o badge do separador, sem transferir a lista.
+    suspend fun countMobileBackup(type: String): Result<Int> = runCatching {
+        val response = api.mobileBackup(type = type, page = "1", perPage = 1, withFolders = true, countOnly = true)
+        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        (response.body() ?: error("Resposta vazia")).meta?.paginate?.total ?: 0
+    }
+
+    // Navegação nas abas de backup: devolve as pastas de origem (Camera,
+    // Screenshots, …) e os ficheiros do nível pedido, filtrados por tipo no
+    // servidor. parentId=null é a raiz do backup.
+    suspend fun listMobileBackupTree(type: String, parentId: String?): Result<List<BrowseItem>> = runCatching {
+        val response = api.mobileBackup(
+            type = type,
+            page = "all",
+            withFolders = true,
+            parentId = parentId,
+        )
+        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        val body = response.body() ?: error("Resposta vazia")
+        body.data.map { it.data.toItem() }
+    }
+
     // Conteúdo completo de uma pasta (page="all") — usado para navegar nas
     // subpastas do backup (Camera, Screenshots, …) sem paginação.
     suspend fun listAllFolder(id: String): Result<List<BrowseItem>> = runCatching {
@@ -64,6 +86,13 @@ class BrowseRepository @Inject constructor(
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val body = response.body() ?: error("Resposta vazia")
         body.data.map { it.data.toItem() }
+    }
+
+    suspend fun folderFingerprint(id: String?): Result<String> = runCatching {
+        val targetId = id ?: ROOT
+        val response = api.folderFingerprint(targetId)
+        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        (response.body() ?: error("Resposta vazia")).signature
     }
 
     suspend fun navigation(): Result<List<NavigationSection>> = runCatching {

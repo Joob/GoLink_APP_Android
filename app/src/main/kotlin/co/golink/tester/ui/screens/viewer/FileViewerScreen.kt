@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.viewer
 
+import co.golink.tester.ui.i18n.tr
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
@@ -96,6 +97,8 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.ui.components.dialogs.ConfirmDialog
+import co.golink.tester.ui.components.dialogs.ShareDialog
+import co.golink.tester.ui.components.dialogs.ShareDialogState
 import co.golink.tester.ui.components.dialogs.TextInputDialog
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -144,7 +147,7 @@ fun FileViewerScreen(
     var dialog by remember { mutableStateOf(ViewerDialog.None) }
 
     val showSoon: () -> Unit = {
-        scope.launch { snackbarHostState.showSnackbar("Em breve") }
+        scope.launch { snackbarHostState.showSnackbar("Em breve".tr()) }
         Unit
     }
 
@@ -183,7 +186,7 @@ fun FileViewerScreen(
                 },
                 actions = {
                     IconButton(onClick = onClose) {
-                        Icon(Icons.Filled.Close, contentDescription = "Fechar")
+                        Icon(Icons.Filled.Close, contentDescription = "Fechar".tr())
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -202,31 +205,31 @@ fun FileViewerScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         IconButton(onClick = { viewModel.download() }) {
-                            Icon(Icons.Outlined.Download, contentDescription = "Descarregar")
+                            Icon(Icons.Outlined.Download, contentDescription = "Descarregar".tr())
                         }
                         if (current.isImageLike() || current.isPdfLike()) {
                             IconButton(onClick = viewModel::rotateLeft) {
-                                Icon(Icons.Outlined.RotateLeft, contentDescription = "Rodar à esquerda")
+                                Icon(Icons.Outlined.RotateLeft, contentDescription = "Rodar à esquerda".tr())
                             }
                             IconButton(onClick = viewModel::rotateRight) {
-                                Icon(Icons.Outlined.RotateRight, contentDescription = "Rodar à direita")
+                                Icon(Icons.Outlined.RotateRight, contentDescription = "Rodar à direita".tr())
                             }
                             IconButton(
                                 onClick = { viewModel.setZoom((state.zoom / 1.25f).coerceAtLeast(0.2f)) },
                                 enabled = state.zoom > 0.25f,
                             ) {
-                                Icon(Icons.Outlined.ZoomOut, contentDescription = "Reduzir zoom")
+                                Icon(Icons.Outlined.ZoomOut, contentDescription = "Reduzir zoom".tr())
                             }
                             IconButton(
                                 onClick = { viewModel.setZoom((state.zoom * 1.25f).coerceAtMost(8f)) },
                                 enabled = state.zoom < 7.9f,
                             ) {
-                                Icon(Icons.Outlined.ZoomIn, contentDescription = "Aumentar zoom")
+                                Icon(Icons.Outlined.ZoomIn, contentDescription = "Aumentar zoom".tr())
                             }
                         }
                         Spacer(Modifier.weight(1f))
                         IconButton(onClick = { fileSheetOpen = true }) {
-                            Icon(Icons.Filled.MoreVert, contentDescription = "Mais opções")
+                            Icon(Icons.Filled.MoreVert, contentDescription = "Mais opções".tr())
                         }
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
@@ -290,7 +293,7 @@ fun FileViewerScreen(
                             isActive = page == state.currentIndex,
                         )
                         else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("Pré-visualização não suportada")
+                            Text("Pré-visualização não suportada".tr())
                         }
                     }
                 }
@@ -323,24 +326,47 @@ fun FileViewerScreen(
             },
             onDelete = { dialog = ViewerDialog.Delete },
             onDownload = { viewModel.download() },
-            onEditShare = { showSoon() },
+            onEditShare = { viewModel.openShareDialog() },
             onDetails = { dialog = ViewerDialog.Details },
+        )
+    }
+
+    val shareState by viewModel.shareState.collectAsStateWithLifecycle()
+    shareState?.let { ss ->
+        ShareDialog(
+            state = ShareDialogState(
+                item = ss.item,
+                share = ss.share,
+                qrSvg = ss.qrSvg,
+                sendingEmail = ss.sendingEmail,
+                loadingQr = ss.loadingQr,
+                isWorking = ss.isWorking,
+                emailDialogVisible = ss.emailDialogVisible,
+            ),
+            onDismiss = { viewModel.closeShareDialog() },
+            onCreate = { pwd, perm, days -> viewModel.createShare(pwd, perm, days) },
+            onUpdate = { pwd, perm, days -> viewModel.updateCurrentShare(pwd, perm, days) },
+            onCopy = { /* clipboard handled inside dialog */ },
+            onShowQr = viewModel::fetchQrCode,
+            onSendEmail = viewModel::sendShareEmail,
+            onShowEmailDialog = viewModel::setEmailDialogVisible,
+            onRevoke = viewModel::revokeCurrentShare,
         )
     }
 
     when (dialog) {
         ViewerDialog.Rename -> TextInputDialog(
-            title = "Renomear",
-            label = "Novo nome",
+            title = "Renomear".tr(),
+            label = "Novo nome".tr(),
             initialValue = current.name,
-            confirmText = "Guardar",
+            confirmText = "Guardar".tr(),
             onDismiss = { dialog = ViewerDialog.None },
             onConfirm = { name -> viewModel.rename(name); dialog = ViewerDialog.None },
         )
         ViewerDialog.Delete -> ConfirmDialog(
-            title = "Mover para o lixo?",
+            title = "Mover para o lixo?".tr(),
             message = "${current.name} ficará no lixo e podes restaurar depois.",
-            confirmText = "Mover para o lixo",
+            confirmText = "Mover para o lixo".tr(),
             destructive = true,
             onDismiss = { dialog = ViewerDialog.None },
             onConfirm = { viewModel.delete(); dialog = ViewerDialog.None },
@@ -357,9 +383,9 @@ fun FileViewerScreen(
             )
             createInMoveFor?.let { (_, parentId) ->
                 TextInputDialog(
-                    title = "Nova pasta",
+                    title = "Nova pasta".tr(),
                     label = "Nome",
-                    confirmText = "Criar",
+                    confirmText = "Criar".tr(),
                     onDismiss = { createInMoveFor = null },
                     onConfirm = { name ->
                         viewModel.createFolderIn(name, parentId)
@@ -383,7 +409,7 @@ private fun NavArrow(forward: Boolean, modifier: Modifier = Modifier, onClick: (
         IconButton(onClick = onClick) {
             Icon(
                 if (forward) Icons.AutoMirrored.Filled.ArrowForward else Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = if (forward) "Seguinte" else "Anterior",
+                contentDescription = if (forward) "Seguinte".tr() else "Anterior",
             )
         }
     }
@@ -415,8 +441,21 @@ private fun ImageViewer(
                 conn.connectTimeout = 20_000
                 conn.readTimeout = 60_000
                 conn.inputStream.use { input ->
-                    android.graphics.BitmapFactory.decodeStream(input)
-                        ?: error("Falha na descodificação")
+                    // Lê os bytes uma vez para decodificar E ler a orientação EXIF
+                    // do mesmo conteúdo. Sem isto as fotos apareciam de lado (o
+                    // BitmapFactory ignora a orientação; o Coil, usado nas
+                    // miniaturas, aplica-a — daí a diferença).
+                    val bytes = input.readBytes()
+                    val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        ?: error("Falha na descodificação".tr())
+                    val orientation = runCatching {
+                        android.media.ExifInterface(java.io.ByteArrayInputStream(bytes))
+                            .getAttributeInt(
+                                android.media.ExifInterface.TAG_ORIENTATION,
+                                android.media.ExifInterface.ORIENTATION_NORMAL,
+                            )
+                    }.getOrDefault(android.media.ExifInterface.ORIENTATION_NORMAL)
+                    applyExifOrientation(bmp, orientation)
                 }
             }
         }
@@ -490,6 +529,24 @@ private fun ImageViewer(
     }
 }
 
+// Roda/espelha o bitmap segundo a orientação EXIF para a foto aparecer direita.
+private fun applyExifOrientation(bmp: android.graphics.Bitmap, orientation: Int): android.graphics.Bitmap {
+    val m = android.graphics.Matrix()
+    when (orientation) {
+        android.media.ExifInterface.ORIENTATION_ROTATE_90 -> m.postRotate(90f)
+        android.media.ExifInterface.ORIENTATION_ROTATE_180 -> m.postRotate(180f)
+        android.media.ExifInterface.ORIENTATION_ROTATE_270 -> m.postRotate(270f)
+        android.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> m.postScale(-1f, 1f)
+        android.media.ExifInterface.ORIENTATION_FLIP_VERTICAL -> m.postScale(1f, -1f)
+        android.media.ExifInterface.ORIENTATION_TRANSPOSE -> { m.postRotate(90f); m.postScale(-1f, 1f) }
+        android.media.ExifInterface.ORIENTATION_TRANSVERSE -> { m.postRotate(270f); m.postScale(-1f, 1f) }
+        else -> return bmp
+    }
+    return runCatching {
+        android.graphics.Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+    }.getOrDefault(bmp)
+}
+
 @Composable
 private fun TextViewer(content: String?, loading: Boolean, error: String?) {
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
@@ -509,7 +566,7 @@ private fun TextViewer(content: String?, loading: Boolean, error: String?) {
                     )
                 }
             }
-            else -> Text("Sem conteúdo")
+            else -> Text("Sem conteúdo".tr())
         }
     }
 }
@@ -772,7 +829,7 @@ private fun PdfViewer(
         when {
             loading -> CircularProgressIndicator()
             error != null -> Text("Erro: $error", color = MaterialTheme.colorScheme.onSurface)
-            pageBitmaps.isEmpty() -> Text("PDF vazio", color = MaterialTheme.colorScheme.onSurface)
+            pageBitmaps.isEmpty() -> Text("PDF vazio".tr(), color = MaterialTheme.colorScheme.onSurface)
             else -> {
                 LazyColumn(
                     modifier = Modifier
@@ -811,7 +868,7 @@ private fun DetailsSheet(file: BrowseItem.File, onDismiss: () -> Unit) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)) {
-            Text("Detalhes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Detalhes".tr(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(12.dp))
             DetailRow("Nome", file.name)
             DetailRow("Tipo", file.type)
@@ -856,19 +913,19 @@ private fun ViewerFileSheet(
             ViewerSheetHeader(file)
             Spacer(Modifier.height(4.dp))
             ViewerActionGroup {
-                ViewerActionItem(Icons.Outlined.DriveFileRenameOutline, "Renomear", MaterialTheme.colorScheme.primary.copy(alpha = 0.10f), MaterialTheme.colorScheme.primary) { onRename(); onDismiss() }
+                ViewerActionItem(Icons.Outlined.DriveFileRenameOutline, "Renomear".tr(), MaterialTheme.colorScheme.primary.copy(alpha = 0.10f), MaterialTheme.colorScheme.primary) { onRename(); onDismiss() }
                 ViewerSheetDivider()
-                ViewerActionItem(Icons.AutoMirrored.Outlined.DriveFileMove, "Mover", MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f), MaterialTheme.colorScheme.secondary) { onMove(); onDismiss() }
+                ViewerActionItem(Icons.AutoMirrored.Outlined.DriveFileMove, "Mover".tr(), MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f), MaterialTheme.colorScheme.secondary) { onMove(); onDismiss() }
                 ViewerSheetDivider()
-                ViewerActionItem(Icons.Outlined.Share, "Editar partilha", MaterialTheme.colorScheme.primary.copy(alpha = 0.10f), MaterialTheme.colorScheme.primary) { onEditShare(); onDismiss() }
+                ViewerActionItem(Icons.Outlined.Share, if (file.share != null) "Editar partilha".tr() else "Partilhar".tr(), MaterialTheme.colorScheme.primary.copy(alpha = 0.10f), MaterialTheme.colorScheme.primary) { onEditShare(); onDismiss() }
                 ViewerSheetDivider()
-                ViewerActionItem(Icons.Outlined.DeleteOutline, "Eliminar", MaterialTheme.colorScheme.error.copy(alpha = 0.10f), MaterialTheme.colorScheme.error, labelColor = MaterialTheme.colorScheme.error) { onDelete(); onDismiss() }
+                ViewerActionItem(Icons.Outlined.DeleteOutline, "Eliminar".tr(), MaterialTheme.colorScheme.error.copy(alpha = 0.10f), MaterialTheme.colorScheme.error, labelColor = MaterialTheme.colorScheme.error) { onDelete(); onDismiss() }
             }
             Spacer(Modifier.height(8.dp))
             ViewerActionGroup {
-                ViewerActionItem(Icons.Outlined.Download, "Descarregar", MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f), MaterialTheme.colorScheme.tertiary) { onDownload(); onDismiss() }
+                ViewerActionItem(Icons.Outlined.Download, "Descarregar".tr(), MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f), MaterialTheme.colorScheme.tertiary) { onDownload(); onDismiss() }
                 ViewerSheetDivider()
-                ViewerActionItem(Icons.Outlined.Info, "Detalhes", MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant) { onDetails(); onDismiss() }
+                ViewerActionItem(Icons.Outlined.Info, "Detalhes".tr(), MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant) { onDetails(); onDismiss() }
             }
         }
     }

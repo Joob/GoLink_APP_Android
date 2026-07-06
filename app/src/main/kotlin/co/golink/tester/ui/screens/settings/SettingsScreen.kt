@@ -32,6 +32,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
@@ -46,6 +47,7 @@ import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Devices
@@ -54,8 +56,11 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.MailOutline
 import androidx.compose.material.icons.outlined.MusicNote
+import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Receipt
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Security
@@ -111,7 +116,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.window.Dialog
+import androidx.compose.material.icons.outlined.Language
 import co.golink.tester.data.LogEntry
+import co.golink.tester.data.LogSanitizer
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -134,6 +142,10 @@ private sealed interface SettingsRoute {
     data object Sessions : SettingsRoute
     data object Billing : SettingsRoute
     data object AppSecurity : SettingsRoute
+    data object Dashboard : SettingsRoute
+    data object Analytics : SettingsRoute
+    data object Users : SettingsRoute
+    data object InviteRegisters : SettingsRoute
     data object News : SettingsRoute
 }
 
@@ -186,14 +198,18 @@ fun SettingsScreen(
     }
 
     val title = when (route) {
-        SettingsRoute.Menu -> "Definições"
-        SettingsRoute.Profile -> "Perfil"
+        SettingsRoute.Menu -> "Definições".tr()
+        SettingsRoute.Profile -> "Perfil".tr()
         SettingsRoute.Password -> "Password"
-        SettingsRoute.Storage -> "Armazenamento"
-        SettingsRoute.Sessions -> "Sessões"
-        SettingsRoute.Billing -> "Faturação"
-        SettingsRoute.AppSecurity -> "Segurança da app"
-        SettingsRoute.News -> "Notícias"
+        SettingsRoute.Storage -> "Armazenamento".tr()
+        SettingsRoute.Sessions -> "Sessões".tr()
+        SettingsRoute.Billing -> "Faturação".tr()
+        SettingsRoute.AppSecurity -> "Segurança da app".tr()
+        SettingsRoute.Dashboard -> "Painel".tr()
+        SettingsRoute.Analytics -> "Análises".tr()
+        SettingsRoute.Users -> "Utilizadores".tr()
+        SettingsRoute.InviteRegisters -> "Registos de Convite".tr()
+        SettingsRoute.News -> "Notícias".tr()
     }
 
     Scaffold(
@@ -204,7 +220,7 @@ fun SettingsScreen(
                     IconButton(onClick = {
                         if (route == SettingsRoute.Menu) onBack() else route = SettingsRoute.Menu
                     }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar".tr())
                     }
                 },
             )
@@ -218,6 +234,7 @@ fun SettingsScreen(
                     onNavigate = { route = it },
                     onOpenAutoBackup = onOpenAutoBackup,
                     onLogout = viewModel::logout,
+                    onUpdateAvatar = viewModel::updateAvatar,
                 )
                 SettingsRoute.Profile -> ProfilePane(
                     user = user,
@@ -261,7 +278,12 @@ fun SettingsScreen(
                     onRefresh = viewModel::loadTransactions,
                 )
                 SettingsRoute.News -> NewsAdminPane()
+                SettingsRoute.Dashboard -> DashboardPane()
+                SettingsRoute.Analytics -> AnalyticsPane()
+                SettingsRoute.Users -> AdminUsersPane()
+                SettingsRoute.InviteRegisters -> InviteRegistersPane()
                 SettingsRoute.AppSecurity -> AppSecurityPane(
+                    user = user,
                     biometricEnabled = state.biometricEnabled,
                     pinEnabled = state.pinEnabled,
                     hasPinSet = viewModel.hasPinSet,
@@ -284,14 +306,32 @@ private fun MenuPane(
     onNavigate: (SettingsRoute) -> Unit,
     onOpenAutoBackup: () -> Unit,
     onLogout: () -> Unit,
+    onUpdateAvatar: (ByteArray) -> Unit,
 ) {
     var showLogoutConfirm by remember { mutableStateOf(false) }
 
+    // Avatar: escolher imagem → recortar no popup → confirmar → upload.
+    var pickedImage by remember { mutableStateOf<android.net.Uri?>(null) }
+    val avatarPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia(),
+    ) { uri -> if (uri != null) pickedImage = uri }
+
+    pickedImage?.let { uri ->
+        co.golink.tester.ui.components.dialogs.AvatarCropDialog(
+            imageUri = uri,
+            onCancel = { pickedImage = null },
+            onConfirm = { jpeg ->
+                pickedImage = null
+                onUpdateAvatar(jpeg)
+            },
+        )
+    }
+
     if (showLogoutConfirm) {
         co.golink.tester.ui.components.dialogs.ConfirmDialog(
-            title = "Sair da Conta?",
-            message = "Tens a certeza que queres sair da tua conta?",
-            confirmText = "Sair",
+            title = "Sair da Conta?".tr(),
+            message = "Tens a certeza que queres sair da tua conta?".tr(),
+            confirmText = "Sair".tr(),
             destructive = true,
             onDismiss = { showLogoutConfirm = false },
             onConfirm = onLogout,
@@ -313,26 +353,57 @@ private fun MenuPane(
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
                     .padding(16.dp),
             ) {
-                if (u.avatar != null) {
-                    AsyncImage(
-                        model = u.avatar,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(56.dp).clip(CircleShape),
-                    )
-                } else {
+                // Clicar no avatar → escolher/recortar/enviar nova imagem.
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .clickable {
+                            avatarPicker.launch(
+                                androidx.activity.result.PickVisualMediaRequest(
+                                    androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly,
+                                ),
+                            )
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (u.avatar != null) {
+                        AsyncImage(
+                            model = u.avatar,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().clip(CircleShape),
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                u.name.take(1).uppercase(),
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                    // Selo de câmara no canto.
                     Box(
                         modifier = Modifier
-                            .size(56.dp)
+                            .align(Alignment.BottomEnd)
+                            .size(20.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                            .background(MaterialTheme.colorScheme.primary),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(
-                            u.name.take(1).uppercase(),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
+                        Icon(
+                            Icons.Filled.PhotoCamera,
+                            contentDescription = "Alterar imagem".tr(),
+                            tint = Color.White,
+                            modifier = Modifier.size(12.dp),
                         )
                     }
                 }
@@ -377,27 +448,39 @@ private fun MenuPane(
         Spacer(Modifier.height(16.dp))
 
         MenuGroup {
-            MenuRow(Icons.Outlined.AccountCircle, "Perfil", "Nome e detalhes da conta") { onNavigate(SettingsRoute.Profile) }
+            MenuRow(Icons.Outlined.AccountCircle, "Perfil".tr(), "Nome e detalhes da conta".tr()) { onNavigate(SettingsRoute.Profile) }
             MenuDivider()
-            MenuRow(Icons.Outlined.Lock, "Password", "Alterar a tua password") { onNavigate(SettingsRoute.Password) }
+            MenuRow(Icons.Outlined.Lock, "Password", "Alterar a tua password".tr()) { onNavigate(SettingsRoute.Password) }
             MenuDivider()
-            MenuRow(Icons.Outlined.CloudQueue, "Armazenamento", "Espaço utilizado e disponível") { onNavigate(SettingsRoute.Storage) }
+            MenuRow(Icons.Outlined.CloudQueue, "Armazenamento".tr(), "Espaço utilizado e disponível".tr()) { onNavigate(SettingsRoute.Storage) }
             MenuDivider()
-            MenuRow(Icons.Outlined.Devices, "Sessões", "Dispositivos e sessões activas") { onNavigate(SettingsRoute.Sessions) }
+            MenuRow(Icons.Outlined.Devices, "Sessões".tr(), "Dispositivos e sessões activas".tr()) { onNavigate(SettingsRoute.Sessions) }
         }
 
         Spacer(Modifier.height(16.dp))
 
         MenuGroup {
-            MenuRow(Icons.Outlined.Receipt, "Faturação", "Histórico de transações") { onNavigate(SettingsRoute.Billing) }
+            MenuRow(Icons.Outlined.Receipt, "Faturação".tr(), "Histórico de transações".tr()) { onNavigate(SettingsRoute.Billing) }
             MenuDivider()
-            MenuRow(Icons.Outlined.ShieldMoon, "Segurança da app", "Biométrico e PIN") { onNavigate(SettingsRoute.AppSecurity) }
+            MenuRow(Icons.Outlined.ShieldMoon, "Segurança da app".tr(), "Biométrico e PIN".tr()) { onNavigate(SettingsRoute.AppSecurity) }
         }
 
         if (user?.role == "admin") {
+            Spacer(Modifier.height(20.dp))
+            SectionLabel("Administração".tr())
+            MenuGroup {
+                MenuRow(Icons.Outlined.Dashboard, "Painel".tr(), "Visão geral e estatísticas".tr()) { onNavigate(SettingsRoute.Dashboard) }
+                MenuDivider()
+                MenuRow(Icons.Outlined.Insights, "Análises".tr(), "Visitas e visitantes".tr()) { onNavigate(SettingsRoute.Analytics) }
+                MenuDivider()
+                MenuRow(Icons.Outlined.People, "Utilizadores".tr(), "Lista de utilizadores".tr()) { onNavigate(SettingsRoute.Users) }
+                MenuDivider()
+                MenuRow(Icons.Outlined.MailOutline, "Registos de Convite".tr(), "Convidar e gerir registos".tr()) { onNavigate(SettingsRoute.InviteRegisters) }
+            }
+
             Spacer(Modifier.height(16.dp))
             MenuGroup {
-                MenuRow(Icons.Outlined.Campaign, "Notícias", "Notícia importante na zona de files") { onNavigate(SettingsRoute.News) }
+                MenuRow(Icons.Outlined.Campaign, "Notícias".tr(), "Notícia importante na zona de files".tr()) { onNavigate(SettingsRoute.News) }
             }
         }
 
@@ -413,7 +496,7 @@ private fun MenuPane(
         ) {
             Icon(Icons.Filled.Logout, contentDescription = null)
             Spacer(Modifier.width(8.dp))
-            Text("Terminar sessão")
+            Text("Terminar sessão".tr())
         }
 
         Spacer(Modifier.height(16.dp))
@@ -531,7 +614,7 @@ private fun AutoBackupFeaturedRow(onClick: () -> Unit) {
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "Backups Automáticos",
+                        "Backups Automáticos".tr(),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = Color.White,
@@ -552,7 +635,7 @@ private fun AutoBackupFeaturedRow(onClick: () -> Unit) {
                 }
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "Copia as tuas fotos e vídeos automaticamente.",
+                    "Copia as tuas fotos e vídeos automaticamente.".tr(),
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.White.copy(alpha = 0.9f),
                 )
@@ -624,7 +707,7 @@ private fun ProfilePane(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    "O email não pode ser alterado",
+                    "O email não pode ser alterado".tr(),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -632,7 +715,7 @@ private fun ProfilePane(
         }
 
         Spacer(Modifier.height(20.dp))
-        SectionLabel("Definições da conta")
+        SectionLabel("Definições da conta".tr())
         Surface(
             shape = RoundedCornerShape(14.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
@@ -643,7 +726,7 @@ private fun ProfilePane(
                     OutlinedTextField(
                         value = firstName,
                         onValueChange = { firstName = it },
-                        label = { Text("Primeiro nome") },
+                        label = { Text("Primeiro nome".tr()) },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f),
@@ -680,13 +763,13 @@ private fun ProfilePane(
                         )
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text("Guardar definições", fontWeight = FontWeight.SemiBold)
+                    Text("Guardar definições".tr(), fontWeight = FontWeight.SemiBold)
                 }
             }
         }
 
         Spacer(Modifier.height(20.dp))
-        SectionLabel("Informações de faturação")
+        SectionLabel("Informações de faturação".tr())
         Surface(
             shape = RoundedCornerShape(14.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
@@ -713,7 +796,7 @@ private fun ProfilePane(
                     OutlinedTextField(
                         value = postalCode,
                         onValueChange = { postalCode = it },
-                        label = { Text("Código postal") },
+                        label = { Text("Código postal".tr()) },
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f),
@@ -724,7 +807,7 @@ private fun ProfilePane(
                     value = state,
                     onValueChange = { state = it },
                     label = { Text("Estado/Região") },
-                    placeholder = { Text("Se aplicável, ex.: Lisboa") },
+                    placeholder = { Text("Se aplicável, ex.: Lisboa".tr()) },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
@@ -759,7 +842,7 @@ private fun ProfilePane(
                         )
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text("Guardar informações", fontWeight = FontWeight.SemiBold)
+                    Text("Guardar informações".tr(), fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -831,7 +914,7 @@ private fun TimezoneDropdown(value: String, onValueChange: (String) -> Unit) {
             value = selectedLabel,
             onValueChange = {},
             readOnly = true,
-            label = { Text("Fuso horário (GMT)") },
+            label = { Text("Fuso horário (GMT)".tr()) },
             trailingIcon = {
                 Icon(
                     if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
@@ -870,7 +953,7 @@ private fun CountryDropdown(value: String, onValueChange: (String) -> Unit) {
             value = selectedLabel,
             onValueChange = {},
             readOnly = true,
-            label = { Text("País") },
+            label = { Text("País".tr()) },
             trailingIcon = {
                 Icon(
                     if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
@@ -920,7 +1003,7 @@ private fun PasswordPane(
     if (show2faInfo) {
         AlertDialog(
             onDismissRequest = { show2faInfo = false },
-            title = { Text("Gerir 2FA") },
+            title = { Text("Gerir 2FA".tr()) },
             text = {
                 Text(
                     if (twoFactorEnabled)
@@ -935,10 +1018,10 @@ private fun PasswordPane(
                     val url = backendUrl.trimEnd('/') + "/user/settings/password"
                     uriHandler.openUri(url)
                     show2faInfo = false
-                }) { Text("Abrir no browser") }
+                }) { Text("Abrir no browser".tr()) }
             },
             dismissButton = {
-                TextButton(onClick = { onRefreshUser(); show2faInfo = false }) { Text("Actualizar estado") }
+                TextButton(onClick = { onRefreshUser(); show2faInfo = false }) { Text("Actualizar estado".tr()) }
             },
         )
     }
@@ -957,12 +1040,12 @@ private fun PasswordPane(
     if (showCreateTokenDialog) {
         AlertDialog(
             onDismissRequest = { showCreateTokenDialog = false; newTokenName = "" },
-            title = { Text("Novo token de acesso") },
+            title = { Text("Novo token de acesso".tr()) },
             text = {
                 OutlinedTextField(
                     value = newTokenName,
                     onValueChange = { newTokenName = it },
-                    label = { Text("Nome do token") },
+                    label = { Text("Nome do token".tr()) },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
@@ -972,10 +1055,10 @@ private fun PasswordPane(
                 Button(
                     onClick = { onCreateToken(newTokenName.trim()); showCreateTokenDialog = false; newTokenName = "" },
                     enabled = newTokenName.isNotBlank(),
-                ) { Text("Criar") }
+                ) { Text("Criar".tr()) }
             },
             dismissButton = {
-                TextButton(onClick = { showCreateTokenDialog = false; newTokenName = "" }) { Text("Cancelar") }
+                TextButton(onClick = { showCreateTokenDialog = false; newTokenName = "" }) { Text("Cancelar".tr()) }
             },
         )
     }
@@ -994,11 +1077,11 @@ private fun PasswordPane(
             icon = Icons.Outlined.Security,
             iconTint = if (twoFactorEnabled) Color(0xFF16A34A) else MaterialTheme.colorScheme.primary,
             iconBg = (if (twoFactorEnabled) Color(0xFF16A34A) else MaterialTheme.colorScheme.primary).copy(alpha = 0.12f),
-            title = "Autenticação de Dois Fatores",
+            title = "Autenticação de Dois Fatores".tr(),
             description = if (twoFactorEnabled)
                 "Activa nesta conta — toca em \"Gerir\" para abrir as definições no browser."
             else
-                "Adicione uma camada extra de segurança. Configura no browser.",
+                "Adicione uma camada extra de segurança. Configura no browser.".tr(),
             trailing = {
                 Button(
                     onClick = { show2faInfo = true },
@@ -1007,7 +1090,7 @@ private fun PasswordPane(
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (twoFactorEnabled) Color(0xFF16A34A) else MaterialTheme.colorScheme.primary,
                     ),
-                ) { Text(if (twoFactorEnabled) "Gerir" else "Activar", fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                ) { Text(if (twoFactorEnabled) "Gerir" else "Activar".tr(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
             },
         )
 
@@ -1016,8 +1099,8 @@ private fun PasswordPane(
             icon = Icons.Outlined.VpnKey,
             iconTint = MaterialTheme.colorScheme.primary,
             iconBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-            title = "Token de Acesso Pessoal",
-            description = if (tokens.isEmpty()) "Você não tem tokens de acesso pessoal criados ainda."
+            title = "Token de Acesso Pessoal".tr(),
+            description = if (tokens.isEmpty()) "Você não tem tokens de acesso pessoal criados ainda.".tr()
             else "Tem ${tokens.size} token${if (tokens.size > 1) "s" else ""} de acesso pessoal.",
             trailing = {
                 Button(
@@ -1025,7 +1108,7 @@ private fun PasswordPane(
                     shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                ) { Text("Criar Token", fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                ) { Text("Criar Token".tr(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
             },
         )
 
@@ -1038,7 +1121,7 @@ private fun PasswordPane(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        "Token criado — guarda-o agora, não será mostrado novamente.",
+                        "Token criado — guarda-o agora, não será mostrado novamente.".tr(),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                         fontWeight = FontWeight.SemiBold,
@@ -1110,8 +1193,8 @@ private fun PasswordPane(
             icon = Icons.Outlined.Refresh,
             iconTint = pink,
             iconBg = pink.copy(alpha = 0.12f),
-            title = "Redefinir meu CSRF",
-            description = "Redefinir seu token CSRF pode ajudar a resolver problemas de sessão em algumas situações.",
+            title = "Redefinir meu CSRF".tr(),
+            description = "Redefinir seu token CSRF pode ajudar a resolver problemas de sessão em algumas situações.".tr(),
             trailing = {
                 Button(
                     onClick = onResetCsrf,
@@ -1125,18 +1208,18 @@ private fun PasswordPane(
         // Alterar password section
         Spacer(Modifier.height(8.dp))
         Text(
-            "Alterar password",
+            "Alterar password".tr(),
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.SemiBold,
         )
 
-        PasswordField(label = "Password actual", value = current, onChange = { current = it })
-        PasswordField(label = "Nova password", value = newPassword, onChange = { newPassword = it }, isError = tooShort, errorText = if (tooShort) "Mínimo 6 caracteres" else null)
-        PasswordField(label = "Confirmar nova password", value = confirmation, onChange = { confirmation = it }, isError = mismatch, errorText = if (mismatch) "Não coincide" else null)
+        PasswordField(label = "Password actual".tr(), value = current, onChange = { current = it })
+        PasswordField(label = "Nova password".tr(), value = newPassword, onChange = { newPassword = it }, isError = tooShort, errorText = if (tooShort) "Mínimo 6 caracteres".tr() else null)
+        PasswordField(label = "Confirmar nova password".tr(), value = confirmation, onChange = { confirmation = it }, isError = mismatch, errorText = if (mismatch) "Não coincide".tr() else null)
 
         Text(
-            "Por segurança, você será desconectado de outros dispositivos sempre que alterar a password.",
+            "Por segurança, você será desconectado de outros dispositivos sempre que alterar a password.".tr(),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 4.dp),
@@ -1156,7 +1239,7 @@ private fun PasswordPane(
             }
             Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Guardar nova password", fontWeight = FontWeight.SemiBold)
+            Text("Guardar nova password".tr(), fontWeight = FontWeight.SemiBold)
         }
 
         Spacer(Modifier.height(16.dp))
@@ -1296,7 +1379,7 @@ private fun StoragePane(
             StorageFeatureCard(
                 icon = if (isLow) Icons.Outlined.Warning else Icons.Outlined.CloudQueue,
                 iconColor = accentColor,
-                title = "Armazenamento utilizado",
+                title = "Armazenamento utilizado".tr(),
                 subtitle = if (isLow) "Espaço quase esgotado — ${storage.used} de ${storage.capacity}" else "${storage.used} de ${storage.capacity}",
                 progress = (storage.percentage / 100f).coerceIn(0f, 1f),
                 trailing = {
@@ -1349,11 +1432,11 @@ private fun StoragePane(
             data class FileTypeEntry(val label: String, val usage: co.golink.tester.domain.settings.StorageTypeUsage, val icon: androidx.compose.ui.graphics.vector.ImageVector, val color: Color)
 
             val fileTypes = listOfNotNull(
-                storage.videos?.let { FileTypeEntry("Vídeos", it, Icons.Outlined.Videocam, Color(0xFF7C4DFF)) },
-                storage.images?.let { FileTypeEntry("Imagens", it, Icons.Outlined.Image, Color(0xFF43A047)) },
-                storage.documents?.let { FileTypeEntry("Documentos", it, Icons.Outlined.Description, Color(0xFF1E88E5)) },
+                storage.videos?.let { FileTypeEntry("Vídeos".tr(), it, Icons.Outlined.Videocam, Color(0xFF7C4DFF)) },
+                storage.images?.let { FileTypeEntry("Imagens".tr(), it, Icons.Outlined.Image, Color(0xFF43A047)) },
+                storage.documents?.let { FileTypeEntry("Documentos".tr(), it, Icons.Outlined.Description, Color(0xFF1E88E5)) },
                 storage.others?.let { FileTypeEntry("Outros", it, Icons.Outlined.FolderOpen, Color(0xFF9E9E9E)) },
-                storage.audios?.let { FileTypeEntry("Áudios", it, Icons.Outlined.MusicNote, Color(0xFFFF8F00)) },
+                storage.audios?.let { FileTypeEntry("Áudios".tr(), it, Icons.Outlined.MusicNote, Color(0xFFFF8F00)) },
             ).filter { it.usage.used != null }
 
             if (fileTypes.isNotEmpty()) {
@@ -1372,7 +1455,7 @@ private fun StoragePane(
                                 .padding(horizontal = 16.dp, vertical = 14.dp),
                         ) {
                             Text(
-                                "Detalhes por tipo",
+                                "Detalhes por tipo".tr(),
                                 style = MaterialTheme.typography.bodyLarge,
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.weight(1f),
@@ -1442,7 +1525,7 @@ private fun StoragePane(
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(Modifier.width(8.dp))
-                Text("A actualizar…")
+                Text("A actualizar…".tr())
             } else {
                 Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
@@ -1541,10 +1624,10 @@ private fun SessionsPane(
 
     pendingRevoke?.let { s ->
         co.golink.tester.ui.components.dialogs.ConfirmDialog(
-            title = if (s.is_current) "Revogar sessão actual?" else "Revogar esta sessão?",
+            title = if (s.is_current) "Revogar sessão actual?".tr() else "Revogar esta sessão?".tr(),
             message = if (s.is_current)
-                "Vais ser desconectado deste dispositivo imediatamente."
-            else "A sessão será terminada e o dispositivo terá de iniciar sessão novamente.",
+                "Vais ser desconectado deste dispositivo imediatamente.".tr()
+            else "A sessão será terminada e o dispositivo terá de iniciar sessão novamente.".tr(),
             confirmText = "Revogar",
             destructive = true,
             onDismiss = { pendingRevoke = null },
@@ -1553,17 +1636,20 @@ private fun SessionsPane(
     }
     if (showRevokeAll) {
         co.golink.tester.ui.components.dialogs.ConfirmDialog(
-            title = "Terminar outras sessões?",
-            message = "Todas as outras sessões serão revogadas. Continuarás autenticado neste dispositivo.",
-            confirmText = "Terminar todas",
+            title = "Terminar outras sessões?".tr(),
+            message = "Todas as outras sessões serão revogadas. Continuarás autenticado neste dispositivo.".tr(),
+            confirmText = "Terminar todas".tr(),
             destructive = true,
             onDismiss = { showRevokeAll = false },
             onConfirm = { onRevokeAll(); showRevokeAll = false },
         )
     }
 
-    val webSessions = sessions.filter { (it.platform ?: "").lowercase() == "web" }
-    val mobileSessions = sessions.filter { (it.platform ?: "").lowercase() != "web" }
+    // The session currently viewing this list IS this Android app on a phone,
+    // so always treat it as mobile even if the backend still has it labelled
+    // "web" (e.g. it was created before the app sent a mobile User-Agent).
+    val webSessions = sessions.filter { !it.isMobileSession() }
+    val mobileSessions = sessions.filter { it.isMobileSession() }
     val hasOthers = sessions.any { !it.is_current }
 
     Column(
@@ -1586,20 +1672,20 @@ private fun SessionsPane(
         }
 
         SessionsGroup(
-            title = "Sessões Web",
+            title = "Sessões Web".tr(),
             icon = Icons.Outlined.Devices,
-            description = "Dispositivos com sessão iniciada via browser.",
+            description = "Dispositivos com sessão iniciada via browser.".tr(),
             sessions = webSessions,
-            emptyText = "Sem sessões web activas.",
+            emptyText = "Sem sessões web activas.".tr(),
             onRevoke = { pendingRevoke = it },
         )
 
         SessionsGroup(
-            title = "Sessões Mobile",
+            title = "Sessões Mobile".tr(),
             icon = Icons.Filled.Smartphone,
-            description = "Dispositivos móveis com sessão iniciada.",
+            description = "Dispositivos móveis com sessão iniciada.".tr(),
             sessions = mobileSessions,
-            emptyText = "Sem sessões móveis activas.",
+            emptyText = "Sem sessões móveis activas.".tr(),
             onRevoke = { pendingRevoke = it },
         )
 
@@ -1613,7 +1699,7 @@ private fun SessionsPane(
                 if (isLoading) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(8.dp))
-                    Text("A actualizar…")
+                    Text("A actualizar…".tr())
                 } else {
                     Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
@@ -1631,11 +1717,19 @@ private fun SessionsPane(
             ) {
                 Icon(Icons.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Terminar todas as outras sessões")
+                Text("Terminar todas as outras sessões".tr())
             }
         }
     }
 }
+
+/**
+ * A session is shown as mobile when the backend labels it non-"web", OR when
+ * it is the current session — because this list is being viewed from the
+ * Android app, so the active session is necessarily this phone.
+ */
+private fun SessionItem.isMobileSession(): Boolean =
+    is_current || (platform ?: "").lowercase() != "web"
 
 @Composable
 private fun SessionsGroup(
@@ -1680,7 +1774,7 @@ private fun SessionsGroup(
 @Composable
 private fun SessionRow(s: SessionItem, onRevoke: () -> Unit) {
     val accent = if (s.is_current) Color(0xFF16A34A) else MaterialTheme.colorScheme.primary
-    val isMobile = (s.platform ?: "").lowercase() != "web"
+    val isMobile = s.isMobileSession()
     Row(
         verticalAlignment = Alignment.Top,
         modifier = Modifier
@@ -1705,7 +1799,7 @@ private fun SessionRow(s: SessionItem, onRevoke: () -> Unit) {
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    s.device ?: s.browser ?: "Dispositivo desconhecido",
+                    s.device ?: s.browser ?: "Dispositivo desconhecido".tr(),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -1778,13 +1872,13 @@ private fun BillingPane(
             Text("Plano", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(4.dp))
             Text(
-                user?.planName ?: "Plano Gratuito",
+                user?.planName ?: "Plano Gratuito".tr(),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(12.dp))
             Text(
-                "Atualize a sua conta para obter mais.",
+                "Atualize a sua conta para obter mais.".tr(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1802,7 +1896,7 @@ private fun BillingPane(
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(8.dp))
                 }
-                Text("Atualizar Conta", fontWeight = FontWeight.SemiBold)
+                Text("Atualizar Conta".tr(), fontWeight = FontWeight.SemiBold)
             }
         }
 
@@ -1810,14 +1904,14 @@ private fun BillingPane(
 
         InfoCard(
             icon = Icons.Outlined.Receipt,
-            iconContentDescription = "Transações",
+            iconContentDescription = "Transações".tr(),
             trailing = {
                 IconButton(onClick = onRefresh) {
                     Icon(Icons.Outlined.Refresh, contentDescription = "Atualizar", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             },
         ) {
-            Text("Transações", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Transações".tr(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(12.dp))
             when {
                 isLoading && transactions.isEmpty() -> {
@@ -1827,7 +1921,7 @@ private fun BillingPane(
                 }
                 transactions.isEmpty() -> {
                     Text(
-                        "Sem transações",
+                        "Sem transações".tr(),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1868,14 +1962,14 @@ private fun PlansDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Escolher plano", fontWeight = FontWeight.SemiBold) },
+        title = { Text("Escolher plano".tr(), fontWeight = FontWeight.SemiBold) },
         text = {
             when {
                 isLoading -> Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
                 plans.isEmpty() -> Text(
-                    "Sem planos disponíveis no momento.",
+                    "Sem planos disponíveis no momento.".tr(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1913,10 +2007,10 @@ private fun PlansDialog(
                                 }
                                 if (isCurrent) {
                                     Spacer(Modifier.height(6.dp))
-                                    Text("Plano atual", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+                                    Text("Plano atual".tr(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
                                 } else if (plan.stripePriceId == null) {
                                     Spacer(Modifier.height(6.dp))
-                                    Text("Indisponível para checkout móvel", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("Indisponível para checkout móvel".tr(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
@@ -1925,7 +2019,7 @@ private fun PlansDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Fechar") }
+            TextButton(onClick = onDismiss) { Text("Fechar".tr()) }
         },
     )
 }
@@ -1979,7 +2073,7 @@ private fun TransactionRow(t: TransactionItem) {
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                t.note ?: t.type ?: "Transação",
+                t.note ?: t.type ?: "Transação".tr(),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -2000,7 +2094,7 @@ private fun TransactionRow(t: TransactionItem) {
                 Text(price, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                 t.status?.let { status ->
                     val (statusLabel, statusColor) = when (status) {
-                        "completed" -> "concluído" to MaterialTheme.colorScheme.primary
+                        "completed" -> "concluído".tr() to MaterialTheme.colorScheme.primary
                         "cancelled" -> "cancelado" to MaterialTheme.colorScheme.error
                         "error" -> "erro" to MaterialTheme.colorScheme.error
                         "pending" -> "pendente" to MaterialTheme.colorScheme.onSurfaceVariant
@@ -2016,6 +2110,7 @@ private fun TransactionRow(t: TransactionItem) {
 
 @Composable
 private fun AppSecurityPane(
+    user: User?,
     biometricEnabled: Boolean,
     pinEnabled: Boolean,
     hasPinSet: Boolean,
@@ -2051,10 +2146,10 @@ private fun AppSecurityPane(
     if (pinStep == 1) {
         AlertDialog(
             onDismissRequest = { pinStep = 0; pinInput = ""; pinError = null },
-            title = { Text("Definir PIN") },
+            title = { Text("Definir PIN".tr()) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Introduz um PIN de 4 dígitos para bloquear a aplicação.", style = MaterialTheme.typography.bodyMedium)
+                    Text("Introduz um PIN de 4 dígitos para bloquear a aplicação.".tr(), style = MaterialTheme.typography.bodyMedium)
                     OutlinedTextField(
                         value = pinInput,
                         onValueChange = { if (it.length <= 4 && it.all(Char::isDigit)) { pinInput = it; pinError = null } },
@@ -2069,26 +2164,26 @@ private fun AppSecurityPane(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (pinInput.length < 4) { pinError = "O PIN deve ter 4 dígitos"; return@TextButton }
+                    if (pinInput.length < 4) { pinError = "O PIN deve ter 4 dígitos".tr(); return@TextButton }
                     pinFirst = pinInput; pinInput = ""; pinStep = 2
-                }) { Text("Seguinte") }
+                }) { Text("Seguinte".tr()) }
             },
             dismissButton = {
-                TextButton(onClick = { pinStep = 0; pinInput = ""; pinError = null }) { Text("Cancelar") }
+                TextButton(onClick = { pinStep = 0; pinInput = ""; pinError = null }) { Text("Cancelar".tr()) }
             },
         )
     }
     if (pinStep == 2) {
         AlertDialog(
             onDismissRequest = { pinStep = 0; pinInput = ""; pinFirst = ""; pinError = null },
-            title = { Text("Confirmar PIN") },
+            title = { Text("Confirmar PIN".tr()) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Repete o PIN para confirmar.", style = MaterialTheme.typography.bodyMedium)
+                    Text("Repete o PIN para confirmar.".tr(), style = MaterialTheme.typography.bodyMedium)
                     OutlinedTextField(
                         value = pinInput,
                         onValueChange = { if (it.length <= 4 && it.all(Char::isDigit)) { pinInput = it; pinError = null } },
-                        label = { Text("Confirmar PIN") },
+                        label = { Text("Confirmar PIN".tr()) },
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                         singleLine = true,
@@ -2099,13 +2194,13 @@ private fun AppSecurityPane(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (pinInput != pinFirst) { pinError = "Os PINs não coincidem"; return@TextButton }
+                    if (pinInput != pinFirst) { pinError = "Os PINs não coincidem".tr(); return@TextButton }
                     onEnablePin(pinInput)
                     pinStep = 0; pinInput = ""; pinFirst = ""; pinError = null
-                }) { Text("Activar") }
+                }) { Text("Activar".tr()) }
             },
             dismissButton = {
-                TextButton(onClick = { pinStep = 0; pinInput = ""; pinFirst = ""; pinError = null }) { Text("Cancelar") }
+                TextButton(onClick = { pinStep = 0; pinInput = ""; pinFirst = ""; pinError = null }) { Text("Cancelar".tr()) }
             },
         )
     }
@@ -2114,14 +2209,14 @@ private fun AppSecurityPane(
     if (showPinDisable) {
         AlertDialog(
             onDismissRequest = { showPinDisable = false; pinDisableInput = ""; pinDisableError = null },
-            title = { Text("Desactivar PIN") },
+            title = { Text("Desactivar PIN".tr()) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Introduz o PIN actual para desactivar o bloqueio.", style = MaterialTheme.typography.bodyMedium)
+                    Text("Introduz o PIN actual para desactivar o bloqueio.".tr(), style = MaterialTheme.typography.bodyMedium)
                     OutlinedTextField(
                         value = pinDisableInput,
                         onValueChange = { if (it.length <= 4 && it.all(Char::isDigit)) { pinDisableInput = it; pinDisableError = null } },
-                        label = { Text("PIN actual") },
+                        label = { Text("PIN actual".tr()) },
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                         singleLine = true,
@@ -2132,19 +2227,19 @@ private fun AppSecurityPane(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (!onDisablePin(pinDisableInput)) { pinDisableError = "PIN incorrecto"; return@TextButton }
+                    if (!onDisablePin(pinDisableInput)) { pinDisableError = "PIN incorrecto".tr(); return@TextButton }
                     showPinDisable = false; pinDisableInput = ""; pinDisableError = null
                 }) { Text("Desactivar") }
             },
             dismissButton = {
-                TextButton(onClick = { showPinDisable = false; pinDisableInput = ""; pinDisableError = null }) { Text("Cancelar") }
+                TextButton(onClick = { showPinDisable = false; pinDisableInput = ""; pinDisableError = null }) { Text("Cancelar".tr()) }
             },
         )
     }
 
     // Log dialog
     if (showLog) {
-        LogDialog(entries = logEntries, onClear = onClearLog, onDismiss = { showLog = false })
+        LogDialog(user = user, entries = logEntries, onClear = onClearLog, onDismiss = { showLog = false })
     }
 
     Column(
@@ -2153,7 +2248,7 @@ private fun AppSecurityPane(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        SectionLabel("Segurança")
+        SectionLabel("Segurança".tr())
         Surface(
             shape = RoundedCornerShape(14.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
@@ -2162,8 +2257,8 @@ private fun AppSecurityPane(
             Column {
                 SecurityToggleRow(
                     icon = Icons.Outlined.Fingerprint,
-                    title = "Desbloqueio biométrico",
-                    description = if (biometricAvailable) "Usa a impressão digital ou rosto para entrar" else "Não disponível neste dispositivo",
+                    title = "Desbloqueio biométrico".tr(),
+                    description = if (biometricAvailable) "Usa a impressão digital ou rosto para entrar".tr() else "Não disponível neste dispositivo",
                     checked = biometricEnabled && biometricAvailable,
                     enabled = biometricAvailable,
                     onCheckedChange = { enabled ->
@@ -2179,9 +2274,9 @@ private fun AppSecurityPane(
                                 },
                             ).authenticate(
                                 BiometricPrompt.PromptInfo.Builder()
-                                    .setTitle("Activar biométrico")
-                                    .setSubtitle("Confirma a tua identidade para activar")
-                                    .setNegativeButtonText("Cancelar")
+                                    .setTitle("Activar biométrico".tr())
+                                    .setSubtitle("Confirma a tua identidade para activar".tr())
+                                    .setNegativeButtonText("Cancelar".tr())
                                     .build(),
                             )
                         } else {
@@ -2192,8 +2287,8 @@ private fun AppSecurityPane(
                 MenuDivider()
                 SecurityToggleRow(
                     icon = Icons.Outlined.Lock,
-                    title = "Bloqueio por PIN",
-                    description = "Requer PIN para abrir a aplicação",
+                    title = "Bloqueio por PIN".tr(),
+                    description = "Requer PIN para abrir a aplicação".tr(),
                     checked = pinEnabled,
                     enabled = true,
                     onCheckedChange = { checked ->
@@ -2209,7 +2304,7 @@ private fun AppSecurityPane(
 
         Spacer(Modifier.height(16.dp))
         Text(
-            "Quando activo, o bloqueio é pedido sempre que a app fica em segundo plano por mais de 30 segundos.",
+            "Quando activo, o bloqueio é pedido sempre que a app fica em segundo plano por mais de 30 segundos.".tr(),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 4.dp),
@@ -2225,13 +2320,13 @@ private fun AppSecurityPane(
             Column {
                 SecurityActionRow(
                     icon = Icons.Outlined.DeleteSweep,
-                    title = "Limpar cache local",
+                    title = "Limpar cache local".tr(),
                     onClick = onClearCache,
                 )
                 MenuDivider()
                 SecurityActionRow(
                     icon = Icons.AutoMirrored.Outlined.Article,
-                    title = "Mostrar log",
+                    title = "Mostrar log".tr(),
                     onClick = {
                         onRefreshLog()
                         showLog = true
@@ -2318,32 +2413,58 @@ private fun SecurityToggleRow(
 
 @Composable
 private fun LogDialog(
+    user: User?,
     entries: List<LogEntry>,
     onClear: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("Log", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                    IconButton(onClick = onClear) {
-                        Icon(Icons.Outlined.DeleteSweep, contentDescription = "Limpar log", modifier = Modifier.size(20.dp))
+            Column(modifier = Modifier.padding(top = 18.dp, bottom = 12.dp)) {
+                // Cabeçalho
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Registo de atividade".tr(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (entries.isEmpty()) "Sem entradas".tr() else "${entries.size} entrada${if (entries.size != 1) "s" else ""}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    IconButton(onClick = onClear, enabled = entries.isNotEmpty()) {
+                        Icon(Icons.Outlined.DeleteSweep, contentDescription = "Limpar log".tr(), modifier = Modifier.size(20.dp))
                     }
                 }
-                Spacer(Modifier.height(8.dp))
+
+                // Cartão do utilizador — só o essencial, sem dados sensíveis.
+                if (user != null) {
+                    Spacer(Modifier.height(12.dp))
+                    LogUserCard(user, modifier = Modifier.padding(horizontal = 18.dp))
+                }
+
+                Spacer(Modifier.height(12.dp))
+                MenuDivider()
+
                 if (entries.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
-                        Text("Sem entradas", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 36.dp), contentAlignment = Alignment.Center) {
+                        Text(
+                            "Nada registado ainda".tr(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 } else {
                     LazyColumn(
-                        modifier = Modifier.fillMaxWidth().height(420.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                        contentPadding = PaddingValues(vertical = 4.dp),
                     ) {
                         var lastDate: String? = null
                         entries.forEach { entry ->
@@ -2358,50 +2479,151 @@ private fun LogDialog(
                         }
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("Fechar") }
+
+                MenuDivider()
+                Spacer(Modifier.height(4.dp))
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.align(Alignment.End).padding(end = 10.dp),
+                ) { Text("Fechar".tr()) }
             }
         }
     }
 }
 
+// Identificação essencial e não sensível de quem está autenticado: nome,
+// email mascarado e função/plano. Nunca mostramos o id interno nem o email
+// completo.
+@Composable
+private fun LogUserCard(user: User, modifier: Modifier = Modifier) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(12.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    user.name.trim().firstOrNull()?.uppercase() ?: "?",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    user.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    maskEmail(user.email),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            val roleLabel = user.planName?.takeIf { it.isNotBlank() } ?: user.role.replaceFirstChar { it.uppercase() }
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+            ) {
+                Text(
+                    roleLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                )
+            }
+        }
+    }
+}
+
+// Mascara o email: mantém a 1ª letra e o domínio (jo•••@golink.co).
+private fun maskEmail(email: String): String {
+    val at = email.indexOf('@')
+    if (at <= 0) return "—"
+    val local = email.substring(0, at)
+    val domain = email.substring(at)
+    val head = local.first()
+    return "$head•••$domain"
+}
+
+// Cor por categoria de log, para leitura rápida da etiqueta.
+private fun logTagColor(tag: String): Color = when (tag) {
+    "Http" -> Color(0xFF5578EB)
+    "Security" -> Color(0xFF16A34A)
+    "AutoBackup" -> Color(0xFF9D66FE)
+    "App" -> Color(0xFF64748B)
+    "Nav" -> Color(0xFF0EA5E9)
+    "Cache" -> Color(0xFFF59E0B)
+    else -> Color(0xFF64748B)
+}
+
 @Composable
 private fun DateSeparator(date: String) {
-    Box(
+    Text(
+        date,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontWeight = FontWeight.SemiBold,
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            .padding(vertical = 6.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            date,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.Medium,
-        )
-    }
+            .padding(horizontal = 18.dp, vertical = 8.dp),
+    )
 }
 
 @Composable
 private fun LogRow(entry: LogEntry) {
+    val tagColor = logTagColor(entry.tag)
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 5.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Text(
-            entry.timeFormatted(),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            entry.message,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-            modifier = Modifier.weight(1f),
-        )
+        // Etiqueta de categoria
+        Surface(
+            shape = RoundedCornerShape(6.dp),
+            color = tagColor.copy(alpha = 0.12f),
+            modifier = Modifier.width(74.dp),
+        ) {
+            Text(
+                entry.tag,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = tagColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp).fillMaxWidth(),
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                LogSanitizer.redact(entry.message),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                entry.timeFormatted(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            )
+        }
     }
 }

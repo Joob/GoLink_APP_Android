@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.lock
 
+import co.golink.tester.ui.i18n.tr
 import androidx.activity.compose.BackHandler
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -73,11 +74,11 @@ fun LockScreen(
             },
         ).authenticate(
             BiometricPrompt.PromptInfo.Builder()
-                .setTitle("Desbloquear aplicação")
-                .setSubtitle("Confirma a tua identidade")
+                .setTitle("Desbloquear aplicação".tr())
+                .setSubtitle("Confirma a tua identidade".tr())
                 .apply {
                     if (viewModel.pinEnabled) setNegativeButtonText("Usar PIN")
-                    else setNegativeButtonText("Cancelar")
+                    else setNegativeButtonText("Cancelar".tr())
                 }
                 .build(),
         )
@@ -110,7 +111,7 @@ fun LockScreen(
             modifier = Modifier,
         ) {
             Text(
-                "Introduz o PIN",
+                "Introduz o PIN".tr(),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.SemiBold,
             )

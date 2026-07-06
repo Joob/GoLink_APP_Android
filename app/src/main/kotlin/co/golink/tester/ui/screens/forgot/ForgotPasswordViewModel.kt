@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.forgot
 
+import co.golink.tester.ui.i18n.tr
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import co.golink.tester.data.auth.AuthRepository
@@ -32,7 +33,7 @@ class ForgotPasswordViewModel @Inject constructor(
     fun submit() {
         val s = _state.value
         if (s.email.isBlank()) {
-            _state.update { it.copy(emailError = "Email obrigatório") }; return
+            _state.update { it.copy(emailError = "Email obrigatório".tr()) }; return
         }
         _state.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {

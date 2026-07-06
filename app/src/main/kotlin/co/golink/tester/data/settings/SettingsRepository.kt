@@ -8,6 +8,8 @@ import co.golink.tester.domain.settings.TransactionItem
 import co.golink.tester.domain.settings.UpdatePasswordRequest
 import co.golink.tester.domain.settings.UpdateProfileFieldRequest
 import co.golink.tester.network.SettingsApi
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -50,6 +52,14 @@ class SettingsRepository @Inject constructor(
 
     suspend fun updateProfileField(name: String, value: String): Result<Unit> = runCatching {
         val response = api.updateProfileField(UpdateProfileFieldRequest(name = name, value = value))
+        check(response.isSuccessful) { "HTTP ${response.code()}: ${response.errorBody()?.string()?.take(300)}" }
+    }
+
+    // Envia o avatar recortado (JPEG) para POST api/user/avatar (campo "avatar").
+    suspend fun updateAvatar(jpeg: ByteArray): Result<Unit> = runCatching {
+        val body = jpeg.toRequestBody("image/jpeg".toMediaTypeOrNull())
+        val part = okhttp3.MultipartBody.Part.createFormData("avatar", "avatar.jpg", body)
+        val response = api.updateAvatar(part)
         check(response.isSuccessful) { "HTTP ${response.code()}: ${response.errorBody()?.string()?.take(300)}" }
     }
 

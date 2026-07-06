@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.socialite
 
+import co.golink.tester.ui.i18n.tr
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import co.golink.tester.data.auth.AuthRepository
@@ -50,7 +51,7 @@ class SocialiteViewModel @Inject constructor(
     fun onCallbackLanded(cookies: String) {
         if (_state.value.finishingAuth || _state.value.tokenAdopted) return
         if (cookies.isBlank()) {
-            _state.update { it.copy(error = "Sessão OAuth não encontrada") }
+            _state.update { it.copy(error = "Sessão OAuth não encontrada".tr()) }
             return
         }
         _state.update { it.copy(finishingAuth = true, error = null) }
@@ -61,13 +62,13 @@ class SocialiteViewModel @Inject constructor(
                 response.body()?.token
             }.onSuccess { token ->
                 if (token.isNullOrBlank()) {
-                    _state.update { it.copy(finishingAuth = false, error = "Sem token. Tenta novamente.") }
+                    _state.update { it.copy(finishingAuth = false, error = "Sem token. Tenta novamente.".tr()) }
                 } else {
                     authRepository.adoptSocialiteToken(token)
                     _state.update { it.copy(finishingAuth = false, tokenAdopted = true) }
                 }
             }.onFailure { t ->
-                _state.update { it.copy(finishingAuth = false, error = t.message ?: "Erro a obter token") }
+                _state.update { it.copy(finishingAuth = false, error = t.message ?: "Erro a obter token".tr()) }
             }
         }
     }

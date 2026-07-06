@@ -1,5 +1,6 @@
 package co.golink.tester.ui.theme
 
+import co.golink.tester.ui.i18n.tr
 import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme

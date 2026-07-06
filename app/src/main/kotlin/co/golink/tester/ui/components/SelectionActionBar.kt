@@ -1,5 +1,6 @@
 package co.golink.tester.ui.components
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -39,6 +40,7 @@ fun SelectionActionBar(
     onMove: () -> Unit,
     onDelete: () -> Unit,
     trashMode: Boolean = false,
+    selectedCount: Int = 0,
 ) {
     Box(
         modifier = Modifier
@@ -55,20 +57,35 @@ fun SelectionActionBar(
             shadowElevation = 1.dp,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceAround,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (trashMode) {
-                    SelectionAction(Icons.Outlined.DriveFileMove, "Mover", onMove)
-                    SelectionAction(Icons.Outlined.DeleteForever, "Eliminar permanentemente", onDelete)
-                } else {
-                    SelectionAction(Icons.Outlined.Download, "Descarregar", onDownload)
-                    SelectionAction(Icons.Outlined.DriveFileMove, "Mover", onMove)
-                    SelectionAction(Icons.Outlined.DeleteOutline, "Eliminar", onDelete)
+            Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                // Quantos itens estão selecionados.
+                if (selectedCount > 0) {
+                    Text(
+                        if (selectedCount == 1) "1 ${"selecionado".tr()}"
+                        else "$selectedCount ${"selecionados".tr()}",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 2.dp),
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceAround,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (trashMode) {
+                        SelectionAction(Icons.Outlined.DriveFileMove, "Mover".tr(), onMove)
+                        SelectionAction(Icons.Outlined.DeleteForever, "Eliminar permanentemente".tr(), onDelete)
+                    } else {
+                        SelectionAction(Icons.Outlined.Download, "Descarregar".tr(), onDownload)
+                        SelectionAction(Icons.Outlined.DriveFileMove, "Mover".tr(), onMove)
+                        SelectionAction(Icons.Outlined.DeleteOutline, "Eliminar".tr(), onDelete)
+                    }
                 }
             }
         }

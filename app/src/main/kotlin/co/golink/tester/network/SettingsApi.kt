@@ -13,8 +13,10 @@ import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Multipart
 import retrofit2.http.PATCH
 import retrofit2.http.POST
+import retrofit2.http.Part
 import retrofit2.http.Path
 
 interface SettingsApi {
@@ -35,6 +37,10 @@ interface SettingsApi {
 
     @PATCH("api/user/settings")
     suspend fun updateProfileField(@Body body: UpdateProfileFieldRequest): Response<ApiEnvelope<Unit>>
+
+    @Multipart
+    @POST("api/user/avatar")
+    suspend fun updateAvatar(@Part avatar: okhttp3.MultipartBody.Part): Response<okhttp3.ResponseBody>
 
     @GET("api/user/mobile-backup/setting")
     suspend fun getMobileBackupSetting(): Response<co.golink.tester.domain.settings.MobileBackupSettingResponse>

@@ -1,8 +1,10 @@
 package co.golink.tester.ui.screens.browse
 
+import co.golink.tester.ui.i18n.tr
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -32,6 +34,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
@@ -137,6 +140,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.clip
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import co.golink.tester.data.auth.AuthRepository
@@ -175,7 +179,7 @@ import kotlinx.coroutines.launch
 
 @HiltViewModel
 class BrowseShellViewModel @Inject constructor(
-    userRepository: UserRepository,
+    private val userRepository: UserRepository,
     notificationsRepository: NotificationsRepository,
     autoBackupPreferences: co.golink.tester.data.backup.AutoBackupPreferences,
     private val authRepository: AuthRepository,
@@ -183,6 +187,11 @@ class BrowseShellViewModel @Inject constructor(
 ) : ViewModel() {
     val user: StateFlow<User?> = userRepository.me
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    // Avatar recortado no popup → upload → refresca o utilizador.
+    fun updateAvatar(jpeg: ByteArray) = viewModelScope.launch {
+        settingsRepository.updateAvatar(jpeg).onSuccess { userRepository.fetchMe() }
+    }
     val unreadNotifications: StateFlow<Int> = notificationsRepository.unreadCount
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
     val autoBackupEnabled: StateFlow<Boolean> = autoBackupPreferences.state
@@ -224,12 +233,31 @@ fun BrowseScreen(
     val favourites by viewModel.favouriteFolders.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+
+    // Avatar: clicar → escolher imagem → recortar no popup → upload.
+    var avatarPick by remember { mutableStateOf<android.net.Uri?>(null) }
+    val avatarPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia(),
+    ) { uri -> if (uri != null) avatarPick = uri }
+    avatarPick?.let { uri ->
+        co.golink.tester.ui.components.dialogs.AvatarCropDialog(
+            imageUri = uri,
+            onCancel = { avatarPick = null },
+            onConfirm = { jpeg -> avatarPick = null; shell.updateAvatar(jpeg) },
+        )
+    }
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(state.toast) {
         val msg = state.toast ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(msg)
         viewModel.consumeToast()
+    }
+
+    // Sincroniza a pasta em tempo real (polling) só enquanto o ecrã está visível.
+    LifecycleStartEffect(Unit) {
+        viewModel.startRealtimeSync()
+        onStopOrDispose { viewModel.stopRealtimeSync() }
     }
 
     var actionTarget by remember { mutableStateOf<BrowseItem?>(null) }
@@ -267,13 +295,20 @@ fun BrowseScreen(
               Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(48.dp)
+                            .size(42.dp)
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                            .clickable {
+                                avatarPicker.launch(
+                                    androidx.activity.result.PickVisualMediaRequest(
+                                        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly,
+                                    ),
+                                )
+                            },
                         contentAlignment = Alignment.Center,
                     ) {
                         val avatarUrl = user?.avatar
@@ -290,6 +325,22 @@ fun BrowseScreen(
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        // Selo de câmara.
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .size(16.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Filled.PhotoCamera,
+                                contentDescription = "Alterar imagem".tr(),
+                                tint = Color.White,
+                                modifier = Modifier.size(10.dp),
                             )
                         }
                     }
@@ -312,36 +363,39 @@ fun BrowseScreen(
                             )
                         }
                     }
+                    Spacer(Modifier.width(8.dp))
+                    // Seletor de idioma ao lado do nome/email no menu principal.
+                    co.golink.tester.ui.i18n.LanguageMenu()
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), modifier = Modifier.padding(horizontal = 16.dp))
                 Spacer(Modifier.height(8.dp))
                 DrawerSectionHeader("BASE")
-                DrawerEntry(Icons.Outlined.Folder, "Ficheiros", state.mode is BrowseMode.Folder) {
+                DrawerEntry(Icons.Outlined.Folder, "Ficheiros".tr(), state.mode is BrowseMode.Folder) {
                     viewModel.openRoot(); scope.launch { drawerState.close() }
                 }
-                DrawerEntry(Icons.Outlined.History, "Carregamentos recentes", state.mode == BrowseMode.Latest) {
+                DrawerEntry(Icons.Outlined.History, "Carregamentos recentes".tr(), state.mode == BrowseMode.Latest) {
                     viewModel.openLatest(); scope.launch { drawerState.close() }
                 }
-                DrawerEntry(Icons.Outlined.Link, "Partilhado publicamente", state.mode == BrowseMode.Shared) {
+                DrawerEntry(Icons.Outlined.Link, "Partilhado publicamente".tr(), state.mode == BrowseMode.Shared) {
                     viewModel.openShared(); scope.launch { drawerState.close() }
                 }
-                DrawerEntry(Icons.Outlined.Delete, "Lixeira", state.mode == BrowseMode.Trash) {
+                DrawerEntry(Icons.Outlined.Delete, "Lixeira".tr(), state.mode == BrowseMode.Trash) {
                     viewModel.openTrash(); scope.launch { drawerState.close() }
                 }
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(6.dp))
                 DrawerSectionHeader("PARTILHAS")
-                DrawerEntry(Icons.Outlined.Groups, "Pastas de equipa", state.mode is BrowseMode.TeamFolder) {
+                DrawerEntry(Icons.Outlined.Groups, "Pastas de equipa".tr(), state.mode is BrowseMode.TeamFolder) {
                     viewModel.openTeamFolders(); scope.launch { drawerState.close() }
                 }
-                DrawerEntry(Icons.Outlined.PeopleAlt, "Partilhado comigo", state.mode is BrowseMode.SharedWithMe) {
+                DrawerEntry(Icons.Outlined.PeopleAlt, "Partilhado comigo".tr(), state.mode is BrowseMode.SharedWithMe) {
                     viewModel.openSharedWithMe(); scope.launch { drawerState.close() }
                 }
-                Spacer(Modifier.height(16.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), modifier = Modifier.padding(horizontal = 16.dp))
                 Spacer(Modifier.height(8.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), modifier = Modifier.padding(horizontal = 16.dp))
+                Spacer(Modifier.height(6.dp))
                 var myFilesExpanded by remember { mutableStateOf(false) }
                 DrawerExpandableHeader(
-                    title = "Os meus ficheiros",
+                    title = "Os meus ficheiros".tr(),
                     expanded = myFilesExpanded,
                     onClick = {
                         myFilesExpanded = !myFilesExpanded
@@ -351,7 +405,7 @@ fun BrowseScreen(
                 if (myFilesExpanded) {
                     val tree = state.navigationTree.flatMap { it.folders }
                     if (tree.isEmpty()) {
-                        DrawerHint("Sem pastas")
+                        DrawerHint("Sem pastas".tr())
                     } else {
                         tree.forEach { folder ->
                             NavFolderTreeItem(
@@ -365,17 +419,17 @@ fun BrowseScreen(
                         }
                     }
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(4.dp))
                 var favExpanded by remember { mutableStateOf(false) }
                 DrawerExpandableHeader(
-                    title = "Favoritos",
+                    title = "Favoritos".tr(),
                     expanded = favExpanded,
                     onClick = { favExpanded = !favExpanded },
                 )
                 if (favExpanded) {
                     val favs = favourites
                     if (favs.isEmpty()) {
-                        DrawerHint("Arrasta aqui as tuas pastas favoritas")
+                        DrawerHint("Arrasta aqui as tuas pastas favoritas".tr())
                     } else {
                         favs.forEach { folder ->
                             DrawerFolderItem(label = folder.name) {
@@ -389,18 +443,18 @@ fun BrowseScreen(
                 Spacer(Modifier.height(8.dp))
                 DrawerEntry(
                     Icons.Outlined.CloudUpload,
-                    "Backups Automáticos",
+                    "Backups Automáticos".tr(),
                     selected = false,
                     badge = { OnOffBadge(on = autoBackupEnabled) },
                 ) {
                     scope.launch { drawerState.close() }
                     onOpenAutoBackup()
                 }
-                DrawerEntry(Icons.Outlined.Settings, "Definições", false) {
+                DrawerEntry(Icons.Outlined.Settings, "Definições".tr(), false) {
                     scope.launch { drawerState.close() }
                     onOpenSettings()
                 }
-                DrawerEntry(Icons.AutoMirrored.Filled.Logout, "Sair da Conta", false, destructive = true) {
+                DrawerEntry(Icons.AutoMirrored.Filled.Logout, "Sair da Conta".tr(), false, destructive = true) {
                     scope.launch { drawerState.close() }
                     activeDialog = ActionDialog.Logout
                 }
@@ -466,7 +520,7 @@ fun BrowseScreen(
                     },
                     navigationIcon = {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Icon(Icons.Filled.Menu, contentDescription = "Menu")
+                            Icon(Icons.Filled.Menu, contentDescription = "Menu".tr())
                         }
                     },
                     actions = {
@@ -476,7 +530,7 @@ fun BrowseScreen(
                             }) {
                                 Icon(
                                     if (unread > 0) Icons.Filled.Notifications else Icons.Filled.NotificationsNone,
-                                    contentDescription = "Notificações",
+                                    contentDescription = "Notificações".tr(),
                                 )
                             }
                         }
@@ -490,13 +544,13 @@ fun BrowseScreen(
                                 onClick = { activeDialog = ActionDialog.EmptyTrash },
                                 enabled = state.processing == null && state.items.isNotEmpty(),
                             ) {
-                                Icon(Icons.Filled.DeleteSweep, contentDescription = "Esvaziar lixo")
+                                Icon(Icons.Filled.DeleteSweep, contentDescription = "Esvaziar lixo".tr())
                             }
                         }
                         if (state.mode is BrowseMode.Folder) {
                             Box {
                                 IconButton(onClick = { fabMenuOpen = true }) {
-                                    Icon(Icons.Filled.Add, contentDescription = "Adicionar")
+                                    Icon(Icons.Filled.Add, contentDescription = "Adicionar".tr())
                                 }
                                 DropdownMenu(
                                     expanded = fabMenuOpen,
@@ -507,9 +561,9 @@ fun BrowseScreen(
                                     shadowElevation = 16.dp,
                                     modifier = Modifier.widthIn(min = 260.dp).padding(vertical = 4.dp),
                                 ) {
-                                    FabSectionHeader("Mais usados")
+                                    FabSectionHeader("Mais usados".tr())
                                     DropdownMenuItem(
-                                        text = { Text("Carregar ficheiros", style = MaterialTheme.typography.bodyMedium) },
+                                        text = { Text("Carregar ficheiros".tr(), style = MaterialTheme.typography.bodyMedium) },
                                         leadingIcon = {
                                             Box(
                                                 modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
@@ -519,7 +573,7 @@ fun BrowseScreen(
                                         onClick = { fabMenuOpen = false; filePicker.launch(arrayOf("*/*")) },
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Carregar pasta", style = MaterialTheme.typography.bodyMedium) },
+                                        text = { Text("Carregar pasta".tr(), style = MaterialTheme.typography.bodyMedium) },
                                         leadingIcon = {
                                             Box(
                                                 modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
@@ -529,7 +583,7 @@ fun BrowseScreen(
                                         onClick = { fabMenuOpen = false; folderPicker.launch(null) },
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Carregamento remoto", style = MaterialTheme.typography.bodyMedium) },
+                                        text = { Text("Carregamento remoto".tr(), style = MaterialTheme.typography.bodyMedium) },
                                         leadingIcon = {
                                             Box(
                                                 modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f)),
@@ -541,7 +595,7 @@ fun BrowseScreen(
                                     HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                                     FabSectionHeader("Outros")
                                     DropdownMenuItem(
-                                        text = { Text("Criar pasta", style = MaterialTheme.typography.bodyMedium) },
+                                        text = { Text("Criar pasta".tr(), style = MaterialTheme.typography.bodyMedium) },
                                         leadingIcon = {
                                             Box(
                                                 modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f)),
@@ -551,7 +605,7 @@ fun BrowseScreen(
                                         onClick = { fabMenuOpen = false; activeDialog = ActionDialog.CreateFolder },
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Criar pasta de equipa", style = MaterialTheme.typography.bodyMedium) },
+                                        text = { Text("Criar pasta de equipa".tr(), style = MaterialTheme.typography.bodyMedium) },
                                         leadingIcon = {
                                             Box(
                                                 modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f)),
@@ -561,7 +615,7 @@ fun BrowseScreen(
                                         onClick = { fabMenuOpen = false; activeDialog = ActionDialog.CreateTeamFolder },
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Criar pedido de ficheiros", style = MaterialTheme.typography.bodyMedium) },
+                                        text = { Text("Criar pedido de ficheiros".tr(), style = MaterialTheme.typography.bodyMedium) },
                                         leadingIcon = {
                                             Box(
                                                 modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f)),
@@ -589,6 +643,7 @@ fun BrowseScreen(
                             onMove = moveSelected,
                             onDelete = if (state.mode == BrowseMode.Trash) permanentDeleteSelectedConfirm else deleteSelectedConfirm,
                             trashMode = state.mode == BrowseMode.Trash,
+                            selectedCount = state.selectedIds.size,
                         )
                     }
                     BrowseBottomBar(
@@ -602,7 +657,8 @@ fun BrowseScreen(
             },
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ) { padding ->
-            Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            Column(modifier = Modifier.fillMaxSize()) {
                 if ((storage?.percentage ?: 0f) >= 90f) {
                     LowStorageBanner(
                         used = storage?.used,
@@ -643,14 +699,14 @@ fun BrowseScreen(
                             FileListSkeleton(modifier = Modifier.fillMaxSize())
                         }
                         state.error != null && state.items.isEmpty() -> {
-                            EmptyState(title = "Não foi possível carregar", subtitle = state.error ?: "")
+                            EmptyState(title = "Não foi possível carregar".tr(), subtitle = state.error ?: "")
                         }
                         state.items.isEmpty() -> {
                             EmptyState(
-                                title = "Sem conteúdo",
+                                title = "Sem conteúdo".tr(),
                                 subtitle = when (state.mode) {
                                     is BrowseMode.SearchResults -> "Sem resultados para \"${(state.mode as BrowseMode.SearchResults).query}\""
-                                    else -> "Esta pasta está vazia"
+                                    else -> "Esta pasta está vazia".tr()
                                 },
                             )
                         }
@@ -772,6 +828,11 @@ fun BrowseScreen(
                     )
                 }
             }
+            co.golink.tester.ui.components.E2EEncryptedFlash(
+                trigger = state.mode,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+            }
         }
     }
 
@@ -832,18 +893,18 @@ fun BrowseScreen(
 
     when (activeDialog) {
         ActionDialog.CreateFolder -> TextInputDialog(
-            title = "Nova pasta",
+            title = "Nova pasta".tr(),
             label = "Nome",
-            confirmText = "Criar",
+            confirmText = "Criar".tr(),
             onDismiss = { activeDialog = ActionDialog.None },
             onConfirm = { name -> viewModel.createFolder(name) },
         )
         ActionDialog.Rename -> actionTarget?.let { target ->
             TextInputDialog(
-                title = "Renomear",
-                label = "Novo nome",
+                title = "Renomear".tr(),
+                label = "Novo nome".tr(),
                 initialValue = target.name,
-                confirmText = "Guardar",
+                confirmText = "Guardar".tr(),
                 onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
                 onConfirm = { name -> viewModel.rename(target, name) },
             )
@@ -854,10 +915,10 @@ fun BrowseScreen(
             val targetName = actionTarget?.name
             if (count > 0) {
                 ConfirmDialog(
-                    title = "Mover para o lixo?",
+                    title = "Mover para o lixo?".tr(),
                     message = if (multi) "$count itens ficarão no lixo e podes restaurar depois."
                               else "$targetName ficará no lixo e podes restaurar depois.",
-                    confirmText = "Mover para o lixo",
+                    confirmText = "Mover para o lixo".tr(),
                     destructive = true,
                     onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
                     onConfirm = {
@@ -884,9 +945,9 @@ fun BrowseScreen(
                 )
                 createInMoveFor?.let { (_, parentId) ->
                     TextInputDialog(
-                        title = "Nova pasta",
+                        title = "Nova pasta".tr(),
                         label = "Nome",
-                        confirmText = "Criar",
+                        confirmText = "Criar".tr(),
                         onDismiss = { createInMoveFor = null },
                         onConfirm = { name ->
                             viewModel.createFolderIn(name, parentId)
@@ -929,10 +990,10 @@ fun BrowseScreen(
             val count = if (multi) viewModel.selectedItems().size else 1
             if (count > 0) {
                 ConfirmDialog(
-                    title = "Eliminar permanentemente?",
+                    title = "Eliminar permanentemente?".tr(),
                     message = if (multi) "$count itens serão removidos para sempre. Esta acção não pode ser desfeita."
                               else "${actionTarget?.name} será removido para sempre. Esta acção não pode ser desfeita.",
-                    confirmText = "Eliminar permanentemente",
+                    confirmText = "Eliminar permanentemente".tr(),
                     destructive = true,
                     onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
                     onConfirm = {
@@ -943,10 +1004,10 @@ fun BrowseScreen(
             }
         }
         ActionDialog.RemoteUpload -> TextInputDialog(
-            title = "Carregamento remoto",
+            title = "Carregamento remoto".tr(),
             label = "URL(s)",
-            confirmText = "Iniciar",
-            subtitle = "Insere os URLs separados por vírgula ou nova linha",
+            confirmText = "Iniciar".tr(),
+            subtitle = "Insere os URLs separados por vírgula ou nova linha".tr(),
             icon = Icons.Outlined.CloudUpload,
             iconColor = MaterialTheme.colorScheme.primary,
             multiLine = true,
@@ -954,17 +1015,17 @@ fun BrowseScreen(
             onConfirm = { input -> viewModel.remoteUpload(input) },
         )
         ActionDialog.EmptyTrash -> ConfirmDialog(
-            title = "Esvaziar lixo?",
-            message = "Todos os itens no lixo serão eliminados para sempre.",
-            confirmText = "Esvaziar lixo",
+            title = "Esvaziar lixo?".tr(),
+            message = "Todos os itens no lixo serão eliminados para sempre.".tr(),
+            confirmText = "Esvaziar lixo".tr(),
             destructive = true,
             onDismiss = { activeDialog = ActionDialog.None },
             onConfirm = viewModel::emptyTrash,
         )
         ActionDialog.Logout -> ConfirmDialog(
-            title = "Sair da Conta?",
-            message = "Tens a certeza que queres sair da tua conta?",
-            confirmText = "Sair",
+            title = "Sair da Conta?".tr(),
+            message = "Tens a certeza que queres sair da tua conta?".tr(),
+            confirmText = "Sair".tr(),
             destructive = true,
             onDismiss = { activeDialog = ActionDialog.None },
             onConfirm = { shell.logout() },
@@ -1000,9 +1061,9 @@ fun BrowseScreen(
 private fun topBarTitle(state: BrowseUiState): String = when (val mode = state.mode) {
     is BrowseMode.Folder -> mode.name
     BrowseMode.Latest -> "Recentes"
-    BrowseMode.Shared -> "Partilhado comigo"
-    BrowseMode.Favourites -> "Favoritos"
-    BrowseMode.Trash -> "Lixo"
+    BrowseMode.Shared -> "Partilhado comigo".tr()
+    BrowseMode.Favourites -> "Favoritos".tr()
+    BrowseMode.Trash -> "Lixo".tr()
     is BrowseMode.SearchResults -> "Resultados: ${mode.query}"
     is BrowseMode.TeamFolder -> mode.name
     is BrowseMode.SharedWithMe -> mode.name
@@ -1016,7 +1077,7 @@ private fun DrawerSectionHeader(text: String) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         fontWeight = FontWeight.Bold,
         letterSpacing = 1.2.sp,
-        modifier = Modifier.padding(start = 28.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
+        modifier = Modifier.padding(start = 28.dp, end = 16.dp, top = 10.dp, bottom = 4.dp),
     )
 }
 
@@ -1140,29 +1201,36 @@ private fun DrawerEntry(
     badge: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
+    // Custom compact row instead of NavigationDrawerItem (whose fixed 56dp
+    // height made the drawer feel oversized). ~42dp tall keeps it tighter.
     val unselectedContent = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-    NavigationDrawerItem(
-        icon = { Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp)) },
-        label = {
-            Text(
-                label,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-        },
-        badge = badge,
-        selected = selected,
-        onClick = onClick,
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-        colors = NavigationDrawerItemDefaults.colors(
-            selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-            selectedIconColor = MaterialTheme.colorScheme.primary,
-            selectedTextColor = MaterialTheme.colorScheme.primary,
-            unselectedContainerColor = MaterialTheme.colorScheme.surface,
-            unselectedIconColor = unselectedContent,
-            unselectedTextColor = unselectedContent,
-        ),
-    )
+    val content = if (selected) MaterialTheme.colorScheme.primary else unselectedContent
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 1.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = if (selected) 0.12f else 0f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 9.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(21.dp))
+        Spacer(Modifier.width(14.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = content,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        badge?.let {
+            Spacer(Modifier.width(8.dp))
+            it()
+        }
+    }
 }
 
 /** Pill "On"/"Off" para indicar o estado de uma funcionalidade no menu. */
@@ -1201,7 +1269,7 @@ private fun SelectionTopBar(
             title = { Text("$count selecionado") },
             navigationIcon = {
                 IconButton(onClick = onClose) {
-                    Icon(Icons.Filled.Close, contentDescription = "Limpar selecção")
+                    Icon(Icons.Filled.Close, contentDescription = "Limpar selecção".tr())
                 }
             },
             colors = TopAppBarDefaults.topAppBarColors(
@@ -1215,13 +1283,12 @@ private fun SelectionTopBar(
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            SelectionAction(Icons.Outlined.OpenInNew, "Abrir", onOpen)
-            SelectionAction(Icons.Outlined.Share, "Partilhar", onShare)
-            SelectionAction(Icons.Outlined.DriveFileMove, "Mover", onMove)
-            SelectionAction(Icons.Outlined.DriveFileRenameOutline, "Renomear", onRename)
-            SelectionAction(Icons.Outlined.Download, "Descarregar", onDownload)
-            SelectionAction(Icons.Outlined.ContentCopy, "Duplicar", onShare)
-            SelectionAction(Icons.Outlined.Delete, "Eliminar", onDelete)
+            SelectionAction(Icons.Outlined.OpenInNew, "Abrir".tr(), onOpen)
+            SelectionAction(Icons.Outlined.Share, "Partilhar".tr(), onShare)
+            SelectionAction(Icons.Outlined.DriveFileMove, "Mover".tr(), onMove)
+            SelectionAction(Icons.Outlined.DriveFileRenameOutline, "Renomear".tr(), onRename)
+            SelectionAction(Icons.Outlined.Download, "Descarregar".tr(), onDownload)
+            SelectionAction(Icons.Outlined.Delete, "Eliminar".tr(), onDelete)
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
     }
@@ -1242,7 +1309,7 @@ private fun QuickActionsChips(
     onView: () -> Unit,
 ) {
     val viewIcon = if (viewMode == ViewMode.GRID) Icons.Outlined.ViewList else Icons.Outlined.GridView
-    val viewLabel = if (viewMode == ViewMode.GRID) "Lista" else "Grelha"
+    val viewLabel = if (viewMode == ViewMode.GRID) "Lista".tr() else "Grelha".tr()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1251,9 +1318,9 @@ private fun QuickActionsChips(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (inSelectionMode) {
-            ActionChip(icon = Icons.Outlined.CheckBox, label = "Selecionar tudo", onClick = onSelectAll, large = true)
-            ActionChip(icon = Icons.Outlined.DisabledByDefault, label = "Desmarcar todos", onClick = onDeselectAll, large = true)
-            ActionChip(icon = Icons.Outlined.Check, label = "Feito", onClick = onDone, large = true)
+            ActionChip(icon = Icons.Outlined.CheckBox, label = "Selecionar tudo".tr(), onClick = onSelectAll, large = true)
+            ActionChip(icon = Icons.Outlined.DisabledByDefault, label = "Desmarcar todos".tr(), onClick = onDeselectAll, large = true)
+            ActionChip(icon = Icons.Outlined.Check, label = "Feito".tr(), onClick = onDone, large = true)
         } else {
             ActionChip(icon = Icons.Outlined.CheckBox, label = "Selecionar", onClick = onSelectMode, large = true)
             ActionChip(icon = viewIcon, label = viewLabel, onClick = onView, large = true)
@@ -1327,7 +1394,7 @@ private fun SearchRow(
             onValueChange = onQueryChange,
             placeholder = {
                 Text(
-                    "Pesquisar ficheiros e pastas",
+                    "Pesquisar ficheiros e pastas".tr(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             },
@@ -1369,7 +1436,7 @@ private fun SearchRow(
         ) {
             Icon(
                 if (viewMode == ViewMode.GRID) Icons.Outlined.ViewList else Icons.Outlined.GridView,
-                contentDescription = "Vista e ordenação",
+                contentDescription = "Vista e ordenação".tr(),
                 tint = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.size(22.dp),
             )
@@ -1404,7 +1471,7 @@ private fun ViewSortMenu(
         modifier = Modifier.widthIn(min = 250.dp).padding(vertical = 4.dp),
     ) {
         Text(
-            "VISUALIZAR",
+            "Visualizar".tr().uppercase(),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.Bold,
@@ -1413,7 +1480,7 @@ private fun ViewSortMenu(
         )
         val targetView = if (viewMode == ViewMode.GRID) ViewMode.LIST else ViewMode.GRID
         DropdownMenuItem(
-            text = { Text(if (targetView == ViewMode.GRID) "Vista em grelha" else "Vista em lista", style = MaterialTheme.typography.bodyMedium) },
+            text = { Text(if (targetView == ViewMode.GRID) "Vista em grelha".tr() else "Vista em lista".tr(), style = MaterialTheme.typography.bodyMedium) },
             leadingIcon = {
                 Box(
                     modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
@@ -1431,7 +1498,7 @@ private fun ViewSortMenu(
         )
         HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
         Text(
-            "ORDENAÇÃO",
+            "Ordenação".tr().uppercase(),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.Bold,
@@ -1441,7 +1508,7 @@ private fun ViewSortMenu(
         val dateActive = sortMode == SortMode.DATE_DESC || sortMode == SortMode.DATE_ASC
         val alphaActive = sortMode == SortMode.ALPHA_ASC || sortMode == SortMode.ALPHA_DESC
         DropdownMenuItem(
-            text = { Text("Ordenar por data", style = MaterialTheme.typography.bodyMedium, color = if (dateActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
+            text = { Text("Ordenar por data".tr(), style = MaterialTheme.typography.bodyMedium, color = if (dateActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
             leadingIcon = {
                 Box(
                     modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(if (dateActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant),
@@ -1455,7 +1522,7 @@ private fun ViewSortMenu(
             onClick = { onSetSortMode(if (sortMode == SortMode.DATE_DESC) SortMode.DATE_ASC else SortMode.DATE_DESC) },
         )
         DropdownMenuItem(
-            text = { Text("Ordenar alfabeticamente", style = MaterialTheme.typography.bodyMedium, color = if (alphaActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
+            text = { Text("Ordenar alfabeticamente".tr(), style = MaterialTheme.typography.bodyMedium, color = if (alphaActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
             leadingIcon = {
                 Box(
                     modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(if (alphaActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant),
@@ -1583,7 +1650,7 @@ private fun LowStorageBanner(
         Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                "Espaço quase esgotado",
+                "Espaço quase esgotado".tr(),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = color,
@@ -1633,7 +1700,7 @@ private fun StorageFooter(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "Armazenamento",
+                    "Armazenamento".tr(),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = if (isLow) accent else MaterialTheme.colorScheme.onSurface,
@@ -1652,14 +1719,14 @@ private fun StorageFooter(
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = storage?.let { "${it.used} de ${it.capacity} usados" } ?: "—",
+                text = storage?.let { "${it.used} ${"de".tr()} ${it.capacity} ${"usados".tr()}" } ?: "—",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (isLow) {
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    text = "Pouco espaço disponível. Considere fazer upgrade.",
+                    text = "Pouco espaço disponível. Considere fazer upgrade.".tr(),
                     style = MaterialTheme.typography.bodySmall,
                     color = accent,
                     fontWeight = FontWeight.Medium,
@@ -1675,7 +1742,7 @@ private fun StorageFooter(
                     contentColor = MaterialTheme.colorScheme.onPrimary,
                 ),
             ) {
-                Text("Obter mais espaço", fontWeight = FontWeight.SemiBold)
+                Text("Obter mais espaço".tr(), fontWeight = FontWeight.SemiBold)
             }
         }
     }
@@ -1708,21 +1775,21 @@ private fun BrowseBottomBar(
             selected = mode == BrowseMode.Favourites,
             onClick = onFavourites,
             icon = { Icon(Icons.Filled.Star, contentDescription = null) },
-            label = { Text("Favoritos") },
+            label = { Text("Favoritos".tr()) },
             colors = itemColors,
         )
         NavigationBarItem(
             selected = mode == BrowseMode.Shared,
             onClick = onShared,
             icon = { Icon(Icons.Filled.PeopleAlt, contentDescription = null) },
-            label = { Text("Partilhado") },
+            label = { Text("Partilhado".tr()) },
             colors = itemColors,
         )
         NavigationBarItem(
             selected = mode is BrowseMode.Folder,
             onClick = onFiles,
             icon = { Icon(Icons.Filled.Folder, contentDescription = null) },
-            label = { Text("Ficheiros") },
+            label = { Text("Ficheiros".tr()) },
             colors = itemColors,
         )
     }
@@ -1752,7 +1819,7 @@ internal fun BrowseItemDetailsSheet(item: BrowseItem, onDismiss: () -> Unit) {
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp)) {
-            Text("Detalhes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Detalhes".tr(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(16.dp))
             DetailRow("Nome", item.name)
             when (item) {
@@ -1762,18 +1829,18 @@ internal fun BrowseItemDetailsSheet(item: BrowseItem, onDismiss: () -> Unit) {
                     DetailRow("Tamanho", item.filesize ?: "—")
                 }
                 is BrowseItem.Folder -> {
-                    DetailRow("Itens", item.itemCount?.toString() ?: "—")
+                    DetailRow("Itens".tr(), item.itemCount?.toString() ?: "—")
                     DetailRow("Tamanho", item.filesize ?: "—")
-                    if (item.isTeamFolder) DetailRow("Tipo", "Pasta de equipa")
+                    if (item.isTeamFolder) DetailRow("Tipo", "Pasta de equipa".tr())
                 }
             }
-            DetailRow("Criado em", item.createdAt?.take(10) ?: "—")
-            DetailRow("Atualizado em", item.updatedAt?.take(10) ?: "—")
+            DetailRow("Criado em".tr(), item.createdAt?.take(10) ?: "—")
+            DetailRow("Atualizado em".tr(), item.updatedAt?.take(10) ?: "—")
             if (item.share != null) {
-                DetailRow("Partilhado", "Sim")
-                item.share!!.permission?.let { DetailRow("Permissão", if (it == "can-edit") "Pode editar" else "Apenas ver") }
+                DetailRow("Partilhado".tr(), "Sim")
+                item.share!!.permission?.let { DetailRow("Permissão".tr(), if (it == "can-edit") "Pode editar".tr() else "Apenas ver".tr()) }
                 if (item.share!!.protected) DetailRow("Password", "Sim")
-                item.share!!.expireIn?.let { if (it > 0) DetailRow("Expira em", "${it} dias") }
+                item.share!!.expireIn?.let { if (it > 0) DetailRow("Expira em".tr(), "${it} dias") }
             }
             Spacer(Modifier.height(24.dp))
         }
@@ -1878,8 +1945,8 @@ private fun MemberRow(member: TeamMember) {
         }
         member.permission?.let { perm ->
             val label = when (perm) {
-                "owner" -> "Dono"
-                "editor", "can-edit" -> "Editor"
+                "owner" -> "Dono".tr()
+                "editor", "can-edit" -> "Editor".tr()
                 else -> "Visualizador"
             }
             androidx.compose.material3.Badge(

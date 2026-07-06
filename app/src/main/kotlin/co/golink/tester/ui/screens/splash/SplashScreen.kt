@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.splash
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box

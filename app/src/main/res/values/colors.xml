@@ -4,4 +4,6 @@
     <color name="brand_green_light">#ECF7F2</color>
     <color name="dark_background">#151515</color>
     <color name="dark_foreground">#1E2024</color>
+    <!-- Splash window background (overridden in values-night). -->
+    <color name="splash_background">#FFFFFF</color>
 </resources>

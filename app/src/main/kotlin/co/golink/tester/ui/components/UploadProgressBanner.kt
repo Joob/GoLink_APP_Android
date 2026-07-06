@@ -1,5 +1,6 @@
 package co.golink.tester.ui.components
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -263,6 +264,18 @@ private fun BannerHeader(
                 )
             }
         }
+        // Percentagem geral do upload (0–100%) bem visível no cabeçalho.
+        if (state == BannerState.Uploading) {
+            val pct = if (totalBytes > 0)
+                (uploadedBytes * 100 / totalBytes).toInt().coerceIn(0, 100) else 0
+            Text(
+                "$pct%",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(Modifier.width(6.dp))
+        }
         if (state != BannerState.Empty) {
             IconButton(onClick = onToggleExpand, modifier = Modifier.size(32.dp)) {
                 Icon(
@@ -275,7 +288,7 @@ private fun BannerHeader(
         IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
             Icon(
                 Icons.Filled.Close,
-                contentDescription = "Fechar",
+                contentDescription = "Fechar".tr(),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(18.dp),
             )
@@ -363,7 +376,7 @@ private fun UploadRow(
                 IconButton(onClick = onRetry, modifier = Modifier.size(32.dp)) {
                     Icon(
                         Icons.Filled.Refresh,
-                        contentDescription = "Tentar de novo",
+                        contentDescription = "Tentar de novo".tr(),
                         tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier.size(20.dp),
                     )
@@ -387,7 +400,7 @@ private fun UploadRow(
                 IconButton(onClick = onCancel, modifier = Modifier.size(32.dp)) {
                     Icon(
                         Icons.Filled.Close,
-                        contentDescription = "Cancelar",
+                        contentDescription = "Cancelar".tr(),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(16.dp),
                     )
@@ -395,14 +408,14 @@ private fun UploadRow(
             }
             UploadTask.State.Queued -> Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Em fila",
+                    "Em fila".tr(),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 IconButton(onClick = onCancel, modifier = Modifier.size(32.dp)) {
                     Icon(
                         Icons.Filled.Close,
-                        contentDescription = "Cancelar",
+                        contentDescription = "Cancelar".tr(),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(16.dp),
                     )
@@ -418,7 +431,7 @@ private fun UploadRow(
                     Text("Substituir", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
                 }
                 androidx.compose.material3.TextButton(onClick = onSkip, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
-                    Text("Não substituir", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Não substituir".tr(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -431,8 +444,8 @@ private fun BannerFooter(
     onPrimary: () -> Unit,
     onSecondary: () -> Unit,
 ) {
-    val primaryLabel = if (state == BannerState.Failed) "Repetir falhados" else "Ver ficheiros"
-    val secondaryLabel = if (state == BannerState.Failed) "Dispensar" else "Fechar"
+    val primaryLabel = if (state == BannerState.Failed) "Repetir falhados".tr() else "Ver ficheiros".tr()
+    val secondaryLabel = if (state == BannerState.Failed) "Dispensar" else "Fechar".tr()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -475,8 +488,8 @@ private fun BannerFooter(
 
 private fun rowSubtitle(task: UploadTask): String = when (task.state) {
     UploadTask.State.Completed -> "Concluído · ${humanBytes(task.sizeBytes)}"
-    UploadTask.State.Failed -> task.errorMessage?.takeIf { it.isNotBlank() }?.let { "Falhou · $it" } ?: "Falhou · tentar de novo"
-    UploadTask.State.Conflict -> "Já existe · substituir?"
+    UploadTask.State.Failed -> task.errorMessage?.takeIf { it.isNotBlank() }?.let { "Falhou · $it" } ?: "Falhou · tentar de novo".tr()
+    UploadTask.State.Conflict -> "Já existe · substituir?".tr()
     UploadTask.State.Uploading -> {
         val uploaded = (task.progress.toDouble() * task.sizeBytes).roundToLong()
         "${humanBytes(uploaded)} de ${humanBytes(task.sizeBytes)}"

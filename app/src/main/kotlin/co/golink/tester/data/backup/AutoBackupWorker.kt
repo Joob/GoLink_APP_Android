@@ -65,6 +65,9 @@ class AutoBackupWorker @AssistedInject constructor(
         Result.retry()
     } finally {
         manager.endRun()
+        // Reagenda o próximo "tick" de ~1 min enquanto o backup estiver ligado
+        // e não tiver sido cancelado (isStopped = utilizador desligou/Doze parou).
+        if (preferences.enabled && !isStopped) manager.scheduleNextTick()
     }
 
     private suspend fun runBackup(): Result {
@@ -145,7 +148,12 @@ class AutoBackupWorker @AssistedInject constructor(
         // still propagate; only treat genuine MediaStore errors as "0 pending".
         val sources = enabledSources()
         val totalPending = sources.sumOf { src ->
-            safeCount { scanner.countNew(src.collection, src.cursor()) }
+            safeCount { scanner.countNew(src.collection, src.cursor(), setOf(src.folder)) }
+        }
+        // Total de bytes por enviar nesta execução — denominador fixo do
+        // "X MB de Y MB" na barra de progresso.
+        val totalBytesPending = sources.sumOf { src ->
+            safeLong { scanner.sumNewBytes(src.collection, src.cursor(), setOf(src.folder)) }
         }
 
         if (totalPending == 0) {
@@ -156,7 +164,7 @@ class AutoBackupWorker @AssistedInject constructor(
         }
 
         logger.log("AutoBackup", "$totalPending ficheiro(s) por enviar")
-        manager.startRun(totalPending)
+        manager.startRun(totalPending, totalBytesPending)
 
         var uploadedTotal = 0
         var conflictTotal = 0
@@ -172,14 +180,20 @@ class AutoBackupWorker @AssistedInject constructor(
         for (source in sources) {
             if (isStopped) break
             var scanId = source.cursor()
-            val collectionResults = mutableListOf<ItemResult>()
+            // Avanço do cursor por prefixo contíguo, calculado de forma
+            // incremental: `minFailedId` é o menor id que falhou nesta execução
+            // e `cursor` o maior id seguido de sucessos abaixo dele. Antes
+            // acumulávamos TODOS os ItemResult e re-ordenávamos a lista inteira
+            // a cada lote (O(n²) em memória e CPU) — pesado em galerias grandes.
+            var minFailedId = Long.MAX_VALUE
+            var cursor = source.cursor()
 
             while (!isStopped) {
-                val batch = scanner.scanNew(source.collection, scanId, BATCH_SIZE)
+                val batch = scanner.scanNew(source.collection, scanId, BATCH_SIZE, setOf(source.folder))
                 if (batch.isEmpty()) break
                 scanId = batch.maxOf { it.mediaStoreId }
 
-                updateProgressNotification(manager.runProgress.value.done, totalPending)
+                updateProgressNotification(manager.runProgress.value.done, totalPending, source.collection)
 
                 val results = coroutineScope {
                     batch.map { item ->
@@ -212,22 +226,30 @@ class AutoBackupWorker @AssistedInject constructor(
                                 }
                                 // Progresso item-a-item (sucesso, conflito ou falha):
                                 // a UI e a notificação contam de forma monótona em
-                                // vez de saltar por lote.
-                                manager.recordProcessed()
-                                updateProgressNotification(manager.runProgress.value.done, totalPending)
+                                // vez de saltar por lote. Os bytes do ficheiro
+                                // alimentam o "X MB de Y MB".
+                                manager.recordProcessed(item.sizeBytes)
+                                updateProgressNotification(manager.runProgress.value.done, totalPending, source.collection)
                                 result
                             }
                         }
                     }.awaitAll()
                 }
 
-                // Advance the persisted cursor using the contiguous-prefix rule
-                // over *all* results of this collection in this run: sorted by
-                // id, the cursor moves forward while every smaller item also
-                // succeeded. The moment we hit a failure, we stop — so the next
-                // run picks up exactly where the gap is, never skipping a file.
-                collectionResults += results
-                source.setCursor(contiguousMaxId(collectionResults, sinceId = source.cursor()))
+                // Avança o cursor persistido pela regra do prefixo contíguo, mas
+                // de forma incremental: os lotes são lidos por id ascendente
+                // (cada lote tem ids > os do lote anterior), por isso o menor id
+                // falhado em qualquer ponto da execução tapa tudo o que vem
+                // depois. O cursor fica no maior sucesso abaixo desse limite.
+                val batchMinFailed = results.asSequence()
+                    .filter { !it.success }
+                    .minOfOrNull { it.item.mediaStoreId } ?: Long.MAX_VALUE
+                if (batchMinFailed < minFailedId) minFailedId = batchMinFailed
+                val batchContiguous = results.asSequence()
+                    .filter { it.success && it.item.mediaStoreId < minFailedId }
+                    .maxOfOrNull { it.item.mediaStoreId }
+                if (batchContiguous != null && batchContiguous > cursor) cursor = batchContiguous
+                source.setCursor(cursor)
 
                 val batchFailed = results.count { !it.success }
                 uploadedTotal += results.count { it.success && !it.conflict }
@@ -240,7 +262,7 @@ class AutoBackupWorker @AssistedInject constructor(
                 // utilizador (flicker).
                 uploadManager.pruneFinishedBackups(keepLast = 30)
 
-                updateProgressNotification(manager.runProgress.value.done, totalPending)
+                updateProgressNotification(manager.runProgress.value.done, totalPending, source.collection)
 
                 // Whole batch failed — back off instead of hammering the API.
                 if (batchFailed == batch.size) break
@@ -299,8 +321,24 @@ class AutoBackupWorker @AssistedInject constructor(
         info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }.getOrDefault(false)
 
-    private fun updateProgressNotification(done: Int, total: Int) {
+    private fun collectionLabel(collection: BackupCollection): String = when (collection) {
+        BackupCollection.IMAGES -> "imagens"
+        BackupCollection.VIDEOS -> "vídeos"
+        BackupCollection.AUDIOS -> "áudios"
+        BackupCollection.DOCUMENTS -> "documentos"
+        BackupCollection.DOWNLOADS -> "downloads"
+    }
+
+    // Throttle: um backup grande processa milhares de itens; reemitir a
+    // notificação a cada item é desperdício (e o Android limita notify() muito
+    // frequente). Actualizamos no máximo ~2x por segundo, e sempre no fim.
+    @Volatile private var lastNotifyMs = 0L
+
+    private fun updateProgressNotification(done: Int, total: Int, collection: BackupCollection) {
         if (total <= 0) return
+        val now = System.currentTimeMillis()
+        if (done < total && now - lastNotifyMs < 500L) return
+        lastNotifyMs = now
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(
                 applicationContext,
@@ -310,7 +348,9 @@ class AutoBackupWorker @AssistedInject constructor(
         runCatching {
             val notification = BackupNotifications.buildProgress(
                 context = applicationContext,
-                title = "A fazer backup das fotos",
+                // Título reflecte o que está mesmo a ser enviado — antes dizia
+                // sempre "das fotos" mesmo a enviar vídeos/áudios.
+                title = "A fazer backup de ${collectionLabel(collection)}",
                 text = "$done de $total carregados",
                 indeterminate = false,
                 progress = done,
@@ -323,39 +363,35 @@ class AutoBackupWorker @AssistedInject constructor(
 
     private class SourceSpec(
         val collection: BackupCollection,
+        // Uma fonte = uma pasta escolhida. O scan filtra por esta pasta e o
+        // cursor é próprio dela, para pastas adicionadas mais tarde serem
+        // enviadas por inteiro (e não a partir do cursor da colecção).
+        val folder: String,
         val cursor: () -> Long,
         val setCursor: (Long) -> Unit,
     )
 
+    // Expande cada colecção ligada nas suas pastas seleccionadas. Opt-in: sem
+    // pastas, a colecção não gera fontes.
     private fun enabledSources(): List<SourceSpec> = buildList {
-        if (preferences.includeImages) {
-            add(SourceSpec(BackupCollection.IMAGES, { preferences.lastImageId }, { preferences.lastImageId = it }))
+        fun addCollection(enabled: Boolean, collection: BackupCollection) {
+            if (!enabled) return
+            preferences.selectedFolders(collection).sorted().forEach { folder ->
+                add(
+                    SourceSpec(
+                        collection = collection,
+                        folder = folder,
+                        cursor = { preferences.folderCursor(collection, folder) },
+                        setCursor = { preferences.setFolderCursor(collection, folder, it) },
+                    ),
+                )
+            }
         }
-        if (preferences.includeVideos) {
-            add(SourceSpec(BackupCollection.VIDEOS, { preferences.lastVideoId }, { preferences.lastVideoId = it }))
-        }
-        if (preferences.includeAudios) {
-            add(SourceSpec(BackupCollection.AUDIOS, { preferences.lastAudioId }, { preferences.lastAudioId = it }))
-        }
-        if (preferences.includeDocuments) {
-            add(SourceSpec(BackupCollection.DOCUMENTS, { preferences.lastDocumentId }, { preferences.lastDocumentId = it }))
-        }
-        if (preferences.includeDownloads) {
-            add(SourceSpec(BackupCollection.DOWNLOADS, { preferences.lastDownloadId }, { preferences.lastDownloadId = it }))
-        }
-    }
-
-    private fun contiguousMaxId(
-        results: List<ItemResult>,
-        sinceId: Long,
-    ): Long {
-        val sorted = results.sortedBy { it.item.mediaStoreId }
-        var cursor = sinceId
-        for (r in sorted) {
-            if (!r.success) break
-            cursor = maxOf(cursor, r.item.mediaStoreId)
-        }
-        return cursor
+        addCollection(preferences.includeImages, BackupCollection.IMAGES)
+        addCollection(preferences.includeVideos, BackupCollection.VIDEOS)
+        addCollection(preferences.includeAudios, BackupCollection.AUDIOS)
+        addCollection(preferences.includeDocuments, BackupCollection.DOCUMENTS)
+        addCollection(preferences.includeDownloads, BackupCollection.DOWNLOADS)
     }
 
     private inline fun safeCount(block: () -> Int): Int = try {
@@ -364,6 +400,14 @@ class AutoBackupWorker @AssistedInject constructor(
         throw c
     } catch (_: Throwable) {
         0
+    }
+
+    private inline fun safeLong(block: () -> Long): Long = try {
+        block()
+    } catch (c: CancellationException) {
+        throw c
+    } catch (_: Throwable) {
+        0L
     }
 
     private fun hasMediaPermissions(): Boolean {

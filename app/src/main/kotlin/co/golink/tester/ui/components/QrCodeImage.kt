@@ -1,5 +1,6 @@
 package co.golink.tester.ui.components
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,7 +36,7 @@ fun QrCodeImage(url: String) {
 
     Image(
         bitmap = bitmap.asImageBitmap(),
-        contentDescription = "QR Code",
+        contentDescription = "QR Code".tr(),
         contentScale = ContentScale.FillBounds,
         modifier = Modifier
             .fillMaxWidth()

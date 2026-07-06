@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.browse
 
+import co.golink.tester.ui.i18n.tr
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
@@ -9,6 +10,7 @@ import androidx.lifecycle.viewModelScope
 import co.golink.tester.data.auth.AuthState
 import co.golink.tester.data.auth.SessionManager
 import co.golink.tester.data.browse.BrowseRepository
+import co.golink.tester.data.browse.PagedItems
 import co.golink.tester.data.download.FileDownloader
 import co.golink.tester.data.favourites.FavouritesRepository
 import co.golink.tester.data.files.FilesRepository
@@ -27,6 +29,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -51,7 +54,7 @@ enum class ViewMode { LIST, GRID }
 enum class SortMode { ALPHA_ASC, ALPHA_DESC, DATE_DESC, DATE_ASC }
 
 data class BrowseUiState(
-    val mode: BrowseMode = BrowseMode.Folder(id = null, name = "Os meus ficheiros"),
+    val mode: BrowseMode = BrowseMode.Folder(id = null, name = "Os meus ficheiros".tr()),
     val crumbs: List<Crumb> = emptyList(),
     val items: List<BrowseItem> = emptyList(),
     val isLoading: Boolean = false,
@@ -96,6 +99,7 @@ class BrowseViewModel @Inject constructor(
     private val downloader: FileDownloader,
     private val uploadManager: UploadManager,
     private val fileViewerSession: FileViewerSession,
+    private val viewPreferences: co.golink.tester.data.settings.ViewPreferences,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
     private val _state = MutableStateFlow(BrowseUiState())
@@ -114,7 +118,22 @@ class BrowseViewModel @Inject constructor(
     private var searchJob: Job? = null
     private var loadJob: Job? = null
 
+    // Sincronização em tempo real (polling): enquanto o ecrã está visível,
+    // sondamos periodicamente o "fingerprint" da pasta actual e, se mudou
+    // (upload/apagar/mover/renomear noutro dispositivo), recarregamos em
+    // silêncio sem spinner nem perda de scroll.
+    private var pollJob: Job? = null
+    @Volatile private var lastFingerprint: String? = null
+
     init {
+        // Restaura vista/ordenação guardadas antes do primeiro load, para a lista
+        // já vir ordenada como o utilizador deixou.
+        _state.update {
+            it.copy(
+                viewMode = viewPreferences.viewMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BROWSE, ViewMode.LIST),
+                sortMode = viewPreferences.sortMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BROWSE, SortMode.ALPHA_ASC),
+            )
+        }
         openRoot()
         viewModelScope.launch {
             uploadManager.completedTick.collect { t ->
@@ -138,7 +157,7 @@ class BrowseViewModel @Inject constructor(
     }
 
     fun openRoot() {
-        val crumb = Crumb(id = null, name = "Os meus ficheiros")
+        val crumb = Crumb(id = null, name = "Os meus ficheiros".tr())
         _state.update {
             it.copy(
                 mode = BrowseMode.Folder(id = null, name = crumb.name),
@@ -169,7 +188,7 @@ class BrowseViewModel @Inject constructor(
         _state.update {
             it.copy(
                 mode = BrowseMode.Folder(id = id, name = name),
-                crumbs = listOf(Crumb(null, "Os meus ficheiros"), Crumb(id, name)),
+                crumbs = listOf(Crumb(null, "Os meus ficheiros".tr()), Crumb(id, name)),
                 searchQuery = "",
             )
         }
@@ -195,11 +214,11 @@ class BrowseViewModel @Inject constructor(
     }
 
     fun openLatest() = switchTo(BrowseMode.Latest, "Recentes")
-    fun openShared() = switchTo(BrowseMode.Shared, "Partilhado comigo")
-    fun openFavourites() = switchTo(BrowseMode.Favourites, "Favoritos")
-    fun openTrash() = switchTo(BrowseMode.Trash, "Lixo")
-    fun openTeamFolders() = switchTo(BrowseMode.TeamFolder(id = null, name = "Pastas de equipa"), "Pastas de equipa")
-    fun openSharedWithMe() = switchTo(BrowseMode.SharedWithMe(id = null, name = "Partilhado comigo"), "Partilhado comigo")
+    fun openShared() = switchTo(BrowseMode.Shared, "Partilhado comigo".tr())
+    fun openFavourites() = switchTo(BrowseMode.Favourites, "Favoritos".tr())
+    fun openTrash() = switchTo(BrowseMode.Trash, "Lixo".tr())
+    fun openTeamFolders() = switchTo(BrowseMode.TeamFolder(id = null, name = "Pastas de equipa".tr()), "Pastas de equipa".tr())
+    fun openSharedWithMe() = switchTo(BrowseMode.SharedWithMe(id = null, name = "Partilhado comigo".tr()), "Partilhado comigo".tr())
 
     private fun switchTo(mode: BrowseMode, name: String) {
         _state.update {
@@ -244,7 +263,7 @@ class BrowseViewModel @Inject constructor(
     }
 
     fun notifyComingSoon() {
-        _state.update { it.copy(toast = "Em breve") }
+        _state.update { it.copy(toast = "Em breve".tr()) }
     }
 
     fun prepareViewer(files: List<BrowseItem.File>, startId: String) {
@@ -295,7 +314,7 @@ class BrowseViewModel @Inject constructor(
         val parentId = (state.value.mode as? BrowseMode.Folder)?.id
         viewModelScope.launch {
             filesRepository.createFolder(name.trim(), parentId)
-                .onSuccess { _state.update { it.copy(toast = "Pasta criada") }; loadCurrent() }
+                .onSuccess { _state.update { it.copy(toast = "Pasta criada".tr()) }; loadCurrent() }
                 .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
         }
     }
@@ -304,7 +323,7 @@ class BrowseViewModel @Inject constructor(
         viewModelScope.launch {
             filesRepository.createFolder(name.trim(), parentId)
                 .onSuccess {
-                    _state.update { it.copy(toast = "Pasta criada") }
+                    _state.update { it.copy(toast = "Pasta criada".tr()) }
                     loadNavigationTree()
                     if ((state.value.mode as? BrowseMode.Folder)?.id == parentId) loadCurrent()
                 }
@@ -321,10 +340,10 @@ class BrowseViewModel @Inject constructor(
     }
 
     fun delete(item: BrowseItem, permanent: Boolean = false) {
-        if (permanent) _state.update { it.copy(processing = "A eliminar…") }
+        if (permanent) _state.update { it.copy(processing = "A eliminar…".tr()) }
         viewModelScope.launch {
             filesRepository.delete(listOf(item), permanent)
-                .onSuccess { _state.update { it.copy(processing = null, toast = if (permanent) "Eliminado" else "Movido para o lixo") }; loadCurrent() }
+                .onSuccess { _state.update { it.copy(processing = null, toast = if (permanent) "Eliminado" else "Movido para o lixo".tr()) }; loadCurrent() }
                 .onFailure { t ->
                     android.util.Log.e("BrowseVM", "delete failed", t)
                     _state.update { it.copy(processing = null, toast = "Falha: ${t.message ?: t::class.java.simpleName}") }
@@ -355,7 +374,7 @@ class BrowseViewModel @Inject constructor(
             .map { it.trim() }
             .filter { it.startsWith("http://", ignoreCase = true) || it.startsWith("https://", ignoreCase = true) }
         if (urls.isEmpty()) {
-            _state.update { it.copy(toast = "Insira pelo menos um URL válido") }
+            _state.update { it.copy(toast = "Insira pelo menos um URL válido".tr()) }
             return
         }
         val parentId = (state.value.mode as? BrowseMode.Folder)?.id
@@ -369,7 +388,7 @@ class BrowseViewModel @Inject constructor(
     fun createTeamFolder(name: String, invitations: List<TeamInvitation>) {
         viewModelScope.launch {
             teamsRepository.createTeamFolder(name.trim(), invitations)
-                .onSuccess { _state.update { it.copy(toast = "Pasta de equipa criada") }; loadCurrent() }
+                .onSuccess { _state.update { it.copy(toast = "Pasta de equipa criada".tr()) }; loadCurrent() }
                 .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
         }
     }
@@ -377,7 +396,7 @@ class BrowseViewModel @Inject constructor(
     fun convertToTeamFolder(folderId: String, invitations: List<TeamInvitation>) {
         viewModelScope.launch {
             teamsRepository.convertToTeamFolder(folderId, invitations)
-                .onSuccess { _state.update { it.copy(toast = "Pasta convertida") }; loadCurrent() }
+                .onSuccess { _state.update { it.copy(toast = "Pasta convertida".tr()) }; loadCurrent() }
                 .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
         }
     }
@@ -386,7 +405,7 @@ class BrowseViewModel @Inject constructor(
         val folderId = (state.value.mode as? BrowseMode.Folder)?.id
         viewModelScope.launch {
             uploadRequestRepository.createFileRequest(name, email, notes, folderId)
-                .onSuccess { _state.update { it.copy(toast = "Pedido de ficheiros criado") } }
+                .onSuccess { _state.update { it.copy(toast = "Pedido de ficheiros criado".tr()) } }
                 .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
         }
     }
@@ -396,7 +415,7 @@ class BrowseViewModel @Inject constructor(
         viewModelScope.launch {
             val files = collectFilesFromTree(treeUri)
             if (files.isEmpty()) {
-                _state.update { it.copy(toast = "Pasta vazia ou sem ficheiros") }
+                _state.update { it.copy(toast = "Pasta vazia ou sem ficheiros".tr()) }
                 return@launch
             }
             files.forEach { uploadManager.enqueue(it, parentId) }
@@ -460,7 +479,7 @@ class BrowseViewModel @Inject constructor(
             shareRepository.create(current.item, password, permission, expirationDays, null)
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
-                    _state.update { it.copy(toast = "Partilha criada") }
+                    _state.update { it.copy(toast = "Partilha criada".tr()) }
                     loadCurrent()
                 }
                 .onFailure { t ->
@@ -484,7 +503,7 @@ class BrowseViewModel @Inject constructor(
             )
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
-                    _state.update { it.copy(toast = "Partilha actualizada") }
+                    _state.update { it.copy(toast = "Partilha actualizada".tr()) }
                     loadCurrent()
                 }
                 .onFailure { t ->
@@ -502,7 +521,7 @@ class BrowseViewModel @Inject constructor(
             shareRepository.revoke(token)
                 .onSuccess {
                     _shareState.value = null
-                    _state.update { it.copy(toast = "Partilha revogada") }
+                    _state.update { it.copy(toast = "Partilha revogada".tr()) }
                     loadCurrent()
                 }
                 .onFailure { t ->
@@ -537,14 +556,14 @@ class BrowseViewModel @Inject constructor(
         _shareState.value = current.copy(sendingEmail = true, emailDialogVisible = false)
         viewModelScope.launch {
             shareRepository.sendByEmail(token, emails)
-                .onSuccess { _state.update { it.copy(toast = "Email enviado") } }
+                .onSuccess { _state.update { it.copy(toast = "Email enviado".tr()) } }
                 .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
             _shareState.update { it?.copy(sendingEmail = false) }
         }
     }
 
     fun restore(item: BrowseItem) {
-        _state.update { it.copy(processing = "A restaurar…") }
+        _state.update { it.copy(processing = "A restaurar…".tr()) }
         viewModelScope.launch {
             trashRepository.restore(listOf(item))
                 .onSuccess { _state.update { it.copy(processing = null, toast = "Restaurado") }; loadCurrent() }
@@ -556,10 +575,10 @@ class BrowseViewModel @Inject constructor(
     }
 
     fun emptyTrash() {
-        _state.update { it.copy(processing = "A esvaziar o lixo…") }
+        _state.update { it.copy(processing = "A esvaziar o lixo…".tr()) }
         viewModelScope.launch {
             trashRepository.emptyTrash()
-                .onSuccess { _state.update { it.copy(processing = null, toast = "Lixo esvaziado") }; loadCurrent() }
+                .onSuccess { _state.update { it.copy(processing = null, toast = "Lixo esvaziado".tr()) }; loadCurrent() }
                 .onFailure { t ->
                     android.util.Log.e("BrowseVM", "emptyTrash failed", t)
                     _state.update { it.copy(processing = null, toast = "Falha: ${t.message ?: t::class.java.simpleName}") }
@@ -575,7 +594,7 @@ class BrowseViewModel @Inject constructor(
             result
                 .onSuccess {
                     sessionManager.refreshUser()
-                    _state.update { it.copy(toast = if (isFavourite) "Removido dos favoritos" else "Adicionado aos favoritos") }
+                    _state.update { it.copy(toast = if (isFavourite) "Removido dos favoritos".tr() else "Adicionado aos favoritos".tr()) }
                 }
                 .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
         }
@@ -584,42 +603,117 @@ class BrowseViewModel @Inject constructor(
     fun isFavourite(folder: BrowseItem.Folder): Boolean =
         favouriteFolders.value.any { it.id == folder.id }
 
-    private fun loadCurrent() {
+    private fun loadCurrent(silent: Boolean = false) {
         loadJob?.cancel()
         val mode = _state.value.mode
-        _state.update { it.copy(items = emptyList(), isLoading = true, isLoadingMore = false, currentPage = 1, lastPage = 1, error = null) }
+        // Recarga normal: limpa baseline e mostra spinner. Recarga silenciosa
+        // (despoletada pelo polling): mantém os itens e o scroll no ecrã e
+        // repõe exactamente as páginas que o utilizador já tinha aberto.
+        val pagesToReload = if (silent) _state.value.currentPage.coerceAtLeast(1) else 1
+        if (!silent) {
+            lastFingerprint = null
+            _state.update { it.copy(items = emptyList(), isLoading = true, isLoadingMore = false, currentPage = 1, lastPage = 1, error = null) }
+        }
         loadJob = viewModelScope.launch {
             when (mode) {
-                is BrowseMode.Folder -> handlePaged(repository.listFolder(mode.id, page = 1), mode)
-                BrowseMode.Latest -> handlePaged(repository.listLatest(page = 1), mode)
-                BrowseMode.Shared -> handlePaged(repository.listShared(page = 1), mode)
                 BrowseMode.Favourites -> handleSimple(Result.success(favouriteFolders.value.toList<BrowseItem>()), mode)
                 BrowseMode.Trash -> handleSimple(trashRepository.list(), mode)
                 is BrowseMode.SearchResults -> handleSimple(repository.search(mode.query), mode)
-                is BrowseMode.TeamFolder -> handlePaged(teamsRepository.listTeamFolder(mode.id, page = 1), mode)
-                is BrowseMode.SharedWithMe -> handlePaged(teamsRepository.listSharedWithMe(mode.id, page = 1), mode)
+                else -> loadPaged(mode, pagesToReload, silent)
             }
         }
     }
 
-    private fun handlePaged(result: Result<co.golink.tester.data.browse.PagedItems>, mode: BrowseMode) {
+    // Carrega uma única página da fonte correspondente ao modo actual.
+    // Devolve null para modos não paginados (Favoritos/Lixo/Pesquisa).
+    private suspend fun fetchPage(mode: BrowseMode, page: Int): Result<PagedItems>? = when (mode) {
+        is BrowseMode.Folder -> repository.listFolder(mode.id, page = page)
+        BrowseMode.Latest -> repository.listLatest(page = page)
+        BrowseMode.Shared -> repository.listShared(page = page)
+        is BrowseMode.TeamFolder -> teamsRepository.listTeamFolder(mode.id, page = page)
+        is BrowseMode.SharedWithMe -> teamsRepository.listSharedWithMe(mode.id, page = page)
+        else -> null
+    }
+
+    // Carregamento paginado preguiçoso: a abertura normal pede só a página 1; as
+    // seguintes chegam à medida que o utilizador faz scroll (loadMore). Antes
+    // carregava TODAS as páginas de imediato em cascata — dezenas de pedidos em
+    // série ao abrir uma pasta grande, a causa principal do "lento a carregar".
+    // Numa recarga silenciosa pedimos as primeiras `pages` páginas para repor o
+    // que já estava visível, sem spinner e sem mexer no scroll.
+    private suspend fun loadPaged(mode: BrowseMode, pages: Int, silent: Boolean) {
+        val first = fetchPage(mode, 1) ?: return
         if (mode != _state.value.mode) return
-        result
-            .onSuccess { paged ->
+        first
+            .onSuccess { firstPaged ->
+                val all = firstPaged.items.toMutableList()
+                var current = firstPaged.currentPage
+                val last = firstPaged.lastPage
+                var page = 2
+                while (page <= pages && page <= last) {
+                    if (mode != _state.value.mode) return
+                    val next = fetchPage(mode, page)?.getOrNull() ?: break
+                    all += next.items
+                    current = next.currentPage
+                    page++
+                }
+                if (mode != _state.value.mode) return
                 _state.update {
                     it.copy(
-                        items = sorted(paged.items),
+                        items = sorted(all),
                         isLoading = false,
                         isRefreshing = false,
-                        currentPage = paged.currentPage,
-                        lastPage = paged.lastPage,
+                        currentPage = current,
+                        lastPage = last,
                     )
                 }
-                if (paged.currentPage < paged.lastPage) loadMore()
             }
             .onFailure { t ->
-                _state.update { it.copy(items = emptyList(), isLoading = false, isRefreshing = false, error = t.message) }
+                // Numa recarga silenciosa não apagamos a vista por um erro de rede.
+                if (silent) {
+                    _state.update { it.copy(isRefreshing = false) }
+                } else {
+                    _state.update { it.copy(items = emptyList(), isLoading = false, isRefreshing = false, error = t.message) }
+                }
             }
+    }
+
+    // --- Sincronização em tempo real via polling ----------------------------
+
+    /** Chamar quando o ecrã fica visível (ON_RESUME). */
+    fun startRealtimeSync() {
+        if (pollJob?.isActive == true) return
+        pollJob = viewModelScope.launch {
+            while (isActive) {
+                delay(POLL_INTERVAL_MS)
+                pollFolderOnce()
+            }
+        }
+    }
+
+    /** Chamar quando o ecrã deixa de estar visível (ON_PAUSE). */
+    fun stopRealtimeSync() {
+        pollJob?.cancel()
+        pollJob = null
+    }
+
+    private suspend fun pollFolderOnce() {
+        val s = _state.value
+        val mode = s.mode
+        // Só pastas pessoais têm endpoint de fingerprint; evitar interferir
+        // durante carregamentos ou enquanto o utilizador selecciona itens.
+        if (mode !is BrowseMode.Folder) return
+        if (s.isLoading || s.isLoadingMore || s.isRefreshing) return
+        if (s.selectedIds.isNotEmpty()) return
+
+        val signature = repository.folderFingerprint(mode.id).getOrNull() ?: return
+        if (mode != _state.value.mode) return // navegou entretanto
+
+        val previous = lastFingerprint
+        lastFingerprint = signature
+        if (previous != null && previous != signature) {
+            loadCurrent(silent = true)
+        }
     }
 
     private fun handleSimple(result: Result<List<BrowseItem>>, mode: BrowseMode) {
@@ -643,13 +737,9 @@ class BrowseViewModel @Inject constructor(
         val nextPage = s.currentPage + 1
         _state.update { it.copy(isLoadingMore = true) }
         viewModelScope.launch {
-            val result = when (mode) {
-                is BrowseMode.Folder -> repository.listFolder(mode.id, page = nextPage)
-                BrowseMode.Latest -> repository.listLatest(page = nextPage)
-                BrowseMode.Shared -> repository.listShared(page = nextPage)
-                is BrowseMode.TeamFolder -> teamsRepository.listTeamFolder(mode.id, page = nextPage)
-                is BrowseMode.SharedWithMe -> teamsRepository.listSharedWithMe(mode.id, page = nextPage)
-                else -> return@launch
+            val result = fetchPage(mode, nextPage) ?: run {
+                _state.update { it.copy(isLoadingMore = false) }
+                return@launch
             }
             if (mode != _state.value.mode) return@launch
             result
@@ -662,7 +752,8 @@ class BrowseViewModel @Inject constructor(
                             lastPage = paged.lastPage,
                         )
                     }
-                    if (paged.currentPage < paged.lastPage) loadMore()
+                    // Sem cascata: a página seguinte só carrega quando o scroll
+                    // voltar a aproximar-se do fim da lista.
                 }
                 .onFailure { t ->
                     _state.update { it.copy(isLoadingMore = false, error = t.message) }
@@ -670,10 +761,15 @@ class BrowseViewModel @Inject constructor(
         }
     }
 
-    fun setViewMode(mode: ViewMode) = _state.update { it.copy(viewMode = mode) }
+    fun setViewMode(mode: ViewMode) {
+        viewPreferences.setViewMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BROWSE, mode)
+        _state.update { it.copy(viewMode = mode) }
+    }
 
     fun toggleViewMode() = _state.update {
-        it.copy(viewMode = if (it.viewMode == ViewMode.GRID) ViewMode.LIST else ViewMode.GRID)
+        val next = if (it.viewMode == ViewMode.GRID) ViewMode.LIST else ViewMode.GRID
+        viewPreferences.setViewMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BROWSE, next)
+        it.copy(viewMode = next)
     }
 
     fun toggleSelection(id: String) = _state.update {
@@ -698,6 +794,7 @@ class BrowseViewModel @Inject constructor(
     }
 
     fun setSortMode(mode: SortMode) {
+        viewPreferences.setSortMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BROWSE, mode)
         _state.update { it.copy(sortMode = mode, items = sortedWith(it.items, mode)) }
     }
 
@@ -706,12 +803,18 @@ class BrowseViewModel @Inject constructor(
 
     private fun sortedWith(items: List<BrowseItem>, mode: SortMode): List<BrowseItem> {
         val foldersFirst = compareBy<BrowseItem> { it !is BrowseItem.Folder }
+        // CASE_INSENSITIVE_ORDER compara sem criar uma cópia em minúsculas por
+        // elemento a cada comparação (o sort é refeito a cada página).
         val secondary: Comparator<BrowseItem> = when (mode) {
-            SortMode.ALPHA_ASC -> compareBy { it.name.lowercase() }
-            SortMode.ALPHA_DESC -> compareByDescending { it.name.lowercase() }
+            SortMode.ALPHA_ASC -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }
+            SortMode.ALPHA_DESC -> compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.name }
             SortMode.DATE_DESC -> compareByDescending { it.createdAt ?: it.updatedAt ?: "" }
             SortMode.DATE_ASC -> compareBy { it.createdAt ?: it.updatedAt ?: "" }
         }
         return items.sortedWith(foldersFirst.then(secondary))
+    }
+
+    companion object {
+        private const val POLL_INTERVAL_MS = 5_000L
     }
 }

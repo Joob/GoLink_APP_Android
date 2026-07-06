@@ -38,7 +38,10 @@ class FileDownloader @Inject constructor(
     @ApplicationContext private val context: Context,
     private val backendUrlHolder: BackendUrlHolder,
     private val tokenStore: TokenStore,
-    @Named("authed") private val httpClient: OkHttpClient,
+    // Cliente de timeouts longos (leitura 5 min / chamada 10 min): o "authed"
+    // tinha readTimeout de 60 s, o que fazia downloads grandes ou em ligações
+    // lentas falharem a meio ("nunca termina"). Aqui streamamos o ficheiro todo.
+    @Named("longRunning") private val httpClient: OkHttpClient,
 ) {
     sealed interface Event {
         data class Started(val name: String) : Event
@@ -56,6 +59,8 @@ class FileDownloader @Inject constructor(
 
     companion object {
         private const val CHANNEL_ID = "golink_downloads"
+        // 64 KB por leitura — menos syscalls, mais throughput em ficheiros grandes.
+        private const val DEFAULT_COPY_BUFFER = 64 * 1024
     }
 
     private val receiver = object : BroadcastReceiver() {
@@ -200,13 +205,13 @@ class FileDownloader @Inject constructor(
             }
             val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                 ?: throw IOException("Não foi possível criar ficheiro em Downloads")
-            context.contentResolver.openOutputStream(uri)?.use { out -> input.copyTo(out) }
+            context.contentResolver.openOutputStream(uri)?.use { out -> input.copyTo(out, DEFAULT_COPY_BUFFER) }
             val update = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
             context.contentResolver.update(uri, update, null, null)
         } else {
             val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             dir.mkdirs()
-            java.io.File(dir, name).outputStream().use { input.copyTo(it) }
+            java.io.File(dir, name).outputStream().use { input.copyTo(it, DEFAULT_COPY_BUFFER) }
         }
     }
 

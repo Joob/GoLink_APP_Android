@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.otp
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -36,14 +37,14 @@ fun OtpScreen(
     LaunchedEffect(state.validated) { if (state.validated) onValidated() }
 
     AuthScaffold(
-        title = "Verificação",
-        subtitle = "Introduz o código de 6 dígitos que enviámos para o teu email",
+        title = "Verificação".tr(),
+        subtitle = "Introduz o código de 6 dígitos que enviámos para o teu email".tr(),
         onBack = onCancel,
     ) {
         OutlinedTextField(
             value = state.code,
             onValueChange = viewModel::onCode,
-            label = { Text("Código") },
+            label = { Text("Código".tr()) },
             singleLine = true,
             isError = state.error != null,
             supportingText = state.error?.let { { Text(it) } },
@@ -79,7 +80,7 @@ fun OtpScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "Não recebeu o código?",
+                "Não recebeu o código?".tr(),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -87,7 +88,7 @@ fun OtpScreen(
                 onClick = { viewModel.sendCode() },
                 enabled = !state.sending,
             ) {
-                Text(if (state.sending) "A enviar…" else "Reenviar")
+                Text(if (state.sending) "A enviar…".tr() else "Reenviar")
             }
         }
     }

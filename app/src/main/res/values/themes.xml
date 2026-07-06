@@ -6,7 +6,18 @@
         <item name="android:navigationBarColor">@android:color/white</item>
     </style>
 
-    <style name="Theme.VueFileManager.Splash" parent="Theme.VueFileManager">
-        <item name="android:windowBackground">@android:color/white</item>
+    <!--
+        Splash theme — canonical androidx.core:core-splashscreen setup.
+        A dedicated ic_splash drawable + a white icon background circle is used
+        (instead of a bare adaptive icon) so the platform does NOT apply its
+        ~1.5x "inner 2/3" zoom to the icon. ic_splash matches the launcher
+        icon's logo proportion, so the splash and the home icon look the same
+        and there is no grow/shrink during the launch/exit animation.
+    -->
+    <style name="Theme.VueFileManager.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+        <item name="windowSplashScreenIconBackgroundColor">@android:color/white</item>
+        <item name="postSplashScreenTheme">@style/Theme.VueFileManager</item>
     </style>
 </resources>

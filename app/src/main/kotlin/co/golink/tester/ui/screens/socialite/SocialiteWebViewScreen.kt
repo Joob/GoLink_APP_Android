@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.socialite
 
+import co.golink.tester.ui.i18n.tr
 import android.annotation.SuppressLint
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
@@ -59,7 +60,7 @@ fun SocialiteWebViewScreen(
                 title = { Text("Entrar com ${provider.replaceFirstChar { it.titlecase() }}") },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
-                        Icon(Icons.Filled.Close, contentDescription = "Cancelar")
+                        Icon(Icons.Filled.Close, contentDescription = "Cancelar".tr())
                     }
                 },
             )
@@ -81,7 +82,7 @@ fun SocialiteWebViewScreen(
                         viewModel.onCallbackLanded(cookies)
                     },
                 )
-                else -> ErrorBlock(message = "Configuração do servidor inválida", onRetry = onCancel)
+                else -> ErrorBlock(message = "Configuração do servidor inválida".tr(), onRetry = onCancel)
             }
             if (state.finishingAuth) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -148,6 +149,6 @@ private fun ErrorBlock(message: String, onRetry: () -> Unit) {
             shape = RoundedCornerShape(12.dp),
             contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("Tentar de novo") }
+        ) { Text("Tentar de novo".tr()) }
     }
 }

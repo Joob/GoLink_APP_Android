@@ -1,7 +1,10 @@
 package co.golink.tester.ui.common
 
+import co.golink.tester.ui.i18n.LanguageMenu
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -42,14 +45,21 @@ fun AuthScaffold(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 16.dp),
         ) {
-            if (onBack != null) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
+            // Topo: voltar (esquerda) + seletor de idioma (direita), para o
+            // utilizador poder trocar de idioma já no login/registo.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (onBack != null) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar".tr())
+                    }
                 }
-                Spacer(Modifier.height(8.dp))
-            } else {
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.weight(1f))
+                LanguageMenu()
             }
+            Spacer(Modifier.height(8.dp))
             Text(
                 text = title,
                 style = MaterialTheme.typography.displayLarge,

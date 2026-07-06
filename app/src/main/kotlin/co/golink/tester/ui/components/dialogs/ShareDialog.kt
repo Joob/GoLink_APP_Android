@@ -1,5 +1,6 @@
 package co.golink.tester.ui.components.dialogs
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -126,7 +127,7 @@ fun ShareDialog(
                     Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "Partilhar",
+                            "Partilhar".tr(),
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                         )
@@ -178,7 +179,7 @@ fun ShareDialog(
                     onClick = onDismiss,
                     modifier = Modifier.align(Alignment.End),
                 ) {
-                    Text("Fechar", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Fechar".tr(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -267,7 +268,7 @@ private fun PermissionSection(
             .padding(14.dp),
     ) {
         Text(
-            "Permissão",
+            "Permissão".tr(),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontWeight = FontWeight.SemiBold,
@@ -276,14 +277,14 @@ private fun PermissionSection(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PermissionChip(
                 icon = Icons.Outlined.RemoveRedEye,
-                label = "Apenas ver",
+                label = "Apenas ver".tr(),
                 selected = permission == "visitor",
                 modifier = Modifier.weight(1f),
                 onClick = { onPermissionChange("visitor") },
             )
             PermissionChip(
                 icon = Icons.Outlined.Edit,
-                label = "Pode editar",
+                label = "Pode editar".tr(),
                 selected = permission == "editor",
                 modifier = Modifier.weight(1f),
                 onClick = { onPermissionChange("editor") },
@@ -307,7 +308,7 @@ private fun CreateShareForm(
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SwitchRow(
             icon = Icons.Filled.Lock,
-            label = "Proteger com password",
+            label = "Proteger com password".tr(),
             checked = protectWithPassword,
             onCheckedChange = { protectWithPassword = it },
         )
@@ -329,7 +330,7 @@ private fun CreateShareForm(
 
         SwitchRow(
             icon = Icons.Outlined.Schedule,
-            label = "Expira após (dias)",
+            label = "Expira após (dias)".tr(),
             checked = hasExpiration,
             onCheckedChange = { hasExpiration = it },
         )
@@ -337,7 +338,7 @@ private fun CreateShareForm(
             OutlinedTextField(
                 value = expirationDays,
                 onValueChange = { v -> expirationDays = v.filter { it.isDigit() }.take(4) },
-                label = { Text("Número de dias") },
+                label = { Text("Número de dias".tr()) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 shape = RoundedCornerShape(12.dp),
@@ -368,7 +369,7 @@ private fun CreateShareForm(
                 )
                 Spacer(Modifier.width(8.dp))
             }
-            Text("Criar link de partilha", fontWeight = FontWeight.SemiBold)
+            Text("Criar link de partilha".tr(), fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -403,7 +404,7 @@ private fun ExistingShareView(
                 .padding(14.dp),
         ) {
             Text(
-                "Link público",
+                "Link público".tr(),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontWeight = FontWeight.SemiBold,
@@ -438,7 +439,7 @@ private fun ExistingShareView(
             if (share.protected || (share.expireIn != null && share.expireIn > 0) || !share.permission.isNullOrBlank()) {
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (share.protected) TagChip("Com password")
+                    if (share.protected) TagChip("Com password".tr())
                     if (share.expireIn != null && share.expireIn > 0) TagChip("Expira em ${share.expireIn}d")
                     if (!share.permission.isNullOrBlank()) TagChip(prettyPermission(share.permission))
                 }
@@ -449,7 +450,7 @@ private fun ExistingShareView(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ShareActionButton(
                 icon = Icons.Filled.QrCode2,
-                label = "QR code",
+                label = "QR code".tr(),
                 modifier = Modifier.weight(1f),
                 active = showQr,
                 onClick = { activePanel = if (showQr) SharePanel.None else SharePanel.Qr },
@@ -501,14 +502,14 @@ private fun ExistingShareView(
                     .padding(14.dp),
             ) {
                 Text(
-                    "Editar partilha",
+                    "Editar partilha".tr(),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.SemiBold,
                 )
                 SwitchRow(
                     icon = Icons.Filled.Lock,
-                    label = "Proteger com password",
+                    label = "Proteger com password".tr(),
                     checked = hasPassword,
                     onCheckedChange = { hasPassword = it },
                 )
@@ -516,7 +517,7 @@ private fun ExistingShareView(
                     OutlinedTextField(
                         value = password,
                         onValueChange = { password = it },
-                        label = { Text("Nova password") },
+                        label = { Text("Nova password".tr()) },
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp),
@@ -528,7 +529,7 @@ private fun ExistingShareView(
                 }
                 SwitchRow(
                     icon = Icons.Outlined.Schedule,
-                    label = "Expira após (dias)",
+                    label = "Expira após (dias)".tr(),
                     checked = hasExpiration,
                     onCheckedChange = { hasExpiration = it },
                 )
@@ -536,7 +537,7 @@ private fun ExistingShareView(
                     OutlinedTextField(
                         value = expirationDays,
                         onValueChange = { v -> expirationDays = v.filter { it.isDigit() }.take(4) },
-                        label = { Text("Número de dias") },
+                        label = { Text("Número de dias".tr()) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         shape = RoundedCornerShape(12.dp),
@@ -565,7 +566,7 @@ private fun ExistingShareView(
                         )
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text("Guardar alterações", fontWeight = FontWeight.SemiBold)
+                    Text("Guardar alterações".tr(), fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -591,7 +592,7 @@ private fun ExistingShareView(
             )
             Spacer(Modifier.width(10.dp))
             Text(
-                "Revogar partilha",
+                "Revogar partilha".tr(),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.error,
                 fontWeight = FontWeight.Medium,
@@ -677,11 +678,11 @@ private fun EmailRecipientsDialog(
                         Icon(Icons.Filled.Email, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
                     }
                     Spacer(Modifier.width(12.dp))
-                    Text("Enviar por email", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Enviar por email".tr(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 }
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    "Indica os emails separados por vírgula",
+                    "Indica os emails separados por vírgula".tr(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -689,7 +690,7 @@ private fun EmailRecipientsDialog(
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
-                    label = { Text("Destinatários") },
+                    label = { Text("Destinatários".tr()) },
                     placeholder = { Text("a@b.com, c@d.com") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                     shape = RoundedCornerShape(12.dp),
@@ -698,7 +699,7 @@ private fun EmailRecipientsDialog(
                 Spacer(Modifier.height(20.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = onDismiss) {
-                        Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Cancelar".tr(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Spacer(Modifier.width(8.dp))
                     Button(
@@ -723,7 +724,7 @@ private fun EmailRecipientsDialog(
 }
 
 private fun prettyPermission(p: String): String = when (p) {
-    "editor" -> "Pode editar"
-    "visitor" -> "Apenas ver"
+    "editor" -> "Pode editar".tr()
+    "visitor" -> "Apenas ver".tr()
     else -> p
 }

@@ -1,5 +1,6 @@
 package co.golink.tester.ui.theme
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight

@@ -49,8 +49,9 @@ interface FilesApi {
         @Part("name") name: RequestBody,
         @Part("extension") extension: RequestBody,
         @Part("overwrite_existing") overwriteExisting: RequestBody?,
-        // Pasta de origem no dispositivo ("Camera", "Screenshots", …) — o
-        // backend usa-a para organizar o backup em subpastas por origem.
+        // Só a pasta de origem (Camera, Screenshots…). O servidor monta o
+        // caminho por tipo (/Imagens/Camera, /Vídeos/Camera…) e cria/reutiliza
+        // as pastas.
         @Part("folder") folder: RequestBody?,
         @Part file: MultipartBody.Part,
     ): Response<BrowseEntryEnvelope>
@@ -63,6 +64,12 @@ interface FilesApi {
         @Part("parent_id") parentId: RequestBody?,
         @Part("is_last_chunk") isLastChunk: RequestBody,
         @Part("overwrite_existing") overwriteExisting: RequestBody?,
+        // Backup por chunks (vídeos grandes): marca a origem; o servidor monta
+        // o caminho por tipo a partir da pasta de origem ("folder").
+        @Part("mobile_backup") mobileBackup: RequestBody? = null,
+        @Part("folder") folder: RequestBody? = null,
+        // Caminho explícito — usado só pelos uploads normais (web) de pastas.
+        @Part("path") path: RequestBody? = null,
         @Part chunk: MultipartBody.Part,
     ): Response<okhttp3.ResponseBody>
 

@@ -88,10 +88,17 @@ class UploadManager @Inject constructor(
     private fun runTask(taskId: String, uri: Uri, metadata: FileMetadata, parentId: String?, overwrite: Boolean = false, mobileBackup: Boolean = false, backupFolder: String? = null): Job {
         val job = scope.launch {
             try {
-                // Mobile backup uploads always go through the dedicated single-shot
-                // endpoint so the server tags them with source=mobile_backup.
+                // Mobile backup: ficheiros até 25 MB vão no endpoint single-shot
+                // (marca source=mobile_backup). Acima disso, um único pedido
+                // rebentava o limite do nginx (HTTP 413 "Entity too large") — por
+                // isso os grandes (vídeos) vão por chunks, que também marcam a
+                // origem e criam a pasta.
                 if (mobileBackup) {
-                    uploadMobileBackupSingle(taskId, uri, metadata, overwrite, backupFolder)
+                    if (metadata.size > CHUNK_THRESHOLD) {
+                        uploadChunked(taskId, uri, metadata, parentId = null, overwrite, mobileBackup = true, backupFolder = backupFolder)
+                    } else {
+                        uploadMobileBackupSingle(taskId, uri, metadata, overwrite, backupFolder)
+                    }
                 } else if (metadata.size in 1..CHUNK_THRESHOLD) {
                     uploadSingle(taskId, uri, metadata, parentId, overwrite)
                 } else {
@@ -229,6 +236,8 @@ class UploadManager @Inject constructor(
             updateProgress(taskId, p)
         }
         val filePart = MultipartBody.Part.createFormData("file", metadata.displayName, fileBody)
+        // Envia só a pasta de origem; o servidor monta o caminho por tipo
+        // (/Imagens/Camera, /Vídeos/Camera…) e cria/reutiliza as pastas.
         val response = api.uploadMobileBackup(
             name = textPart(metadata.baseName),
             extension = textPart(metadata.extension),
@@ -247,10 +256,16 @@ class UploadManager @Inject constructor(
         metadata: FileMetadata,
         parentId: String?,
         overwrite: Boolean,
+        mobileBackup: Boolean = false,
+        backupFolder: String? = null,
     ) {
         markUploading(taskId)
         val safeDisplay = metadata.displayName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
         val chunkOriginalName = "${UUID.randomUUID()}-$safeDisplay"
+        // Só a pasta de origem; o servidor monta o caminho por tipo no último
+        // chunk. Enviada sempre — inofensivo nos chunks intermédios.
+        val backupBucket = if (mobileBackup) backupFolder?.takeIf { it.isNotBlank() } else null
+        val mobileFlag = if (mobileBackup) "1" else null
         val total = metadata.size
         var sent = 0L
         resolver.openInputStream(uri)?.use { input ->
@@ -283,6 +298,8 @@ class UploadManager @Inject constructor(
                     parentId = parentId?.let { textPart(it) },
                     isLastChunk = textPart(if (isLast) "1" else "0"),
                     overwriteExisting = if (overwrite && isLast) textPart("1") else null,
+                    mobileBackup = mobileFlag?.let { textPart(it) },
+                    folder = backupBucket?.let { textPart(it) },
                     chunk = chunkPart,
                 )
                 if (response.code() == 409) throw ConflictException()

@@ -1,5 +1,6 @@
 package co.golink.tester.ui.navigation
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut

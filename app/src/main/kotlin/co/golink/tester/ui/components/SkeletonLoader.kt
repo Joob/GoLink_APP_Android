@@ -1,5 +1,6 @@
 package co.golink.tester.ui.components
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat

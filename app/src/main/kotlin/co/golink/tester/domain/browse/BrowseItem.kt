@@ -1,8 +1,10 @@
 package co.golink.tester.domain.browse
 
+import androidx.compose.runtime.Immutable
 import co.golink.tester.domain.asEmoji
 import co.golink.tester.domain.asUrl
 
+@Immutable
 data class ShareInfo(
     val token: String,
     val link: String?,
@@ -11,6 +13,7 @@ data class ShareInfo(
     val expireIn: Int?,
 )
 
+@Immutable
 data class TeamMember(
     val id: String,
     val email: String,
@@ -20,6 +23,11 @@ data class TeamMember(
     val permission: String?,
 )
 
+// @Immutable: estes modelos nunca são mutados após criação (a lista de membros
+// é sempre substituída, nunca alterada). Sem isto o Compose tratava BrowseItem
+// como instável por causa do List<TeamMember> e recompunha todas as linhas a
+// cada mudança de estado — jank no scroll.
+@Immutable
 sealed interface BrowseItem {
     val id: String
     val name: String
@@ -28,6 +36,7 @@ sealed interface BrowseItem {
     val createdAt: String?
     val share: ShareInfo?
 
+    @Immutable
     data class Folder(
         override val id: String,
         override val name: String,
@@ -43,6 +52,7 @@ sealed interface BrowseItem {
         val members: List<TeamMember> = emptyList(),
     ) : BrowseItem
 
+    @Immutable
     data class File(
         override val id: String,
         override val name: String,

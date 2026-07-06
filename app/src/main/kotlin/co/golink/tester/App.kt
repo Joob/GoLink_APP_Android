@@ -13,6 +13,12 @@ import javax.inject.Provider
 class App : Application(), Configuration.Provider, ImageLoaderFactory {
     @Inject lateinit var workerFactory: HiltWorkerFactory
 
+    override fun onCreate() {
+        super.onCreate()
+        // Carrega o idioma guardado antes de qualquer UI compor.
+        co.golink.tester.ui.i18n.I18n.init(this)
+    }
+
     // AsyncImage usa o ImageLoader por omissão do Coil; sem isto o loader do
     // Hilt (cliente autenticado + decoders SVG/vídeo) só era usado onde fosse
     // injectado à mão.

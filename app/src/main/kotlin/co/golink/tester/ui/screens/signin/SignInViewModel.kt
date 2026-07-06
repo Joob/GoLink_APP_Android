@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.signin
 
+import co.golink.tester.ui.i18n.tr
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import co.golink.tester.data.auth.AuthRepository
@@ -56,10 +57,10 @@ class SignInViewModel @Inject constructor(
     fun login() {
         val s = _state.value
         if (s.email.isBlank()) {
-            _state.update { it.copy(emailError = "Email obrigatório") }; return
+            _state.update { it.copy(emailError = "Email obrigatório".tr()) }; return
         }
         if (s.password.isBlank()) {
-            _state.update { it.copy(passwordError = "Password obrigatória") }; return
+            _state.update { it.copy(passwordError = "Password obrigatória".tr()) }; return
         }
         _state.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
@@ -74,11 +75,11 @@ class SignInViewModel @Inject constructor(
     }
 
     private fun readableError(t: Throwable): String = when (t) {
-        is AuthError.InvalidCredentials -> "Email ou password incorrectos"
-        is AuthError.AccountNotFound -> "Conta não encontrada"
-        is AuthError.Validation -> t.message ?: "Dados inválidos"
-        is AuthError.Network -> "Falha de rede"
+        is AuthError.InvalidCredentials -> "Email ou password incorrectos".tr()
+        is AuthError.AccountNotFound -> "Conta não encontrada".tr()
+        is AuthError.Validation -> t.message ?: "Dados inválidos".tr()
+        is AuthError.Network -> "Falha de rede".tr()
         is AuthError -> t.message ?: "Erro"
-        else -> t.message ?: "Erro inesperado"
+        else -> t.message ?: "Erro inesperado".tr()
     }
 }

@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.backup
 
+import co.golink.tester.ui.i18n.tr
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,6 +15,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,6 +51,8 @@ import androidx.compose.material.icons.outlined.BatteryChargingFull
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Lock
@@ -60,6 +64,8 @@ import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -85,12 +91,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import co.golink.tester.data.backup.AutoBackupManager
+import co.golink.tester.data.backup.AutoBackupState
+import co.golink.tester.data.backup.BackupCollection
+import co.golink.tester.data.backup.BackupFolder
 import co.golink.tester.data.backup.BackupRunProgress
 import co.golink.tester.data.upload.UploadTask
 import co.golink.tester.ui.theme.BrandGreen
@@ -112,6 +122,8 @@ fun AutoBackupScreen(
     viewModel: AutoBackupViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val folders by viewModel.folders.collectAsStateWithLifecycle()
+    val loadingFolders by viewModel.loadingFolders.collectAsStateWithLifecycle()
     val allTasks by viewModel.uploadTasks.collectAsStateWithLifecycle()
     // Only show backup-tagged uploads here — user-initiated uploads belong in
     // the browser's global banner.
@@ -197,13 +209,31 @@ fun AutoBackupScreen(
 
     BackHandler(onBack = onBack)
 
+    // Sincroniza com o servidor enquanto o ecrã está visível: se a Web pausar o
+    // backup, o cartão "Activar backup" reaparece de imediato.
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> viewModel.startServerStateSync()
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> viewModel.stopServerStateSync()
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.stopServerStateSync()
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Backups Automáticos") },
+                title = { Text("Backups Automáticos".tr()) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar".tr())
                     }
                 },
             )
@@ -235,7 +265,7 @@ fun AutoBackupScreen(
                     runState = runState,
                     runProgress = runProgress,
                     tasks = tasks,
-                    onRunNow = viewModel::runNow,
+                    onRunNow = viewModel::backupNow,
                     onDisable = viewModel::disable,
                 )
                 state.lastError?.let { err ->
@@ -264,30 +294,35 @@ fun AutoBackupScreen(
                     onToggleCharging = viewModel::setChargingOnly,
                 )
                 ContentSourcesCard(
-                    includeImages = state.includeImages,
-                    includeVideos = state.includeVideos,
-                    includeAudios = state.includeAudios,
-                    includeDocuments = state.includeDocuments,
-                    includeDownloads = state.includeDownloads,
-                    onToggleImages = viewModel::setIncludeImages,
-                    onToggleVideos = viewModel::setIncludeVideos,
-                    onToggleAudios = { enabled ->
-                        viewModel.setIncludeAudios(enabled)
-                        // Áudio precisa de permissão própria no Android 13+.
-                        if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) != PackageManager.PERMISSION_GRANTED
-                        ) {
-                            permissionLauncher.launch(arrayOf(Manifest.permission.READ_MEDIA_AUDIO))
+                    state = state,
+                    folders = folders,
+                    loadingFolders = loadingFolders,
+                    onToggleInclude = { collection, enabled ->
+                        when (collection) {
+                            BackupCollection.IMAGES -> viewModel.setIncludeImages(enabled)
+                            BackupCollection.VIDEOS -> viewModel.setIncludeVideos(enabled)
+                            BackupCollection.AUDIOS -> {
+                                viewModel.setIncludeAudios(enabled)
+                                // Áudio precisa de permissão própria no Android 13+.
+                                if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                    ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) != PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    permissionLauncher.launch(arrayOf(Manifest.permission.READ_MEDIA_AUDIO))
+                                }
+                            }
+                            BackupCollection.DOCUMENTS -> {
+                                viewModel.setIncludeDocuments(enabled)
+                                if (enabled && !hasAllFiles) requestAllFilesAccess()
+                            }
+                            BackupCollection.DOWNLOADS -> {
+                                viewModel.setIncludeDownloads(enabled)
+                                if (enabled && !hasAllFiles) requestAllFilesAccess()
+                            }
                         }
                     },
-                    onToggleDocuments = { enabled ->
-                        viewModel.setIncludeDocuments(enabled)
-                        if (enabled && !hasAllFiles) requestAllFilesAccess()
-                    },
-                    onToggleDownloads = { enabled ->
-                        viewModel.setIncludeDownloads(enabled)
-                        if (enabled && !hasAllFiles) requestAllFilesAccess()
-                    },
+                    onExpand = viewModel::loadFolders,
+                    onToggleFolder = viewModel::toggleFolder,
+                    onToggleAllFolders = viewModel::setAllFolders,
                     allFilesAccess = hasAllFiles,
                     onRequestAllFilesAccess = ::requestAllFilesAccess,
                 )
@@ -313,7 +348,7 @@ private fun OnboardingCard(onActivate: () -> Unit) {
             HeroIllustration()
             Spacer(Modifier.height(20.dp))
             Text(
-                "Encripta e faz backup das tuas fotos e vídeos",
+                "Encripta e faz backup das tuas fotos e vídeos".tr(),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -322,14 +357,14 @@ private fun OnboardingCard(onActivate: () -> Unit) {
             Spacer(Modifier.height(20.dp))
             FeatureRow(
                 icon = Icons.Outlined.Lock,
-                title = "Protege as tuas memórias",
-                description = "As fotos são encriptadas ponto-a-ponto, garantindo total privacidade.",
+                title = "Protege as tuas memórias".tr(),
+                description = "As fotos são encriptadas ponto-a-ponto, garantindo total privacidade.".tr(),
             )
             Spacer(Modifier.height(14.dp))
             FeatureRow(
                 icon = Icons.Outlined.Refresh,
-                title = "Backups automáticos",
-                description = "Cópia regular por Wi-Fi mantendo a qualidade original.",
+                title = "Backups automáticos".tr(),
+                description = "Cópia regular por Wi-Fi mantendo a qualidade original.".tr(),
             )
             Spacer(Modifier.height(24.dp))
             Button(
@@ -341,7 +376,7 @@ private fun OnboardingCard(onActivate: () -> Unit) {
             ) {
                 Icon(Icons.Filled.Backup, contentDescription = null, tint = Color.White)
                 Spacer(Modifier.width(8.dp))
-                Text("Activar backup", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                Text("Activar backup".tr(), color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
             }
         }
     }
@@ -447,17 +482,17 @@ private fun ActiveStatusCard(
                 }
                 Spacer(Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Backup activo", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Backup activo".tr(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     val sub = when (runState) {
                         AutoBackupManager.RunState.Running -> when {
-                            runProgress.total > 0 -> "A enviar ${runProgress.done} de ${runProgress.total}…"
-                            activeCount > 0 -> "A enviar $doneCount de ${tasks.size}…"
-                            else -> "A preparar a galeria…"
+                            runProgress.total > 0 -> "${"A enviar".tr()} ${runProgress.done} ${"de".tr()} ${runProgress.total}…"
+                            activeCount > 0 -> "${"A enviar".tr()} $doneCount ${"de".tr()} ${tasks.size}…"
+                            else -> "A preparar a galeria…".tr()
                         }
-                        AutoBackupManager.RunState.Waiting -> "A aguardar rede / condições…"
+                        AutoBackupManager.RunState.Waiting -> "A aguardar rede / condições…".tr()
                         AutoBackupManager.RunState.Idle -> if (lastBackupAt > 0)
                             "Última verificação: ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(lastBackupAt))}"
-                        else "À espera da primeira verificação…"
+                        else "À espera da primeira verificação…".tr()
                     }
                     Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -483,9 +518,9 @@ private fun ActiveStatusCard(
                 val pct = (overall * 100).toInt().coerceIn(0, 100)
                 Text(
                     when {
-                        runProgress.total > 0 -> "$pct% · ${runProgress.done} de ${runProgress.total} ficheiros"
-                        tasks.isNotEmpty() -> "$pct% · $doneCount de ${tasks.size} ficheiros"
-                        else -> "A preparar…"
+                        runProgress.total > 0 -> "$pct% · ${runProgress.done} ${"de".tr()} ${runProgress.total} ${"ficheiros".tr()}"
+                        tasks.isNotEmpty() -> "$pct% · $doneCount ${"de".tr()} ${tasks.size} ${"ficheiros".tr()}"
+                        else -> "A preparar…".tr()
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -507,14 +542,18 @@ private fun ActiveStatusCard(
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Itens copiados", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                    Text("$backedUpCount ficheiros enviados", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Itens copiados".tr(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    Text("$backedUpCount ${"ficheiros enviados".tr()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             Spacer(Modifier.height(16.dp))
             Button(
                 onClick = onRunNow,
-                enabled = runState == AutoBackupManager.RunState.Idle,
+                // Activo sempre que não há um backup a decorrer. Com o tick de
+                // 1 min agendado o estado fica "Waiting" (ENQUEUED) — antes isso
+                // desactivava o botão quase sempre. Carregar assume prioridade
+                // (REPLACE) sobre o tick pendente e corre já.
+                enabled = runState != AutoBackupManager.RunState.Running,
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = BackupAccent),
                 modifier = Modifier.fillMaxWidth(),
@@ -526,11 +565,11 @@ private fun ActiveStatusCard(
                         color = Color.White,
                     )
                     Spacer(Modifier.width(10.dp))
-                    Text("A enviar…", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text("A enviar…".tr(), color = Color.White, fontWeight = FontWeight.SemiBold)
                 } else {
                     Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Fazer backup agora", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text("Backup Now".tr(), color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -566,111 +605,26 @@ private fun SettingsCard(
             ToggleRow(
                 icon = Icons.Outlined.Wifi,
                 title = "Wi-Fi",
-                description = "Fazer backup quando ligado a Wi-Fi.",
+                description = "Fazer backup quando ligado a Wi-Fi.".tr(),
                 checked = allowWifi,
                 onCheckedChange = onToggleWifi,
             )
             Divider()
             ToggleRow(
                 icon = Icons.Outlined.SignalCellularAlt,
-                title = "Dados móveis",
-                description = "Fazer backup também por dados móveis.",
+                title = "Dados móveis".tr(),
+                description = "Fazer backup também por dados móveis.".tr(),
                 checked = allowCellular,
                 onCheckedChange = onToggleCellular,
             )
             Divider()
             ToggleRow(
                 icon = Icons.Outlined.BatteryChargingFull,
-                title = "Apenas a carregar",
-                description = "Faz backup quando o dispositivo está ligado à corrente.",
+                title = "Apenas a carregar".tr(),
+                description = "Faz backup quando o dispositivo está ligado à corrente.".tr(),
                 checked = chargingOnly,
                 onCheckedChange = onToggleCharging,
             )
-        }
-    }
-}
-
-@Composable
-private fun ContentSourcesCard(
-    includeImages: Boolean,
-    includeVideos: Boolean,
-    includeAudios: Boolean,
-    includeDocuments: Boolean,
-    includeDownloads: Boolean,
-    onToggleImages: (Boolean) -> Unit,
-    onToggleVideos: (Boolean) -> Unit,
-    onToggleAudios: (Boolean) -> Unit,
-    onToggleDocuments: (Boolean) -> Unit,
-    onToggleDownloads: (Boolean) -> Unit,
-    allFilesAccess: Boolean,
-    onRequestAllFilesAccess: () -> Unit,
-) {
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(modifier = Modifier.padding(vertical = 6.dp)) {
-            Text(
-                "Conteúdos a incluir",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-            )
-            ToggleRow(
-                icon = Icons.Outlined.Image,
-                title = "Imagens",
-                description = "Fotos da câmara, screenshots e outras imagens.",
-                checked = includeImages,
-                onCheckedChange = onToggleImages,
-            )
-            Divider()
-            ToggleRow(
-                icon = Icons.Outlined.Videocam,
-                title = "Vídeos",
-                description = "Os vídeos podem ocupar mais espaço e tempo.",
-                checked = includeVideos,
-                onCheckedChange = onToggleVideos,
-            )
-            Divider()
-            ToggleRow(
-                icon = Icons.Outlined.MusicNote,
-                title = "Áudios",
-                description = "Música e gravações guardadas no dispositivo.",
-                checked = includeAudios,
-                onCheckedChange = onToggleAudios,
-            )
-            Divider()
-            ToggleRow(
-                icon = Icons.Outlined.Description,
-                title = "Documentos",
-                description = "Ficheiros na pasta Documentos.",
-                checked = includeDocuments,
-                onCheckedChange = onToggleDocuments,
-            )
-            Divider()
-            ToggleRow(
-                icon = Icons.Outlined.Download,
-                title = "Downloads",
-                description = "Ficheiros na pasta Downloads.",
-                checked = includeDownloads,
-                onCheckedChange = onToggleDownloads,
-            )
-            if ((includeDocuments || includeDownloads) && !allFilesAccess) {
-                Divider()
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
-                ) {
-                    Text(
-                        "Sem o acesso a todos os ficheiros, só fotos, vídeos e áudios destas pastas entram no backup.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = onRequestAllFilesAccess) { Text("Permitir") }
-                }
-            }
         }
     }
 }
@@ -695,6 +649,234 @@ private fun ToggleRow(
         }
         Spacer(Modifier.width(12.dp))
         Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+private data class CollectionSpec(
+    val collection: BackupCollection,
+    val icon: ImageVector,
+    val title: String,
+    val description: String,
+    val included: Boolean,
+)
+
+@Composable
+private fun ContentSourcesCard(
+    state: AutoBackupState,
+    folders: Map<BackupCollection, List<BackupFolder>>,
+    loadingFolders: Set<BackupCollection>,
+    onToggleInclude: (BackupCollection, Boolean) -> Unit,
+    onExpand: (BackupCollection) -> Unit,
+    onToggleFolder: (BackupCollection, String, Boolean) -> Unit,
+    onToggleAllFolders: (BackupCollection, Boolean) -> Unit,
+    allFilesAccess: Boolean,
+    onRequestAllFilesAccess: () -> Unit,
+) {
+    val specs = listOf(
+        CollectionSpec(BackupCollection.IMAGES, Icons.Outlined.Image, "Imagens".tr(), "Fotos da câmara, screenshots e outras imagens.".tr(), state.includeImages),
+        CollectionSpec(BackupCollection.VIDEOS, Icons.Outlined.Videocam, "Vídeos".tr(), "Os vídeos podem ocupar mais espaço e tempo.".tr(), state.includeVideos),
+        CollectionSpec(BackupCollection.AUDIOS, Icons.Outlined.MusicNote, "Áudios".tr(), "Música e gravações guardadas no dispositivo.".tr(), state.includeAudios),
+        CollectionSpec(BackupCollection.DOCUMENTS, Icons.Outlined.Description, "Documentos".tr(), "Ficheiros na pasta Documentos.".tr(), state.includeDocuments),
+        CollectionSpec(BackupCollection.DOWNLOADS, Icons.Outlined.Download, "Downloads".tr(), "Ficheiros na pasta Downloads.".tr(), state.includeDownloads),
+    )
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(vertical = 6.dp)) {
+            Text(
+                "Conteúdos a incluir".tr(),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            )
+            Text(
+                "Ativa uma categoria e escolhe as pastas do telemóvel que entram no backup.".tr(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
+            )
+            specs.forEachIndexed { i, s ->
+                if (i > 0) Divider()
+                CollectionSection(
+                    icon = s.icon,
+                    title = s.title,
+                    description = s.description,
+                    included = s.included,
+                    folders = folders[s.collection],
+                    loading = s.collection in loadingFolders,
+                    selectedNames = state.selectedFolders[s.collection].orEmpty(),
+                    onToggleInclude = { onToggleInclude(s.collection, it) },
+                    onExpand = { onExpand(s.collection) },
+                    onToggleFolder = { name, sel -> onToggleFolder(s.collection, name, sel) },
+                    onToggleAll = { onToggleAllFolders(s.collection, it) },
+                )
+            }
+            if ((state.includeDocuments || state.includeDownloads) && !allFilesAccess) {
+                Divider()
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
+                ) {
+                    Text(
+                        "Sem o acesso a todos os ficheiros, só fotos, vídeos e áudios destas pastas entram no backup.".tr(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onRequestAllFilesAccess) { Text("Permitir".tr()) }
+                }
+            }
+        }
+    }
+}
+
+// Uma categoria (Imagens, Vídeos, …): interruptor de activação + lista
+// expansível das pastas do dispositivo, com checkbox em cada.
+@Composable
+private fun CollectionSection(
+    icon: ImageVector,
+    title: String,
+    description: String,
+    included: Boolean,
+    folders: List<BackupFolder>?,
+    loading: Boolean,
+    selectedNames: Set<String>,
+    onToggleInclude: (Boolean) -> Unit,
+    onExpand: () -> Unit,
+    onToggleFolder: (String, Boolean) -> Unit,
+    onToggleAll: (Boolean) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    // Ao ligar a categoria, abre logo e lê as pastas para o utilizador escolher.
+    LaunchedEffect(included) {
+        if (included && !expanded) {
+            expanded = true
+            onExpand()
+        }
+    }
+
+    Column {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    expanded = !expanded
+                    if (expanded) onExpand()
+                }
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            Icon(icon, contentDescription = null, tint = BackupAccent, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                val subtitle: String
+                val warn: Boolean
+                when {
+                    !included -> { subtitle = description; warn = false }
+                    selectedNames.isEmpty() -> { subtitle = "Nenhuma pasta escolhida — toca para selecionar".tr(); warn = true }
+                    else -> { subtitle = "${selectedNames.size} pasta(s) no backup"; warn = false }
+                }
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (warn) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "Recolher" else "Expandir",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(4.dp))
+            Switch(checked = included, onCheckedChange = onToggleInclude)
+        }
+        AnimatedVisibility(visible = expanded) {
+            FolderChecklist(
+                folders = folders,
+                loading = loading,
+                selectedNames = selectedNames,
+                onToggleFolder = onToggleFolder,
+                onToggleAll = onToggleAll,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FolderChecklist(
+    folders: List<BackupFolder>?,
+    loading: Boolean,
+    selectedNames: Set<String>,
+    onToggleFolder: (String, Boolean) -> Unit,
+    onToggleAll: (Boolean) -> Unit,
+) {
+    Column(modifier = Modifier.padding(start = 52.dp, end = 16.dp, bottom = 10.dp)) {
+        when {
+            loading && folders == null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(10.dp))
+                Text("A ler pastas…".tr(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            folders.isNullOrEmpty() -> Text(
+                "Sem pastas para esta categoria.".tr(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            else -> {
+                val allSelected = folders.all { it.name in selectedNames }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        "Pastas disponíveis".tr(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { onToggleAll(!allSelected) }) {
+                        Text(if (allSelected) "Limpar".tr() else "Todas".tr())
+                    }
+                }
+                folders.forEach { folder ->
+                    FolderRow(
+                        folder = folder,
+                        checked = folder.name in selectedNames,
+                        onCheckedChange = { onToggleFolder(folder.name, it) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FolderRow(
+    folder: BackupFolder,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 2.dp),
+    ) {
+        Checkbox(checked = checked, onCheckedChange = onCheckedChange)
+        Spacer(Modifier.width(4.dp))
+        Text(
+            folder.name,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            "${folder.count}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -723,10 +905,20 @@ private fun UploadProgressCard(
     val failed = tasks.count { it.state == UploadTask.State.Failed }
     val conflict = tasks.count { it.state == UploadTask.State.Conflict }
     val total = tasks.size
-    val totalBytes = tasks.sumOf { it.sizeBytes }.coerceAtLeast(1L)
-    val uploadedBytes = tasks.sumOf { (it.progress * it.sizeBytes).toLong() }
-    // A lista é podada por lote — os bytes/contagens dela recuam. Com o worker
-    // a correr usamos o progresso real da execução.
+    // A lista de tarefas é podada por lote (keepLast), por isso somar só ela dá
+    // um total demasiado pequeno ("de 27 MB" com 335 ficheiros). Enquanto a
+    // execução decorre usamos os bytes da execução inteira (runProgress) e
+    // juntamos o parcial do(s) ficheiro(s) a enviar agora para não saltar aos
+    // degraus. Fora de uma execução (ex.: recarregar o ecrã) usamos a lista.
+    val activePartialBytes = tasks
+        .filter { it.state == UploadTask.State.Uploading }
+        .sumOf { (it.progress * it.sizeBytes).toLong() }
+    val runActive = runProgress.total > 0 && runProgress.totalBytes > 0
+    val totalBytes = if (runActive) runProgress.totalBytes
+        else tasks.sumOf { it.sizeBytes }.coerceAtLeast(1L)
+    val uploadedBytes = if (runActive)
+        (runProgress.doneBytes + activePartialBytes).coerceIn(0L, runProgress.totalBytes)
+    else tasks.sumOf { (it.progress * it.sizeBytes).toLong() }
     val overall = if (runProgress.total > 0)
         (runProgress.done.toFloat() / runProgress.total).coerceIn(0f, 1f)
     else
@@ -758,22 +950,22 @@ private fun UploadProgressCard(
                     // saltava para "Concluído" e de volta — flicker.
                     val title = when {
                         runProgress.total > 0 ->
-                            "A enviar… (${runProgress.done} de ${runProgress.total})"
-                        active > 0 -> "A enviar… ($done de $total)"
+                            "${"A enviar…".tr()} (${runProgress.done} ${"de".tr()} ${runProgress.total})"
+                        active > 0 -> "${"A enviar…".tr()} ($done ${"de".tr()} $total)"
                         failed > 0 -> "$failed falha(s)"
                         conflict > 0 -> "$conflict conflito(s)"
                         done == total && total > 0 -> "Concluído ($done)"
-                        else -> "Em curso"
+                        else -> "Em curso".tr()
                     }
                     Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "${formatBytes(uploadedBytes)} de ${formatBytes(totalBytes)}",
+                        "${formatBytes(uploadedBytes)} ${"de".tr()} ${formatBytes(totalBytes)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 if (active == 0 && runProgress.total == 0) {
-                    TextButton(onClick = onDismiss) { Text("Limpar") }
+                    TextButton(onClick = onDismiss) { Text("Limpar".tr()) }
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -831,7 +1023,7 @@ private fun UploadProgressCard(
                 ) {
                     Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Tentar novamente os falhados")
+                    Text("Tentar novamente os falhados".tr())
                 }
             }
         }
@@ -883,7 +1075,7 @@ private fun UploadTaskRow(
                     fontWeight = FontWeight.SemiBold,
                 )
                 UploadTask.State.Queued -> Text(
-                    "Em espera",
+                    "Em espera".tr(),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -910,8 +1102,8 @@ private fun UploadTaskRow(
                     Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
                 }
                 Row {
-                    TextButton(onClick = onRetry) { Text("Tentar novamente") }
-                    TextButton(onClick = onCancel) { Text("Cancelar") }
+                    TextButton(onClick = onRetry) { Text("Tentar novamente".tr()) }
+                    TextButton(onClick = onCancel) { Text("Cancelar".tr()) }
                 }
             }
             UploadTask.State.Conflict -> {
@@ -933,10 +1125,10 @@ private fun RescanCard(onReset: () -> Unit) {
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text("Re-verificar a galeria", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text("Re-verificar a galeria".tr(), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(4.dp))
             Text(
-                "Faz com que o backup volte a analisar todas as fotos e vídeos do telemóvel (não duplica — o servidor recusa ficheiros já enviados).",
+                "Faz com que o backup volte a analisar todas as fotos e vídeos do telemóvel (não duplica — o servidor recusa ficheiros já enviados).".tr(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -948,7 +1140,7 @@ private fun RescanCard(onReset: () -> Unit) {
             ) {
                 Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Voltar a verificar a galeria")
+                Text("Voltar a verificar a galeria".tr())
             }
         }
     }
@@ -971,7 +1163,7 @@ private fun ErrorCard(message: String, onDismiss: () -> Unit, onRetry: () -> Uni
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "Backup com erro",
+                    "Backup com erro".tr(),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.error,
@@ -992,10 +1184,10 @@ private fun ErrorCard(message: String, onDismiss: () -> Unit, onRetry: () -> Uni
                 ) {
                     Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Tentar de novo", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text("Tentar de novo".tr(), color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
                 Spacer(Modifier.width(8.dp))
-                TextButton(onClick = onDismiss) { Text("Limpar") }
+                TextButton(onClick = onDismiss) { Text("Limpar".tr()) }
             }
         }
     }

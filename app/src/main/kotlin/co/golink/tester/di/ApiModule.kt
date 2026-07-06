@@ -1,5 +1,6 @@
 package co.golink.tester.di
 
+import co.golink.tester.network.AdminApi
 import co.golink.tester.network.AuthApi
 import co.golink.tester.network.BillingApi
 import co.golink.tester.network.BrowseApi
@@ -84,4 +85,8 @@ object ApiModule {
     @Provides
     @Singleton
     fun provideBillingApi(retrofit: Retrofit): BillingApi = retrofit.create(BillingApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideAdminApi(retrofit: Retrofit): AdminApi = retrofit.create(AdminApi::class.java)
 }

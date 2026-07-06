@@ -1,5 +1,6 @@
 package co.golink.tester.ui.components
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -70,7 +71,7 @@ fun NewsBanner(
         IconButton(onClick = viewModel::dismiss, modifier = Modifier.size(32.dp)) {
             Icon(
                 Icons.Filled.Close,
-                contentDescription = "Fechar notícia",
+                contentDescription = "Fechar notícia".tr(),
                 tint = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.size(18.dp),
             )

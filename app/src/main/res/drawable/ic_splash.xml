@@ -1,10 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Splash animated icon (Android 12+).
+  Used WITH windowSplashScreenIconBackgroundColor (white), which draws the
+  icon inside a 240dp circle and does NOT apply the ~1.5x "inner 2/3" zoom
+  that the platform applies to a bare adaptive icon. The logo is scaled
+  (gravity="fill") to 72dp = ~30% of 240 — the same proportion as the launcher
+  icon (32dp of 108) — so the splash and the home icon look identical.
+-->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/transparent" />
+            <size android:width="240dp" android:height="240dp" />
+        </shape>
+    </item>
     <item
-        android:left="40dp"
-        android:right="40dp"
-        android:top="40dp"
-        android:bottom="40dp">
-        <bitmap android:src="@drawable/logo_symbol" />
+        android:width="72dp"
+        android:height="72dp"
+        android:gravity="center">
+        <bitmap
+            android:src="@drawable/logo_symbol"
+            android:gravity="fill" />
     </item>
 </layer-list>

@@ -23,8 +23,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 
-/** Progresso da execução actual do worker (itens processados / total). */
-data class BackupRunProgress(val done: Int = 0, val total: Int = 0)
+/**
+ * Progresso da execução actual do worker: itens processados / total e os bytes
+ * correspondentes, para mostrar "X MB de Y MB" da execução inteira (e não só
+ * dos ficheiros que ainda estão na lista em memória).
+ */
+data class BackupRunProgress(
+    val done: Int = 0,
+    val total: Int = 0,
+    val doneBytes: Long = 0L,
+    val totalBytes: Long = 0L,
+)
 
 @Singleton
 class AutoBackupManager @Inject constructor(
@@ -42,12 +51,17 @@ class AutoBackupManager @Inject constructor(
     private val _runProgress = MutableStateFlow(BackupRunProgress())
     val runProgress: StateFlow<BackupRunProgress> = _runProgress.asStateFlow()
 
-    internal fun startRun(total: Int) {
-        _runProgress.value = BackupRunProgress(done = 0, total = total)
+    internal fun startRun(total: Int, totalBytes: Long = 0L) {
+        _runProgress.value = BackupRunProgress(done = 0, total = total, doneBytes = 0L, totalBytes = totalBytes)
     }
 
-    internal fun recordProcessed() {
-        _runProgress.update { it.copy(done = (it.done + 1).coerceAtMost(it.total)) }
+    internal fun recordProcessed(bytes: Long = 0L) {
+        _runProgress.update {
+            it.copy(
+                done = (it.done + 1).coerceAtMost(it.total),
+                doneBytes = (it.doneBytes + bytes.coerceAtLeast(0L)).coerceAtMost(it.totalBytes),
+            )
+        }
     }
 
     internal fun endRun() {
@@ -58,7 +72,32 @@ class AutoBackupManager @Inject constructor(
         preferences.enabled = true
         logger.log("AutoBackup", "Backup automático activado")
         reschedule()
+        scheduleNextTick()
         runNow()
+    }
+
+    // "Tick" de ~1 minuto: o WorkManager periódico tem mínimo de 15 min, por
+    // isso para verificar de minuto a minuto usamos uma cadeia de OneTimeWork
+    // que se reagenda a si própria ao fim de cada execução (ver o worker). O
+    // periódico de 30 min fica como rede de segurança se o Doze matar a cadeia.
+    //
+    // CRÍTICO: o tick e o "Fazer backup agora" partilham o MESMO nome único
+    // (WORK_ONESHOT) para o WorkManager os serializar — nunca correm dois
+    // workers em paralelo nos mesmos cursores. O tick usa KEEP (não perturba um
+    // já pendente/a correr); o botão usa REPLACE (assume prioridade). Antes eram
+    // nomes distintos e corriam em paralelo: o "Fazer backup agora" ficava sem
+    // efeito por vezes (o tick já tinha avançado o cursor / o botão desactivado).
+    fun scheduleNextTick() {
+        if (!preferences.enabled) return
+        val request = OneTimeWorkRequestBuilder<AutoBackupWorker>()
+            .setInitialDelay(TICK_MINUTES, TimeUnit.MINUTES)
+            .setConstraints(buildConstraints())
+            .build()
+        workManager.enqueueUniqueWork(
+            AutoBackupWorker.WORK_ONESHOT,
+            ExistingWorkPolicy.KEEP,
+            request,
+        )
     }
 
     fun disable() {
@@ -89,6 +128,8 @@ class AutoBackupManager @Inject constructor(
             ExistingPeriodicWorkPolicy.UPDATE,
             request,
         )
+        // Re-arma a cadeia de 1 min com as novas condições.
+        scheduleNextTick()
     }
 
     fun runNow() {
@@ -168,5 +209,6 @@ class AutoBackupManager @Inject constructor(
 
     private companion object {
         const val PERIOD_MINUTES = 30L
+        const val TICK_MINUTES = 1L
     }
 }

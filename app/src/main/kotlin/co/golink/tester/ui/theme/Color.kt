@@ -1,5 +1,6 @@
 package co.golink.tester.ui.theme
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.ui.graphics.Color
 
 val BrandGreen = Color(0xFF00BC7E)

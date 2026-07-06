@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.settings
 
+import co.golink.tester.ui.i18n.tr
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -97,10 +98,26 @@ class SettingsViewModel @Inject constructor(
 
     fun refreshUser() = viewModelScope.launch { sessionManager.refreshUser() }
 
+    private val _isUpdatingAvatar = MutableStateFlow(false)
+    val isUpdatingAvatar: StateFlow<Boolean> = _isUpdatingAvatar
+
+    fun updateAvatar(jpeg: ByteArray) {
+        _isUpdatingAvatar.value = true
+        viewModelScope.launch {
+            repository.updateAvatar(jpeg)
+                .onSuccess {
+                    sessionManager.refreshUser()
+                    _state.update { it.copy(toast = "Imagem de perfil actualizada".tr()) }
+                }
+                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+            _isUpdatingAvatar.value = false
+        }
+    }
+
     fun resetCsrf() {
         viewModelScope.launch {
-            logger.log("Security", "Token CSRF redefinido")
-            _state.update { it.copy(toast = "Token CSRF redefinido") }
+            logger.log("Security", "Token CSRF redefinido".tr())
+            _state.update { it.copy(toast = "Token CSRF redefinido".tr()) }
         }
     }
 
@@ -129,7 +146,7 @@ class SettingsViewModel @Inject constructor(
                 if (wasCurrent) {
                     authRepository.logout()
                 } else {
-                    _state.update { it.copy(toast = "Sessão revogada", sessions = it.sessions.filterNot { s -> s.id == id }) }
+                    _state.update { it.copy(toast = "Sessão revogada".tr(), sessions = it.sessions.filterNot { s -> s.id == id }) }
                 }
             }
             .onFailure { t -> _state.update { it.copy(toast = t.message) } }
@@ -137,7 +154,7 @@ class SettingsViewModel @Inject constructor(
 
     fun revokeAllSessions() = viewModelScope.launch {
         repository.revokeAllSessions()
-            .onSuccess { _state.update { it.copy(toast = "Todas as outras sessões revogadas") }; loadSessions() }
+            .onSuccess { _state.update { it.copy(toast = "Todas as outras sessões revogadas".tr()) }; loadSessions() }
             .onFailure { t -> _state.update { it.copy(toast = t.message) } }
     }
 
@@ -145,7 +162,7 @@ class SettingsViewModel @Inject constructor(
         _state.update { it.copy(isUpdatingPassword = true) }
         viewModelScope.launch {
             repository.updatePassword(current, newPassword)
-                .onSuccess { _state.update { it.copy(isUpdatingPassword = false, toast = "Password actualizada") } }
+                .onSuccess { _state.update { it.copy(isUpdatingPassword = false, toast = "Password actualizada".tr()) } }
                 .onFailure { t -> _state.update { it.copy(isUpdatingPassword = false, toast = t.message) } }
         }
     }
@@ -156,7 +173,7 @@ class SettingsViewModel @Inject constructor(
             repository.updateProfileField(name, value)
                 .onSuccess {
                     sessionManager.refreshUser()
-                    _state.update { it.copy(isUpdatingProfile = false, toast = "Perfil actualizado") }
+                    _state.update { it.copy(isUpdatingProfile = false, toast = "Perfil actualizado".tr()) }
                 }
                 .onFailure { t -> _state.update { it.copy(isUpdatingProfile = false, toast = t.message) } }
         }
@@ -222,10 +239,10 @@ class SettingsViewModel @Inject constructor(
                 imageLoader.memoryCache?.clear()
                 imageLoader.diskCache?.clear()
                 context.cacheDir.deleteRecursively()
-                logger.log("Cache", "Cache local limpa")
-                _state.update { it.copy(toast = "Cache limpa com sucesso") }
+                logger.log("Cache", "Cache local limpa".tr())
+                _state.update { it.copy(toast = "Cache limpa com sucesso".tr()) }
             } catch (e: Exception) {
-                _state.update { it.copy(toast = "Erro ao limpar cache") }
+                _state.update { it.copy(toast = "Erro ao limpar cache".tr()) }
             }
         }
     }
@@ -256,7 +273,7 @@ class SettingsViewModel @Inject constructor(
     fun startStripeCheckout(plan: Plan) {
         val priceId = plan.stripePriceId
         if (priceId.isNullOrBlank()) {
-            _state.update { it.copy(toast = "Este plano não tem Stripe configurado") }
+            _state.update { it.copy(toast = "Este plano não tem Stripe configurado".tr()) }
             return
         }
         _state.update { it.copy(isStartingCheckout = true) }

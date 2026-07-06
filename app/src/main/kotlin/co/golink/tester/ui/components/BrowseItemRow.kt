@@ -1,5 +1,6 @@
 package co.golink.tester.ui.components
 
+import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -191,7 +192,7 @@ fun BrowseItemRow(
             IconButton(onClick = onMoreClick) {
                 Icon(
                     Icons.Filled.MoreVert,
-                    contentDescription = "Mais opções",
+                    contentDescription = "Mais opções".tr(),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -235,7 +236,7 @@ fun BrowseItemGridCard(
                 ) {
                     Icon(
                         Icons.Filled.MoreVert,
-                        contentDescription = "Mais opções",
+                        contentDescription = "Mais opções".tr(),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp),
                     )
@@ -478,7 +479,7 @@ private fun ShareBadge(modifier: Modifier = Modifier) {
     ) {
         Icon(
             Icons.Outlined.Link,
-            contentDescription = "Partilhado",
+            contentDescription = "Partilhado".tr(),
             tint = MaterialTheme.colorScheme.onPrimary,
             modifier = Modifier.size(11.dp),
         )
