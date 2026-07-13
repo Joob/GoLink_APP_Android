@@ -314,6 +314,10 @@ object I18nDict {
         r("Visualizar", "View", "Affichage", "Visualización"),
         r("Backup Now", "Backup Now", "Sauvegarder maintenant", "Copia ahora"),
         r("Backups Automáticos", "Automatic Backups", "Sauvegardes automatiques", "Copias automáticas"),
+        r("Pedido criado — link copiado", "Request created — link copied", "Demande créée — lien copié", "Solicitud creada — enlace copiado"),
+        r("A converter…", "Converting…", "Conversion…", "Convirtiendo…"),
+        r("Encriptação em curso", "Encryption in progress", "Chiffrement en cours", "Cifrado en curso"),
+        r("Estamos a encriptar os teus ficheiros. Podes continuar a usar a app.", "We're encrypting your files. You can keep using the app.", "Nous chiffrons vos fichiers. Vous pouvez continuer à utiliser l'application.", "Estamos cifrando tus archivos. Puedes seguir usando la app."),
         r("A tua informação, sempre sob o teu controlo.", "Your information, always under your control.", "Vos informations, toujours sous votre contrôle.", "Tu información, siempre bajo tu control."),
 
         // Palavras curtas comuns (auth / formulários)

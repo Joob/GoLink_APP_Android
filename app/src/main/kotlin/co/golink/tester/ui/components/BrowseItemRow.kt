@@ -82,6 +82,27 @@ private fun FilePreview(
     iconSize: Dp,
     modifier: Modifier = Modifier,
 ) {
+    // E2E: thumbnail cifrado — decifra em memória (não há URL do servidor).
+    if (item.encrypted && (item.type == "image" || item.type == "video")) {
+        Box(modifier = modifier) {
+            EncryptedThumbnail(
+                fileId = item.id,
+                contentDescription = item.name,
+                modifier = Modifier.fillMaxSize(),
+                fallback = {
+                    val (icon, tint) = fileIcon(item.type)
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(iconSize))
+                    }
+                },
+            )
+            if (item.type == "video") {
+                PlayBadge(Modifier.align(Alignment.Center))
+            }
+        }
+        return
+    }
+
     val candidates = remember(item.id, item.thumbnailUrl, item.fileUrl) { previewCandidates(item) }
     var index by remember(candidates) { mutableIntStateOf(0) }
     if (index >= candidates.size) {
@@ -245,7 +266,9 @@ fun BrowseItemGridCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(1.6f)
+                    // Área de pré-visualização mais alta (era 1.6f) para caberem
+                    // ícones/miniaturas maiores no modo grelha.
+                    .aspectRatio(1.25f)
                     .clip(RoundedCornerShape(10.dp)),
                 contentAlignment = Alignment.Center,
             ) {
@@ -253,13 +276,13 @@ fun BrowseItemGridCard(
                     is BrowseItem.Folder -> {
                         val tint = parseHexColor(item.color) ?: MaterialTheme.colorScheme.primary
                         if (!item.emoji.isNullOrBlank()) {
-                            Text(item.emoji, fontSize = 40.sp)
+                            Text(item.emoji, fontSize = 56.sp)
                         } else {
                             Icon(
                                 Icons.Filled.Folder,
                                 contentDescription = null,
                                 tint = tint,
-                                modifier = Modifier.size(56.dp),
+                                modifier = Modifier.size(80.dp),
                             )
                         }
                         // Member avatars overlay at bottom-start
@@ -277,7 +300,7 @@ fun BrowseItemGridCard(
                     is BrowseItem.File -> {
                         FilePreview(
                             item = item,
-                            iconSize = 56.dp,
+                            iconSize = 80.dp,
                             modifier = Modifier.fillMaxSize(),
                         )
                     }

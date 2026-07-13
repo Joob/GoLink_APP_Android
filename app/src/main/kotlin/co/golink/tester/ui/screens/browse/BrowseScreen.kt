@@ -34,6 +34,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.ui.platform.LocalContext
+import co.golink.tester.data.encryption.E2EShareService
+import co.golink.tester.ui.components.dialogs.GrantE2EAccessDialog
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronRight
@@ -622,7 +626,7 @@ fun BrowseScreen(
                                                 contentAlignment = Alignment.Center,
                                             ) { Icon(Icons.Outlined.NoteAdd, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(18.dp)) }
                                         },
-                                        onClick = { fabMenuOpen = false; activeDialog = ActionDialog.FileRequest },
+                                        onClick = { fabMenuOpen = false; actionTarget = null; activeDialog = ActionDialog.FileRequest },
                                     )
                                     Spacer(Modifier.height(4.dp))
                                 }
@@ -667,6 +671,7 @@ fun BrowseScreen(
                     )
                 }
                 NewsBanner()
+                co.golink.tester.ui.screens.encryption.E2EMigrationBanner()
                 SearchRow(
                     query = state.searchQuery,
                     onQueryChange = viewModel::setSearchQuery,
@@ -725,6 +730,9 @@ fun BrowseScreen(
                                 viewModel.enterSelectMode()
                                 viewModel.toggleSelection(it.id)
                             }
+                            val displayed = remember(state.items, state.filesOnly) {
+                                if (state.filesOnly) state.items.filterIsInstance<BrowseItem.File>() else state.items
+                            }
                             if (state.viewMode == ViewMode.GRID) {
                                 val gridState = rememberLazyGridState()
                                 val shouldLoadMore by remember {
@@ -745,7 +753,6 @@ fun BrowseScreen(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
-                                    val displayed = if (state.filesOnly) state.items.filterIsInstance<BrowseItem.File>() else state.items
                                     items(displayed, key = { it.id }) { item ->
                                         BrowseItemGridCard(
                                             item = item,
@@ -778,7 +785,6 @@ fun BrowseScreen(
                                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
-                                    val displayed = if (state.filesOnly) state.items.filterIsInstance<BrowseItem.File>() else state.items
                                     items(displayed, key = { it.id }) { item ->
                                         BrowseItemRow(
                                             item = item,
@@ -881,6 +887,7 @@ fun BrowseScreen(
             onDetails = { actionTarget = target; activeDialog = ActionDialog.Details },
             onComingSoon = { viewModel.notifyComingSoon() },
             onConvertToTeamFolder = { actionTarget = target; activeDialog = ActionDialog.ConvertToTeamFolder },
+            onFileRequest = { actionTarget = target; activeDialog = ActionDialog.FileRequest },
         )
     }
 
@@ -1052,7 +1059,8 @@ fun BrowseScreen(
         }
         ActionDialog.FileRequest -> CreateFileRequestDialog(
             onDismiss = { activeDialog = ActionDialog.None },
-            onCreate = { name, email, notes -> viewModel.createFileRequest(name, email, notes) },
+            // actionTarget definido = pedido para essa pasta (menu "…"); null = pasta actual (botão +).
+            onCreate = { name, email, notes -> viewModel.createFileRequest(name, email, notes, actionTarget?.id) },
         )
         ActionDialog.None -> Unit
     }
@@ -1874,6 +1882,14 @@ private fun TeamMembersPopup(
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val context = LocalContext.current
+    val e2eShare = remember { E2EShareService.get(context) }
+    var grantMember by remember { mutableStateOf<TeamMember?>(null) }
+
+    grantMember?.let { m ->
+        GrantE2EAccessDialog(member = m, folderId = folder.id, onDismiss = { grantMember = null })
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -1908,7 +1924,12 @@ private fun TeamMembersPopup(
                 modifier = Modifier.padding(bottom = 12.dp),
             )
             folder.members.forEach { member ->
-                MemberRow(member = member)
+                MemberRow(
+                    member = member,
+                    onGrant = if (e2eShare.isUnlocked && member.permission != "owner") {
+                        { grantMember = member }
+                    } else null,
+                )
                 Spacer(Modifier.height(4.dp))
             }
         }
@@ -1916,7 +1937,7 @@ private fun TeamMembersPopup(
 }
 
 @Composable
-private fun MemberRow(member: TeamMember) {
+private fun MemberRow(member: TeamMember, onGrant: (() -> Unit)? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1940,6 +1961,16 @@ private fun MemberRow(member: TeamMember) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        // E2E: conceder acesso de encriptação (com confirmação de fingerprint).
+        onGrant?.let {
+            IconButton(onClick = it) {
+                Icon(
+                    Icons.Outlined.Lock,
+                    contentDescription = "Conceder acesso de encriptação".tr(),
+                    tint = MaterialTheme.colorScheme.primary,
                 )
             }
         }

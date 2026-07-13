@@ -2,10 +2,17 @@ package co.golink.tester.data.upload
 
 import android.content.ContentResolver
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
+import co.golink.tester.data.encryption.E2EKeyManager
+import co.golink.tester.data.encryption.EncryptedFileCodec
+import co.golink.tester.data.encryption.Envelope
 import co.golink.tester.network.FilesApi
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -20,6 +27,7 @@ import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSink
 
@@ -42,6 +50,7 @@ data class UploadTask(
 class UploadManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val api: FilesApi,
+    private val e2eKeyManager: E2EKeyManager,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val resolver: ContentResolver get() = context.contentResolver
@@ -98,6 +107,17 @@ class UploadManager @Inject constructor(
                         uploadChunked(taskId, uri, metadata, parentId = null, overwrite, mobileBackup = true, backupFolder = backupFolder)
                     } else {
                         uploadMobileBackupSingle(taskId, uri, metadata, overwrite, backupFolder)
+                    }
+                } else if (e2eKeyManager.shouldEncrypt) {
+                    // E2E: cifra o ficheiro (streaming p/ temp) e envia ciphertext +
+                    // a data key selada. Grandes (> limite) vão por chunks (senão o
+                    // nginx rejeita com 413). Tamanho 0 = provider não expõe SIZE
+                    // (Google Photos/Drive) → assumir grande e ir por chunks, como
+                    // no caminho não-E2E.
+                    if (metadata.size > CHUNK_THRESHOLD || metadata.size == 0L) {
+                        uploadEncryptedChunked(taskId, uri, metadata, parentId, overwrite)
+                    } else {
+                        uploadEncryptedSingle(taskId, uri, metadata, parentId, overwrite)
                     }
                 } else if (metadata.size in 1..CHUNK_THRESHOLD) {
                     uploadSingle(taskId, uri, metadata, parentId, overwrite)
@@ -222,6 +242,283 @@ class UploadManager @Inject constructor(
         if (response.code() == 409) throw ConflictException()
         if (!response.isSuccessful) error(httpErrorMessage(response.code(), response.errorBody()?.string()))
         updateProgress(taskId, 1f)
+    }
+
+    private suspend fun uploadEncryptedSingle(
+        taskId: String,
+        uri: Uri,
+        metadata: FileMetadata,
+        parentId: String?,
+        overwrite: Boolean,
+    ) {
+        markUploading(taskId)
+        val dataKey = Envelope.generateDataKey()
+        val mediaType = mediaTypeFor(metadata.mimeType)
+
+        // Team folder: o ficheiro pertence ao DONO (user_id = dono), por isso a
+        // wrapped_data_key primária tem de ser selada à pública do dono; os membros
+        // recebem-na depois via share-key. Sem team folder, dono = próprio.
+        val memberKeys = parentId?.let { folderMemberKeys(it) }
+        val ownerPublicKey = memberKeys?.owner?.public_key
+        val recipients = memberKeys?.recipients.orEmpty().filter { !it.public_key.isNullOrBlank() }
+        val wrapped = if (ownerPublicKey.isNullOrBlank()) {
+            e2eKeyManager.sealForSelf(dataKey)
+        } else {
+            e2eKeyManager.sealForPublicKey(dataKey, ownerPublicKey)
+        }
+
+        // Thumbnail E2E (imagem/vídeo): gerado no cliente e cifrado com a MESMA
+        // data key. Best-effort — se falhar, o ficheiro fica com ícone.
+        val encryptedThumb: ByteArray? = try {
+            generateThumbnailJpeg(uri, metadata.mimeType)?.let { jpeg ->
+                EncryptedFileCodec.encrypt(jpeg, dataKey)
+            }
+        } catch (e: Throwable) {
+            null
+        }
+
+        val temp = File.createTempFile("e2e_", ".enc", context.cacheDir)
+        try {
+            (resolver.openInputStream(uri) ?: error("não foi possível ler o ficheiro")).use { input ->
+                temp.outputStream().use { out ->
+                    EncryptedFileCodec.encryptStream(input, out, dataKey)
+                }
+            }
+            val fileBody = temp.asRequestBody("application/octet-stream".toMediaTypeOrNull())
+            val filePart = MultipartBody.Part.createFormData("file", metadata.displayName, fileBody)
+            val response = api.upload(
+                name = textPart(metadata.baseName),
+                extension = textPart(metadata.extension),
+                parentId = parentId?.let { textPart(it) },
+                overwriteExisting = if (overwrite) textPart("1") else null,
+                file = filePart,
+                encrypted = textPart("1"),
+                wrappedDataKey = textPart(wrapped),
+                mediaType = textPart(mediaType),
+            )
+            if (response.code() == 409) throw ConflictException()
+            if (!response.isSuccessful) error(httpErrorMessage(response.code(), response.errorBody()?.string()))
+
+            val fileId = response.body()?.data?.id
+
+            // Partilhar a data key com os membros da team folder (share-key) para
+            // eles decifrarem o ficheiro acabado de enviar. Best-effort por membro.
+            if (fileId != null && recipients.isNotEmpty()) {
+                for (r in recipients) {
+                    try {
+                        val sealed = e2eKeyManager.sealForPublicKey(dataKey, r.public_key!!)
+                        api.shareFileKey(fileId, co.golink.tester.domain.encryption.ShareKeyBody(r.user_id, sealed))
+                    } catch (e: Throwable) {
+                        // sem acesso p/ este membro; segue
+                    }
+                }
+            }
+
+            // Enviar o thumbnail cifrado agora que o ficheiro existe (best-effort).
+            if (encryptedThumb != null && fileId != null) {
+                try {
+                    api.uploadEncryptedThumbnail(
+                        fileId,
+                        encryptedThumb.toRequestBody("application/octet-stream".toMediaTypeOrNull()),
+                    )
+                } catch (e: Throwable) {
+                    // sem thumb; segue
+                }
+            }
+
+            updateProgress(taskId, 1f)
+        } finally {
+            temp.delete()
+        }
+    }
+
+    // Parser para extrair o id do ficheiro criado na resposta do último chunk.
+    private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+    // Cache por pasta (uploads em lote vão para a mesma pasta) das chaves dos
+    // destinatários E2E. null = pasta sem team folder / sem info.
+    private val memberKeysCache = java.util.concurrent.ConcurrentHashMap<String, co.golink.tester.domain.encryption.FolderMemberKeysResponse>()
+
+    private suspend fun folderMemberKeys(folderId: String): co.golink.tester.domain.encryption.FolderMemberKeysResponse? {
+        memberKeysCache[folderId]?.let { return it }
+        return try {
+            // Só cachear SUCESSO: numa team folder, uma falha cacheada faria selar
+            // ao próprio (fallback) → o dono não abriria o ficheiro. Falha
+            // transitória → tenta de novo no próximo upload.
+            api.folderMemberKeys(folderId).body()?.also { memberKeysCache[folderId] = it }
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
+    private fun mediaTypeFor(mime: String): String = when {
+        mime.startsWith("image/") -> "image"
+        mime.startsWith("video/") -> "video"
+        mime.startsWith("audio/") -> "audio"
+        else -> "file"
+    }
+
+    /** Gera um JPEG (~960px) de imagem ou vídeo. null se não aplicável/falhar. */
+    private fun generateThumbnailJpeg(uri: Uri, mime: String, maxDim: Int = 960): ByteArray? {
+        val bitmap: Bitmap = when {
+            mime.startsWith("image/") -> decodeScaledImage(uri, maxDim)
+            mime.startsWith("video/") -> decodeVideoFrame(uri)
+            else -> null
+        } ?: return null
+
+        val scaled = scaleBitmap(bitmap, maxDim)
+        return try {
+            java.io.ByteArrayOutputStream().use { out ->
+                scaled.compress(Bitmap.CompressFormat.JPEG, 80, out)
+                out.toByteArray()
+            }
+        } finally {
+            if (scaled !== bitmap) bitmap.recycle()
+        }
+    }
+
+    private fun decodeScaledImage(uri: Uri, maxDim: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        val maxOrig = maxOf(bounds.outWidth, bounds.outHeight)
+        if (maxOrig <= 0) return null
+        var sample = 1
+        while (maxOrig / sample > maxDim * 2) sample *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        return resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+    }
+
+    private fun decodeVideoFrame(uri: Uri): Bitmap? {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(context, uri)
+            retriever.getFrameAtTime(3_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                ?: retriever.getFrameAtTime()
+        } catch (e: Throwable) {
+            null
+        } finally {
+            try { retriever.release() } catch (_: Throwable) {}
+        }
+    }
+
+    private fun scaleBitmap(bmp: Bitmap, maxDim: Int): Bitmap {
+        val scale = minOf(1f, maxDim.toFloat() / maxOf(bmp.width, bmp.height))
+        if (scale >= 1f) return bmp
+        val w = (bmp.width * scale).toInt().coerceAtLeast(1)
+        val h = (bmp.height * scale).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(bmp, w, h, true)
+    }
+
+    /**
+     * Upload E2E de ficheiros grandes (> limite): cifra para um temp (streaming) e
+     * envia o ciphertext por CHUNKS com as flags E2E, à imagem da Web. No fim,
+     * partilha a data key com os membros (share-key) e envia o thumbnail cifrado.
+     */
+    private suspend fun uploadEncryptedChunked(
+        taskId: String,
+        uri: Uri,
+        metadata: FileMetadata,
+        parentId: String?,
+        overwrite: Boolean,
+    ) {
+        markUploading(taskId)
+        val dataKey = Envelope.generateDataKey()
+        val mediaType = mediaTypeFor(metadata.mimeType)
+
+        val memberKeys = parentId?.let { folderMemberKeys(it) }
+        val ownerPublicKey = memberKeys?.owner?.public_key
+        val recipients = memberKeys?.recipients.orEmpty().filter { !it.public_key.isNullOrBlank() }
+        val wrapped = if (ownerPublicKey.isNullOrBlank()) {
+            e2eKeyManager.sealForSelf(dataKey)
+        } else {
+            e2eKeyManager.sealForPublicKey(dataKey, ownerPublicKey)
+        }
+
+        val encryptedThumb: ByteArray? = try {
+            generateThumbnailJpeg(uri, metadata.mimeType)?.let { EncryptedFileCodec.encrypt(it, dataKey) }
+        } catch (e: Throwable) {
+            null
+        }
+
+        val temp = File.createTempFile("e2e_", ".enc", context.cacheDir)
+        try {
+            // 1) cifra para o temp (memory-safe)
+            (resolver.openInputStream(uri) ?: error("não foi possível ler o ficheiro")).use { input ->
+                temp.outputStream().use { out ->
+                    EncryptedFileCodec.encryptStream(input, out, dataKey)
+                }
+            }
+
+            // 2) envia o ciphertext por chunks (tamanho exato do temp)
+            val cipherName = "${UUID.randomUUID()}-${metadata.displayName.replace(Regex("[\\\\/:*?\"<>|]"), "_")}"
+            val total = temp.length()
+            var sent = 0L
+            var lastBody: String? = null
+
+            temp.inputStream().use { fin ->
+                val buffer = ByteArray(CHUNK_SIZE)
+                while (sent < total) {
+                    val toRead = minOf(CHUNK_SIZE.toLong(), total - sent).toInt()
+                    val filled = readUpToN(fin, buffer, toRead, 0)
+                    if (filled <= 0) break
+                    val isLast = sent + filled >= total
+                    val chunkBytes = if (filled == buffer.size) buffer.copyOf() else buffer.copyOf(filled)
+                    val chunkPart = MultipartBody.Part.createFormData(
+                        "chunk", cipherName,
+                        chunkBytes.toRequestBody("application/octet-stream".toMediaTypeOrNull()),
+                    )
+                    val response = api.uploadChunk(
+                        name = textPart(metadata.baseName),
+                        extension = textPart(metadata.extension),
+                        parentId = parentId?.let { textPart(it) },
+                        isLastChunk = textPart(if (isLast) "1" else "0"),
+                        overwriteExisting = if (overwrite && isLast) textPart("1") else null,
+                        chunk = chunkPart,
+                        encrypted = textPart("1"),
+                        wrappedDataKey = textPart(wrapped),
+                        mediaType = textPart(mediaType),
+                    )
+                    if (response.code() == 409) throw ConflictException()
+                    if (!response.isSuccessful) error(httpErrorMessage(response.code(), response.errorBody()?.string()))
+                    if (isLast) lastBody = response.body()?.string()
+                    sent += filled
+                    if (total > 0L) updateProgress(taskId, sent.toFloat() / total.toFloat())
+                }
+            }
+
+            // 3) id do ficheiro criado (resposta do último chunk)
+            val fileId = lastBody?.let {
+                runCatching {
+                    json.decodeFromString<co.golink.tester.domain.browse.BrowseEntryEnvelope>(it).data.id
+                }.getOrNull()
+            }
+
+            // 4) partilhar a data key com os membros da team folder (best-effort)
+            if (fileId != null && recipients.isNotEmpty()) {
+                for (r in recipients) {
+                    try {
+                        val sealed = e2eKeyManager.sealForPublicKey(dataKey, r.public_key!!)
+                        api.shareFileKey(fileId, co.golink.tester.domain.encryption.ShareKeyBody(r.user_id, sealed))
+                    } catch (e: Throwable) {
+                    }
+                }
+            }
+
+            // 5) thumbnail cifrado (best-effort)
+            if (encryptedThumb != null && fileId != null) {
+                try {
+                    api.uploadEncryptedThumbnail(
+                        fileId,
+                        encryptedThumb.toRequestBody("application/octet-stream".toMediaTypeOrNull()),
+                    )
+                } catch (e: Throwable) {
+                }
+            }
+
+            updateProgress(taskId, 1f)
+        } finally {
+            temp.delete()
+        }
     }
 
     private suspend fun uploadMobileBackupSingle(

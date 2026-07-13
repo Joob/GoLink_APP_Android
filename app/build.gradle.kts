@@ -15,8 +15,8 @@ android {
         applicationId = "co.golink.tester"
         minSdk = 26
         targetSdk = 35
-        versionCode = 35
-        versionName = "2.5.34"
+        versionCode = 39
+        versionName = "3.5.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -112,4 +112,11 @@ dependencies {
     implementation(libs.androidx.biometric)
     implementation(libs.androidx.browser)
     implementation(libs.androidx.webkit)
+
+    // E2E: libsodium nativo (crypto_box_seal, Argon2id, secretbox) — interopera
+    // com o libsodium do PHP/JS. AES-256-GCM do codec usa o javax.crypto.
+    implementation("com.goterl:lazysodium-android:5.1.0@aar")
+    implementation("net.java.dev.jna:jna:5.14.0@aar")
+
+    testImplementation("junit:junit:4.13.2")
 }

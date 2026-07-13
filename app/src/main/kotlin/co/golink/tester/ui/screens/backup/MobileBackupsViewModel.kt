@@ -8,7 +8,12 @@ import co.golink.tester.data.browse.BrowseRepository
 import co.golink.tester.data.download.FileDownloader
 import co.golink.tester.data.files.FilesRepository
 import co.golink.tester.data.share.ShareRepository
+import co.golink.tester.data.teams.TeamsRepository
+import co.golink.tester.data.uploadrequest.UploadRequestRepository
+import co.golink.tester.domain.teams.TeamInvitation
 import co.golink.tester.data.upload.UploadManager
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.sample
 import co.golink.tester.domain.browse.BrowseItem
@@ -75,6 +80,9 @@ class MobileBackupsViewModel @Inject constructor(
     private val fileViewerSession: FileViewerSession,
     private val uploadManager: UploadManager,
     private val viewPreferences: co.golink.tester.data.settings.ViewPreferences,
+    private val teamsRepository: TeamsRepository,
+    private val uploadRequestRepository: UploadRequestRepository,
+    @ApplicationContext private val appContext: Context,
     notificationsRepository: co.golink.tester.data.notifications.NotificationsRepository,
 ) : ViewModel() {
 
@@ -270,6 +278,29 @@ class MobileBackupsViewModel @Inject constructor(
                     load()
                 }
                 .onFailure { t -> _state.update { it.copy(processing = null, toast = "Falha: ${t.message ?: "erro"}") } }
+        }
+    }
+
+    fun convertToTeamFolder(folderId: String, invitations: List<TeamInvitation>) {
+        _state.update { it.copy(processing = "A converter…".tr()) }
+        viewModelScope.launch {
+            teamsRepository.convertToTeamFolder(folderId, invitations)
+                .onSuccess { _state.update { it.copy(processing = null, toast = "Pasta convertida".tr()) }; load() }
+                .onFailure { t -> _state.update { it.copy(processing = null, toast = "Falha: ${t.message}") } }
+        }
+    }
+
+    fun createFileRequest(name: String?, email: String?, notes: String?, folderId: String?) {
+        viewModelScope.launch {
+            uploadRequestRepository.createFileRequest(name, email, notes, folderId)
+                .onSuccess { link ->
+                    runCatching {
+                        val cm = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        cm.setPrimaryClip(android.content.ClipData.newPlainText("file-request", link))
+                    }
+                    _state.update { it.copy(toast = "Pedido criado — link copiado".tr()) }
+                }
+                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
         }
     }
 

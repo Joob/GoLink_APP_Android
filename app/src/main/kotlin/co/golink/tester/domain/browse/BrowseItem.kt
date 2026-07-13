@@ -66,6 +66,7 @@ sealed interface BrowseItem {
         val filesize: String?,
         val thumbnailUrl: String?,
         val fileUrl: String?,
+        val encrypted: Boolean = false,
     ) : BrowseItem
 }
 
@@ -123,5 +124,6 @@ fun BrowseEntry.toItem(): BrowseItem = if (type == "folder") {
         filesize = attributes.filesize,
         thumbnailUrl = attributes.thumbnail.asUrl(),
         fileUrl = attributes.file_url,
+        encrypted = attributes.encrypted,
     )
 }

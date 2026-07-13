@@ -66,6 +66,7 @@ class SettingsViewModel @Inject constructor(
     private val imageLoader: ImageLoader,
     private val backendUrlHolder: BackendUrlHolder,
     private val billingRepository: BillingRepository,
+    private val e2eKeyManager: co.golink.tester.data.encryption.E2EKeyManager,
 ) : ViewModel() {
 
     val user: StateFlow<User?> = sessionManager.state
@@ -73,6 +74,11 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val backendUrl: StateFlow<String> = backendUrlHolder.state
+
+    // E2E: fingerprint da chave pública (deteta key-substitution). Só disponível
+    // com a encriptação desbloqueada (precisa da chave em memória).
+    val e2eUnlocked: StateFlow<Boolean> = e2eKeyManager.unlocked
+    fun e2eFingerprint(): String? = e2eKeyManager.fingerprint()
 
     private val _state = MutableStateFlow(SettingsUiState())
     val state: StateFlow<SettingsUiState> = _state.asStateFlow()

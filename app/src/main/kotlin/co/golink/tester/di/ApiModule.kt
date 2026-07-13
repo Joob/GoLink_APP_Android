@@ -37,6 +37,11 @@ object ApiModule {
 
     @Provides
     @Singleton
+    fun provideUserEncryptionApi(retrofit: Retrofit): co.golink.tester.network.UserEncryptionApi =
+        retrofit.create(co.golink.tester.network.UserEncryptionApi::class.java)
+
+    @Provides
+    @Singleton
     fun provideConfigApi(retrofit: Retrofit): ConfigApi = retrofit.create(ConfigApi::class.java)
 
     @Provides

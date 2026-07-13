@@ -69,6 +69,8 @@ fun ItemActionsSheet(
     onDetails: () -> Unit = {},
     onComingSoon: () -> Unit = {},
     onConvertToTeamFolder: () -> Unit = {},
+    onFileRequest: () -> Unit = {},
+    showFolderCollaboration: Boolean = true,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -166,20 +168,22 @@ fun ItemActionsSheet(
                             iconBg = Color(0xFFFFF3E0),
                             iconTint = Color(0xFFFF8F00),
                         ) { onToggleFavourite(); onDismiss() }
-                        SheetDivider()
-                        ActionItem(
-                            icon = Icons.Outlined.Groups,
-                            label = "Converter em pasta de equipa".tr(),
-                            iconBg = MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f),
-                            iconTint = MaterialTheme.colorScheme.secondary,
-                        ) { onConvertToTeamFolder(); onDismiss() }
-                        SheetDivider()
-                        ActionItem(
-                            icon = Icons.Outlined.NoteAdd,
-                            label = "Pedido de ficheiros".tr(),
-                            iconBg = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f),
-                            iconTint = MaterialTheme.colorScheme.tertiary,
-                        ) { onComingSoon(); onDismiss() }
+                        if (showFolderCollaboration) {
+                            SheetDivider()
+                            ActionItem(
+                                icon = Icons.Outlined.Groups,
+                                label = "Converter em pasta de equipa".tr(),
+                                iconBg = MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f),
+                                iconTint = MaterialTheme.colorScheme.secondary,
+                            ) { onConvertToTeamFolder(); onDismiss() }
+                            SheetDivider()
+                            ActionItem(
+                                icon = Icons.Outlined.NoteAdd,
+                                label = "Pedido de ficheiros".tr(),
+                                iconBg = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f),
+                                iconTint = MaterialTheme.colorScheme.tertiary,
+                            ) { onFileRequest(); onDismiss() }
+                        }
                     }
                 }
             }

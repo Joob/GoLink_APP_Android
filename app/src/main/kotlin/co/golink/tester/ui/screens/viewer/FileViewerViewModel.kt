@@ -28,6 +28,7 @@ import okhttp3.Request
 
 @HiltViewModel
 class FileViewerViewModel @Inject constructor(
+    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
     private val session: FileViewerSession,
     private val backendUrlHolder: BackendUrlHolder,
     private val tokenStore: TokenStore,
@@ -36,6 +37,8 @@ class FileViewerViewModel @Inject constructor(
     private val filesRepository: FilesRepository,
     private val browseRepository: BrowseRepository,
     private val shareRepository: ShareRepository,
+    private val e2eKeyManager: co.golink.tester.data.encryption.E2EKeyManager,
+    private val userEncryptionApi: co.golink.tester.network.UserEncryptionApi,
 ) : ViewModel() {
 
     data class UiState(
@@ -111,11 +114,56 @@ class FileViewerViewModel @Inject constructor(
 
     fun download() {
         current?.let { file ->
-            downloader.downloadFile(file.id, file.name)
+            downloader.downloadFile(file) // passa file.encrypted -> decifra ao guardar
                 .onSuccess { _state.update { it.copy(toast = "Download iniciado: ${file.name}") } }
                 .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
         }
     }
+
+    // ----- E2E preview -----
+
+    /** Data key do ficheiro (null se não cifrado ou E2E bloqueado). */
+    private suspend fun dataKeyFor(file: BrowseItem.File): ByteArray? {
+        if (!file.encrypted || !e2eKeyManager.isUnlocked) return null
+        val wrapped = runCatching { userEncryptionApi.fileKey(file.id).body()?.wrapped_data_key }.getOrNull() ?: return null
+        return runCatching { e2eKeyManager.openFileDataKey(wrapped) }.getOrNull()
+    }
+
+    /** Decifra bytes de imagem já descarregados (ciphertext) — usado no ImageViewer. */
+    suspend fun decryptImageBytes(file: BrowseItem.File, cipher: ByteArray): ByteArray? = withContext(Dispatchers.Default) {
+        val key = dataKeyFor(file) ?: return@withContext null
+        runCatching { co.golink.tester.data.encryption.EncryptedFileCodec.decryptFull(cipher, key) }.getOrNull()
+    }
+
+    /**
+     * Descarrega + decifra um media cifrado para um ficheiro local (seek nativo).
+     * Devolve null se não cifrado. v1: decifra o ficheiro todo antes de tocar.
+     */
+    suspend fun decryptedMediaFile(file: BrowseItem.File): java.io.File? = withContext(Dispatchers.IO) {
+        val key = dataKeyFor(file) ?: return@withContext null
+        val url = authedUrlForDownload(file)
+        val out = java.io.File(appContext.cacheDir, "e2e_view_${file.id}.tmp")
+        runCatching {
+            httpClient.newCall(Request.Builder().url(url).build()).execute().use { resp ->
+                val body = resp.body ?: error("vazio")
+                body.byteStream().use { input ->
+                    out.outputStream().use { o ->
+                        co.golink.tester.data.encryption.EncryptedFileCodec.decryptStream(input, o, key)
+                    }
+                }
+            }
+            out
+        }.getOrElse { out.delete(); null }
+    }
+
+    private fun authedUrlForDownload(file: BrowseItem.File): String {
+        val backend = backendUrlHolder.current.trimEnd('/')
+        val token = tokenStore.token
+        val tokenParam = if (!token.isNullOrBlank()) "?token=${android.net.Uri.encode(token)}" else ""
+        return "$backend/api/file/${android.net.Uri.encode(file.id)}/download$tokenParam"
+    }
+
+    fun isEncrypted(file: BrowseItem.File): Boolean = file.encrypted
 
     // ----- Sharing -----
 

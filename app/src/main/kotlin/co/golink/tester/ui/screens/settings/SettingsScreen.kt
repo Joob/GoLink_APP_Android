@@ -160,6 +160,7 @@ fun SettingsScreen(
     val user by viewModel.user.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
     val backendUrl by viewModel.backendUrl.collectAsStateWithLifecycle()
+    val e2eUnlocked by viewModel.e2eUnlocked.collectAsStateWithLifecycle()
     val snackbarHost = remember { SnackbarHostState() }
     var route by remember {
         mutableStateOf<SettingsRoute>(
@@ -294,6 +295,7 @@ fun SettingsScreen(
                     logEntries = state.logEntries,
                     onRefreshLog = viewModel::refreshLog,
                     onClearLog = viewModel::clearLog,
+                    e2eFingerprint = if (e2eUnlocked) viewModel.e2eFingerprint() else null,
                 )
             }
         }
@@ -2121,6 +2123,7 @@ private fun AppSecurityPane(
     logEntries: List<LogEntry>,
     onRefreshLog: () -> Unit,
     onClearLog: () -> Unit,
+    e2eFingerprint: String? = null,
 ) {
     val context = LocalContext.current
     val biometricAvailable = remember {
@@ -2248,6 +2251,38 @@ private fun AppSecurityPane(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
+        // E2E: fingerprint da chave pública (deteta key-substitution).
+        if (e2eFingerprint != null) {
+            SectionLabel("Encriptação".tr())
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "Impressão da chave de encriptação".tr(),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Confirma que é igual nos teus outros dispositivos — um código diferente pode indicar troca de chave.".tr(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        e2eFingerprint,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 2.sp,
+                    )
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+
         SectionLabel("Segurança".tr())
         Surface(
             shape = RoundedCornerShape(14.dp),

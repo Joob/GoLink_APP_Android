@@ -203,13 +203,17 @@ fun AppNavHost(
             )
         }
         composable(Routes.HOME) {
-            BrowseScreen(
-                onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
-                onOpenSettings = { navController.navigate(Routes.settings()) },
-                onOpenBilling = { navController.navigate(Routes.settings("billing")) },
-                onOpenAutoBackup = { navController.navigate(Routes.MOBILE_BACKUPS) },
-                onOpenFile = { fileId -> navController.navigate(Routes.viewer(fileId)) },
-            )
+            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+                BrowseScreen(
+                    onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
+                    onOpenSettings = { navController.navigate(Routes.settings()) },
+                    onOpenBilling = { navController.navigate(Routes.settings("billing")) },
+                    onOpenAutoBackup = { navController.navigate(Routes.MOBILE_BACKUPS) },
+                    onOpenFile = { fileId -> navController.navigate(Routes.viewer(fileId)) },
+                )
+                // Gate E2E: pede unlock/setup quando autenticado mas sem privada em memória.
+                co.golink.tester.ui.screens.encryption.E2EGate()
+            }
         }
         composable(
             route = Routes.VIEWER,

@@ -73,6 +73,8 @@ import co.golink.tester.ui.components.BrowseItemRow
 import co.golink.tester.ui.components.ItemActionsSheet
 import co.golink.tester.ui.components.SelectionActionBar
 import co.golink.tester.ui.components.dialogs.ConfirmDialog
+import co.golink.tester.ui.components.dialogs.CreateFileRequestDialog
+import co.golink.tester.ui.components.dialogs.CreateTeamFolderDialog
 import co.golink.tester.ui.components.dialogs.MoveDestinationDialog
 import co.golink.tester.ui.components.dialogs.ShareDialog
 import co.golink.tester.ui.components.dialogs.ShareDialogState
@@ -99,7 +101,7 @@ import androidx.compose.ui.draw.clip
 
 private val AccentGreen = Color(0xFF16A34A)
 
-private enum class BackupItemDialog { None, Rename, Delete, Move, Details }
+private enum class BackupItemDialog { None, Rename, Delete, Move, Details, ConvertToTeamFolder, FileRequest }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -343,10 +345,10 @@ fun MobileBackupsScreen(
                     ) {
                         rows.forEach { row ->
                             when (row) {
-                                is BackupRow.Header -> item(key = "hdr_${row.label}") {
+                                is BackupRow.Header -> item(key = "hdr_${row.label}", contentType = "header") {
                                     BackupDateHeader(row.label)
                                 }
-                                is BackupRow.Entry -> item(key = row.item.id) {
+                                is BackupRow.Entry -> item(key = row.item.id, contentType = "entry") {
                                     val item = row.item
                                     BrowseItemRow(
                                         item = item,
@@ -420,6 +422,9 @@ fun MobileBackupsScreen(
             onDelete = { dialogTarget = target; activeDialog = BackupItemDialog.Delete },
             onDetails = { dialogTarget = target; activeDialog = BackupItemDialog.Details },
             onComingSoon = { /* no-op */ },
+            onConvertToTeamFolder = { dialogTarget = target; activeDialog = BackupItemDialog.ConvertToTeamFolder },
+            onFileRequest = { dialogTarget = target; activeDialog = BackupItemDialog.FileRequest },
+            showFolderCollaboration = false,
         )
     }
 
@@ -500,6 +505,28 @@ fun MobileBackupsScreen(
             BrowseItemDetailsSheet(
                 item = target,
                 onDismiss = { activeDialog = BackupItemDialog.None; dialogTarget = null },
+            )
+        }
+        BackupItemDialog.ConvertToTeamFolder -> dialogTarget?.let { target ->
+            CreateTeamFolderDialog(
+                isConvert = true,
+                onDismiss = { activeDialog = BackupItemDialog.None; dialogTarget = null },
+                onCreate = { _, _ -> },
+                onConvert = { invites ->
+                    viewModel.convertToTeamFolder(target.id, invites)
+                    activeDialog = BackupItemDialog.None
+                    dialogTarget = null
+                },
+            )
+        }
+        BackupItemDialog.FileRequest -> dialogTarget?.let { target ->
+            CreateFileRequestDialog(
+                onDismiss = { activeDialog = BackupItemDialog.None; dialogTarget = null },
+                onCreate = { name, email, notes ->
+                    viewModel.createFileRequest(name, email, notes, target.id)
+                    activeDialog = BackupItemDialog.None
+                    dialogTarget = null
+                },
             )
         }
         BackupItemDialog.None -> Unit

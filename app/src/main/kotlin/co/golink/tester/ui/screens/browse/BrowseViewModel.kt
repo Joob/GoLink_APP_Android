@@ -401,12 +401,25 @@ class BrowseViewModel @Inject constructor(
         }
     }
 
-    fun createFileRequest(name: String?, email: String?, notes: String?) {
-        val folderId = (state.value.mode as? BrowseMode.Folder)?.id
+    // folderId nulo = usa a pasta actual (fluxo do botão +). O menu "…" de uma
+    // pasta passa o id dessa pasta. Ao criar, copiamos o link para a área de
+    // transferência, como faz a Web.
+    fun createFileRequest(name: String?, email: String?, notes: String?, folderId: String? = null) {
+        val effectiveFolder = folderId ?: (state.value.mode as? BrowseMode.Folder)?.id
         viewModelScope.launch {
-            uploadRequestRepository.createFileRequest(name, email, notes, folderId)
-                .onSuccess { _state.update { it.copy(toast = "Pedido de ficheiros criado".tr()) } }
+            uploadRequestRepository.createFileRequest(name, email, notes, effectiveFolder)
+                .onSuccess { link ->
+                    copyToClipboard("file-request", link)
+                    _state.update { it.copy(toast = "Pedido criado — link copiado".tr()) }
+                }
                 .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+        }
+    }
+
+    private fun copyToClipboard(label: String, text: String) {
+        runCatching {
+            val cm = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText(label, text))
         }
     }
 

@@ -96,6 +96,7 @@ data class BrowseAttributes(
     val created_at: String? = null,
     val updated_at: String? = null,
     val deleted_at: String? = null,
+    val encrypted: Boolean = false,
 )
 
 @Serializable

@@ -11,6 +11,7 @@ import okhttp3.RequestBody
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.HTTP
+import retrofit2.http.GET
 import retrofit2.http.Multipart
 import retrofit2.http.PATCH
 import retrofit2.http.POST
@@ -41,7 +42,42 @@ interface FilesApi {
         @Part("parent_id") parentId: RequestBody?,
         @Part("overwrite_existing") overwriteExisting: RequestBody?,
         @Part file: MultipartBody.Part,
+        @Part("encrypted") encrypted: RequestBody? = null,
+        @Part("wrapped_data_key") wrappedDataKey: RequestBody? = null,
+        // E2E: tipo real do media (o servidor não o consegue inferir do ciphertext).
+        @Part("media_type") mediaType: RequestBody? = null,
     ): Response<BrowseEntryEnvelope>
+
+    // E2E: thumbnail cifrado (ciphertext opaco gerado no cliente com a data key).
+    @POST("api/file/{id}/encrypted-thumbnail")
+    suspend fun uploadEncryptedThumbnail(
+        @Path("id") id: String,
+        @Body body: RequestBody,
+    ): Response<okhttp3.ResponseBody>
+
+    @GET("api/file/{id}/encrypted-thumbnail")
+    suspend fun downloadEncryptedThumbnail(
+        @Path("id") id: String,
+    ): Response<okhttp3.ResponseBody>
+
+    // E2E: chaves públicas dos destinatários de uma pasta (dono + membros).
+    @GET("api/folder/{id}/member-keys")
+    suspend fun folderMemberKeys(
+        @Path("id") id: String,
+    ): Response<co.golink.tester.domain.encryption.FolderMemberKeysResponse>
+
+    // E2E: ids dos ficheiros cifrados sob uma pasta (recursivo).
+    @GET("api/folder/{id}/encrypted-file-ids")
+    suspend fun folderEncryptedFileIds(
+        @Path("id") id: String,
+    ): Response<co.golink.tester.domain.encryption.FolderEncryptedFilesResponse>
+
+    // E2E: partilhar a data key de um ficheiro com um destinatário registado.
+    @POST("api/file/{id}/share-key")
+    suspend fun shareFileKey(
+        @Path("id") id: String,
+        @Body body: co.golink.tester.domain.encryption.ShareKeyBody,
+    ): Response<okhttp3.ResponseBody>
 
     @Multipart
     @POST("api/upload/mobile-backup")
@@ -71,6 +107,10 @@ interface FilesApi {
         // Caminho explícito — usado só pelos uploads normais (web) de pastas.
         @Part("path") path: RequestBody? = null,
         @Part chunk: MultipartBody.Part,
+        // E2E: ciphertext em chunks (o servidor monta e cifra no último chunk).
+        @Part("encrypted") encrypted: RequestBody? = null,
+        @Part("wrapped_data_key") wrappedDataKey: RequestBody? = null,
+        @Part("media_type") mediaType: RequestBody? = null,
     ): Response<okhttp3.ResponseBody>
 
     @POST("api/upload/remote")

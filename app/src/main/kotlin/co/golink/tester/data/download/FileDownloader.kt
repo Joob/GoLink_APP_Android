@@ -38,6 +38,8 @@ class FileDownloader @Inject constructor(
     @ApplicationContext private val context: Context,
     private val backendUrlHolder: BackendUrlHolder,
     private val tokenStore: TokenStore,
+    private val e2eKeyManager: co.golink.tester.data.encryption.E2EKeyManager,
+    private val userEncryptionApi: co.golink.tester.network.UserEncryptionApi,
     // Cliente de timeouts longos (leitura 5 min / chamada 10 min): o "authed"
     // tinha readTimeout de 60 s, o que fazia downloads grandes ou em ligações
     // lentas falharem a meio ("nunca termina"). Aqui streamamos o ficheiro todo.
@@ -99,7 +101,7 @@ class FileDownloader @Inject constructor(
         }
     }
 
-    fun downloadFile(id: String, name: String, basename: String? = null): Result<Unit> = runCatching {
+    fun downloadFile(id: String, name: String, basename: String? = null, encrypted: Boolean = false): Result<Unit> = runCatching {
         val backend = backendUrlHolder.current.trimEnd('/')
         val url = "$backend/api/file/${Uri.encode(id)}/download"
         val tempLabel = sanitize(name)
@@ -108,6 +110,22 @@ class FileDownloader @Inject constructor(
         notify(nid, tempLabel, inProgress = true)
         scope.launch {
             try {
+                // E2E: abrir a data key selada (precisa da privada desbloqueada).
+                var dataKey: ByteArray? = null
+                if (encrypted) {
+                    if (!e2eKeyManager.isUnlocked) {
+                        notifManager.cancel(nid)
+                        _events.tryEmit(Event.Failed(tempLabel, "Desbloqueia a encriptação para descarregar"))
+                        return@launch
+                    }
+                    val wrapped = runCatching { userEncryptionApi.fileKey(id).body()?.wrapped_data_key }.getOrNull()
+                    if (wrapped == null) {
+                        notifManager.cancel(nid)
+                        _events.tryEmit(Event.Failed(tempLabel, "Sem chave de encriptação"))
+                        return@launch
+                    }
+                    dataKey = e2eKeyManager.openFileDataKey(wrapped)
+                }
                 httpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
                     if (!response.isSuccessful) {
                         val errBody = response.body?.string()?.take(300)?.trim()
@@ -133,7 +151,7 @@ class FileDownloader @Inject constructor(
                         else -> name
                     }
                     val finalName = uniqueDestination(sanitize(resolvedName))
-                    writeToDownloads(finalName, mimeTypeFor(finalName), body.byteStream())
+                    writeToDownloads(finalName, mimeTypeFor(finalName), body.byteStream(), dataKey)
                     notifManager.cancel(nid)
                     notify(nid, finalName, inProgress = false, success = true)
                     _events.tryEmit(Event.Completed(finalName))
@@ -146,7 +164,7 @@ class FileDownloader @Inject constructor(
     }
 
     fun downloadFile(file: BrowseItem.File): Result<Unit> =
-        downloadFile(file.id, file.name, file.basename)
+        downloadFile(file.id, file.name, file.basename, file.encrypted)
 
     fun downloadFolder(folder: BrowseItem.Folder): Result<Long> =
         downloadZip(listOf(folder), suggestedName = "${folder.name}.zip")
@@ -196,7 +214,15 @@ class FileDownloader @Inject constructor(
         notifManager.notify(id, builder.build())
     }
 
-    private fun writeToDownloads(name: String, mime: String, input: java.io.InputStream) {
+    // dataKey != null => decifra o stream (E2E) enquanto escreve; senão copia.
+    private fun writeToDownloads(name: String, mime: String, input: java.io.InputStream, dataKey: ByteArray? = null) {
+        val pump: (java.io.OutputStream) -> Unit = { out ->
+            if (dataKey != null) {
+                co.golink.tester.data.encryption.EncryptedFileCodec.decryptStream(input, out, dataKey)
+            } else {
+                input.copyTo(out, DEFAULT_COPY_BUFFER)
+            }
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, name)
@@ -205,13 +231,13 @@ class FileDownloader @Inject constructor(
             }
             val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                 ?: throw IOException("Não foi possível criar ficheiro em Downloads")
-            context.contentResolver.openOutputStream(uri)?.use { out -> input.copyTo(out, DEFAULT_COPY_BUFFER) }
+            context.contentResolver.openOutputStream(uri)?.use { out -> pump(out) }
             val update = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
             context.contentResolver.update(uri, update, null, null)
         } else {
             val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             dir.mkdirs()
-            java.io.File(dir, name).outputStream().use { input.copyTo(it, DEFAULT_COPY_BUFFER) }
+            java.io.File(dir, name).outputStream().use { out -> pump(out) }
         }
     }
 

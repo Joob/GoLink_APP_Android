@@ -17,6 +17,7 @@ class AuthRepository @Inject constructor(
     private val api: AuthApi,
     private val tokenStore: TokenStore,
     private val errorParser: ApiErrorParser,
+    private val e2eKeyManager: co.golink.tester.data.encryption.E2EKeyManager,
 ) {
     suspend fun checkAccount(email: String): Result<CheckAccountResponse> = runCatching {
         val response = api.checkAccount(CheckAccountRequest(email = email))
@@ -100,6 +101,7 @@ class AuthRepository @Inject constructor(
 
     suspend fun logout(): Result<Unit> = runCatching {
         runCatching { api.logout() }
+        e2eKeyManager.lock() // limpar a chave privada E2E da memória
         tokenStore.clear()
     }
 }

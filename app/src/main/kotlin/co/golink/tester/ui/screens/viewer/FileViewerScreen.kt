@@ -260,11 +260,13 @@ fun FileViewerScreen(
                     when {
                         file.isImageLike() -> ImageViewer(
                             file = file,
-                            url = viewModel.authedUrlFor(file),
+                            // E2E: usa o download-by-id (que faz dual-read do bucket cifrado).
+                            url = if (file.encrypted) viewModel.authedUrlFor(file) else viewModel.authedUrlFor(file),
                             token = viewModel.authToken(),
                             zoom = if (page == state.currentIndex) state.zoom else 1f,
                             rotation = if (page == state.currentIndex) state.rotation else 0f,
                             onZoomChange = { if (page == state.currentIndex) viewModel.setZoom(it) },
+                            decrypt = if (file.encrypted) { { c -> viewModel.decryptImageBytes(file, c) } } else null,
                         )
                         file.isPdfLike() -> PdfViewer(
                             url = viewModel.authedUrlFor(file),
@@ -279,19 +281,27 @@ fun FileViewerScreen(
                             if (page == state.currentIndex) state.textLoading else false,
                             if (page == state.currentIndex) state.textError else null,
                         )
-                        file.isAudioLike() -> AudioViewer(
-                            file = file,
-                            url = viewModel.authedUrlFor(file),
-                            token = viewModel.authToken(),
-                            fileKey = file.id,
-                            isActive = page == state.currentIndex,
-                        )
-                        file.isVideoLike() -> VideoViewer(
-                            url = viewModel.authedUrlFor(file),
-                            token = viewModel.authToken(),
-                            fileKey = file.id,
-                            isActive = page == state.currentIndex,
-                        )
+                        file.isAudioLike() -> {
+                            val src = rememberPlayableUrl(file, viewModel)
+                            if (src == null) MediaLoadingBox()
+                            else AudioViewer(
+                                file = file,
+                                url = src,
+                                token = viewModel.authToken(),
+                                fileKey = file.id,
+                                isActive = page == state.currentIndex,
+                            )
+                        }
+                        file.isVideoLike() -> {
+                            val src = rememberPlayableUrl(file, viewModel)
+                            if (src == null) MediaLoadingBox()
+                            else VideoViewer(
+                                url = src,
+                                token = viewModel.authToken(),
+                                fileKey = file.id,
+                                isActive = page == state.currentIndex,
+                            )
+                        }
                         else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text("Pré-visualização não suportada".tr())
                         }
@@ -423,6 +433,7 @@ private fun ImageViewer(
     zoom: Float,
     rotation: Float,
     onZoomChange: (Float) -> Unit,
+    decrypt: (suspend (ByteArray) -> ByteArray?)? = null,
 ) {
     var bitmap by remember(file.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
     var loading by remember(file.id) { mutableStateOf(true) }
@@ -445,7 +456,9 @@ private fun ImageViewer(
                     // do mesmo conteúdo. Sem isto as fotos apareciam de lado (o
                     // BitmapFactory ignora a orientação; o Coil, usado nas
                     // miniaturas, aplica-a — daí a diferença).
-                    val bytes = input.readBytes()
+                    val raw = input.readBytes()
+                    // E2E: se cifrado, decifra os bytes antes de descodificar.
+                    val bytes = if (decrypt != null) (decrypt(raw) ?: error("Falha ao decifrar".tr())) else raw
                     val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                         ?: error("Falha na descodificação".tr())
                     val orientation = runCatching {
@@ -545,6 +558,24 @@ private fun applyExifOrientation(bmp: android.graphics.Bitmap, orientation: Int)
     return runCatching {
         android.graphics.Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
     }.getOrDefault(bmp)
+}
+
+// E2E: para media cifrado devolve um file:// local já decifrado (seek nativo);
+// senão o URL HTTP normal. null enquanto decifra (mostra loading).
+@Composable
+private fun rememberPlayableUrl(file: BrowseItem.File, viewModel: FileViewerViewModel): String? {
+    if (!file.encrypted) return viewModel.authedUrlFor(file)
+    val state = androidx.compose.runtime.produceState<String?>(null, file.id) {
+        value = viewModel.decryptedMediaFile(file)?.let { android.net.Uri.fromFile(it).toString() }
+    }
+    return state.value
+}
+
+@Composable
+private fun MediaLoadingBox() {
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(color = Color.White)
+    }
 }
 
 @Composable
