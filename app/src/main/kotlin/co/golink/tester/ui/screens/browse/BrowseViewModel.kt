@@ -100,6 +100,8 @@ class BrowseViewModel @Inject constructor(
     private val uploadManager: UploadManager,
     private val fileViewerSession: FileViewerSession,
     private val viewPreferences: co.golink.tester.data.settings.ViewPreferences,
+    private val e2eKeys: co.golink.tester.data.encryption.E2EKeyManager,
+    private val encryptionApi: co.golink.tester.network.UserEncryptionApi,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
     private val _state = MutableStateFlow(BrowseUiState())
@@ -235,8 +237,11 @@ class BrowseViewModel @Inject constructor(
         _state.update { it.copy(searchQuery = query) }
         searchJob?.cancel()
         if (query.isBlank()) return
+        // Mínimo 2 chars + debounce 300ms: 1 carácter é um LIKE quase-full-scan
+        // no servidor sem valor para o utilizador (alinha com o Spotlight da Web).
+        if (query.trim().length < 2) return
         searchJob = viewModelScope.launch {
-            delay(150)
+            delay(300)
             _state.update { it.copy(mode = BrowseMode.SearchResults(query), isLoading = true, error = null) }
             repository.search(query)
                 .onSuccess { items ->
@@ -470,15 +475,49 @@ class BrowseViewModel @Inject constructor(
     }
 
     fun dismissCompletedUploads() = uploadManager.clearFinished()
-    fun cancelUpload(taskId: String) = uploadManager.cancel(taskId)
+    fun cancelUpload(taskId: String) {
+        uploadManager.cancel(taskId)
+        _state.update { it.copy(toast = "Upload cancelado".tr()) }
+    }
     fun retryUpload(taskId: String) = uploadManager.retry(taskId)
     fun retryFailedUploads() = uploadManager.retryFailed()
-    fun clearAllUploads() = uploadManager.clearAll()
+    fun clearAllUploads() {
+        val had = uploads.value.any { it.state == UploadTask.State.Uploading || it.state == UploadTask.State.Queued }
+        uploadManager.clearAll()
+        if (had) {
+            _state.update { it.copy(toast = "Uploads cancelados".tr()) }
+            loadCurrent() // refresh de confirmação
+        }
+    }
     fun overwriteConflict(taskId: String) = uploadManager.overwriteConflict(taskId)
     fun skipConflict(taskId: String) = uploadManager.skipConflict(taskId)
 
     fun openShareDialog(item: BrowseItem) {
         _shareState.value = ShareDialogUiState(item = item, share = item.share)
+        attachShareKeyFragment()
+    }
+
+    /**
+     * E2E: para ficheiros cifrados, a data key tem de viajar no fragmento (#k=)
+     * do link de partilha — nunca chega ao servidor. Sem isto o destinatário
+     * recebia ciphertext que não conseguia abrir (igual ao CopyShareLink da Web).
+     */
+    private fun attachShareKeyFragment() {
+        val st = _shareState.value ?: return
+        val link = st.share?.link ?: return
+        val isEncryptedFile = (st.item as? BrowseItem.File)?.encrypted == true
+        if (!isEncryptedFile || !e2eKeys.isUnlocked || link.contains("#k=")) return
+        viewModelScope.launch {
+            runCatching {
+                val wrapped = encryptionApi.fileKey(st.item.id).body()?.wrapped_data_key ?: return@launch
+                val dataKey = e2eKeys.openFileDataKey(wrapped)
+                val fragment = "#k=" + java.net.URLEncoder.encode(
+                    co.golink.tester.data.encryption.Envelope.b64(dataKey), "UTF-8")
+                _shareState.update { cur ->
+                    cur?.copy(share = cur.share?.copy(link = cur.share.link + fragment))
+                }
+            }
+        }
     }
 
     fun closeShareDialog() {
@@ -492,6 +531,7 @@ class BrowseViewModel @Inject constructor(
             shareRepository.create(current.item, password, permission, expirationDays, null)
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
+                    attachShareKeyFragment()
                     _state.update { it.copy(toast = "Partilha criada".tr()) }
                     loadCurrent()
                 }

@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -61,6 +62,7 @@ class E2EGateViewModel @Inject constructor(
 
     fun submitSecret(secret: String) {
         if (secret.isBlank() || working) return
+        submitMinMillis = 10_000L // manter a animação de decifra visível ~10s (pedido de design)
         // Mínimo 8 chars NO SETUP (wrap = alvo de brute-force offline); no unlock
         // não, para chaves antigas continuarem a abrir. Igual à Web.
         if (!configured && secret.length < 8) {
@@ -69,8 +71,13 @@ class E2EGateViewModel @Inject constructor(
         }
         run("segredo errado".tr()) {
             val rk = keys.setupOrUnlock(secret)
-            if (rk != null) { recoveryKey = rk; mode = GateMode.ShowRecovery }
-            else mode = GateMode.Done
+            // A mudança de modo (fechar o gate) só corre DEPOIS do delay — senão
+            // o diálogo desaparecia no instante do unlock e a animação era cortada.
+            val finish: () -> Unit = {
+                if (rk != null) { recoveryKey = rk; mode = GateMode.ShowRecovery }
+                else mode = GateMode.Done
+            }
+            finish
         }
     }
 
@@ -83,7 +90,8 @@ class E2EGateViewModel @Inject constructor(
         if (rk.isBlank() || working) return
         run("recovery key inválida".tr()) {
             keys.recoverWithKey(rk)
-            mode = GateMode.Reset // força definir nova password
+            val finish: () -> Unit = { mode = GateMode.Reset } // nova password (pós-delay)
+            finish
         }
     }
 
@@ -95,15 +103,27 @@ class E2EGateViewModel @Inject constructor(
         }
         run("falhou".tr()) {
             keys.rotateSecret(secret)
-            mode = GateMode.Done
+            val finish: () -> Unit = { mode = GateMode.Done }
+            finish
         }
     }
 
-    private fun run(errMsg: String, block: suspend () -> Unit) {
+    private var submitMinMillis = 0L
+
+    // O bloco devolve a AÇÃO DE CONCLUSÃO (mudar de modo/fechar) — executada só
+    // depois do delay mínimo, para a animação de decifra correr até ao fim.
+    private fun run(errMsg: String, block: suspend () -> (() -> Unit)?) {
         working = true; error = null
+        val minMillis = submitMinMillis
+        submitMinMillis = 0L
         viewModelScope.launch {
-            runCatching { block() }
-                .onFailure { error = errMsg }
+            val t0 = System.currentTimeMillis()
+            val result = runCatching { block() }
+            // Em sucesso, segura a animação até ao mínimo pedido; em erro mostra já.
+            if (result.isSuccess && minMillis > 0) {
+                kotlinx.coroutines.delay((minMillis - (System.currentTimeMillis() - t0)).coerceAtLeast(0L))
+            }
+            result.onSuccess { it?.invoke() }.onFailure { error = errMsg }
             working = false
         }
     }
@@ -144,6 +164,62 @@ fun E2EGate(viewModel: E2EGateViewModel = hiltViewModel()) {
 }
 
 @Composable
+private fun DecryptEffect(label: String) {
+    val pool = "ABCDEF0123456789"
+    fun rand(n: Int) = buildString {
+        repeat(n) { i ->
+            append(pool.random())
+            if (i % 4 == 3 && i < n - 1) append(' ')
+        }
+    }
+    var line1 by remember { mutableStateOf(rand(20)) }
+    var line2 by remember { mutableStateOf(rand(20)) }
+    var fixed by remember { mutableStateOf(rand(20)) }
+    var step by remember { mutableStateOf(0) }
+    var dots by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        while (true) {
+            step = (step + 1) % 28
+            val solved = minOf(step, 20)
+            line1 = fixed.take(solved + solved / 4) + rand(20 - solved)
+            line2 = rand(20)
+            if (step == 0) fixed = rand(20)
+            if (step % 6 == 0) dots = if (dots.length >= 3) "" else "$dots."
+            kotlinx.coroutines.delay(65)
+        }
+    }
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+        Text(line1, style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
+        Text(line2, style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+        Spacer(Modifier.height(8.dp))
+        Text(label + dots, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** Botão primário do gate — mesmo estilo dos botões da Web (rounded-xl, verde, texto branco semibold). */
+@Composable
+private fun GateButton(text: String, enabled: Boolean = true, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 14.dp),
+        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+            containerColor = co.golink.tester.ui.theme.BrandGreen,
+            disabledContainerColor = co.golink.tester.ui.theme.BrandGreen.copy(alpha = 0.45f),
+        ),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            text,
+            fontSize = 15.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            color = androidx.compose.ui.graphics.Color.White,
+        )
+    }
+}
+
+@Composable
 private fun SecretContent(
     title: String,
     desc: String,
@@ -157,20 +233,25 @@ private fun SecretContent(
     Spacer(Modifier.height(4.dp))
     Text(desc, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(12.dp))
-    OutlinedTextField(
-        value = secret,
-        onValueChange = { secret = it },
-        singleLine = true,
-        visualTransformation = PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-        modifier = Modifier.fillMaxWidth(),
-    )
-    viewModel.error?.let { Spacer(Modifier.height(6.dp)); Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-    Spacer(Modifier.height(14.dp))
-    Button(onClick = { onSubmit(secret) }, enabled = !viewModel.working && secret.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
-        if (viewModel.working) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.height(18.dp)) else Text(button)
+    if (viewModel.working) {
+        // Efeito "a desencriptar" no lugar do formulário — igual à Web.
+        Spacer(Modifier.height(8.dp))
+        co.golink.tester.ui.components.DecryptEffect(label = if (viewModel.configured) "A desencriptar".tr() else "A proteger os teus ficheiros".tr())
+        Spacer(Modifier.height(8.dp))
+    } else {
+        OutlinedTextField(
+            value = secret,
+            onValueChange = { secret = it },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        viewModel.error?.let { Spacer(Modifier.height(6.dp)); Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        Spacer(Modifier.height(14.dp))
+        GateButton(button, enabled = secret.isNotBlank()) { onSubmit(secret) }
     }
-    if (showForgot) {
+    if (showForgot && !viewModel.working) {
         TextButton(onClick = viewModel::startRecover, modifier = Modifier.fillMaxWidth()) {
             Text("Esqueci a password?".tr())
         }
@@ -195,7 +276,7 @@ private fun RecoveryContent(viewModel: E2EGateViewModel) {
         )
     }
     Spacer(Modifier.height(14.dp))
-    Button(onClick = viewModel::confirmRecoverySaved, modifier = Modifier.fillMaxWidth()) { Text("Guardei".tr()) }
+    GateButton("Guardei".tr(), onClick = viewModel::confirmRecoverySaved)
 }
 
 @Composable
@@ -208,8 +289,6 @@ private fun RecoverContent(viewModel: E2EGateViewModel) {
     OutlinedTextField(value = rk, onValueChange = { rk = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
     viewModel.error?.let { Spacer(Modifier.height(6.dp)); Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
     Spacer(Modifier.height(14.dp))
-    Button(onClick = { viewModel.submitRecovery(rk) }, enabled = !viewModel.working && rk.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
-        Text("Recuperar".tr())
-    }
+    GateButton("Recuperar".tr(), enabled = !viewModel.working && rk.isNotBlank()) { viewModel.submitRecovery(rk) }
     TextButton(onClick = viewModel::backToPrompt, modifier = Modifier.fillMaxWidth()) { Text("Voltar".tr()) }
 }

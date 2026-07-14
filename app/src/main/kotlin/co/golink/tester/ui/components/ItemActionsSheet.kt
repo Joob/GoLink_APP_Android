@@ -123,7 +123,7 @@ fun ItemActionsSheet(
                     SheetDivider()
                     ActionItem(
                         icon = Icons.AutoMirrored.Outlined.DriveFileMove,
-                        label = "Mover".tr(),
+                        label = if (item is BrowseItem.Folder) "Mover pasta".tr() else "Mover item".tr(),
                         iconBg = MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f),
                         iconTint = MaterialTheme.colorScheme.secondary,
                     ) { onMove(); onDismiss() }

@@ -144,7 +144,14 @@ class FileViewerViewModel @Inject constructor(
         val url = authedUrlForDownload(file)
         val out = java.io.File(appContext.cacheDir, "e2e_view_${file.id}.tmp")
         runCatching {
-            httpClient.newCall(Request.Builder().url(url).build()).execute().use { resp ->
+            // Authorization no HEADER: o ?token= da query não é aceite pelo
+            // backend → 401 → a decifra falhava e o viewer ficava "a decifrar"
+            // para sempre.
+            val req = Request.Builder().url(url).apply {
+                tokenStore.token?.takeIf { it.isNotBlank() }?.let { addHeader("Authorization", "Bearer $it") }
+            }.build()
+            httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) error("HTTP ${resp.code}")
                 val body = resp.body ?: error("vazio")
                 body.byteStream().use { input ->
                     out.outputStream().use { o ->
@@ -153,7 +160,11 @@ class FileViewerViewModel @Inject constructor(
                 }
             }
             out
-        }.getOrElse { out.delete(); null }
+        }.getOrElse { t ->
+            out.delete()
+            _state.update { it.copy(toast = "Falha a decifrar o media: ${t.message}") }
+            null
+        }
     }
 
     private fun authedUrlForDownload(file: BrowseItem.File): String {
@@ -360,7 +371,13 @@ class FileViewerViewModel @Inject constructor(
                     }.build()
                     httpClient.newCall(req).execute().use { resp ->
                         if (!resp.isSuccessful) error("HTTP ${resp.code}")
-                        val bytes = resp.body?.bytes() ?: ByteArray(0)
+                        var bytes = resp.body?.bytes() ?: ByteArray(0)
+                        // E2E: o corpo é ciphertext (GLK1...) — decifrar antes de mostrar,
+                        // senão o viewer mostrava lixo binário.
+                        if (file.encrypted) {
+                            val key = dataKeyFor(file) ?: error("E2E bloqueado ou sem chave deste ficheiro")
+                            bytes = co.golink.tester.data.encryption.EncryptedFileCodec.decryptFull(bytes, key)
+                        }
                         // Cap to ~1MB to avoid blowing memory
                         val capped = if (bytes.size > 1_048_576) bytes.copyOfRange(0, 1_048_576) else bytes
                         String(capped, Charsets.UTF_8)

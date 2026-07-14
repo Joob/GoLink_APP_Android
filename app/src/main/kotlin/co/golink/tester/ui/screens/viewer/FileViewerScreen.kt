@@ -275,11 +275,13 @@ fun FileViewerScreen(
                             zoom = if (page == state.currentIndex) state.zoom else 1f,
                             rotation = if (page == state.currentIndex) state.rotation else 0f,
                             onZoomChange = { if (page == state.currentIndex) viewModel.setZoom(it) },
+                            decrypt = if (file.encrypted) { { c -> viewModel.decryptImageBytes(file, c) } } else null,
                         )
                         file.isTextLike() -> TextViewer(
                             if (page == state.currentIndex) state.textContent else null,
                             if (page == state.currentIndex) state.textLoading else false,
                             if (page == state.currentIndex) state.textError else null,
+                            encrypted = file.encrypted,
                         )
                         file.isAudioLike() -> {
                             val src = rememberPlayableUrl(file, viewModel)
@@ -522,7 +524,7 @@ private fun ImageViewer(
         contentAlignment = Alignment.Center,
     ) {
         when {
-            loading -> CircularProgressIndicator()
+            loading -> if (file.encrypted) co.golink.tester.ui.components.DecryptEffect(label = "A desencriptar".tr()) else CircularProgressIndicator()
             error != null -> Text("Erro: $error", color = MaterialTheme.colorScheme.onSurface)
             bitmap != null -> Image(
                 bitmap = bitmap!!.asImageBitmap(),
@@ -573,16 +575,18 @@ private fun rememberPlayableUrl(file: BrowseItem.File, viewModel: FileViewerView
 
 @Composable
 private fun MediaLoadingBox() {
+    // Só aparece enquanto um media E2E está a ser decifrado (os não cifrados têm
+    // URL imediato) — usa o mesmo efeito de decifra do gate/uploads.
     Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(color = Color.White)
+        co.golink.tester.ui.components.DecryptEffect(label = "A desencriptar".tr())
     }
 }
 
 @Composable
-private fun TextViewer(content: String?, loading: Boolean, error: String?) {
+private fun TextViewer(content: String?, loading: Boolean, error: String?, encrypted: Boolean = false) {
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
         when {
-            loading -> CircularProgressIndicator()
+            loading -> if (encrypted) co.golink.tester.ui.components.DecryptEffect(label = "A desencriptar".tr()) else CircularProgressIndicator()
             error != null -> Text("Erro: $error")
             content != null -> {
                 Column(
@@ -754,6 +758,7 @@ private fun PdfViewer(
     zoom: Float,
     rotation: Float,
     onZoomChange: (Float) -> Unit,
+    decrypt: (suspend (ByteArray) -> ByteArray?)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -775,8 +780,16 @@ private fun PdfViewer(
                     if (!token.isNullOrBlank()) conn.setRequestProperty("Authorization", "Bearer $token")
                     conn.connectTimeout = 20_000
                     conn.readTimeout = 60_000
-                    conn.inputStream.use { input ->
-                        cacheFile.outputStream().use { out -> input.copyTo(out) }
+                    if (decrypt != null) {
+                        // E2E: o download é ciphertext — decifrar antes de dar ao PdfRenderer
+                        // (senão: "Unable to load the document").
+                        val cipher = conn.inputStream.use { it.readBytes() }
+                        val plain = decrypt(cipher) ?: error("decifra falhou (E2E bloqueado ou sem chave)")
+                        cacheFile.writeBytes(plain)
+                    } else {
+                        conn.inputStream.use { input ->
+                            cacheFile.outputStream().use { out -> input.copyTo(out) }
+                        }
                     }
                     cacheFile
                 }
@@ -858,7 +871,7 @@ private fun PdfViewer(
         contentAlignment = Alignment.Center,
     ) {
         when {
-            loading -> CircularProgressIndicator()
+            loading -> if (decrypt != null) co.golink.tester.ui.components.DecryptEffect(label = "A desencriptar".tr()) else CircularProgressIndicator()
             error != null -> Text("Erro: $error", color = MaterialTheme.colorScheme.onSurface)
             pageBitmaps.isEmpty() -> Text("PDF vazio".tr(), color = MaterialTheme.colorScheme.onSurface)
             else -> {

@@ -134,6 +134,11 @@ fun UploadProgressBanner(
                 color = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
             )
+            // Uploads E2E cifram no dispositivo — efeito "a encriptar" (igual à Web).
+            DecryptEffect(
+                label = "A encriptar".tr(),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
         }
         AnimatedVisibility(
             visible = expanded,

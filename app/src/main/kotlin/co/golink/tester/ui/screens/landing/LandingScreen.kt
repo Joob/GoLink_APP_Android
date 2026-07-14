@@ -156,7 +156,7 @@ fun LandingScreen(
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    text = "End-to-end encrypted",
+                    text = "Encriptado ponta-a-ponta".tr(),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = BrandGreen,
@@ -200,7 +200,7 @@ fun LandingScreen(
             Spacer(Modifier.height(22.dp))
 
             Text(
-                "GoLink.co  ·  Privacidade por defeito",
+                "GoLink.co  ·  " + "Privacidade por defeito".tr(),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
             )
