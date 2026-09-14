@@ -3,7 +3,9 @@ package co.golink.tester.data.notifications
 import co.golink.tester.data.auth.AuthState
 import co.golink.tester.data.auth.SessionManager
 import co.golink.tester.domain.notifications.Notification
+import android.content.Context
 import co.golink.tester.network.NotificationsApi
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -21,6 +23,7 @@ import kotlinx.coroutines.launch
 class NotificationsRepository @Inject constructor(
     private val api: NotificationsApi,
     private val sessionManager: SessionManager,
+    @ApplicationContext private val context: Context,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -47,8 +50,16 @@ class NotificationsRepository @Inject constructor(
                     pollJob?.cancel()
                     pollJob = null
                     _items.value = emptyList()
+                    // Sessão terminada: o contador de outra conta não pode ficar
+                    // no ícone.
+                    NotificationBadge.clear(context)
                 }
             }
+        }
+        // O badge segue o contador — cobre refresh, markRead, delete e flush sem
+        // ter de tocar em cada um deles.
+        scope.launch {
+            unreadCount.collect { count -> NotificationBadge.update(context, count) }
         }
     }
 

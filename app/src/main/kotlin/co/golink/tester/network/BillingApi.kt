@@ -1,6 +1,8 @@
 package co.golink.tester.network
 
 import co.golink.tester.domain.billing.CheckoutResponse
+import co.golink.tester.domain.billing.NowPaymentsCheckoutRequest
+import co.golink.tester.domain.billing.NowPaymentsCheckoutResponse
 import co.golink.tester.domain.billing.PlansResponse
 import co.golink.tester.domain.billing.StripeCheckoutRequest
 import retrofit2.Response
@@ -14,4 +16,7 @@ interface BillingApi {
 
     @POST("api/stripe/checkout")
     suspend fun stripeCheckout(@Body body: StripeCheckoutRequest): Response<CheckoutResponse>
+
+    @POST("api/nowpayments/checkout")
+    suspend fun nowPaymentsCheckout(@Body body: NowPaymentsCheckoutRequest): Response<NowPaymentsCheckoutResponse>
 }

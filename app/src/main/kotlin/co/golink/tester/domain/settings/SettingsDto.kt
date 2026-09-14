@@ -56,6 +56,8 @@ data class StorageAttributes(
     val used: String,
     val capacity: String,
     val percentage: Float,
+    val used_bytes: Long? = null,
+    val capacity_bytes: Long? = null,
 )
 
 @Serializable
@@ -75,6 +77,41 @@ data class SessionItem(
     val is_current: Boolean = false,
     val login_at: String? = null,
     val last_activity_at: String? = null,
+)
+
+/**
+ * Histórico de segurança da conta (GET /api/user/security-events).
+ * O envelope é aninhado (data[].data.attributes), ao contrário das sessões.
+ */
+@Serializable
+data class SecurityEventsResponse(
+    val data: List<SecurityEventRow> = emptyList(),
+    val meta: SecurityEventsMeta? = null,
+)
+
+@Serializable
+data class SecurityEventRow(
+    val data: SecurityEventData,
+)
+
+@Serializable
+data class SecurityEventData(
+    val id: String,
+    val attributes: SecurityEventAttributes,
+)
+
+@Serializable
+data class SecurityEventAttributes(
+    val event: String,
+    val ip: String? = null,
+    val user_agent: String? = null,
+    val created_at: String? = null,
+)
+
+@Serializable
+data class SecurityEventsMeta(
+    val current_page: Int? = null,
+    val last_page: Int? = null,
 )
 
 @Serializable
@@ -119,10 +156,14 @@ data class CreateTokenResponse(
     val plainTextToken: String? = null,
 )
 
+enum class StorageLevel { OK, WARNING, DANGER }
+
 data class StorageUsage(
     val used: String,
     val capacity: String,
     val percentage: Float,
+    val usedBytes: Long? = null,
+    val capacityBytes: Long? = null,
     val trafficUpload: String?,
     val trafficDownload: String?,
     val trafficChartUpload: List<TrafficChartPoint>?,
@@ -133,11 +174,24 @@ data class StorageUsage(
     val documents: StorageTypeUsage?,
     val others: StorageTypeUsage?,
 ) {
+    /** Severity by usage %: OK < 75, WARNING 75–85, DANGER ≥ 85 (≤ 15 % free). */
+    val level: StorageLevel
+        get() = when {
+            percentage >= 85f -> StorageLevel.DANGER
+            percentage >= 75f -> StorageLevel.WARNING
+            else -> StorageLevel.OK
+        }
+
+    /** True once free space drops to ≤ 15 % – triggers the warning UI. */
+    val isLow: Boolean get() = percentage >= 85f
+
     companion object {
         fun fromResponse(response: StorageResponse) = StorageUsage(
             used = response.data.attributes.used,
             capacity = response.data.attributes.capacity,
             percentage = response.data.attributes.percentage,
+            usedBytes = response.data.attributes.used_bytes,
+            capacityBytes = response.data.attributes.capacity_bytes,
             trafficUpload = response.data.meta?.traffic?.upload,
             trafficDownload = response.data.meta?.traffic?.download,
             trafficChartUpload = response.data.meta?.traffic?.chart?.upload,

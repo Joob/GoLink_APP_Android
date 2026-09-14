@@ -11,6 +11,7 @@ import co.golink.tester.data.encryption.E2EKeyManager
 import co.golink.tester.data.encryption.EncryptedFileCodec
 import co.golink.tester.data.encryption.Envelope
 import co.golink.tester.network.FilesApi
+import co.golink.tester.ui.i18n.tr
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.util.UUID
@@ -66,19 +67,42 @@ class UploadManager @Inject constructor(
         val parentId: String?,
         val mobileBackup: Boolean = false,
         val backupFolder: String? = null,
+        // Id do ficheiro que este upload substitui (conflito detetado no cliente).
+        val replacesId: String? = null,
     )
     private val sources = mutableMapOf<String, Source>()
     private val jobs = mutableMapOf<String, Job>()
 
-    fun enqueue(uri: Uri, parentId: String?): Job = enqueueWithId(uri, parentId).second
+    fun enqueue(uri: Uri, parentId: String?, existingFiles: Map<String, String> = emptyMap()): Job =
+        enqueueWithId(uri, parentId, existingFiles = existingFiles).second
 
     fun enqueueWithId(
         uri: Uri,
         parentId: String?,
         mobileBackup: Boolean = false,
         backupFolder: String? = null,
+        existingFiles: Map<String, String> = emptyMap(),
     ): Pair<String, Job> {
         val metadata = readMetadata(uri)
+
+        // Nome cifrado: o servidor guarda o placeholder e NÃO consegue detetar o
+        // duplicado (o 409 só existe no caminho em claro), por isso o "substituir?"
+        // tinha deixado de aparecer. Quem tem o nome em claro é o cliente — os
+        // nomes visíveis da pasta de destino chegam de quem inicia o upload.
+        val replacesId = existingFiles[metadata.displayName]
+        if (e2eKeyManager.canSealNames && replacesId != null) {
+            val task = UploadTask(
+                id = UUID.randomUUID().toString(),
+                name = metadata.displayName,
+                progress = 0f,
+                state = UploadTask.State.Conflict,
+                sizeBytes = metadata.size,
+                mobileBackup = mobileBackup,
+            )
+            sources[task.id] = Source(uri, parentId, mobileBackup, backupFolder, replacesId)
+            update { list -> list + task }
+            return task.id to scope.launch { }
+        }
         val task = UploadTask(
             id = UUID.randomUUID().toString(),
             name = metadata.displayName,
@@ -94,7 +118,7 @@ class UploadManager @Inject constructor(
 
     private class ConflictException : RuntimeException("conflict")
 
-    private fun runTask(taskId: String, uri: Uri, metadata: FileMetadata, parentId: String?, overwrite: Boolean = false, mobileBackup: Boolean = false, backupFolder: String? = null): Job {
+    private fun runTask(taskId: String, uri: Uri, metadata: FileMetadata, parentId: String?, overwrite: Boolean = false, mobileBackup: Boolean = false, backupFolder: String? = null, replacesId: String? = null): Job {
         val job = scope.launch {
             try {
                 // Mobile backup: ficheiros até 25 MB vão no endpoint single-shot
@@ -102,6 +126,15 @@ class UploadManager @Inject constructor(
                 // rebentava o limite do nginx (HTTP 413 "Entity too large") — por
                 // isso os grandes (vídeos) vão por chunks, que também marcam a
                 // origem e criam a pasta.
+                // E2E configurada mas trancada: NÃO enviar em claro. O backup
+                // automático corre sem UI, por isso não há forma de pedir a
+                // passphrase — falha e é retomado no próximo ciclo, já
+                // desbloqueado. Enviar sem cifrar contornava silenciosamente o
+                // E2E justamente nos ficheiros que o utilizador nunca escolheu
+                // enviar à mão.
+                if (!e2eKeyManager.isUnlocked && e2eKeyManager.isConfiguredOrUnknown()) {
+                    error("e2e_locked")
+                }
                 if (mobileBackup) {
                     if (metadata.size > CHUNK_THRESHOLD) {
                         uploadChunked(taskId, uri, metadata, parentId = null, overwrite, mobileBackup = true, backupFolder = backupFolder)
@@ -115,9 +148,9 @@ class UploadManager @Inject constructor(
                     // (Google Photos/Drive) → assumir grande e ir por chunks, como
                     // no caminho não-E2E.
                     if (metadata.size > CHUNK_THRESHOLD || metadata.size == 0L) {
-                        uploadEncryptedChunked(taskId, uri, metadata, parentId, overwrite)
+                        uploadEncryptedChunked(taskId, uri, metadata, parentId, overwrite, replacesId)
                     } else {
-                        uploadEncryptedSingle(taskId, uri, metadata, parentId, overwrite)
+                        uploadEncryptedSingle(taskId, uri, metadata, parentId, overwrite, replacesId)
                     }
                 } else if (metadata.size in 1..CHUNK_THRESHOLD) {
                     uploadSingle(taskId, uri, metadata, parentId, overwrite)
@@ -138,7 +171,10 @@ class UploadManager @Inject constructor(
                         update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Conflict, errorMessage = null) else it } }
                     }
                 } else {
-                    update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Failed, errorMessage = t.message) else it } }
+                    val message = if (t.message == "e2e_locked")
+                        "Desbloqueia a encriptação para enviar este ficheiro.".tr()
+                    else t.message
+                    update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Failed, errorMessage = message) else it } }
                 }
             } finally {
                 jobs.remove(taskId)
@@ -157,7 +193,7 @@ class UploadManager @Inject constructor(
         // mobileBackup tem de ser propagado: sem isto o reenvio ia para o
         // endpoint normal (raiz) e voltava a dar 409 — o botão "Substituir"
         // parecia não fazer nada.
-        runTask(taskId, source.uri, metadata, source.parentId, overwrite = true, mobileBackup = source.mobileBackup, backupFolder = source.backupFolder)
+        runTask(taskId, source.uri, metadata, source.parentId, overwrite = true, mobileBackup = source.mobileBackup, backupFolder = source.backupFolder, replacesId = source.replacesId)
     }
 
     fun skipConflict(taskId: String) {
@@ -250,6 +286,7 @@ class UploadManager @Inject constructor(
         metadata: FileMetadata,
         parentId: String?,
         overwrite: Boolean,
+        replacesId: String? = null,
     ) {
         markUploading(taskId)
         val dataKey = Envelope.generateDataKey()
@@ -266,6 +303,11 @@ class UploadManager @Inject constructor(
         } else {
             e2eKeyManager.sealForPublicKey(dataKey, ownerPublicKey)
         }
+
+        // E2E Fase 2: cifra o nome só no espaço privado (ficheiro do próprio, sem
+        // dono de team folder). Em team folders/partilhas mantém-se em claro.
+        val nameEncrypted = if (ownerPublicKey.isNullOrBlank() && e2eKeyManager.canSealNames)
+            e2eKeyManager.sealName(metadata.baseName) else null
 
         // Thumbnail E2E (imagem/vídeo): gerado no cliente e cifrado com a MESMA
         // data key. Best-effort — se falhar, o ficheiro fica com ícone.
@@ -287,7 +329,8 @@ class UploadManager @Inject constructor(
             val fileBody = temp.asRequestBody("application/octet-stream".toMediaTypeOrNull())
             val filePart = MultipartBody.Part.createFormData("file", metadata.displayName, fileBody)
             val response = api.upload(
-                name = textPart(metadata.baseName),
+                overwriteFileId = replacesId?.takeIf { overwrite }?.let { textPart(it) },
+                name = textPart(if (nameEncrypted != null) "•" else metadata.baseName),
                 extension = textPart(metadata.extension),
                 parentId = parentId?.let { textPart(it) },
                 overwriteExisting = if (overwrite) textPart("1") else null,
@@ -295,6 +338,7 @@ class UploadManager @Inject constructor(
                 encrypted = textPart("1"),
                 wrappedDataKey = textPart(wrapped),
                 mediaType = textPart(mediaType),
+                nameEncrypted = nameEncrypted?.let { textPart(it) },
             )
             if (response.code() == 409) throw ConflictException()
             if (!response.isSuccessful) error(httpErrorMessage(response.code(), response.errorBody()?.string()))
@@ -420,6 +464,7 @@ class UploadManager @Inject constructor(
         metadata: FileMetadata,
         parentId: String?,
         overwrite: Boolean,
+        replacesId: String? = null,
     ) {
         markUploading(taskId)
         val dataKey = Envelope.generateDataKey()
@@ -433,6 +478,10 @@ class UploadManager @Inject constructor(
         } else {
             e2eKeyManager.sealForPublicKey(dataKey, ownerPublicKey)
         }
+
+        // E2E Fase 2: nome cifrado só no espaço privado (ficheiro do próprio).
+        val nameEncrypted = if (ownerPublicKey.isNullOrBlank() && e2eKeyManager.canSealNames)
+            e2eKeyManager.sealName(metadata.baseName) else null
 
         val encryptedThumb: ByteArray? = try {
             generateThumbnailJpeg(uri, metadata.mimeType)?.let { EncryptedFileCodec.encrypt(it, dataKey) }
@@ -457,6 +506,7 @@ class UploadManager @Inject constructor(
 
             temp.inputStream().use { fin ->
                 val buffer = ByteArray(CHUNK_SIZE)
+                var chunkIndex = 0
                 while (sent < total) {
                     val toRead = minOf(CHUNK_SIZE.toLong(), total - sent).toInt()
                     val filled = readUpToN(fin, buffer, toRead, 0)
@@ -468,20 +518,24 @@ class UploadManager @Inject constructor(
                         chunkBytes.toRequestBody("application/octet-stream".toMediaTypeOrNull()),
                     )
                     val response = api.uploadChunk(
-                        name = textPart(metadata.baseName),
+                        name = textPart(if (nameEncrypted != null) "•" else metadata.baseName),
                         extension = textPart(metadata.extension),
                         parentId = parentId?.let { textPart(it) },
                         isLastChunk = textPart(if (isLast) "1" else "0"),
+                        chunkIndex = textPart(chunkIndex.toString()),
                         overwriteExisting = if (overwrite && isLast) textPart("1") else null,
+                        overwriteFileId = replacesId?.takeIf { overwrite && isLast }?.let { textPart(it) },
                         chunk = chunkPart,
                         encrypted = textPart("1"),
                         wrappedDataKey = textPart(wrapped),
                         mediaType = textPart(mediaType),
+                        nameEncrypted = nameEncrypted?.let { textPart(it) },
                     )
                     if (response.code() == 409) throw ConflictException()
                     if (!response.isSuccessful) error(httpErrorMessage(response.code(), response.errorBody()?.string()))
                     if (isLast) lastBody = response.body()?.string()
                     sent += filled
+                    chunkIndex++
                     if (total > 0L) updateProgress(taskId, sent.toFloat() / total.toFloat())
                 }
             }
@@ -570,6 +624,7 @@ class UploadManager @Inject constructor(
             // Carry-over: when we peek 1 byte past the chunk to detect EOF, we
             // stash it here and prepend it to the next chunk. -1 means no peek.
             var carryOver = -1
+            var plainChunkIndex = 0
             while (true) {
                 val startOffset = if (carryOver >= 0) {
                     buffer[0] = carryOver.toByte()
@@ -594,6 +649,7 @@ class UploadManager @Inject constructor(
                     extension = textPart(metadata.extension),
                     parentId = parentId?.let { textPart(it) },
                     isLastChunk = textPart(if (isLast) "1" else "0"),
+                    chunkIndex = textPart(plainChunkIndex.toString()),
                     overwriteExisting = if (overwrite && isLast) textPart("1") else null,
                     mobileBackup = mobileFlag?.let { textPart(it) },
                     folder = backupBucket?.let { textPart(it) },
@@ -602,6 +658,7 @@ class UploadManager @Inject constructor(
                 if (response.code() == 409) throw ConflictException()
                 if (!response.isSuccessful) error(httpErrorMessage(response.code(), response.errorBody()?.string()))
                 sent += filled
+                plainChunkIndex++
                 if (total > 0L) updateProgress(taskId, sent.toFloat() / total.toFloat())
                 if (isLast) break
             }

@@ -2,6 +2,7 @@ package co.golink.tester.data.settings
 
 import co.golink.tester.domain.settings.AccessToken
 import co.golink.tester.domain.settings.CreateTokenRequest
+import co.golink.tester.domain.settings.SecurityEventData
 import co.golink.tester.domain.settings.SessionItem
 import co.golink.tester.domain.settings.StorageUsage
 import co.golink.tester.domain.settings.TransactionItem
@@ -12,6 +13,12 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/** Uma página do histórico de segurança, já achatada para a UI. */
+data class SecurityEventsPage(
+    val items: List<SecurityEventData>,
+    val hasMore: Boolean,
+)
 
 @Singleton
 class SettingsRepository @Inject constructor(
@@ -27,6 +34,22 @@ class SettingsRepository @Inject constructor(
         val response = api.sessions()
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         response.body()?.data.orEmpty()
+    }
+
+    /**
+     * Histórico de segurança da conta, já achatado (o envelope da API é
+     * aninhado) e com a indicação de haver mais páginas.
+     */
+    suspend fun securityEvents(page: Int = 1): Result<SecurityEventsPage> = runCatching {
+        val response = api.securityEvents(page)
+        check(response.isSuccessful) { "HTTP ${response.code()}" }
+
+        val body = response.body()
+        val items = body?.data.orEmpty().map { it.data }
+        val current = body?.meta?.current_page ?: page
+        val last = body?.meta?.last_page ?: current
+
+        SecurityEventsPage(items = items, hasMore = current < last)
     }
 
     suspend fun revokeSession(id: String): Result<Unit> = runCatching {

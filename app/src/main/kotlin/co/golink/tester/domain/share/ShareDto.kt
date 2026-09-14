@@ -12,6 +12,7 @@ data class CreateShareRequest(
     val passwordShow: String? = null,
     val permission: String? = null,
     val expiration: Int? = null,
+    val download_limit: Int? = null,
     val emails: List<String>? = null,
 )
 
@@ -23,6 +24,7 @@ data class UpdateShareRequest(
     val passwordShow: String? = null,
     val permission: String? = null,
     val expiration: Int? = null,
+    val download_limit: Int? = null,
 )
 
 @Serializable
@@ -54,6 +56,9 @@ data class ShareResponseAttributes(
     val item_id: String,
     val protectedPasswordShow: Boolean? = null,
     val expire_in: Int? = null,
+    val expires_at: String? = null,
+    val download_limit: Int? = null,
+    val download_count: Int? = null,
     val token: String,
     val link: String? = null,
     val type: String,

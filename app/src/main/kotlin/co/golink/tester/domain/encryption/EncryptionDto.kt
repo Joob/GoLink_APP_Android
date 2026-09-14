@@ -85,6 +85,61 @@ data class ShareKeyBody(
     val wrapped_data_key: String,
 )
 
+// E2E: pedido em lote das data keys (seladas ao próprio) de vários ficheiros.
+@Serializable
+data class FileIdsBody(
+    val file_ids: List<String>,
+)
+
+@Serializable
+data class FileEncryptionKeyRow(
+    val file_id: String,
+    val wrapped_data_key: String,
+)
+
+@Serializable
+data class FileEncryptionKeysBatchResponse(
+    val keys: List<FileEncryptionKeyRow> = emptyList(),
+)
+
+// E2E: registo das data keys re-embrulhadas com a chave de partilha da pasta.
+@Serializable
+data class FolderShareKeyEntry(
+    val file_id: String,
+    val wrapped_data_key: String,
+)
+
+@Serializable
+data class StoreFolderKeysBody(
+    val keys: List<FolderShareKeyEntry>,
+)
+
+// E2E nomes em partilhas: o nome re-cifrado com a chave da partilha (#k=), por
+// item. Sem isto o visitante do link vê o placeholder em vez do nome.
+@Serializable
+data class ShareItemNameEntry(
+    val id: String,
+    val name_encrypted: String,
+)
+
+@Serializable
+data class StoreShareItemNamesBody(
+    val names: List<ShareItemNameEntry>,
+)
+
+@Serializable
+data class DescendantNameEntry(
+    val id: String,
+    val type: String? = null,
+    val name: String? = null,
+    val name_encrypted: String? = null,
+)
+
+@Serializable
+data class DescendantNamesResponse(
+    val items: List<DescendantNameEntry> = emptyList(),
+)
+
 @Serializable
 data class MigrationStatusResponse(
     val configured: Boolean = false,
@@ -93,4 +148,61 @@ data class MigrationStatusResponse(
     val total: Int = 0,
     val migrated: Int = 0,
     val remaining: Int = 0,
+)
+
+// E2E Fase 2 — migração de nomes.
+@Serializable
+data class PlainNamesResponse(
+    val files: List<PlainNameItem> = emptyList(),
+    val folders: List<PlainNameItem> = emptyList(),
+    val remaining: Int = 0,
+)
+
+@Serializable
+data class PlainNameItem(
+    val id: String,
+    val name: String,
+)
+
+@Serializable
+data class EncryptedNameItem(
+    val id: String,
+    val name_encrypted: String,
+)
+
+@Serializable
+data class EncryptNamesBody(
+    val files: List<EncryptedNameItem> = emptyList(),
+    val folders: List<EncryptedNameItem> = emptyList(),
+)
+
+// E2E Fase 2 — pesquisa client-side sobre nomes cifrados.
+@Serializable
+data class NameIndexResponse(
+    val files: List<NameIndexItem> = emptyList(),
+    val folders: List<NameIndexItem> = emptyList(),
+)
+
+@Serializable
+data class NameIndexItem(
+    val id: String,
+    val type: String? = null,
+    val name_encrypted: String,
+)
+
+@Serializable
+data class SearchByIdsBody(
+    val file_ids: List<String> = emptyList(),
+    val folder_ids: List<String> = emptyList(),
+)
+
+@Serializable
+data class NameMigrationStatusResponse(
+    val total: Int = 0,
+    val done: Int = 0,
+    val remaining: Int = 0,
+    val percent: Int = 100,
+    val in_progress: Boolean = false,
+    // Migração dos FICHEIROS ainda a decorrer — nomes só começam depois.
+    val waiting_for_file_migration: Boolean = false,
 )

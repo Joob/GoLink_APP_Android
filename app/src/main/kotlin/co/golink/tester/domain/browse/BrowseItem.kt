@@ -10,8 +10,15 @@ data class ShareInfo(
     val link: String?,
     val protected: Boolean,
     val permission: String?,
+    // Em DIAS (o backend guarda horas em expire_in; convertemos na fronteira).
     val expireIn: Int?,
+    val downloadLimit: Int? = null,
+    val downloadCount: Int? = null,
 )
+
+/** Horas (expire_in do backend) → dias, arredondando para cima; null/<=0 → null. */
+fun expireHoursToDays(hours: Int?): Int? =
+    hours?.takeIf { it > 0 }?.let { (it + 23) / 24 }
 
 @Immutable
 data class TeamMember(
@@ -34,7 +41,14 @@ sealed interface BrowseItem {
     val parentId: String?
     val updatedAt: String?
     val createdAt: String?
+    // ISO-8601 (UTC) para ordenação; createdAt/updatedAt são strings localizadas.
+    val createdAtIso: String?
+    val updatedAtIso: String?
     val share: ShareInfo?
+
+    // E2E Fase 2: ciphertext do nome (quando cifrado). Guardado para poder
+    // decifrar em contextos que não passam pelo BrowseRepository (ex.: favoritas).
+    val nameEncrypted: String?
 
     @Immutable
     data class Folder(
@@ -43,6 +57,8 @@ sealed interface BrowseItem {
         override val parentId: String?,
         override val updatedAt: String?,
         override val createdAt: String?,
+        override val createdAtIso: String?,
+        override val updatedAtIso: String?,
         override val share: ShareInfo?,
         val color: String?,
         val emoji: String?,
@@ -50,6 +66,7 @@ sealed interface BrowseItem {
         val itemCount: Int?,
         val filesize: String?,
         val members: List<TeamMember> = emptyList(),
+        override val nameEncrypted: String? = null,
     ) : BrowseItem
 
     @Immutable
@@ -59,6 +76,8 @@ sealed interface BrowseItem {
         override val parentId: String?,
         override val updatedAt: String?,
         override val createdAt: String?,
+        override val createdAtIso: String?,
+        override val updatedAtIso: String?,
         override val share: ShareInfo?,
         val basename: String,
         val mimetype: String?,
@@ -67,6 +86,7 @@ sealed interface BrowseItem {
         val thumbnailUrl: String?,
         val fileUrl: String?,
         val encrypted: Boolean = false,
+        override val nameEncrypted: String? = null,
     ) : BrowseItem
 }
 
@@ -91,7 +111,9 @@ private fun BrowseRelationships?.toShareInfo(): ShareInfo? {
         link = attrs.link,
         protected = attrs.protected ?: false,
         permission = attrs.permission,
-        expireIn = attrs.expire_in,
+        expireIn = expireHoursToDays(attrs.expire_in),
+        downloadLimit = attrs.download_limit,
+        downloadCount = attrs.download_count,
     )
 }
 
@@ -102,6 +124,8 @@ fun BrowseEntry.toItem(): BrowseItem = if (type == "folder") {
         parentId = attributes.parent_id,
         updatedAt = attributes.updated_at,
         createdAt = attributes.created_at,
+        createdAtIso = attributes.created_at_iso,
+        updatedAtIso = attributes.updated_at_iso,
         share = relationships.toShareInfo(),
         color = attributes.color,
         emoji = attributes.emoji.asEmoji(),
@@ -109,6 +133,7 @@ fun BrowseEntry.toItem(): BrowseItem = if (type == "folder") {
         itemCount = attributes.items,
         filesize = attributes.filesize,
         members = relationships.toMembers(),
+        nameEncrypted = attributes.name_encrypted,
     )
 } else {
     BrowseItem.File(
@@ -117,6 +142,8 @@ fun BrowseEntry.toItem(): BrowseItem = if (type == "folder") {
         parentId = attributes.parent_id,
         updatedAt = attributes.updated_at,
         createdAt = attributes.created_at,
+        createdAtIso = attributes.created_at_iso,
+        updatedAtIso = attributes.updated_at_iso,
         share = relationships.toShareInfo(),
         basename = attributes.basename ?: attributes.name,
         mimetype = attributes.mimetype,
@@ -125,5 +152,6 @@ fun BrowseEntry.toItem(): BrowseItem = if (type == "folder") {
         thumbnailUrl = attributes.thumbnail.asUrl(),
         fileUrl = attributes.file_url,
         encrypted = attributes.encrypted,
+        nameEncrypted = attributes.name_encrypted,
     )
 }

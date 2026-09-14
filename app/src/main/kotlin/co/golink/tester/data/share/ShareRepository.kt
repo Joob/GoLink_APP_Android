@@ -2,6 +2,7 @@ package co.golink.tester.data.share
 
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.ShareInfo
+import co.golink.tester.domain.browse.expireHoursToDays
 import co.golink.tester.domain.share.CreateShareRequest
 import co.golink.tester.domain.share.RevokeSharesRequest
 import co.golink.tester.domain.share.ShareByEmailRequest
@@ -20,6 +21,7 @@ class ShareRepository @Inject constructor(
         password: String?,
         permission: String?,
         expirationDays: Int?,
+        downloadLimit: Int?,
         emails: List<String>?,
     ): Result<ShareInfo> = runCatching {
         val type = if (item is BrowseItem.Folder) "folder" else "file"
@@ -29,7 +31,9 @@ class ShareRepository @Inject constructor(
             isPassword = !password.isNullOrBlank(),
             password = password?.takeIf { it.isNotBlank() },
             permission = permission,
-            expiration = expirationDays,
+            // Backend conta em HORAS; a UI é em dias.
+            expiration = expirationDays?.takeIf { it > 0 }?.let { it * 24 },
+            download_limit = downloadLimit?.takeIf { it > 0 },
             emails = emails?.filter { it.isNotBlank() },
         )
         val response = api.create(body)
@@ -47,13 +51,15 @@ class ShareRepository @Inject constructor(
         password: String?,
         permission: String?,
         expirationDays: Int?,
+        downloadLimit: Int?,
     ): Result<ShareInfo> = runCatching {
         val body = UpdateShareRequest(
             protected = protected,
             protectedPasswordShow = false,
             password = password,
             permission = permission,
-            expiration = expirationDays,
+            expiration = expirationDays?.takeIf { it > 0 }?.let { it * 24 },
+            download_limit = downloadLimit?.takeIf { it > 0 },
         )
         val response = api.update(token, body)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
@@ -82,6 +88,8 @@ class ShareRepository @Inject constructor(
         link = link,
         protected = protected ?: false,
         permission = permission,
-        expireIn = expire_in,
+        expireIn = expireHoursToDays(expire_in),
+        downloadLimit = download_limit,
+        downloadCount = download_count,
     )
 }

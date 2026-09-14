@@ -30,6 +30,9 @@ data class UserAttributes(
     val two_factor_confirmed_at: String? = null,
     val socialite_account: Boolean = false,
     val email_verified_at: String? = null,
+    val is_suspended: Boolean = false,
+    val suspended_until: String? = null,
+    val suspended_reason: String? = null,
 )
 
 @Serializable
@@ -86,6 +89,11 @@ data class SubscriptionAttributes(
     val status: String? = null,
     val renews_at: String? = null,
     val ends_at: String? = null,
+    // Prazo para regularizar um pagamento em atraso. Ver ScanPastDueSubscriptionsSchedule.
+    val grace_ends_at: String? = null,
+    val is_past_due: Boolean = false,
+    val is_suspended: Boolean = false,
+    val days_left_to_pay: Int = 0,
 )
 
 @Serializable
@@ -122,6 +130,9 @@ data class User(
     val lastName: String?,
     val avatar: String?,
     val emailVerified: Boolean,
+    val isSuspended: Boolean,
+    val suspendedUntil: String?,
+    val suspendedReason: String?,
     val twoFactorEnabled: Boolean,
     val socialiteAccount: Boolean,
     val favouriteFolders: List<BrowseItem.Folder>,
@@ -133,6 +144,9 @@ data class User(
     val postalCode: String?,
     val country: String?,
     val state: String?,
+    val isPastDue: Boolean,
+    val isPaymentSuspended: Boolean,
+    val daysLeftToPay: Int,
 ) {
     companion object {
         fun fromResponse(response: UserResponse): User {
@@ -144,8 +158,8 @@ data class User(
             val favourites = response.data.relationships?.favourites
                 .orEmpty()
                 .mapNotNull { (it.data.toItem() as? BrowseItem.Folder) }
-            val planName = response.data.relationships?.subscription
-                ?.data?.relationships?.plan?.data?.attributes?.name
+            val subscription = response.data.relationships?.subscription?.data
+            val planName = subscription?.relationships?.plan?.data?.attributes?.name
             return User(
                 id = response.data.id,
                 email = attrs.email,
@@ -155,7 +169,10 @@ data class User(
                 lastName = settings?.last_name,
                 avatar = attrs.avatar.asUrl() ?: settings?.avatar.asUrl(),
                 emailVerified = attrs.email_verified_at != null,
-                twoFactorEnabled = attrs.two_factor_authentication,
+                isSuspended = attrs.is_suspended,
+                suspendedUntil = attrs.suspended_until,
+                suspendedReason = attrs.suspended_reason,
+                twoFactorEnabled = attrs.two_factor_confirmed_at != null,
                 socialiteAccount = attrs.socialite_account,
                 favouriteFolders = favourites,
                 planName = planName,
@@ -166,6 +183,9 @@ data class User(
                 postalCode = settings?.postal_code,
                 country = settings?.country,
                 state = settings?.state,
+                isPastDue = subscription?.attributes?.is_past_due == true,
+                isPaymentSuspended = subscription?.attributes?.is_suspended == true,
+                daysLeftToPay = subscription?.attributes?.days_left_to_pay ?: 0,
             )
         }
     }

@@ -62,6 +62,20 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- App Links: abrir na app os links de reposição de password e de
+                 convite enviados por email (create-new-password / register/{token}).
+                 Requer assetlinks.json em /.well-known/ de cada domínio. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="golink.co" />
+                <data android:host="tester.golink.co" />
+                <data android:pathPrefix="/create-new-password" />
+                <data android:pathPrefix="/register/" />
+            </intent-filter>
         </activity>
 
         <!--
@@ -75,6 +89,13 @@
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
+
+        <!-- Zip de pastas / vários ficheiros E2E: mantém o processo vivo e a
+             notificação de progresso enquanto decifra + zipa (pode demorar). -->
+        <service
+            android:name="co.golink.tester.data.download.ZipDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
 </manifest>

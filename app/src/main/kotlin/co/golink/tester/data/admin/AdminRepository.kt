@@ -5,14 +5,20 @@ import co.golink.tester.domain.admin.AnalyticsResponse
 import co.golink.tester.domain.admin.CreateInviteRequest
 import co.golink.tester.domain.admin.DashboardResponse
 import co.golink.tester.domain.admin.InviteItem
+import co.golink.tester.domain.admin.SuspendUserRequest
 import co.golink.tester.domain.user.User
 import co.golink.tester.network.AdminApi
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import retrofit2.Response
 
 @Singleton
 class AdminRepository @Inject constructor(
     private val api: AdminApi,
+    private val json: Json,
 ) {
     suspend fun dashboard(): Result<DashboardResponse> = runCatching {
         val response = api.dashboard()
@@ -38,6 +44,9 @@ class AdminRepository @Inject constructor(
                 email = user.email,
                 role = user.role,
                 avatar = user.avatar,
+                isSuspended = user.isSuspended,
+                suspendedUntil = user.suspendedUntil,
+                suspendedReason = user.suspendedReason,
             )
         }
         val hasMore = (body.meta?.current_page ?: page) < (body.meta?.last_page ?: page)
@@ -70,5 +79,34 @@ class AdminRepository @Inject constructor(
     suspend fun deleteInvite(id: String): Result<Unit> = runCatching {
         val response = api.deleteInvite(id)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
+    }
+
+    /** [unit]/[value] a null = suspensão indefinida. */
+    suspend fun suspendUser(
+        id: String,
+        unit: String?,
+        value: Int?,
+        reason: String?,
+    ): Result<Unit> = runCatching {
+        val response = api.suspendUser(
+            id,
+            SuspendUserRequest(unit = unit, value = value, reason = reason?.takeIf { it.isNotBlank() }),
+        )
+        // O servidor recusa suspender admins (403) e o próprio (406) com uma
+        // mensagem explicativa — mostrá-la em vez de um código HTTP.
+        check(response.isSuccessful) { serverMessage(response) }
+    }
+
+    suspend fun unsuspendUser(id: String): Result<Unit> = runCatching {
+        val response = api.unsuspendUser(id)
+        check(response.isSuccessful) { serverMessage(response) }
+    }
+
+    private fun serverMessage(response: Response<*>): String {
+        val raw = runCatching { response.errorBody()?.string().orEmpty() }.getOrDefault("")
+        val parsed = runCatching {
+            json.decodeFromString(JsonObject.serializer(), raw)["message"]?.jsonPrimitive?.content
+        }.getOrNull()
+        return parsed ?: "HTTP ${response.code()}"
     }
 }

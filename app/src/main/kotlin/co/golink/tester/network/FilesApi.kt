@@ -41,11 +41,16 @@ interface FilesApi {
         @Part("extension") extension: RequestBody,
         @Part("parent_id") parentId: RequestBody?,
         @Part("overwrite_existing") overwriteExisting: RequestBody?,
+        // E2E: qual o ficheiro a substituir — com o nome cifrado o servidor não
+        // o consegue encontrar pelo nome.
+        @Part("overwrite_file_id") overwriteFileId: RequestBody? = null,
         @Part file: MultipartBody.Part,
         @Part("encrypted") encrypted: RequestBody? = null,
         @Part("wrapped_data_key") wrappedDataKey: RequestBody? = null,
         // E2E: tipo real do media (o servidor não o consegue inferir do ciphertext).
         @Part("media_type") mediaType: RequestBody? = null,
+        // E2E Fase 2: nome cifrado (espaço privado) — `name` fica placeholder.
+        @Part("name_encrypted") nameEncrypted: RequestBody? = null,
     ): Response<BrowseEntryEnvelope>
 
     // E2E: thumbnail cifrado (ciphertext opaco gerado no cliente com a data key).
@@ -79,6 +84,32 @@ interface FilesApi {
         @Body body: co.golink.tester.domain.encryption.ShareKeyBody,
     ): Response<okhttp3.ResponseBody>
 
+    // E2E: data keys (seladas ao próprio) de vários ficheiros num único pedido.
+    @POST("api/files/encryption-keys")
+    suspend fun fileEncryptionKeysBatch(
+        @Body body: co.golink.tester.domain.encryption.FileIdsBody,
+    ): Response<co.golink.tester.domain.encryption.FileEncryptionKeysBatchResponse>
+
+    // E2E: regista as data keys re-embrulhadas com a chave de partilha da pasta.
+    @POST("api/share/{token}/folder-keys")
+    suspend fun storeFolderShareKeys(
+        @Path("token") token: String,
+        @Body body: co.golink.tester.domain.encryption.StoreFolderKeysBody,
+    ): Response<okhttp3.ResponseBody>
+
+    // E2E nomes em partilhas: nomes dos descendentes (para o dono os re-cifrar
+    // com a chave da partilha) e registo em lote por token.
+    @GET("api/folder/{id}/descendant-names")
+    suspend fun folderDescendantNames(
+        @Path("id") id: String,
+    ): Response<co.golink.tester.domain.encryption.DescendantNamesResponse>
+
+    @POST("api/share/{token}/item-names")
+    suspend fun storeShareItemNames(
+        @Path("token") token: String,
+        @Body body: co.golink.tester.domain.encryption.StoreShareItemNamesBody,
+    ): Response<okhttp3.ResponseBody>
+
     @Multipart
     @POST("api/upload/mobile-backup")
     suspend fun uploadMobileBackup(
@@ -99,7 +130,11 @@ interface FilesApi {
         @Part("extension") extension: RequestBody,
         @Part("parent_id") parentId: RequestBody?,
         @Part("is_last_chunk") isLastChunk: RequestBody,
+        // Índice do chunk: o servidor grava cada parte no seu sítio, por isso um
+        // reenvio (timeout) deixa de duplicar bytes e corromper o ficheiro.
+        @Part("chunk_index") chunkIndex: RequestBody? = null,
         @Part("overwrite_existing") overwriteExisting: RequestBody?,
+        @Part("overwrite_file_id") overwriteFileId: RequestBody? = null,
         // Backup por chunks (vídeos grandes): marca a origem; o servidor monta
         // o caminho por tipo a partir da pasta de origem ("folder").
         @Part("mobile_backup") mobileBackup: RequestBody? = null,
@@ -111,6 +146,8 @@ interface FilesApi {
         @Part("encrypted") encrypted: RequestBody? = null,
         @Part("wrapped_data_key") wrappedDataKey: RequestBody? = null,
         @Part("media_type") mediaType: RequestBody? = null,
+        // E2E Fase 2: nome cifrado (espaço privado) — `name` fica placeholder.
+        @Part("name_encrypted") nameEncrypted: RequestBody? = null,
     ): Response<okhttp3.ResponseBody>
 
     @POST("api/upload/remote")

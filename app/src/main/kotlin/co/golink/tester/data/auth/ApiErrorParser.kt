@@ -36,6 +36,20 @@ class ApiErrorParser @Inject constructor(
         }
     }
 
+    /**
+     * 429 do fluxo OTP: a mensagem vem em `otp_code` (não em `message`) e traz
+     * os segundos de cooldown que faltam.
+     */
+    fun parseOtpCooldown(response: Response<*>): AuthError {
+        val raw = runCatching { response.errorBody()?.string().orEmpty() }.getOrDefault("")
+        val body = runCatching { json.decodeFromString(ErrorBody.serializer(), raw) }.getOrNull()
+
+        return AuthError.OtpCooldown(
+            remainingSeconds = body?.remaining_cooldown ?: 0,
+            message = body?.otp_code ?: body?.message ?: "Demasiadas tentativas",
+        )
+    }
+
     fun fromThrowable(t: Throwable): AuthError = when (t) {
         is AuthError -> t
         is java.io.IOException -> AuthError.Network(t.message ?: "Falha de rede")

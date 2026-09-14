@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.golink.tester.R
+import co.golink.tester.ui.common.EncryptedVaultHero
 import co.golink.tester.ui.theme.BrandGreen
 import co.golink.tester.ui.theme.BrandGreenLight
 
@@ -71,41 +72,8 @@ fun LandingScreen(
             }
             Spacer(Modifier.weight(1f))
 
-            // Logo with layered halos for a softer, more elegant presence.
-            Box(
-                modifier = Modifier.size(208.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(208.dp)
-                        .clip(CircleShape)
-                        .background(BrandGreenLight.copy(alpha = 0.22f)),
-                )
-                Box(
-                    modifier = Modifier
-                        .size(170.dp)
-                        .clip(CircleShape)
-                        .background(BrandGreenLight.copy(alpha = 0.45f)),
-                )
-                Box(
-                    modifier = Modifier
-                        .size(140.dp)
-                        .clip(CircleShape)
-                        .background(
-                            brush = Brush.linearGradient(
-                                colors = listOf(BrandGreenLight, Color(0xFFE5F7EF)),
-                            ),
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Image(
-                        painter = painterResource(R.drawable.logo_symbol),
-                        contentDescription = null,
-                        modifier = Modifier.size(78.dp),
-                    )
-                }
-            }
+            // Encrypted vault presentation (privacy-first brand visual).
+            EncryptedVaultHero()
 
             Spacer(Modifier.height(28.dp))
 
@@ -118,7 +86,7 @@ fun LandingScreen(
             Spacer(Modifier.height(24.dp))
 
             Text(
-                text = "Armazenamento\ndescentralizado e seguro.".tr(),
+                text = "A tua informação está sempre sob o teu controlo.".tr(),
                 style = MaterialTheme.typography.headlineMedium.copy(
                     fontWeight = FontWeight.SemiBold,
                     lineHeight = 36.sp,
@@ -131,7 +99,7 @@ fun LandingScreen(
             Spacer(Modifier.height(12.dp))
 
             Text(
-                text = "A tua informação, sempre sob o teu controlo.".tr(),
+                text = "Encriptação ponta-a-ponta em cada ficheiro. Só tu e quem escolheres têm a chave.".tr(),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -199,11 +167,22 @@ fun LandingScreen(
 
             Spacer(Modifier.height(22.dp))
 
-            Text(
-                "GoLink.co  ·  " + "Privacidade por defeito".tr(),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    "© ${java.time.Year.now().value} GoLink.co # Encrypted Cloud Storage",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "All Rights Reserved",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    textAlign = TextAlign.Center,
+                )
+            }
 
             Spacer(Modifier.height(16.dp))
         }

@@ -356,8 +356,8 @@ fun FileViewerScreen(
                 emailDialogVisible = ss.emailDialogVisible,
             ),
             onDismiss = { viewModel.closeShareDialog() },
-            onCreate = { pwd, perm, days -> viewModel.createShare(pwd, perm, days) },
-            onUpdate = { pwd, perm, days -> viewModel.updateCurrentShare(pwd, perm, days) },
+            onCreate = { pwd, perm, days, limit -> viewModel.createShare(pwd, perm, days, limit) },
+            onUpdate = { pwd, perm, days, limit -> viewModel.updateCurrentShare(pwd, perm, days, limit) },
             onCopy = { /* clipboard handled inside dialog */ },
             onShowQr = viewModel::fetchQrCode,
             onSendEmail = viewModel::sendShareEmail,
@@ -524,7 +524,7 @@ private fun ImageViewer(
         contentAlignment = Alignment.Center,
     ) {
         when {
-            loading -> if (file.encrypted) co.golink.tester.ui.components.DecryptEffect(label = "A desencriptar".tr()) else CircularProgressIndicator()
+            loading -> CircularProgressIndicator()
             error != null -> Text("Erro: $error", color = MaterialTheme.colorScheme.onSurface)
             bitmap != null -> Image(
                 bitmap = bitmap!!.asImageBitmap(),
@@ -578,7 +578,7 @@ private fun MediaLoadingBox() {
     // Só aparece enquanto um media E2E está a ser decifrado (os não cifrados têm
     // URL imediato) — usa o mesmo efeito de decifra do gate/uploads.
     Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-        co.golink.tester.ui.components.DecryptEffect(label = "A desencriptar".tr())
+        CircularProgressIndicator(color = Color.White)
     }
 }
 
@@ -586,7 +586,7 @@ private fun MediaLoadingBox() {
 private fun TextViewer(content: String?, loading: Boolean, error: String?, encrypted: Boolean = false) {
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
         when {
-            loading -> if (encrypted) co.golink.tester.ui.components.DecryptEffect(label = "A desencriptar".tr()) else CircularProgressIndicator()
+            loading -> CircularProgressIndicator()
             error != null -> Text("Erro: $error")
             content != null -> {
                 Column(
@@ -614,10 +614,14 @@ private fun VideoViewer(url: String, token: String?, fileKey: String, isActive: 
 
     val player = remember(fileKey) {
         val headers = if (!token.isNullOrBlank()) mapOf("Authorization" to "Bearer $token") else emptyMap()
-        val dataSourceFactory = DefaultHttpDataSource.Factory()
+        val httpFactory = DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(headers)
             .setConnectTimeoutMs(20_000)
             .setReadTimeoutMs(60_000)
+        // Envolve o factory HTTP num DefaultDataSource para também abrir file://:
+        // vídeos/áudio E2E são decifrados para um ficheiro local antes de tocar e
+        // um factory só-HTTP não abre file://, por isso a reprodução falhava.
+        val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(context, httpFactory)
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
             .build().apply {
@@ -671,10 +675,14 @@ private fun AudioViewer(
 
     val player = remember(fileKey) {
         val headers = if (!token.isNullOrBlank()) mapOf("Authorization" to "Bearer $token") else emptyMap()
-        val dataSourceFactory = DefaultHttpDataSource.Factory()
+        val httpFactory = DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(headers)
             .setConnectTimeoutMs(20_000)
             .setReadTimeoutMs(60_000)
+        // Envolve o factory HTTP num DefaultDataSource para também abrir file://:
+        // vídeos/áudio E2E são decifrados para um ficheiro local antes de tocar e
+        // um factory só-HTTP não abre file://, por isso a reprodução falhava.
+        val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(context, httpFactory)
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
             .build().apply {
@@ -871,7 +879,7 @@ private fun PdfViewer(
         contentAlignment = Alignment.Center,
     ) {
         when {
-            loading -> if (decrypt != null) co.golink.tester.ui.components.DecryptEffect(label = "A desencriptar".tr()) else CircularProgressIndicator()
+            loading -> CircularProgressIndicator()
             error != null -> Text("Erro: $error", color = MaterialTheme.colorScheme.onSurface)
             pageBitmaps.isEmpty() -> Text("PDF vazio".tr(), color = MaterialTheme.colorScheme.onSurface)
             else -> {

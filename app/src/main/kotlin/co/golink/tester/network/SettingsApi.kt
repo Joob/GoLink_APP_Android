@@ -4,6 +4,7 @@ import co.golink.tester.domain.auth.ApiEnvelope
 import co.golink.tester.domain.settings.AccessToken
 import co.golink.tester.domain.settings.CreateTokenRequest
 import co.golink.tester.domain.settings.CreateTokenResponse
+import co.golink.tester.domain.settings.SecurityEventsResponse
 import co.golink.tester.domain.settings.SessionsResponse
 import co.golink.tester.domain.settings.StorageResponse
 import co.golink.tester.domain.settings.TransactionsResponse
@@ -18,6 +19,7 @@ import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.Part
 import retrofit2.http.Path
+import retrofit2.http.Query
 
 interface SettingsApi {
     @GET("api/user/storage")
@@ -31,6 +33,9 @@ interface SettingsApi {
 
     @DELETE("api/user/sessions/{id}")
     suspend fun revokeSession(@Path("id") id: String): Response<ApiEnvelope<Unit>>
+
+    @GET("api/user/security-events")
+    suspend fun securityEvents(@Query("page") page: Int = 1): Response<SecurityEventsResponse>
 
     @POST("api/user/password")
     suspend fun updatePassword(@Body body: UpdatePasswordRequest): Response<ApiEnvelope<Unit>>

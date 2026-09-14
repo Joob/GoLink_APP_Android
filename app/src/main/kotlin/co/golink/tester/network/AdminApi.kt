@@ -5,6 +5,7 @@ import co.golink.tester.domain.admin.AnalyticsResponse
 import co.golink.tester.domain.admin.CreateInviteRequest
 import co.golink.tester.domain.admin.DashboardResponse
 import co.golink.tester.domain.admin.InviteRegistersResponse
+import co.golink.tester.domain.admin.SuspendUserRequest
 import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.Body
@@ -23,6 +24,15 @@ interface AdminApi {
 
     @GET("api/admin/users")
     suspend fun users(@Query("page") page: Int = 1): Response<AdminUsersResponse>
+
+    @POST("api/admin/users/{id}/suspend")
+    suspend fun suspendUser(
+        @Path("id") id: String,
+        @Body body: SuspendUserRequest,
+    ): Response<ResponseBody>
+
+    @DELETE("api/admin/users/{id}/suspend")
+    suspend fun unsuspendUser(@Path("id") id: String): Response<ResponseBody>
 
     @GET("api/admin/invite-registers")
     suspend fun inviteRegisters(@Query("page") page: Int = 1): Response<InviteRegistersResponse>

@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.DriveFileMove
@@ -31,8 +30,8 @@ import androidx.compose.ui.unit.dp
 
 /**
  * Barra de acções da selecção múltipla. No lixo (`trashMode`) só faz sentido
- * Mover (restaurar) e Eliminar permanentemente; nos restantes ecrãs mostra
- * Descarregar / Mover / Eliminar.
+ * Mover (restaurar) — a eliminação permanente é feita pelo Flush; nos restantes
+ * ecrãs mostra Descarregar / Mover / Eliminar.
  */
 @Composable
 fun SelectionActionBar(
@@ -79,8 +78,9 @@ fun SelectionActionBar(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (trashMode) {
+                        // No lixo só "Mover" (restaurar); a eliminação permanente é
+                        // feita em bloco pelo botão "Esvaziar lixo" (Flush).
                         SelectionAction(Icons.Outlined.DriveFileMove, "Mover".tr(), onMove)
-                        SelectionAction(Icons.Outlined.DeleteForever, "Eliminar permanentemente".tr(), onDelete)
                     } else {
                         SelectionAction(Icons.Outlined.Download, "Descarregar".tr(), onDownload)
                         SelectionAction(Icons.Outlined.DriveFileMove, "Mover".tr(), onMove)

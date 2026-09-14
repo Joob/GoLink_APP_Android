@@ -13,6 +13,8 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import co.golink.tester.data.AppLogger
 import co.golink.tester.data.auth.TokenStore
+import co.golink.tester.data.encryption.E2EKeyManager
+import co.golink.tester.ui.i18n.tr
 import co.golink.tester.data.upload.UploadManager
 import co.golink.tester.data.upload.UploadTask
 import co.golink.tester.network.SettingsApi
@@ -37,6 +39,7 @@ class AutoBackupWorker @AssistedInject constructor(
     private val settingsApi: SettingsApi,
     private val logger: AppLogger,
     private val manager: AutoBackupManager,
+    private val e2eKeyManager: E2EKeyManager,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun getForegroundInfo() = BackupNotifications.foregroundInfo(
@@ -163,12 +166,50 @@ class AutoBackupWorker @AssistedInject constructor(
             return Result.success()
         }
 
+        // E2E trancada: os ficheiros teriam de ir em claro, por isso nem começamos.
+        // Sem UI não há como pedir a passphrase — retry() para retomar sozinho
+        // depois do próximo unlock, sem marcar centenas de itens como falhados.
+        if (!e2eKeyManager.isUnlocked && e2eKeyManager.isConfiguredOrUnknown()) {
+            logger.log("AutoBackup", "E2E trancada — backup adiado até desbloqueares")
+            preferences.lastError = "Encriptação trancada — abre a app e introduz a passphrase.".tr()
+            BackupNotifications.cancelProgress(applicationContext)
+            BackupNotifications.showE2ELocked(applicationContext)
+            return Result.retry()
+        }
+        // Passou o gate: se ficou um aviso pendente de uma execução anterior,
+        // já não se aplica.
+        BackupNotifications.cancelE2ELocked(applicationContext)
+
+        // Verifica o espaço da conta ANTES de enviar: se os bytes por enviar não
+        // cabem no que resta, não vale a pena tentar (o servidor rejeitaria os
+        // uploads). Avisa nas notificações e cancela — o próximo tick volta a
+        // verificar e retoma assim que houver espaço.
+        when (val quota = checkQuota(totalBytesPending)) {
+            is QuotaResult.Insufficient -> {
+                val shortfallLabel = humanBytes(quota.shortfall)
+                logger.log("AutoBackup", "Sem espaço: faltam $shortfallLabel")
+                preferences.lastError = "Sem espaço na conta — backup em pausa até libertares espaço."
+                BackupNotifications.cancelProgress(applicationContext)
+                BackupNotifications.showResult(
+                    applicationContext,
+                    title = "Sem espaço para o backup",
+                    text = "Faltam $shortfallLabel para enviar ${humanBytes(totalBytesPending)}. " +
+                        "O backup fica em pausa até libertares espaço na conta.",
+                )
+                return Result.failure()
+            }
+            QuotaResult.Ok, QuotaResult.Unknown -> Unit
+        }
+
         logger.log("AutoBackup", "$totalPending ficheiro(s) por enviar")
         manager.startRun(totalPending, totalBytesPending)
 
         var uploadedTotal = 0
         var conflictTotal = 0
         var failedTotal = 0
+        // Sinalizado quando o servidor recusa por falta de espaço (HTTP 507) a
+        // meio do envio — ex.: outra sessão encheu a conta depois do pre-flight.
+        var quotaExceeded = false
         val semaphore = Semaphore(PARALLEL)
 
         // As colecções são processadas sequencialmente. Os cursores de scan
@@ -178,7 +219,7 @@ class AutoBackupWorker @AssistedInject constructor(
         // scan devolver o mesmo lote em loop, e as falhas são retomadas na
         // execução seguinte.
         for (source in sources) {
-            if (isStopped) break
+            if (isStopped || quotaExceeded) break
             var scanId = source.cursor()
             // Avanço do cursor por prefixo contíguo, calculado de forma
             // incremental: `minFailedId` é o menor id que falhou nesta execução
@@ -188,7 +229,7 @@ class AutoBackupWorker @AssistedInject constructor(
             var minFailedId = Long.MAX_VALUE
             var cursor = source.cursor()
 
-            while (!isStopped) {
+            while (!isStopped && !quotaExceeded) {
                 val batch = scanner.scanNew(source.collection, scanId, BATCH_SIZE, setOf(source.folder))
                 if (batch.isEmpty()) break
                 scanId = batch.maxOf { it.mediaStoreId }
@@ -256,6 +297,13 @@ class AutoBackupWorker @AssistedInject constructor(
                 conflictTotal += results.count { it.conflict }
                 failedTotal += batchFailed
 
+                // Servidor recusou por falta de espaço (HTTP 507) — pára já o
+                // resto do run: não adianta continuar a enviar.
+                if (results.any { !it.success && isQuotaError(it.error) }) {
+                    quotaExceeded = true
+                    break
+                }
+
                 // Bound the in-memory task list — see pruneFinishedBackups.
                 // keepLast generoso: a lista da UI tem scroll e remover linhas
                 // concluídas demasiado cedo fazia-as desaparecer à frente do
@@ -271,6 +319,20 @@ class AutoBackupWorker @AssistedInject constructor(
 
         preferences.lastBackupAt = System.currentTimeMillis()
         BackupNotifications.cancelProgress(applicationContext)
+
+        // Sem espaço a meio do run: avisa e pausa (o servidor também envia
+        // notificação/email). O próximo tick volta a verificar e retoma quando
+        // houver espaço. failure() para não entrar em retry-loop imediato.
+        if (quotaExceeded) {
+            logger.log("AutoBackup", "Servidor recusou por falta de espaço (507) — a pausar")
+            preferences.lastError = "Sem espaço na conta — backup em pausa até libertares espaço."
+            BackupNotifications.showResult(
+                applicationContext,
+                title = "Sem espaço para o backup",
+                text = "A conta está cheia. O backup fica em pausa até libertares espaço ou fazeres upgrade.",
+            )
+            return Result.failure()
+        }
 
         return if (failedTotal > 0) {
             preferences.lastError = "$failedTotal ficheiro(s) falharam"
@@ -408,6 +470,61 @@ class AutoBackupWorker @AssistedInject constructor(
         throw c
     } catch (_: Throwable) {
         0L
+    }
+
+    // O UploadManager formata o erro como "HTTP 507: …". 507 (Insufficient
+    // Storage) é o código dedicado do servidor para "conta cheia".
+    private fun isQuotaError(error: String?): Boolean =
+        error != null && error.contains("HTTP 507")
+
+    private fun humanBytes(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        val units = arrayOf("KB", "MB", "GB", "TB")
+        var value = bytes.toDouble() / 1024
+        var i = 0
+        while (value >= 1024 && i < units.lastIndex) {
+            value /= 1024
+            i++
+        }
+        return if (value >= 10) "${value.toInt()} ${units[i]}"
+        else String.format(java.util.Locale.US, "%.1f %s", value, units[i])
+    }
+
+    private sealed interface QuotaResult {
+        object Ok : QuotaResult
+        // O servidor não devolveu bytes utilizáveis: seguimos em frente e
+        // deixamos o próprio upload falhar se não couber (não bloqueamos por
+        // uma leitura de storage indisponível).
+        object Unknown : QuotaResult
+        data class Insufficient(val shortfall: Long) : QuotaResult
+    }
+
+    // Margem de segurança: deixa uma folga para o overhead de metadados/E2E do
+    // servidor e para outros uploads concorrentes não rebentarem o limite.
+    private val quotaSafetyMargin = 10L * 1024 * 1024 // 10 MB
+
+    private suspend fun checkQuota(bytesPending: Long): QuotaResult {
+        if (bytesPending <= 0L) return QuotaResult.Ok
+        val attrs = try {
+            val response = settingsApi.storage()
+            if (!response.isSuccessful) {
+                logger.log("AutoBackup", "Leitura de storage falhou (HTTP ${response.code()}) — a prosseguir")
+                return QuotaResult.Unknown
+            }
+            response.body()?.data?.attributes
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            logger.log("AutoBackup", "Leitura de storage erro: ${t.message} — a prosseguir")
+            return QuotaResult.Unknown
+        }
+        val used = attrs?.used_bytes
+        val capacity = attrs?.capacity_bytes
+        // Capacidade 0/nula = ilimitado ou desconhecido: não bloquear.
+        if (used == null || capacity == null || capacity <= 0L) return QuotaResult.Unknown
+        val free = capacity - used
+        val needed = bytesPending + quotaSafetyMargin
+        return if (needed > free) QuotaResult.Insufficient(needed - free) else QuotaResult.Ok
     }
 
     private fun hasMediaPermissions(): Boolean {

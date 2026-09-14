@@ -187,11 +187,11 @@ class FileViewerViewModel @Inject constructor(
         _shareState.value = null
     }
 
-    fun createShare(password: String?, permission: String?, expirationDays: Int?) {
+    fun createShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) {
         val cur = _shareState.value ?: return
         _shareState.value = cur.copy(isWorking = true)
         viewModelScope.launch {
-            shareRepository.create(cur.item, password, permission, expirationDays, null)
+            shareRepository.create(cur.item, password, permission, expirationDays, downloadLimit, null)
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
                     applyShareToCurrent(info)
@@ -204,7 +204,7 @@ class FileViewerViewModel @Inject constructor(
         }
     }
 
-    fun updateCurrentShare(password: String?, permission: String?, expirationDays: Int?) {
+    fun updateCurrentShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) {
         val cur = _shareState.value ?: return
         val token = cur.share?.token ?: return
         _shareState.value = cur.copy(isWorking = true)
@@ -215,6 +215,7 @@ class FileViewerViewModel @Inject constructor(
                 password = password?.takeIf { it.isNotBlank() },
                 permission = permission,
                 expirationDays = expirationDays,
+                downloadLimit = downloadLimit,
             )
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }

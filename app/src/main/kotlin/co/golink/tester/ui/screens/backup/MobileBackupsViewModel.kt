@@ -334,11 +334,11 @@ class MobileBackupsViewModel @Inject constructor(
         _shareState.value = null
     }
 
-    fun createShare(password: String?, permission: String?, expirationDays: Int?) {
+    fun createShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) {
         val current = _shareState.value ?: return
         _shareState.value = current.copy(isWorking = true)
         viewModelScope.launch {
-            shareRepository.create(current.item, password, permission, expirationDays, null)
+            shareRepository.create(current.item, password, permission, expirationDays, downloadLimit, null)
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
                     _state.update { it.copy(toast = "Partilha criada".tr()) }
@@ -351,7 +351,7 @@ class MobileBackupsViewModel @Inject constructor(
         }
     }
 
-    fun updateCurrentShare(password: String?, permission: String?, expirationDays: Int?) {
+    fun updateCurrentShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) {
         val current = _shareState.value ?: return
         val token = current.share?.token ?: return
         _shareState.value = current.copy(isWorking = true)
@@ -362,6 +362,7 @@ class MobileBackupsViewModel @Inject constructor(
                 password = password?.takeIf { it.isNotBlank() },
                 permission = permission,
                 expirationDays = expirationDays,
+                downloadLimit = downloadLimit,
             )
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }

@@ -38,6 +38,12 @@ class TokenStore @Inject constructor(
         _state.value = _state.value.copy(otpValidated = true)
     }
 
+    /** Send the session back to the OTP step, keeping the (pending) token. */
+    fun markOtpPending() {
+        prefs.edit().putBoolean(KEY_OTP_VALIDATED, false).apply()
+        _state.value = _state.value.copy(otpValidated = false)
+    }
+
     fun clear() {
         prefs.edit().clear().apply()
         _state.value = StoredToken(null, false)

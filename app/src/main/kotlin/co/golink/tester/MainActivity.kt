@@ -1,11 +1,16 @@
 package co.golink.tester
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import android.content.res.Configuration
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -22,13 +27,27 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var lockManager: AppLockManager
     @Inject lateinit var logger: AppLogger
 
+    // Sem esta permissão (Android 13+) o NotificationManager.notify() é ignorado
+    // em silêncio → downloads (single, zip e foreground service) não mostram
+    // nenhuma notificação. Pedimos uma vez no arranque.
+    private val notifPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* resultado irrelevante */ }
+
+    private fun ensureNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
-        val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(if (isDark) Color.parseColor("#151515") else Color.WHITE))
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         logger.log("App", "App iniciada")
+        ensureNotificationPermission()
         lifecycle.addObserver(LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> {

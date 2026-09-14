@@ -1,5 +1,6 @@
 package co.golink.tester.data.backup
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -13,6 +14,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.work.ForegroundInfo
+import co.golink.tester.ui.i18n.tr
 
 object BackupNotifications {
     const val CHANNEL_PROGRESS = "auto_backup_progress"
@@ -20,6 +22,9 @@ object BackupNotifications {
 
     const val PROGRESS_NOTIFICATION_ID = 7001
     const val RESULT_NOTIFICATION_ID = 7002
+    // ID próprio: o aviso de E2E trancada não pode ser substituído pelo resultado
+    // de um backup anterior nem desaparecer com ele — fica até o unlock.
+    const val LOCKED_NOTIFICATION_ID = 7003
 
     fun ensureChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -94,6 +99,9 @@ object BackupNotifications {
             ForegroundInfo(PROGRESS_NOTIFICATION_ID, notification)
         }
 
+    // A permissão é verificada em canPostNotifications(), mas o lint não segue
+    // a chamada através do helper.
+    @SuppressLint("MissingPermission")
     fun showResult(
         context: Context,
         title: String,
@@ -115,6 +123,34 @@ object BackupNotifications {
 
     fun cancelProgress(context: Context) {
         NotificationManagerCompat.from(context).cancel(PROGRESS_NOTIFICATION_ID)
+    }
+
+    /**
+     * Backup adiado por a encriptação estar trancada. Toca na notificação para
+     * abrir a app e introduzir a passphrase. Não é `ongoing` (o utilizador pode
+     * dispensá-la) mas repõe-se no tick seguinte enquanto continuar trancada.
+     */
+    @SuppressLint("MissingPermission") // ver nota em showResult()
+    fun showE2ELocked(context: Context) {
+        if (!canPostNotifications(context)) return
+        ensureChannels(context)
+        val title = "Backup automático em pausa".tr()
+        val text = "Desbloqueia a passphrase de encriptação para o backup automático continuar.".tr()
+        val notification = NotificationCompat.Builder(context, CHANNEL_RESULT)
+            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(openAppIntent(context))
+            .build()
+        NotificationManagerCompat.from(context).notify(LOCKED_NOTIFICATION_ID, notification)
+    }
+
+    /** Chamada após o unlock: o aviso deixou de fazer sentido. */
+    fun cancelE2ELocked(context: Context) {
+        NotificationManagerCompat.from(context).cancel(LOCKED_NOTIFICATION_ID)
     }
 
     private fun canPostNotifications(context: Context): Boolean {

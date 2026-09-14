@@ -77,10 +77,14 @@ class SessionManager @Inject constructor(
             .onSuccess { _state.value = AuthState.Authenticated(it) }
             .onFailure { error ->
                 val code = (error as? co.golink.tester.data.user.UserRepository.UserFetchException)?.statusCode
-                if (code == 401) {
-                    tokenStore.clear()
-                } else {
-                    _state.value = AuthState.BootstrapFailed(error.message ?: "Erro ao carregar utilizador")
+                when (code) {
+                    // Invalid/expired token → full logout.
+                    401 -> tokenStore.clear()
+                    // OTP not (or no longer) verified server-side → back to OTP,
+                    // keeping the pending token so the user can enter the code.
+                    403 -> tokenStore.markOtpPending()
+                    else -> _state.value =
+                        AuthState.BootstrapFailed(error.message ?: "Erro ao carregar utilizador")
                 }
             }
     }

@@ -35,4 +35,20 @@ interface UserEncryptionApi {
 
     @GET("api/user/encryption/migration-status")
     suspend fun migrationStatus(): Response<co.golink.tester.domain.encryption.MigrationStatusResponse>
+
+    // E2E Fase 2 — migração de nomes: lote em claro + gravar cifrados.
+    @GET("api/user/encryption/plain-names")
+    suspend fun plainNames(): Response<co.golink.tester.domain.encryption.PlainNamesResponse>
+
+    @POST("api/user/encryption/encrypt-names")
+    suspend fun encryptNames(
+        @Body body: co.golink.tester.domain.encryption.EncryptNamesBody,
+    ): Response<okhttp3.ResponseBody>
+
+    @GET("api/user/encryption/name-migration-status")
+    suspend fun nameMigrationStatus(): Response<co.golink.tester.domain.encryption.NameMigrationStatusResponse>
+
+    // Índice de nomes cifrados (pesquisa client-side).
+    @GET("api/user/encryption/name-index")
+    suspend fun nameIndex(): Response<co.golink.tester.domain.encryption.NameIndexResponse>
 }

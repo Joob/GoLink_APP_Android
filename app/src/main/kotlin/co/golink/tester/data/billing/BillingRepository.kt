@@ -1,5 +1,6 @@
 package co.golink.tester.data.billing
 
+import co.golink.tester.domain.billing.NowPaymentsCheckoutRequest
 import co.golink.tester.domain.billing.Plan
 import co.golink.tester.domain.billing.StripeCheckoutRequest
 import co.golink.tester.domain.billing.toPlan
@@ -22,5 +23,11 @@ class BillingRepository @Inject constructor(
         val response = api.stripeCheckout(StripeCheckoutRequest(planCode = stripePriceId))
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         response.body()?.url ?: error("Sem URL no payload")
+    }
+
+    suspend fun createCryptoCheckout(planId: String): Result<String> = runCatching {
+        val response = api.nowPaymentsCheckout(NowPaymentsCheckoutRequest(planId = planId))
+        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        response.body()?.data?.invoice_url ?: error("Sem URL no payload")
     }
 }

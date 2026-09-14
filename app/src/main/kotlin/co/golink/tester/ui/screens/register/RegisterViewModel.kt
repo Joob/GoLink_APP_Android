@@ -20,6 +20,8 @@ data class RegisterUiState(
     val password: String = "",
     val passwordConfirmation: String = "",
     val invitationToken: String = "",
+    val emailLocked: Boolean = false,
+    val invitationLoading: Boolean = false,
     val isLoading: Boolean = false,
     val error: String? = null,
     val fieldErrors: Map<String, String> = emptyMap(),
@@ -43,6 +45,28 @@ class RegisterViewModel @Inject constructor(
                     it.copy(requiresVerification = cfg.registration?.requiresVerification ?: false)
                 }
             }
+        }
+    }
+
+    private var invitationInitialized = false
+
+    /** Loads the invited email for a registration invitation token and locks the field. */
+    fun initInvitation(token: String) {
+        if (invitationInitialized || token.isBlank()) return
+        invitationInitialized = true
+        _state.update { it.copy(invitationToken = token, invitationLoading = true) }
+        viewModelScope.launch {
+            authRepository.getInvitation(token)
+                .onSuccess { email ->
+                    _state.update {
+                        it.copy(
+                            invitationLoading = false,
+                            email = email ?: it.email,
+                            emailLocked = !email.isNullOrBlank(),
+                        )
+                    }
+                }
+                .onFailure { _state.update { it.copy(invitationLoading = false) } }
         }
     }
 

@@ -392,7 +392,7 @@ internal fun MemberAvatar(
     val borderMod = Modifier
         .size(size)
         .clip(CircleShape)
-        .background(Color.White)
+        .background(MaterialTheme.colorScheme.surface)
     Box(modifier = modifier.then(borderMod).padding(1.dp)) {
         if (!member.avatarUrl.isNullOrBlank()) {
             val ctx = LocalContext.current

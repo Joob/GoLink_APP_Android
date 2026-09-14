@@ -4,6 +4,7 @@ import co.golink.tester.BuildConfig
 import co.golink.tester.network.interceptors.AppLoggerInterceptor
 import co.golink.tester.network.interceptors.AuthInterceptor
 import co.golink.tester.network.interceptors.HostRewriteInterceptor
+import co.golink.tester.network.interceptors.SessionGuardInterceptor
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import dagger.Module
 import dagger.Provides
@@ -55,10 +56,12 @@ object NetworkModule {
         @Named("base") base: OkHttpClient,
         hostRewrite: HostRewriteInterceptor,
         auth: AuthInterceptor,
+        sessionGuard: SessionGuardInterceptor,
         appLogger: AppLoggerInterceptor,
     ): OkHttpClient = base.newBuilder()
         .addInterceptor(hostRewrite)
         .addInterceptor(auth)
+        .addInterceptor(sessionGuard)
         .addInterceptor(appLogger)
         .build()
 

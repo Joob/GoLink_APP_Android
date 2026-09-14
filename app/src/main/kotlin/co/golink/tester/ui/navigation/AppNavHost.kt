@@ -30,6 +30,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import androidx.navigation.navDeepLink
 import co.golink.tester.data.AppLogger
 import co.golink.tester.data.auth.AuthState
 import co.golink.tester.data.auth.SessionManager
@@ -42,8 +43,10 @@ import co.golink.tester.ui.screens.error.BootstrapErrorScreen
 import co.golink.tester.ui.screens.viewer.FileViewerScreen
 import co.golink.tester.ui.screens.forgot.ForgotPasswordScreen
 import co.golink.tester.ui.screens.notifications.NotificationsScreen
+import co.golink.tester.ui.screens.security.SecurityActivityScreen
 import co.golink.tester.ui.screens.otp.OtpScreen
 import co.golink.tester.ui.screens.register.RegisterScreen
+import co.golink.tester.ui.screens.resetpassword.CreateNewPasswordScreen
 import co.golink.tester.ui.screens.settings.SettingsScreen
 import co.golink.tester.ui.screens.signin.SignInScreen
 import co.golink.tester.ui.screens.socialite.SocialiteWebViewScreen
@@ -62,11 +65,17 @@ object Routes {
     const val SIGN_IN = "sign_in"
     const val REGISTER = "register"
     const val FORGOT = "forgot"
+    const val CREATE_NEW_PASSWORD = "create_new_password?token={token}"
+    fun createNewPassword(token: String? = null) =
+        if (token == null) "create_new_password" else "create_new_password?token=$token"
+    const val REGISTER_INVITED = "register_invited/{invitation}"
+    fun registerInvited(invitation: String) = "register_invited/$invitation"
     const val OTP = "otp"
     const val HOME = "home"
     const val NOTIFICATIONS = "notifications"
     const val SETTINGS = "settings?initial={initial}"
     fun settings(initial: String? = null) = if (initial == null) "settings" else "settings?initial=$initial"
+    const val SECURITY_ACTIVITY = "security_activity"
     const val AUTO_BACKUP = "auto_backup"
     const val MOBILE_BACKUPS = "mobile_backups"
     const val BOOTSTRAP_ERROR = "bootstrap_error"
@@ -136,6 +145,8 @@ fun AppNavHost(
                 current == Routes.SIGN_IN ||
                 current == Routes.REGISTER ||
                 current == Routes.FORGOT ||
+                current.startsWith("create_new_password") ||
+                current.startsWith("register_invited") ||
                 current.startsWith("socialite/")
         )
         val inAuthenticated = current != null && (
@@ -185,6 +196,50 @@ fun AppNavHost(
         composable(Routes.FORGOT) {
             ForgotPasswordScreen(onBack = { navController.popBackStack() })
         }
+        composable(
+            route = Routes.CREATE_NEW_PASSWORD,
+            arguments = listOf(navArgument("token") {
+                type = NavType.StringType
+                nullable = true
+                defaultValue = null
+            }),
+            deepLinks = listOf(
+                navDeepLink { uriPattern = "https://golink.co/create-new-password?token={token}" },
+                navDeepLink { uriPattern = "https://tester.golink.co/create-new-password?token={token}" },
+            ),
+        ) { backStackEntry ->
+            val token = backStackEntry.arguments?.getString("token").orEmpty()
+            CreateNewPasswordScreen(
+                token = token,
+                onDone = {
+                    navController.navigate(Routes.SIGN_IN) {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                },
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(
+            route = Routes.REGISTER_INVITED,
+            arguments = listOf(navArgument("invitation") { type = NavType.StringType }),
+            deepLinks = listOf(
+                navDeepLink { uriPattern = "https://golink.co/register/{invitation}" },
+                navDeepLink { uriPattern = "https://tester.golink.co/register/{invitation}" },
+            ),
+        ) { backStackEntry ->
+            val invitation = backStackEntry.arguments?.getString("invitation").orEmpty()
+            RegisterScreen(
+                onRegistered = { _ ->
+                    navController.navigate(Routes.SIGN_IN) {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                },
+                onBack = { navController.popBackStack() },
+                invitationToken = invitation,
+            )
+        }
         composable(Routes.OTP) {
             OtpScreen(
                 onValidated = { /* gate transitions to Home */ },
@@ -222,7 +277,13 @@ fun AppNavHost(
             FileViewerScreen(onClose = { navController.popBackStack() })
         }
         composable(Routes.NOTIFICATIONS) {
-            NotificationsScreen(onBack = { navController.popBackStack() })
+            NotificationsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenSecurityActivity = { navController.navigate(Routes.SECURITY_ACTIVITY) },
+            )
+        }
+        composable(Routes.SECURITY_ACTIVITY) {
+            SecurityActivityScreen(onBack = { navController.popBackStack() })
         }
         composable(
             route = Routes.SETTINGS,
@@ -237,6 +298,7 @@ fun AppNavHost(
                 onBack = { navController.popBackStack() },
                 initialRoute = initial,
                 onOpenAutoBackup = { navController.navigate(Routes.MOBILE_BACKUPS) },
+                onOpenSecurityActivity = { navController.navigate(Routes.SECURITY_ACTIVITY) },
             )
         }
         composable(Routes.AUTO_BACKUP) {

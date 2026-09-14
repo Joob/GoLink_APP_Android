@@ -18,6 +18,8 @@ import co.golink.tester.R
 import co.golink.tester.data.auth.TokenStore
 import co.golink.tester.data.config.BackendUrlHolder
 import co.golink.tester.domain.browse.BrowseItem
+import co.golink.tester.domain.download.ZipManifestEntry
+import co.golink.tester.domain.download.ZipManifestResponse
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
@@ -58,6 +60,8 @@ class FileDownloader @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val notifManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     private val notifId = AtomicInteger(2000)
+
+    private val zipJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
 
     companion object {
         private const val CHANNEL_ID = "golink_downloads"
@@ -101,7 +105,7 @@ class FileDownloader @Inject constructor(
         }
     }
 
-    fun downloadFile(id: String, name: String, basename: String? = null, encrypted: Boolean = false): Result<Unit> = runCatching {
+    fun downloadFile(id: String, name: String, basename: String? = null, encrypted: Boolean = false, mimetype: String? = null): Result<Unit> = runCatching {
         val backend = backendUrlHolder.current.trimEnd('/')
         val url = "$backend/api/file/${Uri.encode(id)}/download"
         val tempLabel = sanitize(name)
@@ -150,7 +154,11 @@ class FileDownloader @Inject constructor(
                         }
                         else -> name
                     }
-                    val finalName = uniqueDestination(sanitize(resolvedName))
+                    // Garantir SEMPRE a extensão correta a partir do mimetype (que
+                    // guarda a extensão, ex.: "MP4") — o nome/Content-Disposition
+                    // podia vir sem extensão e o ficheiro saía como .txt/.bin.
+                    val named = ensureExtension(resolvedName, mimetype ?: basename?.substringAfterLast('.', ""))
+                    val finalName = uniqueDestination(sanitize(named))
                     writeToDownloads(finalName, mimeTypeFor(finalName), body.byteStream(), dataKey)
                     notifManager.cancel(nid)
                     notify(nid, finalName, inProgress = false, success = true)
@@ -164,21 +172,179 @@ class FileDownloader @Inject constructor(
     }
 
     fun downloadFile(file: BrowseItem.File): Result<Unit> =
-        downloadFile(file.id, file.name, file.basename, file.encrypted)
+        downloadFile(file.id, file.name, file.basename, file.encrypted, file.mimetype)
 
-    fun downloadFolder(folder: BrowseItem.Folder): Result<Long> =
+    // Acrescenta a extensão do mimetype se o nome ainda não a tiver (case-insensitive).
+    private fun ensureExtension(name: String, ext: String?): String {
+        val clean = ext?.trim()?.removePrefix(".")?.lowercase()
+            ?.takeIf { it.isNotBlank() && it.length <= 6 && it.all { c -> c.isLetterOrDigit() } }
+            ?: return name
+        return if (name.endsWith(".$clean", ignoreCase = true)) name else "$name.$clean"
+    }
+
+    fun downloadFolder(folder: BrowseItem.Folder): Result<Unit> =
         downloadZip(listOf(folder), suggestedName = "${folder.name}.zip")
 
-    fun downloadZip(items: List<BrowseItem>, suggestedName: String): Result<Long> = runCatching {
+    // Resultado do zip para o foreground service decidir a notificação final.
+    sealed interface ZipOutcome {
+        data class Completed(val name: String) : ZipOutcome
+        data class Failed(val message: String) : ZipOutcome
+        // Sem ficheiros cifrados: delegado ao DownloadManager (tem a sua notif).
+        object ServerZipEnqueued : ZipOutcome
+    }
+
+    /**
+     * Zip de pastas / vários itens. E2E: o servidor só tem ciphertext e não pode
+     * zipar — buscamos o manifesto (lista plana + caminhos) e, se houver QUALQUER
+     * ficheiro cifrado, decifra-se cada um e monta-se o zip no cliente. Caso
+     * contrário usa o zip do servidor (DownloadManager), como antes.
+     *
+     * Corre num FOREGROUND SERVICE ([ZipDownloadService]): pastas grandes demoram
+     * e, num scope normal, o SO matava o processo se o utilizador saísse da app →
+     * o zip morria a meio e a entrada MediaStore ficava presa (invisível). O
+     * foreground service mantém o processo vivo e a notificação persistente.
+     */
+    fun downloadZip(items: List<BrowseItem>, suggestedName: String): Result<Unit> = runCatching {
         if (items.isEmpty()) error("Sem itens para descarregar")
-        val backend = backendUrlHolder.current.trimEnd('/')
         val token = tokenStore.token ?: error("Sessão inválida")
         val payload = items.joinToString(",") { item ->
             val type = if (item is BrowseItem.Folder) "folder" else "file"
             "${item.id}|$type"
         }
-        val url = "$backend/api/zip?items=${Uri.encode(payload)}&token=${Uri.encode(token)}"
-        enqueueViaManager(url, suggestedName).also { _events.tryEmit(Event.Started(suggestedName)) }
+        _events.tryEmit(Event.Started(suggestedName))
+        ZipDownloadService.start(context, payload, suggestedName, token)
+    }
+
+    /**
+     * Trabalho pesado do zip, chamado pelo [ZipDownloadService] já em foreground.
+     * `onProgress(done, total)` atualiza a notificação persistente. Emite os
+     * eventos (Started foi emitido em [downloadZip]) e devolve o [ZipOutcome].
+     */
+    suspend fun runZipDownload(
+        payload: String,
+        suggestedName: String,
+        token: String,
+        onProgress: (done: Int, total: Int) -> Unit,
+    ): ZipOutcome {
+        val backend = backendUrlHolder.current.trimEnd('/')
+        return try {
+            val manifest = runCatching {
+                val murl = "$backend/api/zip-manifest?items=${Uri.encode(payload)}"
+                httpClient.newCall(Request.Builder().url(murl).build()).execute().use { r ->
+                    if (!r.isSuccessful) error("manifest HTTP ${r.code}")
+                    zipJson.decodeFromString<ZipManifestResponse>(r.body?.string() ?: error("vazio"))
+                }
+            }.getOrNull()
+
+            val hasEncrypted = manifest?.files?.any { it.encrypted } == true
+            if (hasEncrypted) {
+                if (!e2eKeyManager.isUnlocked) {
+                    _events.tryEmit(Event.Failed(suggestedName, "Desbloqueia a encriptação para descarregar"))
+                    return ZipOutcome.Failed("Desbloqueia a encriptação para descarregar")
+                }
+                val finalName = uniqueDestination(sanitize(suggestedName))
+                writeZipToDownloads(finalName, decryptManifestNames(manifest!!), backend, onProgress)
+                _events.tryEmit(Event.Completed(finalName))
+                ZipOutcome.Completed(finalName)
+            } else {
+                // Sem ficheiros cifrados: zip do servidor via DownloadManager.
+                val url = "$backend/api/zip?items=${Uri.encode(payload)}&token=${Uri.encode(token)}"
+                enqueueViaManager(url, suggestedName)
+                ZipOutcome.ServerZipEnqueued
+            }
+        } catch (e: Exception) {
+            _events.tryEmit(Event.Failed(suggestedName, e.message ?: "Erro no zip"))
+            ZipOutcome.Failed(e.message ?: "Erro no zip")
+        }
+    }
+
+    // Decifra cada ficheiro e escreve-o como entrada do zip (streaming, sem
+    // compressão = rápido; media/cifrado não comprime na mesma). Preserva caminhos.
+    /**
+     * Decifra os nomes do manifesto (em E2E o servidor só tem o placeholder) e
+     * recompõe o caminho de cada entrada — sem isto o zip sai com '•' em todos
+     * os ficheiros e pastas.
+     */
+    private fun decryptManifestNames(manifest: ZipManifestResponse): List<ZipManifestEntry> {
+        if (manifest.names.isEmpty()) return manifest.files
+
+        val plain = manifest.names.mapNotNull { (id, enc) ->
+            e2eKeyManager.openNameOrNull(enc)?.let { id to it }
+        }.toMap()
+
+        if (plain.isEmpty()) return manifest.files
+
+        return manifest.files.map { entry ->
+            val name = plain[entry.id] ?: entry.name
+            val dirs = entry.path_ids.mapNotNull { plain[it] }
+            entry.copy(
+                name = name,
+                path = if (dirs.isEmpty()) name else dirs.joinToString("/") + "/" + name,
+            )
+        }
+    }
+
+    private fun writeZipToDownloads(
+        name: String,
+        files: List<ZipManifestEntry>,
+        backend: String,
+        onProgress: (done: Int, total: Int) -> Unit,
+    ) {
+        val write: (java.io.OutputStream) -> Unit = { raw ->
+            java.util.zip.ZipOutputStream(java.io.BufferedOutputStream(raw)).use { zos ->
+                zos.setLevel(java.util.zip.Deflater.NO_COMPRESSION)
+                val used = HashSet<String>()
+                files.forEachIndexed { i, f ->
+                    onProgress(i + 1, files.size)
+                    var dataKey: ByteArray? = null
+                    if (f.encrypted) {
+                        val wrapped = runCatching {
+                            kotlinx.coroutines.runBlocking { userEncryptionApi.fileKey(f.id).body()?.wrapped_data_key }
+                        }.getOrNull() ?: return@forEachIndexed
+                        dataKey = e2eKeyManager.openFileDataKey(wrapped)
+                    }
+                    val url = "$backend/api/file/${Uri.encode(f.id)}/download"
+                    httpClient.newCall(Request.Builder().url(url).build()).execute().use { resp ->
+                        val body = if (resp.isSuccessful) resp.body else null
+                        if (body == null) return@forEachIndexed
+                        val entryName = uniqueZipPath(ensureExtension(f.path, f.mimetype), used)
+                        zos.putNextEntry(java.util.zip.ZipEntry(entryName))
+                        if (dataKey != null) {
+                            co.golink.tester.data.encryption.EncryptedFileCodec.decryptStream(body.byteStream(), zos, dataKey)
+                        } else {
+                            body.byteStream().copyTo(zos, DEFAULT_COPY_BUFFER)
+                        }
+                        zos.closeEntry()
+                    }
+                }
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, "application/zip")
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IOException("Não foi possível criar o zip em Downloads")
+            context.contentResolver.openOutputStream(uri)?.use { out -> write(out) }
+            context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
+        } else {
+            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            dir.mkdirs()
+            java.io.File(dir, name).outputStream().use { out -> write(out) }
+        }
+    }
+
+    // Evita nomes/caminhos repetidos dentro do zip (corrompem alguns extractores).
+    private fun uniqueZipPath(path: String, used: HashSet<String>): String {
+        if (used.add(path)) return path
+        val dot = path.lastIndexOf('.')
+        val base = if (dot > 0) path.substring(0, dot) else path
+        val ext = if (dot > 0) path.substring(dot) else ""
+        var i = 1
+        while (!used.add("$base ($i)$ext")) i++
+        return "$base ($i)$ext"
     }
 
     private fun enqueueViaManager(url: String, name: String): Long {

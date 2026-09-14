@@ -45,9 +45,13 @@ import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.Campaign
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.CreditCard
+import androidx.compose.material.icons.outlined.CurrencyBitcoin
 import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Devices
@@ -55,6 +59,7 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Lock
@@ -64,6 +69,7 @@ import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Receipt
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Security
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.ShieldMoon
 import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.material.icons.outlined.VpnKey
@@ -128,17 +134,23 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import co.golink.tester.domain.billing.Plan
 import co.golink.tester.domain.settings.AccessToken
+import co.golink.tester.domain.settings.SecurityEventData
 import co.golink.tester.domain.settings.SessionItem
 import co.golink.tester.domain.settings.StorageUsage
 import co.golink.tester.domain.settings.TransactionItem
 import co.golink.tester.domain.user.User
 import coil.compose.AsyncImage
 
+/** Política de passwords do servidor (Fortify\Rules\Password) e do registo. */
+private const val MIN_PASSWORD_LENGTH = 8
+
 private sealed interface SettingsRoute {
     data object Menu : SettingsRoute
     data object Profile : SettingsRoute
     data object Password : SettingsRoute
+    data object Encryption : SettingsRoute
     data object Storage : SettingsRoute
+    data object SecurityActivity : SettingsRoute
     data object Sessions : SettingsRoute
     data object Billing : SettingsRoute
     data object AppSecurity : SettingsRoute
@@ -147,6 +159,7 @@ private sealed interface SettingsRoute {
     data object Users : SettingsRoute
     data object InviteRegisters : SettingsRoute
     data object News : SettingsRoute
+    data object DeleteAccount : SettingsRoute
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -155,6 +168,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     initialRoute: String? = null,
     onOpenAutoBackup: () -> Unit = {},
+    onOpenSecurityActivity: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val user by viewModel.user.collectAsStateWithLifecycle()
@@ -184,6 +198,9 @@ fun SettingsScreen(
         if (route == SettingsRoute.Billing) {
             viewModel.loadPlans()
         }
+        if (route == SettingsRoute.SecurityActivity && state.securityEvents.isEmpty() && !state.isLoadingSecurityEvents) {
+            viewModel.loadSecurityEvents()
+        }
     }
 
     val uriHandlerForCheckout = LocalUriHandler.current
@@ -194,6 +211,15 @@ fun SettingsScreen(
         }
     }
 
+    state.pendingCheckoutPlan?.let { plan ->
+        PaymentMethodDialog(
+            plan = plan,
+            onDismiss = viewModel::dismissPaymentMethods,
+            onStripe = { viewModel.startStripeCheckout(plan) },
+            onCrypto = { viewModel.startCryptoCheckout(plan) },
+        )
+    }
+
     BackHandler(enabled = route != SettingsRoute.Menu) {
         route = SettingsRoute.Menu
     }
@@ -202,8 +228,10 @@ fun SettingsScreen(
         SettingsRoute.Menu -> "Definições".tr()
         SettingsRoute.Profile -> "Perfil".tr()
         SettingsRoute.Password -> "Password"
+        SettingsRoute.Encryption -> "Encriptação".tr()
         SettingsRoute.Storage -> "Armazenamento".tr()
         SettingsRoute.Sessions -> "Sessões".tr()
+        SettingsRoute.SecurityActivity -> "Atividade de segurança".tr()
         SettingsRoute.Billing -> "Faturação".tr()
         SettingsRoute.AppSecurity -> "Segurança da app".tr()
         SettingsRoute.Dashboard -> "Painel".tr()
@@ -211,6 +239,7 @@ fun SettingsScreen(
         SettingsRoute.Users -> "Utilizadores".tr()
         SettingsRoute.InviteRegisters -> "Registos de Convite".tr()
         SettingsRoute.News -> "Notícias".tr()
+        SettingsRoute.DeleteAccount -> "Apagar conta".tr()
     }
 
     Scaffold(
@@ -256,6 +285,12 @@ fun SettingsScreen(
                     onRefreshUser = viewModel::refreshUser,
                     onResetCsrf = viewModel::resetCsrf,
                 )
+                SettingsRoute.Encryption -> EncryptionPane(
+                    e2eUnlocked = e2eUnlocked,
+                    e2eFingerprint = if (e2eUnlocked) viewModel.e2eFingerprint() else null,
+                    isChanging = state.isChangingPassphrase,
+                    onChangePassphrase = viewModel::changeEncryptionPassphrase,
+                )
                 SettingsRoute.Storage -> StoragePane(
                     storage = state.storage,
                     isLoading = state.isLoadingStorage,
@@ -268,6 +303,12 @@ fun SettingsScreen(
                     onRevokeAll = viewModel::revokeAllSessions,
                     onRefresh = viewModel::loadSessions,
                 )
+                SettingsRoute.SecurityActivity -> SecurityActivityPane(
+                    events = state.securityEvents,
+                    isLoading = state.isLoadingSecurityEvents,
+                    hasMore = state.hasMoreSecurityEvents,
+                    onLoadMore = viewModel::loadMoreSecurityEvents,
+                )
                 SettingsRoute.Billing -> BillingPane(
                     user = user,
                     transactions = state.transactions,
@@ -275,10 +316,11 @@ fun SettingsScreen(
                     plans = state.plans,
                     isLoadingPlans = state.isLoadingPlans,
                     isStartingCheckout = state.isStartingCheckout,
-                    onUpgrade = viewModel::startStripeCheckout,
+                    onUpgrade = viewModel::selectPlan,
                     onRefresh = viewModel::loadTransactions,
                 )
                 SettingsRoute.News -> NewsAdminPane()
+                SettingsRoute.DeleteAccount -> DeleteAccountPane(userEmail = user?.email)
                 SettingsRoute.Dashboard -> DashboardPane()
                 SettingsRoute.Analytics -> AnalyticsPane()
                 SettingsRoute.Users -> AdminUsersPane()
@@ -292,11 +334,37 @@ fun SettingsScreen(
                     onEnablePin = viewModel::enablePin,
                     onDisablePin = viewModel::disablePin,
                     onClearCache = viewModel::clearCache,
+                    onOpenSecurityActivity = onOpenSecurityActivity,
                     logEntries = state.logEntries,
                     onRefreshLog = viewModel::refreshLog,
                     onClearLog = viewModel::clearLog,
-                    e2eFingerprint = if (e2eUnlocked) viewModel.e2eFingerprint() else null,
                 )
+            }
+
+            // Overlay de saída: revoke da sessão atual (→ logout automático via
+            // RootGate) ou revoke de todas as outras (fica logado no fim).
+            state.logoutOverlay?.let { msg ->
+                androidx.compose.ui.window.Dialog(
+                    onDismissRequest = { },
+                    properties = androidx.compose.ui.window.DialogProperties(
+                        dismissOnBackPress = false,
+                        dismissOnClickOutside = false,
+                    ),
+                ) {
+                    Surface(
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 32.dp, vertical = 28.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            CircularProgressIndicator(color = co.golink.tester.ui.theme.BrandGreen)
+                            Spacer(Modifier.height(16.dp))
+                            Text(msg, style = MaterialTheme.typography.titleMedium)
+                        }
+                    }
+                }
             }
         }
     }
@@ -454,9 +522,13 @@ private fun MenuPane(
             MenuDivider()
             MenuRow(Icons.Outlined.Lock, "Password", "Alterar a tua password".tr()) { onNavigate(SettingsRoute.Password) }
             MenuDivider()
+            MenuRow(Icons.Outlined.VpnKey, "Encriptação".tr(), "Impressão da chave e passphrase".tr()) { onNavigate(SettingsRoute.Encryption) }
+            MenuDivider()
             MenuRow(Icons.Outlined.CloudQueue, "Armazenamento".tr(), "Espaço utilizado e disponível".tr()) { onNavigate(SettingsRoute.Storage) }
             MenuDivider()
             MenuRow(Icons.Outlined.Devices, "Sessões".tr(), "Dispositivos e sessões activas".tr()) { onNavigate(SettingsRoute.Sessions) }
+            MenuDivider()
+            MenuRow(Icons.Outlined.Shield, "Atividade de segurança".tr(), "Inícios de sessão e alterações à conta".tr()) { onNavigate(SettingsRoute.SecurityActivity) }
         }
 
         Spacer(Modifier.height(16.dp))
@@ -499,6 +571,22 @@ private fun MenuPane(
             Icon(Icons.Filled.Logout, contentDescription = null)
             Spacer(Modifier.width(8.dp))
             Text("Terminar sessão".tr())
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        // Zona de perigo: eliminação permanente da conta (fluxo igual à web).
+        OutlinedButton(
+            onClick = { onNavigate(SettingsRoute.DeleteAccount) },
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
+        ) {
+            Icon(Icons.Outlined.Delete, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Apagar conta permanentemente".tr())
         }
 
         Spacer(Modifier.height(16.dp))
@@ -1031,8 +1119,10 @@ private fun PasswordPane(
     var newPassword by remember { mutableStateOf("") }
     var confirmation by remember { mutableStateOf("") }
     val mismatch = newPassword.isNotEmpty() && confirmation.isNotEmpty() && newPassword != confirmation
-    val tooShort = newPassword.isNotEmpty() && newPassword.length < 6
-    val canSubmit = !isLoading && current.isNotBlank() && newPassword.length >= 6 && newPassword == confirmation
+    // 8 = mesma política do registo e do servidor (Fortify\Rules\Password).
+    val tooShort = newPassword.isNotEmpty() && newPassword.length < MIN_PASSWORD_LENGTH
+    val canSubmit = !isLoading && current.isNotBlank() &&
+        newPassword.length >= MIN_PASSWORD_LENGTH && newPassword == confirmation
 
     var showCreateTokenDialog by remember { mutableStateOf(false) }
     var newTokenName by remember { mutableStateOf("") }
@@ -1217,7 +1307,7 @@ private fun PasswordPane(
         )
 
         PasswordField(label = "Password actual".tr(), value = current, onChange = { current = it })
-        PasswordField(label = "Nova password".tr(), value = newPassword, onChange = { newPassword = it }, isError = tooShort, errorText = if (tooShort) "Mínimo 6 caracteres".tr() else null)
+        PasswordField(label = "Nova password".tr(), value = newPassword, onChange = { newPassword = it }, isError = tooShort, errorText = if (tooShort) "Mínimo 8 caracteres".tr() else null)
         PasswordField(label = "Confirmar nova password".tr(), value = confirmation, onChange = { confirmation = it }, isError = mismatch, errorText = if (mismatch) "Não coincide".tr() else null)
 
         Text(
@@ -1733,6 +1823,142 @@ private fun SessionsPane(
 private fun SessionItem.isMobileSession(): Boolean =
     is_current || (platform ?: "").lowercase() != "web"
 
+/** Eventos que indicam possível compromisso — destacados a vermelho. */
+private val SECURITY_ALERT_EVENTS = setOf(
+    "account.new_device",
+    "auth.login_failed",
+    "auth.otp_locked",
+    "account.password_changed",
+    "account.e2e_secret_rotated",
+)
+
+private fun securityEventLabel(event: String): String = when (event) {
+    "auth.login" -> "Início de sessão".tr()
+    "auth.login_failed" -> "Tentativa de início de sessão falhada".tr()
+    "auth.otp_failed" -> "Código de segurança incorrecto".tr()
+    "auth.otp_locked" -> "Bloqueio temporário após demasiadas tentativas".tr()
+    "account.new_device" -> "Início de sessão de um dispositivo novo".tr()
+    "account.password_changed" -> "Password alterada".tr()
+    "account.e2e_secret_rotated" -> "Segredo de encriptação alterado".tr()
+    else -> "Evento de segurança".tr()
+}
+
+/** ISO-8601 do servidor → data local legível; se falhar mostra o original. */
+private fun formatSecurityEventDate(value: String?): String {
+    if (value.isNullOrBlank()) return ""
+
+    return runCatching {
+        val instant = java.time.Instant.parse(value)
+        java.time.format.DateTimeFormatter
+            .ofLocalizedDateTime(java.time.format.FormatStyle.MEDIUM)
+            .withZone(java.time.ZoneId.systemDefault())
+            .format(instant)
+    }.getOrDefault(value)
+}
+
+@Composable
+private fun SecurityActivityPane(
+    events: List<SecurityEventData>,
+    isLoading: Boolean,
+    hasMore: Boolean,
+    onLoadMore: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            "Eventos de segurança recentes na tua conta. Se vires algo que não reconheces, altera a password e revê as sessões activas.".tr(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        if (isLoading && events.isEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+        }
+
+        if (!isLoading && events.isEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        "Ainda não há atividade de segurança registada.".tr(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        events.forEach { entry ->
+            val attrs = entry.attributes
+            val isAlert = attrs.event in SECURITY_ALERT_EVENTS
+
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Icon(
+                        Icons.Outlined.Shield,
+                        contentDescription = null,
+                        tint = if (isAlert) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            securityEventLabel(attrs.event),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            formatSecurityEventDate(attrs.created_at),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        attrs.ip?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        attrs.user_agent?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (hasMore) {
+            TextButton(onClick = onLoadMore, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
+                Text("Carregar mais".tr())
+            }
+        }
+    }
+}
+
 @Composable
 private fun SessionsGroup(
     title: String,
@@ -1863,13 +2089,19 @@ private fun BillingPane(
     onUpgrade: (Plan) -> Unit,
     onRefresh: () -> Unit,
 ) {
-    var showPlansDialog by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
+        if (user?.isPastDue == true || user?.isPaymentSuspended == true) {
+            PaymentOverdueBanner(
+                isSuspended = user.isPaymentSuspended,
+                daysLeft = user.daysLeftToPay,
+            )
+            Spacer(Modifier.height(12.dp))
+        }
         InfoCard(icon = Icons.Outlined.Edit, iconContentDescription = "Plano") {
             Text("Plano", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(4.dp))
@@ -1885,20 +2117,44 @@ private fun BillingPane(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(16.dp))
-            OutlinedButton(
-                onClick = { showPlansDialog = true },
-                enabled = !isStartingCheckout,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                contentPadding = PaddingValues(vertical = 12.dp),
-            ) {
-                if (isStartingCheckout) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(8.dp))
+            // Mostrar os planos diretamente na área de Billing (mesma grelha da web)
+            if (isLoadingPlans) {
+                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
                 }
-                Text("Atualizar Conta".tr(), fontWeight = FontWeight.SemiBold)
+            } else if (plans.isEmpty()) {
+                Text(
+                    "Sem planos disponíveis.".tr(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                var showYearly by remember { mutableStateOf(false) }
+                val hasYearly = plans.any { it.interval == "year" }
+                val visiblePlans = if (hasYearly) {
+                    plans.filter { it.interval == if (showYearly) "year" else "month" }
+                } else {
+                    plans
+                }
+                Column {
+                    Text("Escolha o seu plano".tr(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    if (hasYearly) {
+                        Spacer(Modifier.height(10.dp))
+                        PlanPeriodSwitcher(showYearly = showYearly, onChange = { showYearly = it })
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    visiblePlans.forEachIndexed { index, plan ->
+                        PlanCard(
+                            plan = plan,
+                            isCurrent = user?.planName?.equals(plan.name, ignoreCase = true) == true,
+                            isBusy = isStartingCheckout,
+                            onSelect = { onUpgrade(plan) },
+                        )
+                        if (index < visiblePlans.lastIndex) {
+                            Spacer(Modifier.height(12.dp))
+                        }
+                    }
+                }
             }
         }
 
@@ -1939,18 +2195,134 @@ private fun BillingPane(
             }
         }
     }
+}
 
-    if (showPlansDialog) {
-        PlansDialog(
-            plans = plans,
-            isLoading = isLoadingPlans,
-            currentPlanName = user?.planName,
-            onDismiss = { showPlansDialog = false },
-            onSelect = { plan ->
-                showPlansDialog = false
-                onUpgrade(plan)
-            },
+// Espelha o cartão de plano da web (UserAvailablePlans.vue): ícone, preço em
+// destaque, features com check, bullets de privacidade e CTA a toda a largura.
+@Composable
+private fun PlanCard(
+    plan: Plan,
+    isCurrent: Boolean,
+    isBusy: Boolean,
+    onSelect: () -> Unit,
+) {
+    // O checkout crypto usa o id do plano local, por isso está sempre
+    // disponível mesmo que o plano não exista no Stripe.
+    val checkoutAvailable = true
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+            ) {
+                Box(modifier = Modifier.size(42.dp), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Outlined.CloudQueue, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(plan.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            if (plan.price != null) {
+                Spacer(Modifier.height(2.dp))
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(plan.price, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    plan.interval?.let {
+                        Text(
+                            " / " + planIntervalLabel(it),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            if (!plan.description.isNullOrBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text(plan.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.height(12.dp))
+            Column {
+                plan.features.forEach { (key, value) -> PlanFeatureRow(planFeatureLabel(key, value)) }
+                PlanFeatureRow("Encriptação Ponta-a-Ponta".tr())
+                PlanFeatureRow("Todos os Dados são Privados".tr())
+                PlanFeatureRow("Dados Descentralizados".tr())
+                PlanFeatureRow("Sem MetaDados".tr())
+                PlanFeatureRow("Suporte".tr())
+            }
+            Spacer(Modifier.height(14.dp))
+            Button(
+                onClick = onSelect,
+                enabled = !isCurrent && checkoutAvailable && !isBusy,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    if (isCurrent) "Plano atual".tr() else "Escolher plano".tr(),
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlanFeatureRow(label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 3.dp)) {
+        Icon(
+            Icons.Outlined.Check,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(16.dp),
         )
+        Spacer(Modifier.width(8.dp))
+        Text(label, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun planFeatureLabel(key: String, value: Long): String = when (key) {
+    "max_storage_amount" -> "{value} GB de armazenamento".tr().replace("{value}", value.toString())
+    "max_team_members" ->
+        if (value == -1L) "Membros de equipa ilimitados".tr()
+        else "Até {value} membros de equipa".tr().replace("{value}", value.toString())
+    else -> "$key: $value"
+}
+
+@Composable
+private fun planIntervalLabel(interval: String): String = when (interval) {
+    "month" -> "mês".tr()
+    "year" -> "ano".tr()
+    else -> interval
+}
+
+@Composable
+private fun PlanPeriodSwitcher(showYearly: Boolean, onChange: (Boolean) -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+    ) {
+        Row(modifier = Modifier.padding(3.dp)) {
+            listOf(false to "Mensal".tr(), true to "Anual".tr()).forEach { (yearly, label) ->
+                val selected = showYearly == yearly
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                    modifier = Modifier.clickable { onChange(yearly) },
+                ) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -1976,45 +2348,15 @@ private fun PlansDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 else -> Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    plans.forEach { plan ->
-                        val isCurrent = currentPlanName?.equals(plan.name, ignoreCase = true) == true
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface,
-                            border = BorderStroke(1.dp, if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 6.dp)
-                                .clickable(enabled = !isCurrent && plan.stripePriceId != null) { onSelect(plan) },
-                        ) {
-                            Column(modifier = Modifier.padding(14.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(plan.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                                    if (plan.price != null) {
-                                        Text(
-                                            plan.price + (plan.interval?.let { " / $it" } ?: ""),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = MaterialTheme.colorScheme.primary,
-                                        )
-                                    }
-                                }
-                                if (!plan.description.isNullOrBlank()) {
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(
-                                        plan.description,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                if (isCurrent) {
-                                    Spacer(Modifier.height(6.dp))
-                                    Text("Plano atual".tr(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
-                                } else if (plan.stripePriceId == null) {
-                                    Spacer(Modifier.height(6.dp))
-                                    Text("Indisponível para checkout móvel".tr(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
+                    plans.forEachIndexed { index, plan ->
+                        PlanCard(
+                            plan = plan,
+                            isCurrent = currentPlanName?.equals(plan.name, ignoreCase = true) == true,
+                            isBusy = false,
+                            onSelect = { onSelect(plan) },
+                        )
+                        if (index < plans.lastIndex) {
+                            Spacer(Modifier.height(12.dp))
                         }
                     }
                 }
@@ -2111,6 +2453,127 @@ private fun TransactionRow(t: TransactionItem) {
 }
 
 @Composable
+private fun EncryptionPane(
+    e2eUnlocked: Boolean,
+    e2eFingerprint: String?,
+    isChanging: Boolean,
+    onChangePassphrase: (String) -> Unit,
+) {
+    val clipboard = LocalClipboardManager.current
+    var newPass by remember { mutableStateOf("") }
+    var confirmPass by remember { mutableStateOf("") }
+    val tooShort = newPass.isNotEmpty() && newPass.length < 8
+    val mismatch = confirmPass.isNotEmpty() && newPass != confirmPass
+    val canSubmit = newPass.length >= 8 && newPass == confirmPass && !isChanging
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        // Impressão da chave pública (deteta key-substitution).
+        SectionLabel("Impressão da chave de encriptação".tr())
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    "Confirma que é igual nos teus outros dispositivos — um código diferente pode indicar troca de chave.".tr(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                if (e2eFingerprint != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            e2eFingerprint,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 2.sp,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = { clipboard.setText(AnnotatedString(e2eFingerprint)) }) {
+                            Icon(Icons.Filled.ContentCopy, contentDescription = "Copiar".tr(), tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                } else {
+                    Text(
+                        "Desbloqueia a encriptação para veres a impressão da chave.".tr(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+
+        // Mudar passphrase: re-embrulha a chave privada (em memória) com o novo
+        // segredo. NÃO re-cifra ficheiros — continuam acessíveis com a nova passphrase.
+        SectionLabel("Alterar passphrase de encriptação".tr())
+        Text(
+            "Muda a passphrase que desbloqueia a tua encriptação. Os teus ficheiros NÃO são re-cifrados — continuam acessíveis com a nova passphrase.".tr(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
+        Spacer(Modifier.height(12.dp))
+
+        if (!e2eUnlocked) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    "Desbloqueia a encriptação primeiro para poderes alterar a passphrase.".tr(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(16.dp),
+                )
+            }
+        } else {
+            PasswordField(
+                label = "Nova passphrase".tr(),
+                value = newPass,
+                onChange = { newPass = it },
+                isError = tooShort,
+                errorText = if (tooShort) "Mínimo 8 caracteres".tr() else null,
+            )
+            PasswordField(
+                label = "Confirmar nova passphrase".tr(),
+                value = confirmPass,
+                onChange = { confirmPass = it },
+                isError = mismatch,
+                errorText = if (mismatch) "Não coincide".tr() else null,
+            )
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = { onChangePassphrase(newPass); newPass = ""; confirmPass = "" },
+                enabled = canSubmit,
+                shape = RoundedCornerShape(28.dp),
+                contentPadding = PaddingValues(vertical = 14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (isChanging) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                }
+                Icon(Icons.Outlined.VpnKey, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Alterar passphrase".tr(), fontWeight = FontWeight.SemiBold)
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
 private fun AppSecurityPane(
     user: User?,
     biometricEnabled: Boolean,
@@ -2120,10 +2583,10 @@ private fun AppSecurityPane(
     onEnablePin: (String) -> Unit,
     onDisablePin: (String) -> Boolean,
     onClearCache: () -> Unit,
+    onOpenSecurityActivity: () -> Unit,
     logEntries: List<LogEntry>,
     onRefreshLog: () -> Unit,
     onClearLog: () -> Unit,
-    e2eFingerprint: String? = null,
 ) {
     val context = LocalContext.current
     val biometricAvailable = remember {
@@ -2251,38 +2714,6 @@ private fun AppSecurityPane(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        // E2E: fingerprint da chave pública (deteta key-substitution).
-        if (e2eFingerprint != null) {
-            SectionLabel("Encriptação".tr())
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        "Impressão da chave de encriptação".tr(),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "Confirma que é igual nos teus outros dispositivos — um código diferente pode indicar troca de chave.".tr(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        e2eFingerprint,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 2.sp,
-                    )
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-        }
-
         SectionLabel("Segurança".tr())
         Surface(
             shape = RoundedCornerShape(14.dp),
@@ -2333,6 +2764,12 @@ private fun AppSecurityPane(
                             showPinDisable = true
                         }
                     },
+                )
+                MenuDivider()
+                SecurityActionRow(
+                    icon = Icons.Outlined.History,
+                    title = "Atividade de segurança".tr(),
+                    onClick = onOpenSecurityActivity,
                 )
             }
         }
@@ -2659,6 +3096,126 @@ private fun LogRow(entry: LogEntry) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
             )
+        }
+    }
+}
+
+// Espelha o seletor de método da web (SubscribeAccountPopup.vue): cartão via
+// Stripe ou cripto via NOWPayments. Ambos abrem uma página externa.
+@Composable
+private fun PaymentMethodDialog(
+    plan: Plan,
+    onDismiss: () -> Unit,
+    onStripe: () -> Unit,
+    onCrypto: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Método de pagamento".tr()) },
+        text = {
+            Column {
+                Text(
+                    plan.name + (plan.price?.let { " — $it" } ?: ""),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(12.dp))
+                if (plan.stripePriceId != null) {
+                    PaymentMethodRow(
+                        icon = Icons.Outlined.CreditCard,
+                        title = "Cartão".tr(),
+                        description = "Renovação automática todos os meses.".tr(),
+                        onClick = onStripe,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                PaymentMethodRow(
+                    icon = Icons.Outlined.CurrencyBitcoin,
+                    title = "Criptomoeda".tr(),
+                    description = "Bitcoin, Ethereum, Dogecoin e mais. Cada período é pago manualmente.".tr(),
+                    onClick = onCrypto,
+                )
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar".tr()) }
+        },
+    )
+}
+
+@Composable
+private fun PaymentMethodRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    description: String,
+    onClick: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+        ) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+// Avisa do pagamento em atraso. Antes do fim do prazo mostra os dias que
+// faltam; depois, que a conta está limitada. Ver ScanPastDueSubscriptionsSchedule.
+@Composable
+private fun PaymentOverdueBanner(
+    isSuspended: Boolean,
+    daysLeft: Int,
+) {
+    val container = if (isSuspended) {
+        MaterialTheme.colorScheme.errorContainer
+    } else {
+        MaterialTheme.colorScheme.tertiaryContainer
+    }
+    val onContainer = if (isSuspended) {
+        MaterialTheme.colorScheme.onErrorContainer
+    } else {
+        MaterialTheme.colorScheme.onTertiaryContainer
+    }
+    Surface(shape = RoundedCornerShape(12.dp), color = container, modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.padding(14.dp)) {
+            Icon(Icons.Outlined.Warning, contentDescription = null, tint = onContainer)
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text(
+                    if (isSuspended) "Conta limitada".tr() else "Pagamento em atraso".tr(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = onContainer,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    if (isSuspended) {
+                        "Os uploads, partilhas e equipas estão pausados. Os teus ficheiros continuam acessíveis para download.".tr()
+                    } else {
+                        "Faltam {days} dia(s) para regularizar. Depois disso, uploads e partilhas ficam pausados."
+                            .tr()
+                            .replace("{days}", daysLeft.toString())
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onContainer,
+                )
+            }
         }
     }
 }

@@ -15,6 +15,7 @@ import co.golink.tester.data.settings.AppSecurityPreferences
 import co.golink.tester.data.settings.SettingsRepository
 import co.golink.tester.domain.billing.Plan
 import co.golink.tester.domain.settings.AccessToken
+import co.golink.tester.domain.settings.SecurityEventData
 import co.golink.tester.domain.settings.SessionItem
 import co.golink.tester.domain.settings.StorageUsage
 import co.golink.tester.domain.settings.TransactionItem
@@ -35,6 +36,10 @@ import kotlinx.coroutines.launch
 data class SettingsUiState(
     val storage: StorageUsage? = null,
     val sessions: List<SessionItem> = emptyList(),
+    val securityEvents: List<SecurityEventData> = emptyList(),
+    val isLoadingSecurityEvents: Boolean = false,
+    val hasMoreSecurityEvents: Boolean = false,
+    val securityEventsPage: Int = 1,
     val transactions: List<TransactionItem> = emptyList(),
     val tokens: List<AccessToken> = emptyList(),
     val isLoadingStorage: Boolean = false,
@@ -42,6 +47,7 @@ data class SettingsUiState(
     val isLoadingTransactions: Boolean = false,
     val isLoadingTokens: Boolean = false,
     val isUpdatingPassword: Boolean = false,
+    val isChangingPassphrase: Boolean = false,
     val isUpdatingProfile: Boolean = false,
     val biometricEnabled: Boolean = false,
     val pinEnabled: Boolean = false,
@@ -53,6 +59,10 @@ data class SettingsUiState(
     val isLoadingPlans: Boolean = false,
     val isStartingCheckout: Boolean = false,
     val checkoutUrl: String? = null,
+    // Plano escolhido à espera que o utilizador escolha cartão ou crypto. null = sem diálogo.
+    val pendingCheckoutPlan: Plan? = null,
+    // Overlay de saída (revoke da sessão atual / de todas as outras). null = escondido.
+    val logoutOverlay: String? = null,
 )
 
 @HiltViewModel
@@ -145,23 +155,60 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /** Recarrega o histórico de segurança desde o início. */
+    fun loadSecurityEvents() = fetchSecurityEvents(page = 1, append = false)
+
+    fun loadMoreSecurityEvents() {
+        val s = _state.value
+        if (s.isLoadingSecurityEvents || !s.hasMoreSecurityEvents) return
+
+        fetchSecurityEvents(page = s.securityEventsPage + 1, append = true)
+    }
+
+    private fun fetchSecurityEvents(page: Int, append: Boolean) {
+        _state.update { it.copy(isLoadingSecurityEvents = true) }
+        viewModelScope.launch {
+            repository.securityEvents(page)
+                .onSuccess { result ->
+                    _state.update {
+                        it.copy(
+                            securityEvents = if (append) it.securityEvents + result.items else result.items,
+                            hasMoreSecurityEvents = result.hasMore,
+                            securityEventsPage = page,
+                            isLoadingSecurityEvents = false,
+                        )
+                    }
+                }
+                .onFailure { t ->
+                    _state.update { it.copy(isLoadingSecurityEvents = false, toast = t.message) }
+                }
+        }
+    }
+
     fun revokeSession(id: String) = viewModelScope.launch {
         val wasCurrent = _state.value.sessions.firstOrNull { it.id == id }?.is_current == true
+        // Revogar a sessão atual desloga → mostrar já o overlay "A sair da conta…".
+        if (wasCurrent) _state.update { it.copy(logoutOverlay = "A sair da conta…".tr()) }
         repository.revokeSession(id)
             .onSuccess {
                 if (wasCurrent) {
+                    // Overlay fica até o logout limpar o token e o RootGate navegar para fora.
                     authRepository.logout()
                 } else {
                     _state.update { it.copy(toast = "Sessão revogada".tr(), sessions = it.sessions.filterNot { s -> s.id == id }) }
                 }
             }
-            .onFailure { t -> _state.update { it.copy(toast = t.message) } }
+            .onFailure { t -> _state.update { it.copy(logoutOverlay = null, toast = t.message) } }
     }
 
     fun revokeAllSessions() = viewModelScope.launch {
+        _state.update { it.copy(logoutOverlay = "A sair de todas as sessões…".tr()) }
         repository.revokeAllSessions()
-            .onSuccess { _state.update { it.copy(toast = "Todas as outras sessões revogadas".tr()) }; loadSessions() }
-            .onFailure { t -> _state.update { it.copy(toast = t.message) } }
+            .onSuccess {
+                _state.update { it.copy(logoutOverlay = null, toast = "Todas as outras sessões revogadas".tr()) }
+                loadSessions()
+            }
+            .onFailure { t -> _state.update { it.copy(logoutOverlay = null, toast = t.message) } }
     }
 
     fun updatePassword(current: String, newPassword: String) {
@@ -170,6 +217,21 @@ class SettingsViewModel @Inject constructor(
             repository.updatePassword(current, newPassword)
                 .onSuccess { _state.update { it.copy(isUpdatingPassword = false, toast = "Password actualizada".tr()) } }
                 .onFailure { t -> _state.update { it.copy(isUpdatingPassword = false, toast = t.message) } }
+        }
+    }
+
+    // Muda a passphrase E2E: re-embrulha a chave privada (em memória) com o novo
+    // segredo. NÃO re-cifra ficheiros — continuam selados à mesma chave pública.
+    fun changeEncryptionPassphrase(secret: String) {
+        if (secret.length < 8) {
+            _state.update { it.copy(toast = "Mínimo 8 caracteres".tr()) }
+            return
+        }
+        _state.update { it.copy(isChangingPassphrase = true) }
+        viewModelScope.launch {
+            runCatching { e2eKeyManager.rotateSecret(secret) }
+                .onSuccess { _state.update { it.copy(isChangingPassphrase = false, toast = "Passphrase alterada".tr()) } }
+                .onFailure { t -> _state.update { it.copy(isChangingPassphrase = false, toast = t.message ?: "Falha ao alterar passphrase".tr()) } }
         }
     }
 
@@ -276,15 +338,32 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /** Abre o seletor de método de pagamento para o plano escolhido. */
+    fun selectPlan(plan: Plan) = _state.update { it.copy(pendingCheckoutPlan = plan) }
+
+    fun dismissPaymentMethods() = _state.update { it.copy(pendingCheckoutPlan = null) }
+
     fun startStripeCheckout(plan: Plan) {
         val priceId = plan.stripePriceId
         if (priceId.isNullOrBlank()) {
             _state.update { it.copy(toast = "Este plano não tem Stripe configurado".tr()) }
             return
         }
-        _state.update { it.copy(isStartingCheckout = true) }
+        startCheckout { billingRepository.createStripeCheckout(priceId) }
+    }
+
+    /**
+     * O checkout crypto usa o id do plano local, por isso está sempre
+     * disponível: não depende de um plano espelhado no gateway.
+     */
+    fun startCryptoCheckout(plan: Plan) {
+        startCheckout { billingRepository.createCryptoCheckout(plan.id) }
+    }
+
+    private fun startCheckout(request: suspend () -> Result<String>) {
+        _state.update { it.copy(isStartingCheckout = true, pendingCheckoutPlan = null) }
         viewModelScope.launch {
-            billingRepository.createStripeCheckout(priceId)
+            request()
                 .onSuccess { url -> _state.update { it.copy(isStartingCheckout = false, checkoutUrl = url) } }
                 .onFailure { t -> _state.update { it.copy(isStartingCheckout = false, toast = "Erro a iniciar checkout: ${t.message}") } }
         }

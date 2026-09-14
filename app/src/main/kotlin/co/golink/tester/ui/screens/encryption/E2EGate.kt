@@ -4,8 +4,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -43,17 +47,23 @@ class E2EGateViewModel @Inject constructor(
 ) : ViewModel() {
 
     val unlocked: StateFlow<Boolean> = keys.unlocked
+    // Configurado no servidor — usado para saber se escondemos a tabela/navegação.
+    val configuredFlow: StateFlow<Boolean> = keys.configured
 
     var mode by mutableStateOf(GateMode.Checking); private set
     var configured by mutableStateOf(false); private set
     var recoveryKey by mutableStateOf<String?>(null); private set
     var working by mutableStateOf(false); private set
     var error by mutableStateOf<String?>(null); private set
+    /** Incrementa a cada falha: dispara o shake do campo (mesmo erro repetido). */
+    var errorPulse by mutableStateOf(0); private set
 
     /** Ao entrar no ecrã autenticado: se já desbloqueado, nada; senão pede. */
     fun start() {
         if (keys.isUnlocked) { mode = GateMode.Done; return }
-        if (mode != GateMode.Checking) return
+        // Done aqui significa "fechado pelo utilizador" (X) — não é estado terminal:
+        // o reopen() a partir do placeholder tem de voltar a abrir o prompt.
+        if (mode != GateMode.Checking && mode != GateMode.Done) return
         viewModelScope.launch {
             configured = runCatching { keys.isConfigured() }.getOrDefault(false)
             mode = GateMode.Prompt
@@ -62,7 +72,10 @@ class E2EGateViewModel @Inject constructor(
 
     fun submitSecret(secret: String) {
         if (secret.isBlank() || working) return
-        submitMinMillis = 10_000L // manter a animação de decifra visível ~10s (pedido de design)
+        // A animação segue o trabalho REAL (KDF + unwrap): fecha assim que a decifra
+        // termina e fica mais tempo se o loading demorar. Só um piso anti-flash de
+        // 700ms, IGUAL à web (E2EKeyGate.vue). Antes eram 10s fixos → irrealista.
+        submitMinMillis = 700L
         // Mínimo 8 chars NO SETUP (wrap = alvo de brute-force offline); no unlock
         // não, para chaves antigas continuarem a abrir. Igual à Web.
         if (!configured && secret.length < 8) {
@@ -82,6 +95,27 @@ class E2EGateViewModel @Inject constructor(
     }
 
     fun confirmRecoverySaved() { mode = GateMode.Done }
+
+    /** Cancelar o unlock (X): fecha o diálogo. A tabela continua escondida
+     *  (configurado && !unlocked) e o placeholder reabre o gate. Só no unlock
+     *  de uma conta já configurada. */
+    fun dismiss() { if (configured && mode == GateMode.Prompt) mode = GateMode.Done }
+
+    /** Reabrir o gate a partir do placeholder "Desencriptar ficheiros".
+     *  Reconfirma `configured` no servidor: o E2EGate só chama start() uma vez
+     *  (LaunchedEffect(Unit)), por isso o reopen tem de ser autossuficiente —
+     *  sem isto o prompt reabria com configured=false e pedia setup em vez de unlock. */
+    fun reopen() {
+        error = null
+        if (keys.isUnlocked) { mode = GateMode.Done; return }
+        mode = GateMode.Prompt
+        viewModelScope.launch {
+            configured = runCatching { keys.isConfigured() }.getOrDefault(configured)
+        }
+    }
+
+    /** Ao voltar a escrever: tira o vermelho em vez de o deixar preso no campo. */
+    fun clearError() { error = null }
 
     fun startRecover() { error = null; mode = GateMode.Recover }
     fun backToPrompt() { error = null; mode = GateMode.Prompt }
@@ -123,7 +157,36 @@ class E2EGateViewModel @Inject constructor(
             if (result.isSuccess && minMillis > 0) {
                 kotlinx.coroutines.delay((minMillis - (System.currentTimeMillis() - t0)).coerceAtLeast(0L))
             }
-            result.onSuccess { it?.invoke() }.onFailure { error = errMsg }
+            result.onSuccess { it?.invoke() }.onFailure {
+                // Só a falha de decifra significa segredo errado. Mismatch de chaves
+                // ou erro de rede davam a mesma mensagem e mandavam o utilizador
+                // tentar sem parar uma passphrase que estava correta.
+                val cause = it.message.orEmpty()
+                error = when {
+                    cause == "e2e_key_mismatch" ->
+                        "As chaves não correspondem. Usa a chave de recuperação.".tr()
+                    // Um 403 aqui é quase sempre OTP por validar, não passphrase errada.
+                    cause.contains("HTTP 403") ->
+                        "Sessão por validar. Volta a entrar na conta.".tr()
+                    it is java.io.IOException ->
+                        "Sem ligação ao servidor (%s).".tr().format(cause)
+                    // Self-test do setup/rotação: o problema é a chave a criar, não o
+                    // segredo introduzido — dizer "segredo errado" mandava o
+                    // utilizador procurar no sítio errado.
+                    cause.startsWith("e2e_selftest") ->
+                        "Falha ao preparar a encriptação neste dispositivo (%s).".tr().format(cause)
+                    // Blob com tamanhos inválidos: o registo no servidor está
+                    // corrompido — dizer "segredo errado" mandava procurar no
+                    // sítio errado.
+                    cause.startsWith("e2e_bad_blob") ->
+                        "Os dados de encriptação no servidor estão inválidos.".tr()
+                    else -> errMsg
+                }
+                errorPulse++
+                // Detalhe técnico só no logcat — a UI mostra a causa em linguagem
+                // normal, sem o despejo de diagnóstico.
+                android.util.Log.w("E2EGate", "unlock falhou", it)
+            }
             working = false
         }
     }
@@ -136,7 +199,9 @@ fun E2EGate(viewModel: E2EGateViewModel = hiltViewModel()) {
     val mode = viewModel.mode
     if (mode == GateMode.Checking || mode == GateMode.Done) return
 
-    Dialog(onDismissRequest = { /* modal obrigatório */ }) {
+    // Só é dismissível no unlock de uma conta já configurada; setup/recovery/reset
+    // mantêm-se obrigatórios (dismiss() faz a verificação).
+    Dialog(onDismissRequest = { viewModel.dismiss() }) {
         Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.fillMaxWidth().padding(20.dp)) {
                 when (mode) {
@@ -156,6 +221,8 @@ fun E2EGate(viewModel: E2EGateViewModel = hiltViewModel()) {
                         viewModel = viewModel,
                         onSubmit = viewModel::submitSecret,
                         showForgot = viewModel.configured,
+                        // X só no unlock de conta configurada.
+                        onClose = if (viewModel.configured) viewModel::dismiss else null,
                     )
                 }
             }
@@ -227,8 +294,23 @@ private fun SecretContent(
     viewModel: E2EGateViewModel,
     onSubmit: (String) -> Unit,
     showForgot: Boolean = false,
+    onClose: (() -> Unit)? = null,
 ) {
     var secret by remember { mutableStateOf("") }
+    if (onClose != null && !viewModel.working) {
+        androidx.compose.foundation.layout.Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End,
+        ) {
+            androidx.compose.material3.IconButton(onClick = onClose, modifier = Modifier.size(28.dp)) {
+                androidx.compose.material3.Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "Fechar".tr(),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
     Text(title, style = MaterialTheme.typography.titleLarge)
     Spacer(Modifier.height(4.dp))
     Text(desc, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -239,13 +321,32 @@ private fun SecretContent(
         co.golink.tester.ui.components.DecryptEffect(label = if (viewModel.configured) "A desencriptar".tr() else "A proteger os teus ficheiros".tr())
         Spacer(Modifier.height(8.dp))
     } else {
+        // Falha: campo a vermelho + shake + vibração curta. O pulse é um contador,
+        // por isso repetir o MESMO erro volta a animar (um simples `error != null`
+        // não mudava de valor e a segunda tentativa passava despercebida).
+        val shake = remember { androidx.compose.animation.core.Animatable(0f) }
+        val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+        LaunchedEffect(viewModel.errorPulse) {
+            if (viewModel.errorPulse == 0) return@LaunchedEffect
+            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+            val spec = androidx.compose.animation.core.tween<Float>(durationMillis = 45)
+            repeat(3) {
+                shake.animateTo(10f, spec)
+                shake.animateTo(-10f, spec)
+            }
+            shake.animateTo(0f, spec)
+        }
+
         OutlinedTextField(
             value = secret,
-            onValueChange = { secret = it },
+            onValueChange = { secret = it; if (viewModel.error != null) viewModel.clearError() },
             singleLine = true,
+            isError = viewModel.error != null,
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { androidx.compose.ui.unit.IntOffset(shake.value.toInt(), 0) },
         )
         viewModel.error?.let { Spacer(Modifier.height(6.dp)); Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         Spacer(Modifier.height(14.dp))

@@ -142,6 +142,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleStartEffect
@@ -153,6 +154,8 @@ import co.golink.tester.data.settings.SettingsRepository
 import co.golink.tester.data.user.UserRepository
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.TeamMember
+import androidx.compose.foundation.isSystemInDarkTheme
+import co.golink.tester.domain.settings.StorageLevel
 import co.golink.tester.domain.settings.StorageUsage
 import co.golink.tester.domain.user.User
 import co.golink.tester.ui.components.BrowseItemGridCard
@@ -238,6 +241,13 @@ fun BrowseScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
+    // Gate E2E (mesma instância do E2EGate() sobreposto no AppNavHost). Enquanto
+    // estiver configurado e trancado, escondemos a tabela e a navegação.
+    val gateVm: co.golink.tester.ui.screens.encryption.E2EGateViewModel = hiltViewModel()
+    val e2eUnlocked by gateVm.unlocked.collectAsStateWithLifecycle()
+    val e2eConfigured by gateVm.configuredFlow.collectAsStateWithLifecycle()
+    val e2eLocked = e2eConfigured && !e2eUnlocked
+
     // Avatar: clicar → escolher imagem → recortar no popup → upload.
     var avatarPick by remember { mutableStateOf<android.net.Uri?>(null) }
     val avatarPicker = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -256,6 +266,12 @@ fun BrowseScreen(
         val msg = state.toast ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(msg)
         viewModel.consumeToast()
+    }
+
+    // Storage em tempo real: recalcula o uso sempre que um upload termina.
+    val completedUploads = uploads.count { it.state.name == "Completed" }
+    LaunchedEffect(completedUploads) {
+        if (completedUploads > 0) shell.refreshStorage()
     }
 
     // Sincroniza a pasta em tempo real (polling) só enquanto o ecrã está visível.
@@ -373,6 +389,9 @@ fun BrowseScreen(
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), modifier = Modifier.padding(horizontal = 16.dp))
                 Spacer(Modifier.height(8.dp))
+                if (e2eLocked) {
+                    DrawerEncryptedIndicator()
+                } else {
                 DrawerSectionHeader("BASE")
                 DrawerEntry(Icons.Outlined.Folder, "Ficheiros".tr(), state.mode is BrowseMode.Folder) {
                     viewModel.openRoot(); scope.launch { drawerState.close() }
@@ -441,6 +460,7 @@ fun BrowseScreen(
                             }
                         }
                     }
+                }
                 }
                 Spacer(Modifier.height(8.dp))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), modifier = Modifier.padding(horizontal = 16.dp))
@@ -520,7 +540,8 @@ fun BrowseScreen(
             topBar = {
                 TopAppBar(
                     title = {
-                        TopBarTitle(state = state, onCrumb = viewModel::goToCrumb)
+                        // E2E trancado: sem breadcrumb (esconde o nome da pasta).
+                        if (!e2eLocked) TopBarTitle(state = state, onCrumb = viewModel::goToCrumb)
                     },
                     navigationIcon = {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
@@ -538,6 +559,9 @@ fun BrowseScreen(
                                 )
                             }
                         }
+                        // E2E trancado: esconde as ações de ficheiros (selecionar,
+                        // esvaziar lixo, adicionar). Mantém notificações e o menu.
+                        if (!e2eLocked) {
                         if (!state.selectMode) {
                             IconButton(onClick = { viewModel.enterSelectMode() }) {
                                 Icon(Icons.Outlined.CheckBox, contentDescription = "Selecionar")
@@ -546,7 +570,7 @@ fun BrowseScreen(
                         if (state.mode == BrowseMode.Trash) {
                             IconButton(
                                 onClick = { activeDialog = ActionDialog.EmptyTrash },
-                                enabled = state.processing == null && state.items.isNotEmpty(),
+                                enabled = !state.isEmptyingTrash && state.items.isNotEmpty(),
                             ) {
                                 Icon(Icons.Filled.DeleteSweep, contentDescription = "Esvaziar lixo".tr())
                             }
@@ -632,6 +656,7 @@ fun BrowseScreen(
                                 }
                             }
                         }
+                        }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -662,16 +687,21 @@ fun BrowseScreen(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ) { padding ->
             Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            if (e2eLocked) {
+                E2ELockedContent(modifier = Modifier.fillMaxSize()) { gateVm.reopen() }
+            } else {
             Column(modifier = Modifier.fillMaxSize()) {
-                if ((storage?.percentage ?: 0f) >= 90f) {
+                if (storage?.isLow == true) {
                     LowStorageBanner(
                         used = storage?.used,
                         capacity = storage?.capacity,
                         onUpgrade = onOpenBilling,
+                        level = storage!!.level,
                     )
                 }
                 NewsBanner()
                 co.golink.tester.ui.screens.encryption.E2EMigrationBanner()
+                co.golink.tester.ui.screens.encryption.E2ENameMigrationBanner()
                 SearchRow(
                     query = state.searchQuery,
                     onQueryChange = viewModel::setSearchQuery,
@@ -697,7 +727,10 @@ fun BrowseScreen(
                 PullToRefreshBox(
                     isRefreshing = state.isRefreshing,
                     onRefresh = viewModel::refresh,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .then(if (state.isEmptyingTrash) Modifier.blur(14.dp) else Modifier),
                 ) {
                     when {
                         state.isLoading && state.items.isEmpty() -> {
@@ -834,6 +867,7 @@ fun BrowseScreen(
                     )
                 }
             }
+            }
             co.golink.tester.ui.components.E2EEncryptedFlash(
                 trigger = state.mode,
                 modifier = Modifier.align(Alignment.BottomCenter),
@@ -857,6 +891,46 @@ fun BrowseScreen(
                     color = androidx.compose.ui.graphics.Color.White,
                     style = MaterialTheme.typography.bodyMedium,
                 )
+            }
+        }
+    }
+
+    // Flush do lixo: cartão de progresso 0–100% por cima da lista desfocada,
+    // enquanto os ficheiros vão desaparecendo por trás a cada lote apagado.
+    if (state.isEmptyingTrash) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 8.dp,
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(horizontal = 30.dp, vertical = 24.dp),
+                ) {
+                    CircularProgressIndicator(
+                        progress = { state.emptyingProgress / 100f },
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        "A eliminar permanentemente…".tr(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "${state.emptyingProgress}%",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         }
     }
@@ -976,14 +1050,15 @@ fun BrowseScreen(
                         loadingQr = ss.loadingQr,
                         isWorking = ss.isWorking,
                         emailDialogVisible = ss.emailDialogVisible,
+                        keyPending = ss.keyPending,
                     ),
                     onDismiss = {
                         activeDialog = ActionDialog.None
                         actionTarget = null
                         viewModel.closeShareDialog()
                     },
-                    onCreate = { pwd, perm, days -> viewModel.createShare(pwd, perm, days) },
-                    onUpdate = { pwd, perm, days -> viewModel.updateCurrentShare(pwd, perm, days) },
+                    onCreate = { pwd, perm, days, limit -> viewModel.createShare(pwd, perm, days, limit) },
+                    onUpdate = { pwd, perm, days, limit -> viewModel.updateCurrentShare(pwd, perm, days, limit) },
                     onCopy = { /* clipboard handled inside dialog */ },
                     onShowQr = viewModel::fetchQrCode,
                     onSendEmail = viewModel::sendShareEmail,
@@ -1006,6 +1081,7 @@ fun BrowseScreen(
                     onConfirm = {
                         if (multi) viewModel.deleteSelected(permanent = true)
                         else actionTarget?.let { viewModel.delete(it, permanent = true) }
+                        shell.refreshStorage()
                     },
                 )
             }
@@ -1631,13 +1707,28 @@ private fun BreadcrumbsRow(crumbs: List<Crumb>, onSelect: (Int) -> Unit) {
     }
 }
 
+/**
+ * Severity accent for storage UI. Green (OK) → amber (WARNING) → red (DANGER).
+ * Amber/red are theme-aware light/dark variants; green reuses the theme primary.
+ */
+@Composable
+private fun storageAccent(level: StorageLevel): Color {
+    val dark = isSystemInDarkTheme()
+    return when (level) {
+        StorageLevel.OK -> MaterialTheme.colorScheme.primary
+        StorageLevel.WARNING -> if (dark) Color(0xFFFBBF24) else Color(0xFFD97706)
+        StorageLevel.DANGER -> if (dark) Color(0xFFF87171) else Color(0xFFDC2626)
+    }
+}
+
 @Composable
 private fun LowStorageBanner(
     used: String?,
     capacity: String?,
     onUpgrade: () -> Unit,
+    level: StorageLevel = StorageLevel.DANGER,
 ) {
-    val color = MaterialTheme.colorScheme.error
+    val color = storageAccent(level)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1665,14 +1756,14 @@ private fun LowStorageBanner(
             )
             if (used != null && capacity != null) {
                 Text(
-                    "$used de $capacity utilizados",
+                    "%1\$s de %2\$s utilizados".tr().format(used, capacity),
                     style = MaterialTheme.typography.bodySmall,
                     color = color.copy(alpha = 0.85f),
                 )
             }
         }
         Text(
-            "Upgrade →",
+            "Upgrade".tr() + " →",
             style = MaterialTheme.typography.labelMedium,
             color = color,
             fontWeight = FontWeight.SemiBold,
@@ -1685,8 +1776,9 @@ private fun StorageFooter(
     storage: StorageUsage?,
     onUpgrade: () -> Unit,
 ) {
-    val isLow = (storage?.percentage ?: 0f) >= 90f
-    val accent = if (isLow) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    val level = storage?.level ?: StorageLevel.OK
+    val isLow = storage?.isLow == true
+    val accent = storageAccent(level)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1813,6 +1905,66 @@ private fun EmptyState(title: String, subtitle: String) {
         Text(title, style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(6.dp))
         Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** Placeholder no lugar da tabela enquanto o E2E está trancado. */
+@Composable
+private fun E2ELockedContent(modifier: Modifier = Modifier, onUnlock: () -> Unit) {
+    Column(
+        modifier = modifier.padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            Icons.Outlined.Lock,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(40.dp),
+        )
+        Spacer(Modifier.height(14.dp))
+        Text("Os teus ficheiros estão protegidos.".tr(), style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Desbloqueia com a tua password de encriptação para veres as pastas e ficheiros.".tr(),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+        Spacer(Modifier.height(18.dp))
+        Button(
+            onClick = onUnlock,
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = co.golink.tester.ui.theme.BrandGreen),
+        ) {
+            Text(
+                "Desencriptar ficheiros".tr(),
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+    }
+}
+
+/** Indicador "Encrypted" no drawer, no lugar da navegação de ficheiros. */
+@Composable
+private fun DrawerEncryptedIndicator() {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            Icons.Outlined.Lock,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Encrypted".tr(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

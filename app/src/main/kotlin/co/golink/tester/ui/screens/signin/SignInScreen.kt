@@ -65,7 +65,7 @@ fun SignInScreen(
         OutlinedTextField(
             value = state.email,
             onValueChange = viewModel::onEmail,
-            placeholder = { Text("o.teu.email@exemplo.com") },
+            placeholder = { Text("o.teu.email@exemplo.com".tr()) },
             singleLine = true,
             isError = state.emailError != null,
             supportingText = state.emailError?.let { { Text(it) } },

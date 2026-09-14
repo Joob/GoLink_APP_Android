@@ -6,12 +6,15 @@ import kotlinx.serialization.Serializable
 data class CreateFolderRequest(
     val name: String,
     val parent_id: String? = null,
+    // E2E Fase 2: nome cifrado (opcional). Presente → `name` fica placeholder.
+    val name_encrypted: String? = null,
 )
 
 @Serializable
 data class RenameItemRequest(
     val name: String,
     val type: String,
+    val name_encrypted: String? = null,
 )
 
 @Serializable

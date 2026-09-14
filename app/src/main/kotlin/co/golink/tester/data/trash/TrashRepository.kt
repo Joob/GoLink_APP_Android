@@ -3,6 +3,7 @@ package co.golink.tester.data.trash
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.toItem
 import co.golink.tester.domain.files.ItemRef
+import co.golink.tester.domain.trash.DumpTrashResponse
 import co.golink.tester.domain.trash.RestoreTrashRequest
 import co.golink.tester.network.TrashApi
 import javax.inject.Inject
@@ -28,8 +29,10 @@ class TrashRepository @Inject constructor(
         check(response.isSuccessful) { "HTTP ${response.code()}" }
     }
 
-    suspend fun emptyTrash(): Result<Unit> = runCatching {
-        val response = api.dump()
+    // Apaga até `limit` itens do lixo e devolve deleted/remaining para o progresso.
+    suspend fun dumpBatch(limit: Int): Result<DumpTrashResponse> = runCatching {
+        val response = api.dump(limit)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
+        response.body() ?: error("Resposta vazia")
     }
 }

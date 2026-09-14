@@ -72,7 +72,8 @@ fun GrantE2EAccessDialog(
             when (phase) {
                 "loading" -> Text("A carregar a chave do destinatário…".tr())
                 "no_e2e" -> Text(
-                    "${member.name ?: member.email} ainda não configurou a encriptação, por isso não pode receber ficheiros cifrados.".tr(),
+                    "%s ainda não configurou a encriptação, por isso não pode receber ficheiros cifrados.".tr()
+                        .format(member.name ?: member.email),
                 )
                 "confirm" -> Column {
                     Text(
@@ -99,7 +100,7 @@ fun GrantE2EAccessDialog(
                     Spacer(Modifier.height(4.dp))
                     Text("$done / $total", style = MaterialTheme.typography.labelSmall)
                 }
-                "done" -> Text("Acesso concedido a $okCount de $total ficheiros.".tr())
+                "done" -> Text("Acesso concedido a %1\$d de %2\$d ficheiros.".tr().format(okCount, total))
             }
         },
         confirmButton = {

@@ -72,6 +72,10 @@ data class BrowseUiState(
     val selectMode: Boolean = false,
     val filesOnly: Boolean = false,
     val isRefreshing: Boolean = false,
+    // Flush do lixo: enquanto true, a lista fica com blur e os ficheiros vão
+    // desaparecendo por trás à medida que cada lote é apagado; progresso 0–100.
+    val isEmptyingTrash: Boolean = false,
+    val emptyingProgress: Int = 0,
 )
 
 data class ShareDialogUiState(
@@ -82,6 +86,10 @@ data class ShareDialogUiState(
     val sendingEmail: Boolean = false,
     val isWorking: Boolean = false,
     val emailDialogVisible: Boolean = false,
+    // E2E: chave (#k=) da partilha ainda a ser preparada em fundo (pastas fazem
+    // round-trip ao servidor). Enquanto true, a UI bloqueia copiar/QR/email para
+    // não entregar um link SEM a chave.
+    val keyPending: Boolean = false,
 )
 
 data class Crumb(val id: String?, val name: String)
@@ -101,6 +109,7 @@ class BrowseViewModel @Inject constructor(
     private val fileViewerSession: FileViewerSession,
     private val viewPreferences: co.golink.tester.data.settings.ViewPreferences,
     private val e2eKeys: co.golink.tester.data.encryption.E2EKeyManager,
+    private val e2eShareService: co.golink.tester.data.encryption.E2EShareService,
     private val encryptionApi: co.golink.tester.network.UserEncryptionApi,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
@@ -113,9 +122,12 @@ class BrowseViewModel @Inject constructor(
     val uploads: StateFlow<List<UploadTask>> = uploadManager.tasks
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    val favouriteFolders: StateFlow<List<BrowseItem.Folder>> = sessionManager.state
-        .map { s -> if (s is AuthState.Authenticated) s.user.favouriteFolders else emptyList() }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    // E2E Fase 2: decifra os nomes das favoritas (re-emite ao desbloquear).
+    val favouriteFolders: StateFlow<List<BrowseItem.Folder>> =
+        kotlinx.coroutines.flow.combine(sessionManager.state, e2eKeys.unlocked) { s, _ ->
+            val list = if (s is AuthState.Authenticated) s.user.favouriteFolders else emptyList()
+            list.map { f -> e2eKeys.openNameOrNull(f.nameEncrypted)?.let { f.copy(name = it) } ?: f }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private var searchJob: Job? = null
     private var loadJob: Job? = null
@@ -153,6 +165,17 @@ class BrowseViewModel @Inject constructor(
                     is FileDownloader.Event.Started -> _state.update { it.copy(toast = "Download iniciado: ${ev.name}") }
                     is FileDownloader.Event.Completed -> _state.update { it.copy(toast = "Download concluído: ${ev.name}") }
                     is FileDownloader.Event.Failed -> _state.update { it.copy(toast = "Falha em ${ev.name}: ${ev.message}") }
+                }
+            }
+        }
+        // E2E Fase 2: ao desbloquear, recarrega (para decifrar os nomes que tinham
+        // sido lidos trancados) e migra em background os nomes ainda em claro.
+        viewModelScope.launch {
+            e2eKeys.unlocked.collect { unlocked ->
+                if (unlocked) {
+                    launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { e2eKeys.migrateNames() } }
+                    loadCurrent()
+                    loadNavigationTree()
                 }
             }
         }
@@ -295,11 +318,11 @@ class BrowseViewModel @Inject constructor(
         val items = selectedItems()
         exitSelectMode()
         if (items.isEmpty()) return
-        val onlyFiles = items.all { it is BrowseItem.File }
+        // 1 item → download direto (single file ou zip da pasta). Vários itens
+        // (ficheiros e/ou pastas) → SEMPRE um zip, como na web. Antes, uma
+        // seleção só de ficheiros descarregava um a um em vez de zipar.
         if (items.size == 1) {
             downloadItem(items.first())
-        } else if (onlyFiles) {
-            items.filterIsInstance<BrowseItem.File>().forEach { downloadFile(it) }
         } else {
             downloader.downloadZip(items, suggestedName = "ficheiros.zip")
                 .onSuccess { _state.update { it.copy(toast = "A preparar zip (${items.size})") } }
@@ -336,9 +359,16 @@ class BrowseViewModel @Inject constructor(
         }
     }
 
+    // E2E Fase 2: só ciframos nomes no espaço privado do utilizador — não em
+    // pastas de equipa / partilhas / resultados de pesquisa.
+    private fun isPrivateNameContext(): Boolean = when (state.value.mode) {
+        is BrowseMode.Folder, BrowseMode.Latest, BrowseMode.Favourites, BrowseMode.Trash -> true
+        else -> false
+    }
+
     fun rename(item: BrowseItem, newName: String) {
         viewModelScope.launch {
-            filesRepository.rename(item, newName.trim())
+            filesRepository.rename(item, newName.trim(), encryptName = isPrivateNameContext())
                 .onSuccess { _state.update { it.copy(toast = "Renomeado") }; loadCurrent() }
                 .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
         }
@@ -364,14 +394,20 @@ class BrowseViewModel @Inject constructor(
         }
     }
 
+    // Nomes (em claro) dos ficheiros já visíveis na pasta: com nomes cifrados é
+    // o cliente que deteta o conflito, o servidor só vê o placeholder.
+    private fun visibleFileNames(): Map<String, String> =
+        state.value.items.filterIsInstance<BrowseItem.File>().associate { it.name to it.id }
+
     fun upload(uri: Uri) {
         val parentId = (state.value.mode as? BrowseMode.Folder)?.id
-        uploadManager.enqueue(uri, parentId)
+        uploadManager.enqueue(uri, parentId, visibleFileNames())
     }
 
     fun uploadMany(uris: List<Uri>) {
         val parentId = (state.value.mode as? BrowseMode.Folder)?.id
-        uris.forEach { uploadManager.enqueue(it, parentId) }
+        val names = visibleFileNames()
+        uris.forEach { uploadManager.enqueue(it, parentId, names) }
     }
 
     fun remoteUpload(rawInput: String) {
@@ -470,7 +506,23 @@ class BrowseViewModel @Inject constructor(
     fun loadNavigationTree() {
         viewModelScope.launch {
             repository.navigation()
-                .onSuccess { sections -> _state.update { it.copy(navigationTree = sections) } }
+                .onSuccess { sections ->
+                    _state.update { st ->
+                        // E2E Fase 2: crumbs criados com a chave trancada ficaram com o
+                        // placeholder '•' — corrige-os com o nome decifrado da árvore.
+                        val byId = buildMap<String, String> {
+                            fun walk(f: co.golink.tester.domain.browse.NavFolder) {
+                                put(f.id, f.name); f.folders.forEach(::walk)
+                            }
+                            sections.forEach { it.folders.forEach(::walk) }
+                        }
+                        val crumbs = st.crumbs.map { c ->
+                            val id = c.id
+                            if (c.name == "•" && id != null) c.copy(name = byId[id] ?: c.name) else c
+                        }
+                        st.copy(navigationTree = sections, crumbs = crumbs)
+                    }
+                }
         }
     }
 
@@ -498,23 +550,51 @@ class BrowseViewModel @Inject constructor(
     }
 
     /**
-     * E2E: para ficheiros cifrados, a data key tem de viajar no fragmento (#k=)
-     * do link de partilha — nunca chega ao servidor. Sem isto o destinatário
-     * recebia ciphertext que não conseguia abrir (igual ao CopyShareLink da Web).
+     * E2E: a data key tem de viajar no fragmento (#k=) do link de partilha —
+     * nunca chega ao servidor. Sem isto o destinatário recebia ciphertext que não
+     * conseguia abrir (igual ao CopyShareLink da Web). FICHEIRO: a própria data
+     * key; PASTA: uma chave de partilha que abre as data keys registadas no token.
      */
     private fun attachShareKeyFragment() {
         val st = _shareState.value ?: return
-        val link = st.share?.link ?: return
-        val isEncryptedFile = (st.item as? BrowseItem.File)?.encrypted == true
-        if (!isEncryptedFile || !e2eKeys.isUnlocked || link.contains("#k=")) return
-        viewModelScope.launch {
-            runCatching {
-                val wrapped = encryptionApi.fileKey(st.item.id).body()?.wrapped_data_key ?: return@launch
-                val dataKey = e2eKeys.openFileDataKey(wrapped)
-                val fragment = "#k=" + java.net.URLEncoder.encode(
-                    co.golink.tester.data.encryption.Envelope.b64(dataKey), "UTF-8")
-                _shareState.update { cur ->
-                    cur?.copy(share = cur.share?.copy(link = cur.share.link + fragment))
+        val share = st.share ?: return
+        val link = share.link ?: return
+        if (!e2eKeys.isUnlocked || link.contains("#k=")) return
+        when (val item = st.item) {
+            is BrowseItem.File -> {
+                if (!item.encrypted) return
+                _shareState.update { it?.copy(keyPending = true) }
+                viewModelScope.launch {
+                    try {
+                        runCatching {
+                            val wrapped = encryptionApi.fileKey(item.id).body()?.wrapped_data_key ?: return@runCatching
+                            // Regista também o nome cifrado com esta chave: sem isso
+                            // o visitante do link vê o placeholder ('•').
+                            val fragment = e2eShareService.buildFileShareFragment(
+                                item.id, share.token, wrapped, item.name,
+                            ) ?: return@runCatching
+                            _shareState.update { cur ->
+                                cur?.copy(share = cur.share?.copy(link = cur.share.link + fragment))
+                            }
+                        }
+                    } finally {
+                        _shareState.update { it?.copy(keyPending = false) }
+                    }
+                }
+            }
+            is BrowseItem.Folder -> {
+                _shareState.update { it?.copy(keyPending = true) }
+                viewModelScope.launch {
+                    try {
+                        runCatching {
+                            val fragment = e2eShareService.buildFolderShareFragment(item.id, share.token) ?: return@runCatching
+                            _shareState.update { cur ->
+                                cur?.copy(share = cur.share?.copy(link = cur.share.link + fragment))
+                            }
+                        }
+                    } finally {
+                        _shareState.update { it?.copy(keyPending = false) }
+                    }
                 }
             }
         }
@@ -524,11 +604,11 @@ class BrowseViewModel @Inject constructor(
         _shareState.value = null
     }
 
-    fun createShare(password: String?, permission: String?, expirationDays: Int?) {
+    fun createShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) {
         val current = _shareState.value ?: return
         _shareState.value = current.copy(isWorking = true)
         viewModelScope.launch {
-            shareRepository.create(current.item, password, permission, expirationDays, null)
+            shareRepository.create(current.item, password, permission, expirationDays, downloadLimit, null)
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
                     attachShareKeyFragment()
@@ -542,7 +622,7 @@ class BrowseViewModel @Inject constructor(
         }
     }
 
-    fun updateCurrentShare(password: String?, permission: String?, expirationDays: Int?) {
+    fun updateCurrentShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) {
         val current = _shareState.value ?: return
         val token = current.share?.token ?: return
         _shareState.value = current.copy(isWorking = true)
@@ -553,6 +633,7 @@ class BrowseViewModel @Inject constructor(
                 password = password?.takeIf { it.isNotBlank() },
                 permission = permission,
                 expirationDays = expirationDays,
+                downloadLimit = downloadLimit,
             )
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
@@ -627,15 +708,47 @@ class BrowseViewModel @Inject constructor(
         }
     }
 
+    // Esvazia o lixo em lotes: a cada lote actualiza o progresso e recarrega a
+    // lista em silêncio (sem spinner) para os itens sumirem por trás do blur.
     fun emptyTrash() {
-        _state.update { it.copy(processing = "A esvaziar o lixo…".tr()) }
+        if (_state.value.isEmptyingTrash) return
+        _state.update { it.copy(isEmptyingTrash = true, emptyingProgress = 0) }
         viewModelScope.launch {
-            trashRepository.emptyTrash()
-                .onSuccess { _state.update { it.copy(processing = null, toast = "Lixo esvaziado".tr()) }; loadCurrent() }
-                .onFailure { t ->
-                    android.util.Log.e("BrowseVM", "emptyTrash failed", t)
-                    _state.update { it.copy(processing = null, toast = "Falha: ${t.message ?: t::class.java.simpleName}") }
+            val batch = 50
+            var total: Int? = null
+            var remaining = Int.MAX_VALUE
+            try {
+                while (remaining > 0) {
+                    val res = trashRepository.dumpBatch(batch).getOrElse { t ->
+                        android.util.Log.e("BrowseVM", "emptyTrash failed", t)
+                        _state.update { it.copy(toast = "Falha: ${t.message ?: t::class.java.simpleName}") }
+                        null
+                    } ?: break
+                    remaining = res.remaining
+                    if (total == null) total = res.deleted + res.remaining
+                    val t = total ?: 0
+                    val pct = if (t > 0) (t - remaining) * 100 / t else 100
+                    _state.update { it.copy(emptyingProgress = pct.coerceIn(0, 99)) }
+                    if (_state.value.mode == BrowseMode.Trash) reloadTrashItems()
+                    if (res.deleted == 0) break
                 }
+                _state.update { it.copy(emptyingProgress = 100) }
+                if (_state.value.mode == BrowseMode.Trash) reloadTrashItems()
+                _state.update { it.copy(toast = "Lixo esvaziado".tr()) }
+            } finally {
+                delay(400)
+                _state.update { it.copy(isEmptyingTrash = false, emptyingProgress = 0) }
+            }
+        }
+    }
+
+    // Recarrega a lista do lixo sem tocar no isLoading (sem skeleton): os itens
+    // já apagados desaparecem por trás do blur, mantendo a vista visível.
+    private suspend fun reloadTrashItems() {
+        trashRepository.list().onSuccess { items ->
+            if (_state.value.mode == BrowseMode.Trash) {
+                _state.update { it.copy(items = sorted(items)) }
+            }
         }
     }
 

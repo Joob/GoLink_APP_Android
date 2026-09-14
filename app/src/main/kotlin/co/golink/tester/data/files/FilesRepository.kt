@@ -9,27 +9,53 @@ import co.golink.tester.domain.files.ItemRef
 import co.golink.tester.domain.files.MoveItemsRequest
 import co.golink.tester.domain.files.RemoteUploadRequest
 import co.golink.tester.domain.files.RenameItemRequest
+import co.golink.tester.data.encryption.E2EKeyManager
 import co.golink.tester.network.FilesApi
 import javax.inject.Inject
 import javax.inject.Singleton
 
+private const val NAME_PLACEHOLDER = "•"
+
 @Singleton
 class FilesRepository @Inject constructor(
     private val api: FilesApi,
+    private val keys: E2EKeyManager,
 ) {
-    suspend fun createFolder(name: String, parentId: String?): Result<BrowseItem.Folder> = runCatching {
-        val response = api.createFolder(CreateFolderRequest(name = name, parent_id = parentId))
+    // E2E Fase 2: cifra o nome no espaço privado (encryptName) quando há chave.
+    // A resposta traz o placeholder → repomos o nome em claro que definimos.
+    suspend fun createFolder(name: String, parentId: String?, encryptName: Boolean = true): Result<BrowseItem.Folder> = runCatching {
+        val enc = if (encryptName && keys.canSealNames) keys.sealName(name) else null
+        val response = api.createFolder(
+            CreateFolderRequest(
+                name = if (enc != null) NAME_PLACEHOLDER else name,
+                parent_id = parentId,
+                name_encrypted = enc,
+            )
+        )
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val entry = response.body()?.data ?: error("Resposta vazia")
-        (entry.toItem() as BrowseItem.Folder)
+        val folder = entry.toItem() as BrowseItem.Folder
+        if (enc != null) folder.copy(name = name) else folder
     }
 
-    suspend fun rename(item: BrowseItem, newName: String): Result<BrowseItem> = runCatching {
+    suspend fun rename(item: BrowseItem, newName: String, encryptName: Boolean = true): Result<BrowseItem> = runCatching {
         val type = if (item is BrowseItem.Folder) "folder" else "file"
-        val response = api.rename(item.id, RenameItemRequest(name = newName, type = type))
+        val enc = if (encryptName && keys.canSealNames) keys.sealName(newName) else null
+        val response = api.rename(
+            item.id,
+            RenameItemRequest(
+                name = if (enc != null) NAME_PLACEHOLDER else newName,
+                type = type,
+                name_encrypted = enc,
+            )
+        )
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val entry = response.body()?.data ?: error("Resposta vazia")
-        entry.toItem()
+        val result = entry.toItem()
+        if (enc == null) result else when (result) {
+            is BrowseItem.Folder -> result.copy(name = newName)
+            is BrowseItem.File -> result.copy(name = newName)
+        }
     }
 
     suspend fun delete(items: List<BrowseItem>, permanent: Boolean = false): Result<Unit> = runCatching {

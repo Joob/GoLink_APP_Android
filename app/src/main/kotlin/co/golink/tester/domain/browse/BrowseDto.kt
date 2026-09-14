@@ -74,6 +74,9 @@ data class SharedRefAttributes(
     val item_id: String? = null,
     val protectedPasswordShow: Boolean? = null,
     val expire_in: Int? = null,
+    val expires_at: String? = null,
+    val download_limit: Int? = null,
+    val download_count: Int? = null,
     val token: String? = null,
     val link: String? = null,
     val type: String? = null,
@@ -82,6 +85,8 @@ data class SharedRefAttributes(
 @Serializable
 data class BrowseAttributes(
     val name: String,
+    // E2E Fase 2: nome cifrado (o cliente decifra). Null → usa `name` em claro.
+    val name_encrypted: String? = null,
     val basename: String? = null,
     val mimetype: String? = null,
     val filesize: String? = null,
@@ -95,6 +100,9 @@ data class BrowseAttributes(
     val parent_id: String? = null,
     val created_at: String? = null,
     val updated_at: String? = null,
+    // ISO-8601 (UTC) — created_at/updated_at são localizados e não ordenáveis.
+    val created_at_iso: String? = null,
+    val updated_at_iso: String? = null,
     val deleted_at: String? = null,
     val encrypted: Boolean = false,
 )
@@ -127,6 +135,7 @@ data class NavFolder(
     val id: String,
     val parent_id: String? = null,
     val name: String,
+    val name_encrypted: String? = null,
     val team_folder: Boolean? = null,
     val folders: List<NavFolder> = emptyList(),
 )

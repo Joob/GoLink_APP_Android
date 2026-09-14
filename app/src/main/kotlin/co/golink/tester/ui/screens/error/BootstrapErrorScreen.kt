@@ -69,7 +69,7 @@ fun BootstrapErrorScreen(
         )
     }
 
-    Scaffold(containerColor = Color.White) { padding ->
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -104,7 +104,7 @@ fun BootstrapErrorScreen(
                     style = MaterialTheme.typography.headlineSmall.copy(
                         fontWeight = FontWeight.SemiBold,
                     ),
-                    color = Color(0xFF1B2539),
+                    color = MaterialTheme.colorScheme.onBackground,
                     textAlign = TextAlign.Center,
                 )
 
@@ -113,7 +113,7 @@ fun BootstrapErrorScreen(
                 Text(
                     text = "Não conseguimos contactar o servidor.\nVerifica a tua ligação e tenta novamente.",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF1B2539).copy(alpha = 0.6f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                     lineHeight = 20.sp,
                 )
@@ -146,7 +146,7 @@ fun BootstrapErrorScreen(
                         "Terminar sessão".tr(),
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
-                        color = Color(0xFF1B2539).copy(alpha = 0.55f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                     )
                 }
             }

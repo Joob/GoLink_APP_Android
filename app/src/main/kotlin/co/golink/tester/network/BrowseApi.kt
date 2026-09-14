@@ -4,7 +4,9 @@ import co.golink.tester.domain.browse.BrowseListResponse
 import co.golink.tester.domain.browse.FolderFingerprint
 import co.golink.tester.domain.browse.NavigationSection
 import retrofit2.Response
+import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -53,5 +55,12 @@ interface BrowseApi {
     suspend fun search(
         @Query("query") query: String,
         @Query("filter") filter: String? = null,
+    ): Response<BrowseListResponse>
+
+    // E2E Fase 2 — pesquisa client-side: entradas completas para os ids que o
+    // cliente encontrou ao filtrar o índice de nomes cifrados localmente.
+    @POST("api/search/encrypted-ids")
+    suspend fun searchEncryptedIds(
+        @Body body: co.golink.tester.domain.encryption.SearchByIdsBody,
     ): Response<BrowseListResponse>
 }

@@ -4,11 +4,13 @@ import co.golink.tester.domain.auth.ApiEnvelope
 import co.golink.tester.domain.auth.CheckAccountRequest
 import co.golink.tester.domain.auth.CheckAccountResponse
 import co.golink.tester.domain.auth.ForgotPasswordRequest
+import co.golink.tester.domain.auth.InvitationData
 import co.golink.tester.domain.auth.LoginData
 import co.golink.tester.domain.auth.LoginRequest
 import co.golink.tester.domain.auth.OtpStatus
 import co.golink.tester.domain.auth.PendingTokenResponse
 import co.golink.tester.domain.auth.RegisterRequest
+import co.golink.tester.domain.auth.ResetPasswordRequest
 import co.golink.tester.domain.auth.SocialiteUrl
 import co.golink.tester.domain.auth.ValidateOtpRequest
 import retrofit2.Response
@@ -30,6 +32,12 @@ interface AuthApi {
 
     @POST("api/password/recover")
     suspend fun recoverPassword(@Body body: ForgotPasswordRequest): Response<ApiEnvelope<Unit>>
+
+    @POST("api/password/reset")
+    suspend fun resetPassword(@Body body: ResetPasswordRequest): Response<ApiEnvelope<Unit>>
+
+    @GET("api/invitation/{token}")
+    suspend fun getInvitation(@Path("token") token: String): Response<ApiEnvelope<InvitationData>>
 
     @POST("api/user/check")
     suspend fun checkAccount(@Body body: CheckAccountRequest): Response<CheckAccountResponse>

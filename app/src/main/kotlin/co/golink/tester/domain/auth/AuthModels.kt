@@ -38,6 +38,19 @@ data class ForgotPasswordRequest(
 )
 
 @Serializable
+data class ResetPasswordRequest(
+    val email: String,
+    val token: String,
+    val password: String,
+    val password_confirmation: String,
+)
+
+@Serializable
+data class InvitationData(
+    val email: String? = null,
+)
+
+@Serializable
 data class ValidateOtpRequest(
     val otp_code: String,
 )
@@ -82,4 +95,8 @@ data class ErrorBody(
     val type: String? = null,
     val message: String? = null,
     val errors: Map<String, List<String>>? = null,
+    // Erros do fluxo OTP: mensagem em `otp_code` e, no cooldown (429), os
+    // segundos que faltam para poder tentar de novo.
+    val otp_code: String? = null,
+    val remaining_cooldown: Int? = null,
 )

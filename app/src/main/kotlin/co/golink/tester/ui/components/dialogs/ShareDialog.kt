@@ -77,14 +77,16 @@ data class ShareDialogState(
     val loadingQr: Boolean,
     val isWorking: Boolean,
     val emailDialogVisible: Boolean,
+    // E2E: chave (#k=) ainda a ser preparada em fundo → bloquear copiar/QR/email.
+    val keyPending: Boolean = false,
 )
 
 @Composable
 fun ShareDialog(
     state: ShareDialogState,
     onDismiss: () -> Unit,
-    onCreate: (password: String?, permission: String?, expirationDays: Int?) -> Unit,
-    onUpdate: (password: String?, permission: String?, expirationDays: Int?) -> Unit = { _, _, _ -> },
+    onCreate: (password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) -> Unit,
+    onUpdate: (password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) -> Unit = { _, _, _, _ -> },
     onCopy: (String) -> Unit,
     onShowQr: () -> Unit,
     onSendEmail: (List<String>) -> Unit,
@@ -94,6 +96,7 @@ fun ShareDialog(
     val item = state.item
     val isFolder = item is BrowseItem.Folder
     val clipboard = LocalClipboardManager.current
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -162,7 +165,9 @@ fun ShareDialog(
                             isFolder = isFolder,
                             sendingEmail = state.sendingEmail,
                             isWorking = state.isWorking,
+                            keyPending = state.keyPending,
                             onCopy = {
+                                if (state.keyPending) return@ExistingShareView
                                 val link = state.share.link ?: return@ExistingShareView
                                 clipboard.setText(AnnotatedString(link))
                                 onCopy(link)
@@ -188,7 +193,27 @@ fun ShareDialog(
     if (state.emailDialogVisible) {
         EmailRecipientsDialog(
             onDismiss = { onShowEmailDialog(false) },
-            onConfirm = { onSendEmail(it) },
+            onConfirm = { emails ->
+                // E2E: o email do servidor levaria o link SEM a chave (#k=) — o
+                // servidor não a conhece. Para partilhas cifradas (o link já traz
+                // #k=) abre-se um rascunho no cliente de email do utilizador com o
+                // link completo; a chave nunca sai do dispositivo. Igual à web.
+                val link = state.share?.link
+                if (link != null && link.contains("#k=")) {
+                    val subject = "Partilharam algo contigo".tr()
+                    val body = "Abre este link para ver (a chave de desencriptação vai incluída no link):".tr() + "\n\n" + link
+                    val intent = android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
+                        data = android.net.Uri.parse("mailto:")
+                        putExtra(android.content.Intent.EXTRA_EMAIL, emails.toTypedArray())
+                        putExtra(android.content.Intent.EXTRA_SUBJECT, subject)
+                        putExtra(android.content.Intent.EXTRA_TEXT, body)
+                    }
+                    runCatching { context.startActivity(intent) }
+                    onShowEmailDialog(false)
+                } else {
+                    onSendEmail(emails)
+                }
+            },
         )
     }
 }
@@ -297,13 +322,15 @@ private fun PermissionSection(
 private fun CreateShareForm(
     isFolder: Boolean,
     isWorking: Boolean,
-    onCreate: (password: String?, permission: String?, expirationDays: Int?) -> Unit,
+    onCreate: (password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) -> Unit,
 ) {
     var protectWithPassword by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
     var permission by remember { mutableStateOf("visitor") }
     var hasExpiration by remember { mutableStateOf(false) }
     var expirationDays by remember { mutableStateOf("7") }
+    var hasDownloadLimit by remember { mutableStateOf(false) }
+    var downloadLimit by remember { mutableStateOf("10") }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SwitchRow(
@@ -346,6 +373,24 @@ private fun CreateShareForm(
             )
         }
 
+        SwitchRow(
+            icon = Icons.Outlined.Schedule,
+            label = "Limite de downloads".tr(),
+            checked = hasDownloadLimit,
+            onCheckedChange = { hasDownloadLimit = it },
+        )
+        AnimatedVisibility(visible = hasDownloadLimit) {
+            OutlinedTextField(
+                value = downloadLimit,
+                onValueChange = { v -> downloadLimit = v.filter { it.isDigit() }.take(6) },
+                label = { Text("Número de downloads".tr()) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
         Spacer(Modifier.height(4.dp))
         Button(
             onClick = {
@@ -353,10 +398,12 @@ private fun CreateShareForm(
                     password.takeIf { protectWithPassword && it.isNotBlank() },
                     if (isFolder) permission else null,
                     expirationDays.toIntOrNull()?.takeIf { hasExpiration && it > 0 },
+                    downloadLimit.toIntOrNull()?.takeIf { hasDownloadLimit && it > 0 },
                 )
             },
             enabled = !isWorking && (!protectWithPassword || password.isNotBlank()) &&
-                (!hasExpiration || expirationDays.toIntOrNull()?.let { it > 0 } == true),
+                (!hasExpiration || expirationDays.toIntOrNull()?.let { it > 0 } == true) &&
+                (!hasDownloadLimit || downloadLimit.toIntOrNull()?.let { it > 0 } == true),
             shape = RoundedCornerShape(14.dp),
             contentPadding = PaddingValues(vertical = 14.dp),
             modifier = Modifier.fillMaxWidth(),
@@ -380,9 +427,10 @@ private fun ExistingShareView(
     isFolder: Boolean,
     sendingEmail: Boolean,
     isWorking: Boolean,
+    keyPending: Boolean = false,
     onCopy: () -> Unit,
     onShowEmailDialog: () -> Unit,
-    onUpdate: (password: String?, permission: String?, expirationDays: Int?) -> Unit,
+    onUpdate: (password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) -> Unit,
     onRevoke: () -> Unit,
 ) {
     var activePanel by remember { mutableStateOf(SharePanel.None) }
@@ -393,6 +441,8 @@ private fun ExistingShareView(
     var permission by remember(share.permission) { mutableStateOf(share.permission ?: "visitor") }
     var hasExpiration by remember(share.expireIn) { mutableStateOf((share.expireIn ?: 0) > 0) }
     var expirationDays by remember(share.expireIn) { mutableStateOf(share.expireIn?.takeIf { it > 0 }?.toString() ?: "7") }
+    var hasDownloadLimit by remember(share.downloadLimit) { mutableStateOf((share.downloadLimit ?: 0) > 0) }
+    var downloadLimit by remember(share.downloadLimit) { mutableStateOf(share.downloadLimit?.takeIf { it > 0 }?.toString() ?: "10") }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         // Link box
@@ -425,22 +475,43 @@ private fun ExistingShareView(
                         .size(36.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
-                        .clickable(onClick = onCopy),
+                        .clickable(enabled = !keyPending, onClick = onCopy),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
-                        Icons.Filled.ContentCopy,
-                        contentDescription = "Copiar",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp),
-                    )
+                    if (keyPending) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(
+                            Icons.Filled.ContentCopy,
+                            contentDescription = "Copiar",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
                 }
             }
-            if (share.protected || (share.expireIn != null && share.expireIn > 0) || !share.permission.isNullOrBlank()) {
+            if (keyPending) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "A preparar a chave de encriptação…".tr(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (share.protected || (share.expireIn != null && share.expireIn > 0) ||
+                (share.downloadLimit != null && share.downloadLimit > 0) || !share.permission.isNullOrBlank()
+            ) {
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (share.protected) TagChip("Com password".tr())
                     if (share.expireIn != null && share.expireIn > 0) TagChip("Expira em ${share.expireIn}d")
+                    if (share.downloadLimit != null && share.downloadLimit > 0) {
+                        TagChip("${share.downloadCount ?: 0}/${share.downloadLimit} downloads")
+                    }
                     if (!share.permission.isNullOrBlank()) TagChip(prettyPermission(share.permission))
                 }
             }
@@ -453,13 +524,14 @@ private fun ExistingShareView(
                 label = "QR code".tr(),
                 modifier = Modifier.weight(1f),
                 active = showQr,
+                enabled = !keyPending,
                 onClick = { activePanel = if (showQr) SharePanel.None else SharePanel.Qr },
             )
             ShareActionButton(
                 icon = Icons.Filled.Email,
                 label = "Email",
                 modifier = Modifier.weight(1f),
-                enabled = !sendingEmail,
+                enabled = !sendingEmail && !keyPending,
                 onClick = {
                     activePanel = SharePanel.None
                     onShowEmailDialog()
@@ -467,7 +539,7 @@ private fun ExistingShareView(
             )
             ShareActionButton(
                 icon = Icons.Outlined.Tune,
-                label = "Editar",
+                label = "Editar".tr(),
                 modifier = Modifier.weight(1f),
                 active = editMode,
                 onClick = {
@@ -544,12 +616,30 @@ private fun ExistingShareView(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
+                SwitchRow(
+                    icon = Icons.Outlined.Schedule,
+                    label = "Limite de downloads".tr(),
+                    checked = hasDownloadLimit,
+                    onCheckedChange = { hasDownloadLimit = it },
+                )
+                AnimatedVisibility(visible = hasDownloadLimit) {
+                    OutlinedTextField(
+                        value = downloadLimit,
+                        onValueChange = { v -> downloadLimit = v.filter { it.isDigit() }.take(6) },
+                        label = { Text("Número de downloads".tr()) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 Button(
                     onClick = {
                         onUpdate(
                             password.takeIf { hasPassword && it.isNotBlank() },
                             if (isFolder) permission else null,
                             expirationDays.toIntOrNull()?.takeIf { hasExpiration && it > 0 },
+                            downloadLimit.toIntOrNull()?.takeIf { hasDownloadLimit && it > 0 },
                         )
                         activePanel = SharePanel.None
                     },
@@ -715,7 +805,7 @@ private fun EmailRecipientsDialog(
                     ) {
                         Icon(Icons.Outlined.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Enviar", fontWeight = FontWeight.SemiBold)
+                        Text("Enviar".tr(), fontWeight = FontWeight.SemiBold)
                     }
                 }
             }

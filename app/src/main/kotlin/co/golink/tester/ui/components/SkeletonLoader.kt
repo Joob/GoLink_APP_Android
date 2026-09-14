@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -42,8 +43,8 @@ fun FileListSkeleton(count: Int = 6, modifier: Modifier = Modifier) {
         ),
         label = "pulse",
     )
-    val strong = Color(0xFFE5E7EB)
-    val soft = Color(0xFFF3F4F6)
+    val strong = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+    val soft = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
     Column(modifier = modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
         repeat(count) { i ->
             Row(

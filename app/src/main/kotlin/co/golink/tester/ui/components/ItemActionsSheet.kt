@@ -19,7 +19,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.InsertDriveFile
-import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
@@ -92,6 +91,8 @@ fun ItemActionsSheet(
             SheetHeader(item)
 
             if (inTrash) {
+                // No lixo só se restaura por item; a eliminação permanente é feita
+                // em bloco pelo botão "Esvaziar lixo" (Flush).
                 Spacer(Modifier.height(4.dp))
                 ActionGroup {
                     ActionItem(
@@ -100,16 +101,6 @@ fun ItemActionsSheet(
                         iconBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
                         iconTint = MaterialTheme.colorScheme.primary,
                     ) { onRestore(); onDismiss() }
-                }
-                Spacer(Modifier.height(8.dp))
-                ActionGroup {
-                    ActionItem(
-                        icon = Icons.Outlined.DeleteForever,
-                        label = "Eliminar permanentemente".tr(),
-                        iconBg = MaterialTheme.colorScheme.error.copy(alpha = 0.10f),
-                        iconTint = MaterialTheme.colorScheme.error,
-                        labelColor = MaterialTheme.colorScheme.error,
-                    ) { onPermanentDelete(); onDismiss() }
                 }
             } else {
                 Spacer(Modifier.height(4.dp))
@@ -165,7 +156,7 @@ fun ItemActionsSheet(
                         ActionItem(
                             icon = if (isFavourite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
                             label = if (isFavourite) "Remover dos favoritos".tr() else "Adicionar aos favoritos".tr(),
-                            iconBg = Color(0xFFFFF3E0),
+                            iconBg = Color(0xFFFF8F00).copy(alpha = 0.15f),
                             iconTint = Color(0xFFFF8F00),
                         ) { onToggleFavourite(); onDismiss() }
                         if (showFolderCollaboration) {

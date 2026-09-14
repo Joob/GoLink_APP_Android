@@ -3,7 +3,6 @@ package co.golink.tester.ui.screens.notifications
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -47,10 +46,28 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import co.golink.tester.domain.notifications.Notification
 
+private val SYSTEM_CATEGORIES =
+    setOf("storage-full", "billing-alert", "payment-alert", "insufficient-balance", "security-alert")
+
+@Composable
+private fun SectionHeader(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NotificationsScreen(
     onBack: () -> Unit,
+    onOpenSecurityActivity: () -> Unit = {},
     viewModel: NotificationsViewModel = hiltViewModel(),
 ) {
     val items by viewModel.items.collectAsStateWithLifecycle()
@@ -86,27 +103,48 @@ fun NotificationsScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) { CircularProgressIndicator(color = MaterialTheme.colorScheme.primary) }
-                items.isEmpty() -> Column(
-                    modifier = Modifier.fillMaxSize().padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Text("Sem notificações".tr(), style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "Quando houver actividade, aparecerá aqui.".tr(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(items, key = { it.id }) { n ->
-                        NotificationRow(
-                            notification = n,
-                            onTap = { if (!n.isRead) viewModel.markRead(n.id) },
-                            onDelete = { viewModel.delete(n.id) },
-                        )
-                        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+                else -> {
+                    val systemItems = items.filter { it.category in SYSTEM_CATEGORIES }
+                    val otherItems = items.filter { it.category !in SYSTEM_CATEGORIES }
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        // Secção Sistema — sempre visível
+                        item(key = "system-header") { SectionHeader("Sistema".tr()) }
+                        if (systemItems.isEmpty()) {
+                            item(key = "system-empty") {
+                                Text(
+                                    "Ainda não tem notificações de sistema".tr(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                )
+                            }
+                        } else {
+                            items(systemItems, key = { it.id }) { n ->
+                                NotificationRow(
+                                    notification = n,
+                                    onTap = {
+                                        if (!n.isRead) viewModel.markRead(n.id)
+                                        if (n.category == "security-alert") onOpenSecurityActivity()
+                                    },
+                                    onDelete = { viewModel.delete(n.id) },
+                                )
+                                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+                            }
+                        }
+                        if (otherItems.isNotEmpty()) {
+                            item(key = "others-header") { SectionHeader("Outros".tr()) }
+                        }
+                        items(otherItems, key = { it.id }) { n ->
+                            NotificationRow(
+                                notification = n,
+                                onTap = {
+                                    if (!n.isRead) viewModel.markRead(n.id)
+                                    if (n.category == "security-alert") onOpenSecurityActivity()
+                                },
+                                onDelete = { viewModel.delete(n.id) },
+                            )
+                            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+                        }
                     }
                 }
             }

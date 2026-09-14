@@ -41,15 +41,25 @@ import co.golink.tester.ui.common.AuthScaffold
 fun RegisterScreen(
     onRegistered: (requiresVerification: Boolean) -> Unit,
     onBack: () -> Unit,
+    invitationToken: String? = null,
     viewModel: RegisterViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val invited = !invitationToken.isNullOrBlank()
+
+    LaunchedEffect(invitationToken) {
+        if (invited) viewModel.initInvitation(invitationToken!!)
+    }
 
     LaunchedEffect(state.success) {
         if (state.success) onRegistered(state.requiresVerification)
     }
 
-    AuthScaffold(title = "Criar conta".tr(), subtitle = "Junta-te ao GoLink".tr(), onBack = onBack) {
+    AuthScaffold(
+        title = if (invited) "Aceitar convite".tr() else "Criar conta".tr(),
+        subtitle = if (invited) "Foste convidado para o GoLink".tr() else "Junta-te ao GoLink".tr(),
+        onBack = onBack,
+    ) {
         Field(
             label = "Nome".tr(),
             placeholder = "O teu nome".tr(),
@@ -62,12 +72,13 @@ fun RegisterScreen(
         Spacer(Modifier.height(14.dp))
         Field(
             label = "Email".tr(),
-            placeholder = "o.teu.email@exemplo.com",
+            placeholder = "o.teu.email@exemplo.com".tr(),
             value = state.email,
             onChange = viewModel::onEmail,
             error = state.fieldErrors["email"],
             icon = Icons.Outlined.Email,
             type = KeyboardType.Email,
+            enabled = !state.emailLocked,
         )
         Spacer(Modifier.height(14.dp))
         Field(
@@ -91,15 +102,17 @@ fun RegisterScreen(
             type = KeyboardType.Password,
             password = true,
         )
-        Spacer(Modifier.height(14.dp))
-        Field(
-            label = "Código de convite (opcional)".tr(),
-            placeholder = "Código de convite".tr(),
-            value = state.invitationToken,
-            onChange = viewModel::onInvitationToken,
-            error = state.fieldErrors["invitation_token"],
-            icon = Icons.Outlined.VpnKey,
-        )
+        if (!invited) {
+            Spacer(Modifier.height(14.dp))
+            Field(
+                label = "Código de convite (opcional)".tr(),
+                placeholder = "Código de convite".tr(),
+                value = state.invitationToken,
+                onChange = viewModel::onInvitationToken,
+                error = state.fieldErrors["invitation_token"],
+                icon = Icons.Outlined.VpnKey,
+            )
+        }
 
         state.error?.let {
             Spacer(Modifier.height(10.dp))
@@ -138,6 +151,7 @@ private fun Field(
     type: KeyboardType = KeyboardType.Text,
     cap: KeyboardCapitalization = KeyboardCapitalization.None,
     password: Boolean = false,
+    enabled: Boolean = true,
 ) {
     Text(
         text = label,
@@ -149,6 +163,7 @@ private fun Field(
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
+        enabled = enabled,
         placeholder = { Text(placeholder) },
         singleLine = true,
         isError = error != null,

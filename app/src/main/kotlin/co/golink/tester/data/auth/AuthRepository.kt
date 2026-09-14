@@ -7,6 +7,7 @@ import co.golink.tester.domain.auth.ForgotPasswordRequest
 import co.golink.tester.domain.auth.LoginRequest
 import co.golink.tester.domain.auth.OtpStatus
 import co.golink.tester.domain.auth.RegisterRequest
+import co.golink.tester.domain.auth.ResetPasswordRequest
 import co.golink.tester.domain.auth.ValidateOtpRequest
 import co.golink.tester.network.AuthApi
 import javax.inject.Inject
@@ -63,6 +64,30 @@ class AuthRepository @Inject constructor(
         if (!response.isSuccessful) throw errorParser.parse(response)
     }.recoverCatching { throw errorParser.fromThrowable(it) }
 
+    suspend fun resetPassword(
+        email: String,
+        token: String,
+        password: String,
+        passwordConfirmation: String,
+    ): Result<Unit> = runCatching {
+        val response = api.resetPassword(
+            ResetPasswordRequest(
+                email = email,
+                token = token,
+                password = password,
+                password_confirmation = passwordConfirmation,
+            )
+        )
+        if (!response.isSuccessful) throw errorParser.parse(response)
+    }.recoverCatching { throw errorParser.fromThrowable(it) }
+
+    /** Fetches the invited email for a registration invitation token (null if none). */
+    suspend fun getInvitation(token: String): Result<String?> = runCatching {
+        val response = api.getInvitation(token)
+        if (!response.isSuccessful) throw errorParser.parse(response)
+        response.body()?.data?.email
+    }.recoverCatching { throw errorParser.fromThrowable(it) }
+
     suspend fun sendOtp(): Result<Unit> = runCatching {
         val response = api.sendOtp()
         if (!response.isSuccessful && response.code() !in 409..429) {
@@ -79,6 +104,8 @@ class AuthRepository @Inject constructor(
     suspend fun validateOtp(code: String): Result<Unit> = runCatching {
         val response = api.validateOtp(ValidateOtpRequest(otp_code = code))
         if (!response.isSuccessful) {
+            // 429: 5 tentativas falhadas seguidas → cooldown imposto pelo servidor.
+            if (response.code() == 429) throw errorParser.parseOtpCooldown(response)
             if (response.code() == 422) throw AuthError.OtpInvalid()
             if (response.code() == 400) {
                 tokenStore.markOtpValidated()

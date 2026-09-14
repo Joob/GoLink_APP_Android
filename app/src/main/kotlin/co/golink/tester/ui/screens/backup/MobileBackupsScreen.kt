@@ -440,8 +440,8 @@ fun MobileBackupsScreen(
                 emailDialogVisible = ss.emailDialogVisible,
             ),
             onDismiss = { viewModel.closeShareDialog() },
-            onCreate = { pwd, perm, days -> viewModel.createShare(pwd, perm, days) },
-            onUpdate = { pwd, perm, days -> viewModel.updateCurrentShare(pwd, perm, days) },
+            onCreate = { pwd, perm, days, limit -> viewModel.createShare(pwd, perm, days, limit) },
+            onUpdate = { pwd, perm, days, limit -> viewModel.updateCurrentShare(pwd, perm, days, limit) },
             onCopy = { /* clipboard handled inside dialog */ },
             onShowQr = viewModel::fetchQrCode,
             onSendEmail = viewModel::sendShareEmail,
@@ -699,9 +699,16 @@ private fun backupDayLabel(key: String): String {
 private fun sortBackupItems(items: List<BrowseItem>, sort: SortMode): List<BrowseItem> = when (sort) {
     SortMode.ALPHA_ASC -> items.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
     SortMode.ALPHA_DESC -> items.sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.name })
-    SortMode.DATE_DESC -> items.sortedByDescending { it.createdAt ?: it.updatedAt ?: "" }
-    SortMode.DATE_ASC -> items.sortedBy { it.createdAt ?: it.updatedAt ?: "" }
+    SortMode.DATE_DESC -> items.sortedByDescending { sortStamp(it) }
+    SortMode.DATE_ASC -> items.sortedBy { sortStamp(it) }
 }
+
+// Chave de ordenação por data: usa o ISO-8601 (UTC), ordenável por texto. Os
+// campos createdAt/updatedAt são strings localizadas ("25. Jul. 2026, 03:00") e
+// não ordenam de forma fiável. Sem ISO (itens antigos/pré-migração) devolve ""
+// para não rebentar — esses caem no fim de forma estável.
+private fun sortStamp(item: BrowseItem): String =
+    item.createdAtIso ?: item.updatedAtIso ?: ""
 
 private fun buildDayGroupedRows(items: List<BrowseItem>, sort: SortMode): List<BackupRow> {
     // Ordenação alfabética: lista plana, sem cabeçalhos de dia.
@@ -710,18 +717,18 @@ private fun buildDayGroupedRows(items: List<BrowseItem>, sort: SortMode): List<B
     }
     val asc = sort == SortMode.DATE_ASC
     val rows = mutableListOf<BackupRow>()
-    val dated = items.filter { backupDayKey(it.createdAt ?: it.updatedAt) != null }
-        .groupBy { backupDayKey(it.createdAt ?: it.updatedAt)!! }
+    val dated = items.filter { backupDayKey(sortStamp(it)) != null }
+        .groupBy { backupDayKey(sortStamp(it))!! }
     val keys = if (asc) dated.keys.sorted() else dated.keys.sortedDescending()
     keys.forEach { key ->
         rows += BackupRow.Header(backupDayLabel(key))
         val group = dated.getValue(key)
-        val ordered = if (asc) group.sortedBy { it.createdAt ?: it.updatedAt ?: "" }
-                      else group.sortedByDescending { it.createdAt ?: it.updatedAt ?: "" }
+        val ordered = if (asc) group.sortedBy { sortStamp(it) }
+                      else group.sortedByDescending { sortStamp(it) }
         ordered.forEach { rows += BackupRow.Entry(it) }
     }
     // Itens sem data reconhecível ficam no fim, sem cabeçalho.
-    items.filter { backupDayKey(it.createdAt ?: it.updatedAt) == null }
+    items.filter { backupDayKey(sortStamp(it)) == null }
         .forEach { rows += BackupRow.Entry(it) }
     return rows
 }

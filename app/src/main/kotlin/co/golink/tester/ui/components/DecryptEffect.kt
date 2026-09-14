@@ -27,24 +27,22 @@ import kotlinx.coroutines.delay
 @Composable
 fun DecryptEffect(label: String, modifier: Modifier = Modifier) {
     val pool = "ABCDEF0123456789"
-    fun rand(n: Int) = buildString {
-        repeat(n) { i ->
-            append(pool.random())
-            if (i % 4 == 3 && i < n - 1) append(' ')
-        }
-    }
-    var line1 by remember { mutableStateOf(rand(20)) }
-    var line2 by remember { mutableStateOf(rand(20)) }
+    fun rand(n: Int) = buildString { repeat(n) { append(pool.random()) } }
+    // Agrupa 4-em-4 no fim: comprimento e alinhamento dos blocos são sempre
+    // iguais, senão a linha centrada "salta" a cada tick.
+    fun format(s: String) = s.chunked(4).joinToString(" ")
+    var line1 by remember { mutableStateOf(format(rand(20))) }
+    var line2 by remember { mutableStateOf(format(rand(20))) }
     var fixed by remember { mutableStateOf(rand(20)) }
     var step by remember { mutableIntStateOf(0) }
     var dots by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
         while (true) {
             step = (step + 1) % 28
-            val solved = minOf(step, 20)
-            line1 = fixed.take(solved + solved / 4) + rand(20 - solved)
-            line2 = rand(20)
             if (step == 0) fixed = rand(20)
+            val solved = minOf(step, 20)
+            line1 = format(fixed.take(solved) + rand(20 - solved))
+            line2 = format(rand(20))
             if (step % 6 == 0) dots = if (dots.length >= 3) "" else "$dots."
             delay(65)
         }

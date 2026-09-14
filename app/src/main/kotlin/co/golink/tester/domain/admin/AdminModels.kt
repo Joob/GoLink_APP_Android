@@ -167,6 +167,17 @@ data class CreateInviteRequest(
     val emails: List<String>,
 )
 
+/**
+ * Suspensão de conta. [unit]/[value] a null = suspensão indefinida; o backend
+ * exige value sempre que unit vier preenchido.
+ */
+@Serializable
+data class SuspendUserRequest(
+    val unit: String? = null,
+    val value: Int? = null,
+    val reason: String? = null,
+)
+
 // ---------------------------------------------------------------------------
 // UI models
 // ---------------------------------------------------------------------------
@@ -177,6 +188,9 @@ data class AdminUserItem(
     val email: String,
     val role: String,
     val avatar: String?,
+    val isSuspended: Boolean = false,
+    val suspendedUntil: String? = null,
+    val suspendedReason: String? = null,
 )
 
 data class InviteItem(
