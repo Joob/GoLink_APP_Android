@@ -1,63 +1,129 @@
-<<<<<<< HEAD
+# GoLink Android
 
-# Android (Native)
+Native Android app for **GoLink** — private cloud storage with end-to-end encryption. Official client for the GoLink backend (Laravel), featuring full file management, sharing, automatic phone backup, and bank-grade security.
 
-Stack: Kotlin · Jetpack Compose · Hilt · Retrofit · DataStore · Material 3.
+![Kotlin](https://img.shields.io/badge/Kotlin-2.x-7F52FF?logo=kotlin&logoColor=white)
+![Compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?logo=jetpackcompose&logoColor=white)
+![minSdk](https://img.shields.io/badge/minSdk-26-3DDC84?logo=android&logoColor=white)
+![targetSdk](https://img.shields.io/badge/targetSdk-36-3DDC84?logo=android&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-## Pré-requisitos
+---
 
-- Android Studio Ladybug ou superior
-- JDK 17
-- Android SDK com `compileSdk = 35` e `targetSdk = 35`
+## ✨ Features
 
-## Como abrir
+### Files
+- 📂 Folder browsing with breadcrumbs, instant search, favourites and "Shared with me"
+- ⬆️ Simple and chunked uploads (5 MB) with live progress; create folder, rename, move, delete
+- ⬇️ Authenticated downloads via `DownloadManager`; built-in viewer for images, video and documents
+- 🗑️ Full trash: restore, permanently delete, empty
+- 🖼️ Real thumbnails, folder emojis and colours, user avatar
 
-1. **Android Studio → Open → selecciona esta pasta.** O Android Studio irá provisionar o Gradle Wrapper (`gradle-wrapper.jar`) automaticamente.
-2. Aguarda o "Gradle sync".
-3. Run ▶ no emulador (API 26+) ou device físico.
+### End-to-end encryption (E2E)
+- 🔐 Files encrypted on-device before upload (X25519 + secretbox) — the server never sees the content
+- 🔑 Private key protected by a passphrase (PBKDF2), unlocked locally, with a recovery option
+- 🤝 E2E sharing with per-recipient re-encryption of the data key
 
-## Estado por fase
+### Account security
+- 🔒 Email OTP login (2-minute code), social login (Google/GitHub/Microsoft)
+- 📱 App lock with biometrics or PIN
+- 🕵️ Active session list with individual and bulk revocation; security activity log
+- 🚪 Immediate detection of suspended accounts and revoked sessions (forced logout)
+- ❌ Self-service account deletion: email confirmation + 6-digit code, with real-time progress as 100% of the data is erased
 
-- [x] **Fase 0** — Scaffold, tema da marca (#00BC7E), DataStore de configuração, ecrã para configurar o URL do servidor com botão "Testar ligação" (faz `GET /api/ping`).
-- [x] **Fase 1** — Auth completa: email/password com OTP por email, registo, recuperar password, Socialite (Google/GitHub/Microsoft) via WebView com sync de cookies, logout, token guardado encriptado, bootstrap via `GET /api/user`, gate de navegação Loading/NeedsBackend/NeedsAuth/NeedsOtp/Authenticated/BootstrapFailed.
-- [x] **Fase 2** — Browse de pastas/ficheiros com `GET /api/browse/folders/{id}`, breadcrumbs com navegação recursiva, drawer com Os Meus Ficheiros / Recentes / Partilhado Comigo, search Spotlight com debounce, bottom sheet de acções por ficheiro, download via `DownloadManager` com Authorization Bearer.
-- [x] **Fase 3** — Upload simples (`POST /api/upload`) + chunked 5 MB (`POST /api/upload/chunks`) com progresso via banner, criar pasta (`POST /api/create-folder`), renomear (`PATCH /api/rename/{id}`), mover (`POST /api/move`) com folder picker baseado no `GET /api/browse/navigation`, eliminar/lixo (`POST /api/remove`). FAB com menu (Carregar/Nova pasta) e long-press / tap-em-ficheiro abre actions sheet (Descarregar/Renomear/Mover/Eliminar).
-- [x] **Fase 4** — Partilha (`POST /api/share`, `PATCH /api/share/{token}`, `DELETE /api/share`) com password opcional, permissão para pastas (can-view/can-edit), expiração em dias; envio por email (`POST /api/share/{token}/email`); QR code via `GET /api/share/{token}/qr` (SVG); revogar; favoritos para pastas (`POST/DELETE /api/favourites`) sincronizados via `/api/user` relationships; novo modo "Favoritos" no drawer.
-- [x] **Fase 5** — Lixo: `GET /api/browse/trash/{id}` para listar, `POST /api/trash/restore` para repor item, `DELETE /api/trash/dump` para esvaziar; novo modo "Lixo" no drawer, top bar com botão **Esvaziar lixo** (com confirmação destrutiva), actions sheet adaptado quando estamos no lixo (Restaurar / Eliminar permanentemente — esconde Partilhar/Mover/Renomear/etc.), confirmação para `force_delete: true`.
-- [x] **Fase 6** — Notificações in-app com polling 60s (`GET /api/notifications`, `POST /api/notifications/read`, `POST /api/notifications/{id}/read`, `POST /api/notifications/{id}/delete`, `DELETE /api/notifications`) + bell badge na top bar com contagem de não lidas; ecrã de definições com perfil, storage usage (`GET /api/user/storage`), lista de sessões activas (`GET /api/user/sessions`) com revogação individual e em massa, alterar password (`POST /api/user/password`). _Billing e WebSocket Pusher ficam para próxima iteração._
-- [x] **Fase 7** — Polish UI: ImageLoader Coil partilhado com OkHttp autenticado + decoder SVG; HostRewrite/AuthInterceptor agora só actuam para o host do backend (URLs assinadas S3/CDN passam transparentes); emojis e cor das pastas renderizados no `BrowseItemRow`; thumbnails reais para imagens; avatar redondo no drawer header (com fallback para inicial); QR code SVG renderizado a 220 dp; recursos `values/strings.xml` + `values-en/strings.xml` (PT e EN) prontos para swap dos hardcoded strings em iteração futura.
+### Sharing
+- 🔗 Share links with optional password, permissions (view/edit) and expiry
+- 📧 Email delivery and QR code
+- ⭐ Synced favourites
 
-## Estrutura
+### Extras
+- ☁️ Automatic gallery backup (WorkManager, network-aware)
+- 🔔 In-app notifications with unread badge
+- 💳 Billing and plans (Stripe / crypto)
+- 🌍 Interface in Portuguese, English, French and Spanish
+- 🛠️ Built-in admin panel (dashboard, users, invites, news)
+
+---
+
+## 🧱 Tech stack
+
+| Layer | Technology |
+|---|---|
+| UI | Jetpack Compose + Material 3 |
+| DI | Hilt |
+| Networking | Retrofit + OkHttp + kotlinx.serialization |
+| Images | Coil (authenticated OkHttp, SVG support) |
+| Storage | DataStore + encrypted SharedPreferences |
+| Background | WorkManager (automatic backup) |
+| Crypto | libsodium-style X25519/XSalsa20-Poly1305, PBKDF2 |
+
+### Project structure
 
 ```
 app/src/main/kotlin/co/golink/tester/
-├── App.kt / MainActivity.kt
-├── data/
-│   ├── auth/                     # TokenStore (encrypted), AuthRepository, SessionManager, ApiErrorParser
-│   ├── config/                   # BackendConfigRepository, BackendUrlHolder, ConfigRepository
-│   └── user/                     # UserRepository
-├── domain/                       # auth, user, config DTOs + AuthError
-├── di/                           # NetworkModule, ApiModule
-├── network/
-│   ├── ApiService(Factory)       # Ping (factory para pré-config)
-│   ├── AuthApi, UserApi, ConfigApi
-│   └── interceptors/             # HostRewrite + Auth bearer
+├── data/          # Repositories, auth, encryption, upload/download, backup
+├── domain/        # DTOs and models (kotlinx.serialization)
+├── network/       # Retrofit interfaces + interceptors (auth, session, host)
+├── di/            # Hilt modules
 └── ui/
-    ├── common/AuthScaffold       # Layout partilhado dos ecrãs de auth
-    ├── theme/                    # Color, Typography, Theme (#00BC7E)
-    ├── navigation/               # NavHost com gate
-    └── screens/
-        ├── config/               # BackendConfigScreen
-        ├── signin/ register/ forgot/ otp/ socialite/
-        └── home/                 # Placeholder pós-login
+    ├── screens/   # Compose screens (browse, settings, share, viewer, …)
+    ├── components/# Reusable dialogs and components
+    ├── i18n/      # Runtime translations (PT/EN/FR/ES)
+    └── theme/     # Brand theme
 ```
 
-## Fluxo de autenticação implementado
+---
 
-1. **Configurar servidor** → guarda URL no DataStore.
-2. **Login** (`POST /api/login`) → recebe token Sanctum → guardado encriptado.
-3. **OTP** (`POST /api/user/send-otp-code` + `POST /api/user/validate-otp-code`) → obrigatório após login (espelha o comportamento da web).
-4. **Bootstrap** (`GET /api/user/`) → utilizador persistido em memória.
-5. **Socialite** → `GET /api/socialite/{provider}/redirect` → WebView → callback no `/sign-in` → cookies copiados para chamar `GET /api/socialite/pending-token` → token adoptado → segue OTP.
-6. **Logout** → `POST /api/logout` + limpa TokenStore.
->>>>>>> 91f381b (project added)
+## 🚀 Getting started
+
+### Requirements
+- Android Studio Ladybug (or newer)
+- JDK 17
+- Android SDK 36
+- A reachable GoLink server (the app asks for the URL on first launch and verifies it with `GET /api/ping`)
+
+### Build
+
+```bash
+git clone git@github.com:Joob/GoLink_APP_Android.git
+cd GoLink_APP_Android
+./gradlew :app:assembleDebug
+```
+
+Or open the folder in Android Studio → Gradle sync → Run ▶ (emulator or device on API 26+).
+
+### Release
+
+Release builds require a `keystore.properties` file in the project root (not versioned):
+
+```properties
+storeFile=../golink-release.jks
+storePassword=•••
+keyAlias=•••
+keyPassword=•••
+```
+
+```bash
+./gradlew :app:assembleRelease
+```
+
+---
+
+## 🔌 Backend
+
+This app talks to the GoLink REST API (Laravel + Sanctum). Main endpoints cover authentication/OTP, browsing, chunked uploads, sharing, trash, notifications, billing, E2E encryption and account deletion. The server URL is configurable in-app — it works with any self-hosted GoLink instance.
+
+---
+
+## 🔒 Security notes
+
+- The session token is stored encrypted on the device
+- Interceptors ensure the `Authorization` header is only sent to the backend host (signed S3/CDN URLs pass through untouched)
+- E2E content is encrypted and decrypted exclusively on the device
+- Logs are sanitised — tokens, codes and file contents are never recorded
+
+---
+
+## 📄 License
+
+Released under the [MIT](LICENSE) license.
