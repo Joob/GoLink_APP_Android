@@ -97,6 +97,26 @@ interface FilesApi {
         @Body body: co.golink.tester.domain.encryption.StoreFolderKeysBody,
     ): Response<okhttp3.ResponseBody>
 
+    // E2E: cofre da chave da partilha (selada à pública do dono). Escrita única —
+    // uma segunda devolve 409 com o blob que já lá está.
+    @GET("api/share/{token}/owner-key")
+    suspend fun shareOwnerKey(
+        @Path("token") token: String,
+    ): Response<co.golink.tester.domain.encryption.ShareOwnerKeyResponse>
+
+    @POST("api/share/{token}/owner-key")
+    suspend fun storeShareOwnerKey(
+        @Path("token") token: String,
+        @Body body: co.golink.tester.domain.encryption.StoreShareOwnerKeyBody,
+    ): Response<okhttp3.ResponseBody>
+
+    // E2E: tokens das partilhas do próprio cujo alvo é este item ou um ancestral
+    // (para registar o nome de itens criados/renomeados DEPOIS da partilha).
+    @GET("api/file/{id}/ancestor-share-tokens")
+    suspend fun ancestorShareTokens(
+        @Path("id") id: String,
+    ): Response<co.golink.tester.domain.encryption.AncestorShareTokensResponse>
+
     // E2E nomes em partilhas: nomes dos descendentes (para o dono os re-cifrar
     // com a chave da partilha) e registo em lote por token.
     @GET("api/folder/{id}/descendant-names")

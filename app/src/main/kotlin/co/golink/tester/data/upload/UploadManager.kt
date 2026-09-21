@@ -52,6 +52,7 @@ class UploadManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val api: FilesApi,
     private val e2eKeyManager: E2EKeyManager,
+    private val e2eShareService: co.golink.tester.data.encryption.E2EShareService,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val resolver: ContentResolver get() = context.contentResolver
@@ -370,6 +371,16 @@ class UploadManager @Inject constructor(
                 }
             }
 
+            // Upload do DONO para uma pasta já partilhada: regista o nome nas
+            // partilhas ancestrais (o visitante do link passa a ver o nome).
+            if (fileId != null && nameEncrypted != null) {
+                e2eShareService.registerItemNameForOwnerShares(fileId, metadata.baseName)
+            }
+            // ...e a data key: sem ela o nome aparecia no link mas o ficheiro não abria.
+            if (fileId != null && ownerPublicKey.isNullOrBlank()) {
+                e2eShareService.registerFileKeyForOwnerShares(fileId, dataKey)
+            }
+
             updateProgress(taskId, 1f)
         } finally {
             temp.delete()
@@ -567,6 +578,16 @@ class UploadManager @Inject constructor(
                     )
                 } catch (e: Throwable) {
                 }
+            }
+
+            // Upload do DONO para uma pasta já partilhada: regista o nome nas
+            // partilhas ancestrais (o visitante do link passa a ver o nome).
+            if (fileId != null && nameEncrypted != null) {
+                e2eShareService.registerItemNameForOwnerShares(fileId, metadata.baseName)
+            }
+            // ...e a data key: sem ela o nome aparecia no link mas o ficheiro não abria.
+            if (fileId != null && ownerPublicKey.isNullOrBlank()) {
+                e2eShareService.registerFileKeyForOwnerShares(fileId, dataKey)
             }
 
             updateProgress(taskId, 1f)

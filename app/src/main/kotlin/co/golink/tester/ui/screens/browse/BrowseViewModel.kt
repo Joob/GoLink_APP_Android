@@ -587,7 +587,13 @@ class BrowseViewModel @Inject constructor(
                 viewModelScope.launch {
                     try {
                         runCatching {
-                            val fragment = e2eShareService.buildFolderShareFragment(item.id, share.token) ?: return@runCatching
+                            val result = e2eShareService.buildFolderShareFragment(item.id, share.token)
+                            // Chave desta partilha irrecuperável e já há links lá fora:
+                            // cunhar uma nova matava-os — avisa-se em vez disso.
+                            if (result.keyLost) {
+                                _state.update { it.copy(toast = "A chave desta partilha só existe no dispositivo onde criaste o link. Abre a conta lá uma vez para a recuperar — senão, revoga e volta a partilhar (o link antigo deixa de funcionar).".tr()) }
+                            }
+                            val fragment = result.fragment ?: return@runCatching
                             _shareState.update { cur ->
                                 cur?.copy(share = cur.share?.copy(link = cur.share.link + fragment))
                             }
@@ -637,6 +643,10 @@ class BrowseViewModel @Inject constructor(
             )
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
+                    // O servidor devolve o link sem #k= (nunca conhece a chave): sem
+                    // re-anexar, o link mostrado/copiado depois de guardar não decifrava.
+                    // A chave é a MESMA de sempre (cofre do dono) — o link não muda.
+                    attachShareKeyFragment()
                     _state.update { it.copy(toast = "Partilha actualizada".tr()) }
                     loadCurrent()
                 }

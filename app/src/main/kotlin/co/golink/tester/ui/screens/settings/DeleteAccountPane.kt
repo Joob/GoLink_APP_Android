@@ -219,12 +219,9 @@ internal fun DeleteAccountPane(
     var emailInput by remember { mutableStateOf("") }
     var codeInput by remember { mutableStateOf("") }
 
-    // Auto-submissão aos 6 dígitos, como no ecrã de OTP.
-    LaunchedEffect(codeInput) {
-        if (codeInput.length == 6 && state.step == DeleteAccountStep.Code && !state.isLoading) {
-            viewModel.confirm(codeInput)
-        }
-    }
+    // Sem auto-submissão aos 6 dígitos (ao contrário do OTP de login): a
+    // eliminação é irreversível, por isso exige sempre um toque explícito,
+    // tal como o botão "Verify & Delete Account" da web.
 
     Column(
         modifier = Modifier
@@ -333,11 +330,31 @@ internal fun DeleteAccountPane(
                     Spacer(Modifier.height(8.dp))
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
-                Spacer(Modifier.height(16.dp))
-                if (state.isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(20.dp))
+                Button(
+                    onClick = { viewModel.confirm(codeInput) },
+                    enabled = !state.isLoading && codeInput.length == 6,
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(vertical = 14.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                ) {
+                    if (state.isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onError,
+                        )
+                    } else {
+                        Icon(Icons.Outlined.Delete, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Verificar e apagar conta".tr())
+                    }
                 }
+                Spacer(Modifier.height(4.dp))
                 TextButton(
                     onClick = { viewModel.resendCode(emailInput) },
                     enabled = state.resendCooldown == 0 && !state.isLoading,

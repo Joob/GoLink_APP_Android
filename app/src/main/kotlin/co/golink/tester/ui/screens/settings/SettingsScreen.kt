@@ -379,6 +379,7 @@ private fun MenuPane(
     onUpdateAvatar: (ByteArray) -> Unit,
 ) {
     var showLogoutConfirm by remember { mutableStateOf(false) }
+    var showDeleteAccountConfirm by remember { mutableStateOf(false) }
 
     // Avatar: escolher imagem → recortar no popup → confirmar → upload.
     var pickedImage by remember { mutableStateOf<android.net.Uri?>(null) }
@@ -405,6 +406,20 @@ private fun MenuPane(
             destructive = true,
             onDismiss = { showLogoutConfirm = false },
             onConfirm = onLogout,
+        )
+    }
+
+    if (showDeleteAccountConfirm) {
+        co.golink.tester.ui.components.dialogs.ConfirmDialog(
+            title = "Apagar conta permanentemente?".tr(),
+            message = "Todos os teus ficheiros, pastas e dados encriptados serão eliminados a 100%. Esta ação não pode ser desfeita.".tr(),
+            confirmText = "Continuar".tr(),
+            destructive = true,
+            onDismiss = { showDeleteAccountConfirm = false },
+            onConfirm = {
+                showDeleteAccountConfirm = false
+                onNavigate(SettingsRoute.DeleteAccount)
+            },
         )
     }
 
@@ -573,11 +588,24 @@ private fun MenuPane(
             Text("Terminar sessão".tr())
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(32.dp))
 
-        // Zona de perigo: eliminação permanente da conta (fluxo igual à web).
+        // Zona de perigo: separada do logout para não se clicar por engano.
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+
+        Spacer(Modifier.height(20.dp))
+
+        Text(
+            "Zona de perigo".tr(),
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp).fillMaxWidth(),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.error,
+            fontWeight = FontWeight.SemiBold,
+        )
+
+        // Eliminação permanente da conta (fluxo igual à web).
         OutlinedButton(
-            onClick = { onNavigate(SettingsRoute.DeleteAccount) },
+            onClick = { showDeleteAccountConfirm = true },
             shape = RoundedCornerShape(12.dp),
             contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
             modifier = Modifier.fillMaxWidth(),

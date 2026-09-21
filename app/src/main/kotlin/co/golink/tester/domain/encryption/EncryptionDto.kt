@@ -114,6 +114,25 @@ data class StoreFolderKeysBody(
     val keys: List<FolderShareKeyEntry>,
 )
 
+// E2E: a chave da partilha selada à pública do dono (cofre no servidor), para
+// qualquer dispositivo dele recuperar a MESMA chave do #k=. `has_file_keys` =
+// já há chaves registadas para o token (links distribuídos que uma nova mataria).
+@Serializable
+data class ShareOwnerKeyResponse(
+    val wrapped_share_key: String? = null,
+    val has_file_keys: Boolean = false,
+)
+
+@Serializable
+data class StoreShareOwnerKeyBody(
+    val wrapped_share_key: String,
+)
+
+@Serializable
+data class AncestorShareTokensResponse(
+    val tokens: List<String> = emptyList(),
+)
+
 // E2E nomes em partilhas: o nome re-cifrado com a chave da partilha (#k=), por
 // item. Sem isto o visitante do link vê o placeholder em vez do nome.
 @Serializable

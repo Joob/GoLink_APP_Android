@@ -53,3 +53,16 @@ RTK.md
 docs/progress.md
 session_summary.md
 /context
+
+# ProGuard/R8 mapping (artefacto de build; ajuda a desofuscar os releases)
+mapping.txt
+app/mapping.txt
+
+# Outputs de assinatura do Android Studio
+app/release/
+
+# Heap dumps / profiling
+*.hprof
+
+# Notas de sessão locais
+docs/delta.md

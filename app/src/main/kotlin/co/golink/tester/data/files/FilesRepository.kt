@@ -10,6 +10,7 @@ import co.golink.tester.domain.files.MoveItemsRequest
 import co.golink.tester.domain.files.RemoteUploadRequest
 import co.golink.tester.domain.files.RenameItemRequest
 import co.golink.tester.data.encryption.E2EKeyManager
+import co.golink.tester.data.encryption.E2EShareService
 import co.golink.tester.network.FilesApi
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -20,6 +21,7 @@ private const val NAME_PLACEHOLDER = "•"
 class FilesRepository @Inject constructor(
     private val api: FilesApi,
     private val keys: E2EKeyManager,
+    private val shareService: E2EShareService,
 ) {
     // E2E Fase 2: cifra o nome no espaço privado (encryptName) quando há chave.
     // A resposta traz o placeholder → repomos o nome em claro que definimos.
@@ -35,6 +37,9 @@ class FilesRepository @Inject constructor(
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val entry = response.body()?.data ?: error("Resposta vazia")
         val folder = entry.toItem() as BrowseItem.Folder
+        // Pasta criada dentro de uma pasta já partilhada: o visitante do link só
+        // lê o nome se for registado com a chave dessa partilha.
+        if (enc != null) shareService.registerItemNameForOwnerShares(folder.id, name)
         if (enc != null) folder.copy(name = name) else folder
     }
 
@@ -52,6 +57,8 @@ class FilesRepository @Inject constructor(
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val entry = response.body()?.data ?: error("Resposta vazia")
         val result = entry.toItem()
+        // Renomear dentro de uma pasta partilhada: o nome antigo continuava no link.
+        if (enc != null) shareService.registerItemNameForOwnerShares(item.id, newName)
         if (enc == null) result else when (result) {
             is BrowseItem.Folder -> result.copy(name = newName)
             is BrowseItem.File -> result.copy(name = newName)
