@@ -53,6 +53,8 @@ import androidx.compose.material.icons.outlined.CurrencyBitcoin
 import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.Download
@@ -380,6 +382,7 @@ private fun MenuPane(
 ) {
     var showLogoutConfirm by remember { mutableStateOf(false) }
     var showDeleteAccountConfirm by remember { mutableStateOf(false) }
+    var dangerZoneExpanded by remember { mutableStateOf(false) }
 
     // Avatar: escolher imagem → recortar no popup → confirmar → upload.
     var pickedImage by remember { mutableStateOf<android.net.Uri?>(null) }
@@ -588,33 +591,54 @@ private fun MenuPane(
             Text("Terminar sessão".tr())
         }
 
-        Spacer(Modifier.height(32.dp))
+        // Zona de perigo: escondida para admins e, para os restantes, atrás de um
+        // link discreto que é preciso abrir antes de ver o botão de eliminação.
+        if (user?.role != "admin") {
+            Spacer(Modifier.height(40.dp))
 
-        // Zona de perigo: separada do logout para não se clicar por engano.
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
 
-        Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(12.dp))
 
-        Text(
-            "Zona de perigo".tr(),
-            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp).fillMaxWidth(),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.error,
-            fontWeight = FontWeight.SemiBold,
-        )
+            TextButton(
+                onClick = { dangerZoneExpanded = !dangerZoneExpanded },
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                ),
+            ) {
+                Text("Zona de perigo".tr(), style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.width(4.dp))
+                Icon(
+                    if (dangerZoneExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
 
-        // Eliminação permanente da conta (fluxo igual à web).
-        OutlinedButton(
-            onClick = { showDeleteAccountConfirm = true },
-            shape = RoundedCornerShape(12.dp),
-            contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
-        ) {
-            Icon(Icons.Outlined.Delete, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("Apagar conta permanentemente".tr())
+            AnimatedVisibility(visible = dangerZoneExpanded) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Esta ação é permanente e não pode ser revertida.".tr(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 4.dp, bottom = 10.dp),
+                    )
+                    // Eliminação permanente da conta (fluxo igual à web).
+                    OutlinedButton(
+                        onClick = { showDeleteAccountConfirm = true },
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
+                    ) {
+                        Icon(Icons.Outlined.Delete, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Apagar conta permanentemente".tr())
+                    }
+                }
+            }
         }
 
         Spacer(Modifier.height(16.dp))

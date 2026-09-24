@@ -242,6 +242,7 @@ class AnalyticsViewModel @Inject constructor(
 ) : ViewModel() {
     data class UiState(
         val data: AnalyticsResponse? = null,
+        val range: String = "7d",
         val isLoading: Boolean = true,
         val error: String? = null,
     )
@@ -251,44 +252,24 @@ class AnalyticsViewModel @Inject constructor(
 
     init { load() }
 
+    /** Troca de janela temporal (24h/7d/30d/90d) sem perder o que já está no ecrã. */
+    fun setRange(range: String) {
+        if (_state.value.range == range) return
+        _state.update { it.copy(range = range) }
+        load()
+    }
+
     fun load() {
         _state.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
-            repository.analytics()
+            repository.analytics(_state.value.range)
                 .onSuccess { d -> _state.update { it.copy(data = d, isLoading = false) } }
                 .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (${t.message})") } }
         }
     }
 }
 
-@Composable
-fun AnalyticsPane(viewModel: AnalyticsViewModel = hiltViewModel()) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
-    when {
-        state.isLoading -> AdminLoading()
-        state.error != null -> AdminError(state.error!!, viewModel::load)
-        else -> {
-            val d = state.data ?: return
-            Column(
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-            ) {
-                AdminSectionTitle("Visitas (${d.range ?: "7d"})")
-                StatRow("Visitantes", d.cards.visitors.toString(), "Visitas", d.cards.visits.toString())
-                Spacer(Modifier.height(12.dp))
-                StatRow("Novos", d.behavior.new.toString(), "Recorrentes", d.behavior.returning.toString())
-
-                RankedSection("Top países".tr(), d.countries)
-                RankedSection("Dispositivos", d.devices)
-                RankedSection("Browsers", d.browsers)
-                RankedSection("Sistemas", d.os)
-                RankedSection("Referências".tr(), d.referrers)
-
-                Spacer(Modifier.height(24.dp))
-            }
-        }
-    }
-}
+// AnalyticsPane vive em AnalyticsPane.kt (gráficos), a usar este ViewModel.
 
 // ===========================================================================
 // Users (read-only paginated list)

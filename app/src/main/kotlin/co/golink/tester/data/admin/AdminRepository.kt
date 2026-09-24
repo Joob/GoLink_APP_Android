@@ -26,8 +26,8 @@ class AdminRepository @Inject constructor(
         response.body() ?: error("Resposta vazia")
     }
 
-    suspend fun analytics(): Result<AnalyticsResponse> = runCatching {
-        val response = api.analytics()
+    suspend fun analytics(range: String = "7d"): Result<AnalyticsResponse> = runCatching {
+        val response = api.analytics(range)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         response.body() ?: error("Resposta vazia")
     }

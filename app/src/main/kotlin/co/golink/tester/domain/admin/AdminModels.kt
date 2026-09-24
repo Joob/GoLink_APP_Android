@@ -58,12 +58,16 @@ data class DashboardCron(
 @Serializable
 data class AnalyticsResponse(
     val range: String? = null,
+    val granularity: String? = null,
     val cards: AnalyticsCards = AnalyticsCards(),
+    val series: AnalyticsSeries = AnalyticsSeries(),
     val countries: List<RankedItem> = emptyList(),
+    val cities: List<RankedItem> = emptyList(),
     val devices: List<RankedItem> = emptyList(),
     val browsers: List<RankedItem> = emptyList(),
     val os: List<RankedItem> = emptyList(),
     val referrers: List<RankedItem> = emptyList(),
+    val events: List<RankedItem> = emptyList(),
     val behavior: AnalyticsBehavior = AnalyticsBehavior(),
 )
 
@@ -73,11 +77,21 @@ data class AnalyticsCards(
     val visits: Int = 0,
     val visitorsChange: Double = 0.0,
     val visitsChange: Double = 0.0,
+    val botsFiltered: Int = 0,
+)
+
+/** Série temporal do sumário: um ponto por dia (ou por hora em 24h). */
+@Serializable
+data class AnalyticsSeries(
+    val labels: List<String> = emptyList(),
+    val visitors: List<Int> = emptyList(),
+    val visits: List<Int> = emptyList(),
 )
 
 @Serializable
 data class RankedItem(
     val label: String? = null,
+    val code: String? = null,
     val value: Int = 0,
     val percentage: Double = 0.0,
 )

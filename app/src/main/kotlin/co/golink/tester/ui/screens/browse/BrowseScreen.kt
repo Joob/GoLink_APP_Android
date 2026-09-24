@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -144,6 +145,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextAlign
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -390,7 +392,10 @@ fun BrowseScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), modifier = Modifier.padding(horizontal = 16.dp))
                 Spacer(Modifier.height(8.dp))
                 if (e2eLocked) {
-                    DrawerEncryptedIndicator()
+                    DrawerEncryptedIndicator(onUnlock = {
+                        scope.launch { drawerState.close() }
+                        gateVm.reopen()
+                    })
                 } else {
                 DrawerSectionHeader("BASE")
                 DrawerEntry(Icons.Outlined.Folder, "Ficheiros".tr(), state.mode is BrowseMode.Folder) {
@@ -465,24 +470,30 @@ fun BrowseScreen(
                 Spacer(Modifier.height(8.dp))
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), modifier = Modifier.padding(horizontal = 16.dp))
                 Spacer(Modifier.height(8.dp))
-                DrawerEntry(
-                    Icons.Outlined.CloudUpload,
-                    "Backups Automáticos".tr(),
-                    selected = false,
-                    badge = { OnOffBadge(on = autoBackupEnabled) },
-                ) {
-                    scope.launch { drawerState.close() }
-                    onOpenAutoBackup()
+                // Backups Automáticos revela estado/conteúdo da conta: só disponível com o cofre aberto.
+                if (!e2eLocked) {
+                    DrawerEntry(
+                        Icons.Outlined.CloudUpload,
+                        "Backups Automáticos".tr(),
+                        selected = false,
+                        badge = { OnOffBadge(on = autoBackupEnabled) },
+                    ) {
+                        scope.launch { drawerState.close() }
+                        onOpenAutoBackup()
+                    }
                 }
                 DrawerEntry(Icons.Outlined.Settings, "Definições".tr(), false) {
                     scope.launch { drawerState.close() }
                     onOpenSettings()
                 }
+                Spacer(Modifier.height(10.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), modifier = Modifier.padding(horizontal = 16.dp))
+                Spacer(Modifier.height(10.dp))
                 DrawerEntry(Icons.AutoMirrored.Filled.Logout, "Sair da Conta".tr(), false, destructive = true) {
                     scope.launch { drawerState.close() }
                     activeDialog = ActionDialog.Logout
                 }
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(12.dp))
               }
               StorageFooter(
                   storage = storage,
@@ -1948,23 +1959,54 @@ private fun E2ELockedContent(modifier: Modifier = Modifier, onUnlock: () -> Unit
 
 /** Indicador "Encrypted" no drawer, no lugar da navegação de ficheiros. */
 @Composable
-private fun DrawerEncryptedIndicator() {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 28.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+private fun DrawerEncryptedIndicator(onUnlock: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.06f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)),
     ) {
-        Icon(
-            Icons.Outlined.Lock,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(22.dp),
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "Encrypted".tr(),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Outlined.Lock,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Conteúdo encriptado".tr(),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Introduz a tua passphrase para veres os ficheiros e os backups.".tr(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(16.dp))
+            Button(
+                onClick = onUnlock,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+            ) {
+                Text("Desencriptar ficheiros".tr(), fontWeight = FontWeight.SemiBold)
+            }
+        }
     }
 }
 
