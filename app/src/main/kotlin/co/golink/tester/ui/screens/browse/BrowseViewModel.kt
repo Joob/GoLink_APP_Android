@@ -18,6 +18,7 @@ import co.golink.tester.data.share.ShareRepository
 import co.golink.tester.data.teams.TeamsRepository
 import co.golink.tester.data.trash.TrashRepository
 import co.golink.tester.data.upload.UploadManager
+import co.golink.tester.domain.files.withTextExtension
 import co.golink.tester.data.upload.UploadTask
 import co.golink.tester.data.uploadrequest.UploadRequestRepository
 import co.golink.tester.domain.browse.BrowseItem
@@ -25,6 +26,7 @@ import co.golink.tester.domain.browse.NavigationSection
 import co.golink.tester.domain.browse.ShareInfo
 import co.golink.tester.domain.teams.TeamInvitation
 import co.golink.tester.ui.screens.viewer.FileViewerSession
+import co.golink.tester.ui.screens.viewer.isViewable
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
@@ -34,10 +36,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 sealed interface BrowseMode {
     data class Folder(val id: String?, val name: String) : BrowseMode
@@ -76,6 +81,9 @@ data class BrowseUiState(
     // desaparecendo por trás à medida que cada lote é apagado; progresso 0–100.
     val isEmptyingTrash: Boolean = false,
     val emptyingProgress: Int = 0,
+    // Id de um ficheiro que o ecrã deve abrir no viewer (ficheiro de texto
+    // acabado de criar). O ecrã navega e limpa-o.
+    val openFileRequest: String? = null,
 )
 
 data class ShareDialogUiState(
@@ -151,7 +159,10 @@ class BrowseViewModel @Inject constructor(
         openRoot()
         viewModelScope.launch {
             uploadManager.completedTick.collect { t ->
-                if (t > 0) loadCurrent()
+                if (t > 0) {
+                    loadCurrent()
+                    pendingTextFileName?.let { openNewTextFileWhenListed(it) }
+                }
             }
         }
         viewModelScope.launch {
@@ -346,6 +357,46 @@ class BrowseViewModel @Inject constructor(
                 .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
         }
     }
+
+    /** Cria um ficheiro .txt vazio na pasta atual (o nome ganha .txt se faltar). */
+    fun createTextFile(name: String) {
+        val parentId = (state.value.mode as? BrowseMode.Folder)?.id
+        val filename = withTextExtension(name)
+        // Sem toast: quem confirma é o painel de uploads (e a lista recarrega no
+        // completedTick) — anunciar "criado" aqui mentia se o upload falhasse.
+        uploadManager.createTextFile(filename, "", parentId)
+        pendingTextFileName = filename
+    }
+
+    // Nome do ficheiro de texto acabado de criar, à espera de aparecer na lista
+    // recarregada para o abrirmos no editor.
+    private var pendingTextFileName: String? = null
+
+    /**
+     * A recarga da lista corre em background, por isso esperamos que o ficheiro
+     * novo apareça antes de pedir ao ecrã que abra o viewer em modo de edição.
+     */
+    private fun openNewTextFileWhenListed(name: String) {
+        viewModelScope.launch {
+            val file = withTimeoutOrNull(15_000) {
+                _state
+                    .map { s -> s.items.filterIsInstance<BrowseItem.File>().firstOrNull { it.name == name } }
+                    .filterNotNull()
+                    .first()
+            }
+            pendingTextFileName = null
+            if (file == null) return@launch
+
+            prepareViewer(
+                state.value.items.filterIsInstance<BrowseItem.File>().filter { it.isViewable() },
+                file.id,
+            )
+            fileViewerSession.startInEditMode = true
+            _state.update { it.copy(openFileRequest = file.id) }
+        }
+    }
+
+    fun consumeOpenFileRequest() = _state.update { it.copy(openFileRequest = null) }
 
     fun createFolderIn(name: String, parentId: String?) {
         viewModelScope.launch {
@@ -610,11 +661,11 @@ class BrowseViewModel @Inject constructor(
         _shareState.value = null
     }
 
-    fun createShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) {
+    fun createShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?, singleView: Boolean) {
         val current = _shareState.value ?: return
         _shareState.value = current.copy(isWorking = true)
         viewModelScope.launch {
-            shareRepository.create(current.item, password, permission, expirationDays, downloadLimit, null)
+            shareRepository.create(current.item, password, permission, expirationDays, downloadLimit, singleView, null)
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
                     attachShareKeyFragment()
@@ -628,7 +679,7 @@ class BrowseViewModel @Inject constructor(
         }
     }
 
-    fun updateCurrentShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) {
+    fun updateCurrentShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?, singleView: Boolean) {
         val current = _shareState.value ?: return
         val token = current.share?.token ?: return
         _shareState.value = current.copy(isWorking = true)
@@ -640,6 +691,7 @@ class BrowseViewModel @Inject constructor(
                 permission = permission,
                 expirationDays = expirationDays,
                 downloadLimit = downloadLimit,
+                singleView = singleView,
             )
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }

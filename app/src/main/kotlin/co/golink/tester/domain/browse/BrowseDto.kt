@@ -77,6 +77,8 @@ data class SharedRefAttributes(
     val expires_at: String? = null,
     val download_limit: Int? = null,
     val download_count: Int? = null,
+    val view_limit: Int? = null,
+    val view_count: Int? = null,
     val token: String? = null,
     val link: String? = null,
     val type: String? = null,

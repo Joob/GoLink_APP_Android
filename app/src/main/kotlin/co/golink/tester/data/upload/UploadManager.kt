@@ -117,6 +117,43 @@ class UploadManager @Inject constructor(
         return task.id to runTask(task.id, uri, metadata, parentId, mobileBackup = mobileBackup, backupFolder = backupFolder)
     }
 
+    /**
+     * Cria um ficheiro de texto novo. Escreve o conteúdo num ficheiro temporário
+     * e passa-o pelo caminho normal de upload — quota, cifragem E2E do conteúdo
+     * e do nome, thumbnails e chaves de partilha já estão lá tratados.
+     * O conteúdo inicial nunca é vazio: 0 bytes cai no caminho por chunks e não
+     * havia nada para enviar.
+     */
+    fun createTextFile(name: String, content: String, parentId: String?): Pair<String, Job> {
+        val temp = File.createTempFile("newtext_", ".txt", context.cacheDir)
+        temp.writeText(content.ifEmpty { "\n" })
+
+        val dot = name.lastIndexOf('.')
+        val metadata = FileMetadata(
+            displayName = name,
+            baseName = if (dot > 0) name.substring(0, dot) else name,
+            extension = if (dot in 0 until name.lastIndex) name.substring(dot + 1) else "txt",
+            mimeType = "text/plain",
+            size = temp.length(),
+        )
+        val uri = Uri.fromFile(temp)
+
+        val task = UploadTask(
+            id = UUID.randomUUID().toString(),
+            name = name,
+            progress = 0f,
+            state = UploadTask.State.Queued,
+            sizeBytes = metadata.size,
+        )
+        sources[task.id] = Source(uri, parentId)
+        update { list -> list + task }
+
+        val job = runTask(task.id, uri, metadata, parentId)
+        job.invokeOnCompletion { temp.delete() }
+
+        return task.id to job
+    }
+
     private class ConflictException : RuntimeException("conflict")
 
     private fun runTask(taskId: String, uri: Uri, metadata: FileMetadata, parentId: String?, overwrite: Boolean = false, mobileBackup: Boolean = false, backupFolder: String? = null, replacesId: String? = null): Job {

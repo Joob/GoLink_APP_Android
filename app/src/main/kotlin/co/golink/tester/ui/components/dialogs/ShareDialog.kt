@@ -85,8 +85,8 @@ data class ShareDialogState(
 fun ShareDialog(
     state: ShareDialogState,
     onDismiss: () -> Unit,
-    onCreate: (password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) -> Unit,
-    onUpdate: (password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) -> Unit = { _, _, _, _ -> },
+    onCreate: (password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?, singleView: Boolean) -> Unit,
+    onUpdate: (password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?, singleView: Boolean) -> Unit = { _, _, _, _, _ -> },
     onCopy: (String) -> Unit,
     onShowQr: () -> Unit,
     onSendEmail: (List<String>) -> Unit,
@@ -322,7 +322,7 @@ private fun PermissionSection(
 private fun CreateShareForm(
     isFolder: Boolean,
     isWorking: Boolean,
-    onCreate: (password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) -> Unit,
+    onCreate: (password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?, singleView: Boolean) -> Unit,
 ) {
     var protectWithPassword by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
@@ -331,6 +331,7 @@ private fun CreateShareForm(
     var expirationDays by remember { mutableStateOf("7") }
     var hasDownloadLimit by remember { mutableStateOf(false) }
     var downloadLimit by remember { mutableStateOf("10") }
+    var singleView by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SwitchRow(
@@ -373,22 +374,39 @@ private fun CreateShareForm(
             )
         }
 
-        SwitchRow(
-            icon = Icons.Outlined.Schedule,
-            label = "Limite de downloads".tr(),
-            checked = hasDownloadLimit,
-            onCheckedChange = { hasDownloadLimit = it },
-        )
-        AnimatedVisibility(visible = hasDownloadLimit) {
-            OutlinedTextField(
-                value = downloadLimit,
-                onValueChange = { v -> downloadLimit = v.filter { it.isDigit() }.take(6) },
-                label = { Text("Número de downloads".tr()) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
+        // Visualização única: só ficheiros (uma pasta não tem uma "abertura"
+        // única) e exclusiva do limite de downloads — o link só pode prometer
+        // uma regra ao visitante.
+        if (!isFolder) {
+            SwitchRow(
+                icon = Icons.Outlined.RemoveRedEye,
+                label = "Apenas uma visualização".tr(),
+                checked = singleView,
+                onCheckedChange = {
+                    singleView = it
+                    if (it) hasDownloadLimit = false
+                },
             )
+        }
+
+        if (!singleView) {
+            SwitchRow(
+                icon = Icons.Outlined.Schedule,
+                label = "Limite de downloads".tr(),
+                checked = hasDownloadLimit,
+                onCheckedChange = { hasDownloadLimit = it },
+            )
+            AnimatedVisibility(visible = hasDownloadLimit) {
+                OutlinedTextField(
+                    value = downloadLimit,
+                    onValueChange = { v -> downloadLimit = v.filter { it.isDigit() }.take(6) },
+                    label = { Text("Número de downloads".tr()) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
 
         Spacer(Modifier.height(4.dp))
@@ -398,12 +416,13 @@ private fun CreateShareForm(
                     password.takeIf { protectWithPassword && it.isNotBlank() },
                     if (isFolder) permission else null,
                     expirationDays.toIntOrNull()?.takeIf { hasExpiration && it > 0 },
-                    downloadLimit.toIntOrNull()?.takeIf { hasDownloadLimit && it > 0 },
+                    downloadLimit.toIntOrNull()?.takeIf { hasDownloadLimit && !singleView && it > 0 },
+                    singleView && !isFolder,
                 )
             },
             enabled = !isWorking && (!protectWithPassword || password.isNotBlank()) &&
                 (!hasExpiration || expirationDays.toIntOrNull()?.let { it > 0 } == true) &&
-                (!hasDownloadLimit || downloadLimit.toIntOrNull()?.let { it > 0 } == true),
+                (singleView || !hasDownloadLimit || downloadLimit.toIntOrNull()?.let { it > 0 } == true),
             shape = RoundedCornerShape(14.dp),
             contentPadding = PaddingValues(vertical = 14.dp),
             modifier = Modifier.fillMaxWidth(),
@@ -430,7 +449,7 @@ private fun ExistingShareView(
     keyPending: Boolean = false,
     onCopy: () -> Unit,
     onShowEmailDialog: () -> Unit,
-    onUpdate: (password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) -> Unit,
+    onUpdate: (password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?, singleView: Boolean) -> Unit,
     onRevoke: () -> Unit,
 ) {
     var activePanel by remember { mutableStateOf(SharePanel.None) }
@@ -443,6 +462,7 @@ private fun ExistingShareView(
     var expirationDays by remember(share.expireIn) { mutableStateOf(share.expireIn?.takeIf { it > 0 }?.toString() ?: "7") }
     var hasDownloadLimit by remember(share.downloadLimit) { mutableStateOf((share.downloadLimit ?: 0) > 0) }
     var downloadLimit by remember(share.downloadLimit) { mutableStateOf(share.downloadLimit?.takeIf { it > 0 }?.toString() ?: "10") }
+    var singleView by remember(share.viewLimit) { mutableStateOf((share.viewLimit ?: 0) > 0) }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         // Link box
@@ -503,7 +523,8 @@ private fun ExistingShareView(
                 )
             }
             if (share.protected || (share.expireIn != null && share.expireIn > 0) ||
-                (share.downloadLimit != null && share.downloadLimit > 0) || !share.permission.isNullOrBlank()
+                (share.downloadLimit != null && share.downloadLimit > 0) ||
+                (share.viewLimit != null && share.viewLimit > 0) || !share.permission.isNullOrBlank()
             ) {
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -511,6 +532,17 @@ private fun ExistingShareView(
                     if (share.expireIn != null && share.expireIn > 0) TagChip("Expira em ${share.expireIn}d")
                     if (share.downloadLimit != null && share.downloadLimit > 0) {
                         TagChip("${share.downloadCount ?: 0}/${share.downloadLimit} downloads")
+                    }
+                    // Saldo da visualização única: sem isto o dono não sabe se o
+                    // link ainda está de pé.
+                    if (share.viewLimit != null && share.viewLimit > 0) {
+                        TagChip(
+                            if ((share.viewCount ?: 0) > 0) {
+                                "Já visto — link gasto".tr()
+                            } else {
+                                "Uma visualização".tr()
+                            }
+                        )
                     }
                     if (!share.permission.isNullOrBlank()) TagChip(prettyPermission(share.permission))
                 }
@@ -616,22 +648,35 @@ private fun ExistingShareView(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                SwitchRow(
-                    icon = Icons.Outlined.Schedule,
-                    label = "Limite de downloads".tr(),
-                    checked = hasDownloadLimit,
-                    onCheckedChange = { hasDownloadLimit = it },
-                )
-                AnimatedVisibility(visible = hasDownloadLimit) {
-                    OutlinedTextField(
-                        value = downloadLimit,
-                        onValueChange = { v -> downloadLimit = v.filter { it.isDigit() }.take(6) },
-                        label = { Text("Número de downloads".tr()) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth(),
+                if (!isFolder) {
+                    SwitchRow(
+                        icon = Icons.Outlined.RemoveRedEye,
+                        label = "Apenas uma visualização".tr(),
+                        checked = singleView,
+                        onCheckedChange = {
+                            singleView = it
+                            if (it) hasDownloadLimit = false
+                        },
                     )
+                }
+                if (!singleView) {
+                    SwitchRow(
+                        icon = Icons.Outlined.Schedule,
+                        label = "Limite de downloads".tr(),
+                        checked = hasDownloadLimit,
+                        onCheckedChange = { hasDownloadLimit = it },
+                    )
+                    AnimatedVisibility(visible = hasDownloadLimit) {
+                        OutlinedTextField(
+                            value = downloadLimit,
+                            onValueChange = { v -> downloadLimit = v.filter { it.isDigit() }.take(6) },
+                            label = { Text("Número de downloads".tr()) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
                 Button(
                     onClick = {
@@ -639,7 +684,8 @@ private fun ExistingShareView(
                             password.takeIf { hasPassword && it.isNotBlank() },
                             if (isFolder) permission else null,
                             expirationDays.toIntOrNull()?.takeIf { hasExpiration && it > 0 },
-                            downloadLimit.toIntOrNull()?.takeIf { hasDownloadLimit && it > 0 },
+                            downloadLimit.toIntOrNull()?.takeIf { hasDownloadLimit && !singleView && it > 0 },
+                            singleView && !isFolder,
                         )
                         activePanel = SharePanel.None
                     },

@@ -12,6 +12,7 @@ import co.golink.tester.data.share.ShareRepository
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.NavigationSection
 import co.golink.tester.domain.browse.ShareInfo
+import co.golink.tester.domain.files.isEditableText
 import co.golink.tester.ui.screens.browse.ShareDialogUiState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -52,7 +53,13 @@ class FileViewerViewModel @Inject constructor(
         val toast: String? = null,
         val closeRequested: Boolean = false,
         val navigationTree: List<NavigationSection> = emptyList(),
-    )
+        // Editor de texto embutido.
+        val editing: Boolean = false,
+        val draft: String = "",
+        val saving: Boolean = false,
+    ) {
+        val dirty: Boolean get() = editing && draft != (textContent ?: "")
+    }
 
     private val _state = MutableStateFlow(
         UiState(
@@ -85,14 +92,14 @@ class FileViewerViewModel @Inject constructor(
     fun goTo(index: Int) {
         val s = _state.value
         if (index < 0 || index >= s.files.size || index == s.currentIndex) return
-        _state.update { it.copy(currentIndex = index, zoom = 1f, rotation = 0f, textContent = null, textError = null) }
+        _state.update { it.copy(currentIndex = index, zoom = 1f, rotation = 0f, textContent = null, textError = null, editing = false, draft = "") }
         maybeLoadText()
     }
 
     fun next() {
         val s = _state.value
         if (s.currentIndex < s.files.lastIndex) {
-            _state.update { it.copy(currentIndex = it.currentIndex + 1, zoom = 1f, rotation = 0f, textContent = null, textError = null) }
+            _state.update { it.copy(currentIndex = it.currentIndex + 1, zoom = 1f, rotation = 0f, textContent = null, textError = null, editing = false, draft = "") }
             maybeLoadText()
         }
     }
@@ -100,7 +107,7 @@ class FileViewerViewModel @Inject constructor(
     fun prev() {
         val s = _state.value
         if (s.currentIndex > 0) {
-            _state.update { it.copy(currentIndex = it.currentIndex - 1, zoom = 1f, rotation = 0f, textContent = null, textError = null) }
+            _state.update { it.copy(currentIndex = it.currentIndex - 1, zoom = 1f, rotation = 0f, textContent = null, textError = null, editing = false, draft = "") }
             maybeLoadText()
         }
     }
@@ -187,11 +194,11 @@ class FileViewerViewModel @Inject constructor(
         _shareState.value = null
     }
 
-    fun createShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) {
+    fun createShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?, singleView: Boolean) {
         val cur = _shareState.value ?: return
         _shareState.value = cur.copy(isWorking = true)
         viewModelScope.launch {
-            shareRepository.create(cur.item, password, permission, expirationDays, downloadLimit, null)
+            shareRepository.create(cur.item, password, permission, expirationDays, downloadLimit, singleView, null)
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
                     applyShareToCurrent(info)
@@ -204,7 +211,7 @@ class FileViewerViewModel @Inject constructor(
         }
     }
 
-    fun updateCurrentShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?) {
+    fun updateCurrentShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?, singleView: Boolean) {
         val cur = _shareState.value ?: return
         val token = cur.share?.token ?: return
         _shareState.value = cur.copy(isWorking = true)
@@ -216,6 +223,7 @@ class FileViewerViewModel @Inject constructor(
                 permission = permission,
                 expirationDays = expirationDays,
                 downloadLimit = downloadLimit,
+                singleView = singleView,
             )
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
@@ -301,7 +309,7 @@ class FileViewerViewModel @Inject constructor(
                         _state.update { it.copy(files = newList, toast = "Movido", closeRequested = true) }
                     } else {
                         val newIdx = _state.value.currentIndex.coerceAtMost(newList.lastIndex)
-                        _state.update { it.copy(files = newList, currentIndex = newIdx, toast = "Movido", zoom = 1f, rotation = 0f, textContent = null) }
+                        _state.update { it.copy(files = newList, currentIndex = newIdx, toast = "Movido", zoom = 1f, rotation = 0f, textContent = null, editing = false, draft = "") }
                         maybeLoadText()
                     }
                 }
@@ -346,7 +354,7 @@ class FileViewerViewModel @Inject constructor(
                         _state.update { it.copy(files = newList, toast = "Movido para o lixo".tr(), closeRequested = true) }
                     } else {
                         val newIdx = _state.value.currentIndex.coerceAtMost(newList.lastIndex)
-                        _state.update { it.copy(files = newList, currentIndex = newIdx, toast = "Movido para o lixo".tr(), zoom = 1f, rotation = 0f, textContent = null) }
+                        _state.update { it.copy(files = newList, currentIndex = newIdx, toast = "Movido para o lixo".tr(), zoom = 1f, rotation = 0f, textContent = null, editing = false, draft = "") }
                         maybeLoadText()
                     }
                 }
@@ -356,6 +364,53 @@ class FileViewerViewModel @Inject constructor(
 
     fun consumeToast() = _state.update { it.copy(toast = null) }
     fun acknowledgeClose() = _state.update { it.copy(closeRequested = false) }
+
+    /**
+     * Só ficheiros de texto com extensão gravável e, quando cifrados, com a
+     * chave E2E desbloqueada — sem ela não há como cifrar o conteúdo novo.
+     * O servidor volta a validar (can-edit, extensão, quota).
+     */
+    fun canEditText(): Boolean {
+        val file = current ?: return false
+        if (!file.isEditableText()) return false
+        if (file.encrypted && !e2eKeyManager.isUnlocked) return false
+        return _state.value.textContent != null
+    }
+
+    fun startEditing() {
+        if (!canEditText()) return
+        _state.update { it.copy(editing = true, draft = it.textContent ?: "") }
+    }
+
+    fun updateDraft(value: String) = _state.update { it.copy(draft = value) }
+
+    fun cancelEditing() = _state.update { it.copy(editing = false, draft = "") }
+
+    fun saveText() {
+        val file = current ?: return
+        val s = _state.value
+        if (!s.editing || s.saving) return
+        val text = s.draft
+
+        _state.update { it.copy(saving = true) }
+        viewModelScope.launch {
+            filesRepository.updateTextContent(file, text)
+                .onSuccess {
+                    _state.update {
+                        it.copy(
+                            saving = false,
+                            editing = false,
+                            draft = "",
+                            textContent = text,
+                            toast = "Ficheiro guardado".tr(),
+                        )
+                    }
+                }
+                .onFailure { t ->
+                    _state.update { it.copy(saving = false, toast = "Falha: ${t.message}") }
+                }
+        }
+    }
 
     fun maybeLoadText() {
         val file = current ?: return
@@ -386,7 +441,14 @@ class FileViewerViewModel @Inject constructor(
                 }
             }
             result
-                .onSuccess { txt -> _state.update { it.copy(textContent = txt, textLoading = false) } }
+                .onSuccess { txt ->
+                    _state.update { it.copy(textContent = txt, textLoading = false) }
+                    // Ficheiro acabado de criar pelo menu "+": abre já em edição.
+                    if (session.startInEditMode) {
+                        session.startInEditMode = false
+                        startEditing()
+                    }
+                }
                 .onFailure { t -> _state.update { it.copy(textLoading = false, textError = t.message ?: "erro") } }
         }
     }

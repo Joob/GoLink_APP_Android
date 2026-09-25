@@ -9,4 +9,10 @@ import javax.inject.Singleton
 class FileViewerSession @Inject constructor() {
     var files: List<BrowseItem.File> = emptyList()
     var startId: String? = null
+
+    /**
+     * Ficheiro de texto acabado de criar pelo menu "+": o viewer abre já em
+     * modo de edição. Consumido uma vez, na primeira carga do texto.
+     */
+    var startInEditMode: Boolean = false
 }

@@ -46,7 +46,10 @@ import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.RotateLeft
 import androidx.compose.material.icons.outlined.RotateRight
@@ -64,6 +67,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -227,6 +231,21 @@ fun FileViewerScreen(
                                 Icon(Icons.Outlined.ZoomIn, contentDescription = "Aumentar zoom".tr())
                             }
                         }
+                        // Editor de texto: editar / guardar em linha.
+                        if (current.isTextLike() && viewModel.canEditText()) {
+                            if (!state.editing) {
+                                IconButton(onClick = viewModel::startEditing) {
+                                    Icon(Icons.Outlined.Edit, contentDescription = "Editar".tr())
+                                }
+                            } else {
+                                IconButton(onClick = viewModel::cancelEditing, enabled = !state.saving) {
+                                    Icon(Icons.Outlined.Close, contentDescription = "Cancelar".tr())
+                                }
+                                IconButton(onClick = viewModel::saveText, enabled = !state.saving) {
+                                    Icon(Icons.Outlined.Save, contentDescription = "Guardar".tr())
+                                }
+                            }
+                        }
                         Spacer(Modifier.weight(1f))
                         IconButton(onClick = { fileSheetOpen = true }) {
                             Icon(Icons.Filled.MoreVert, contentDescription = "Mais opções".tr())
@@ -282,6 +301,9 @@ fun FileViewerScreen(
                             if (page == state.currentIndex) state.textLoading else false,
                             if (page == state.currentIndex) state.textError else null,
                             encrypted = file.encrypted,
+                            editing = page == state.currentIndex && state.editing,
+                            draft = state.draft,
+                            onDraftChange = viewModel::updateDraft,
                         )
                         file.isAudioLike() -> {
                             val src = rememberPlayableUrl(file, viewModel)
@@ -356,8 +378,8 @@ fun FileViewerScreen(
                 emailDialogVisible = ss.emailDialogVisible,
             ),
             onDismiss = { viewModel.closeShareDialog() },
-            onCreate = { pwd, perm, days, limit -> viewModel.createShare(pwd, perm, days, limit) },
-            onUpdate = { pwd, perm, days, limit -> viewModel.updateCurrentShare(pwd, perm, days, limit) },
+            onCreate = { pwd, perm, days, limit, single -> viewModel.createShare(pwd, perm, days, limit, single) },
+            onUpdate = { pwd, perm, days, limit, single -> viewModel.updateCurrentShare(pwd, perm, days, limit, single) },
             onCopy = { /* clipboard handled inside dialog */ },
             onShowQr = viewModel::fetchQrCode,
             onSendEmail = viewModel::sendShareEmail,
@@ -583,9 +605,23 @@ private fun MediaLoadingBox() {
 }
 
 @Composable
-private fun TextViewer(content: String?, loading: Boolean, error: String?, encrypted: Boolean = false) {
+private fun TextViewer(
+    content: String?,
+    loading: Boolean,
+    error: String?,
+    encrypted: Boolean = false,
+    editing: Boolean = false,
+    draft: String = "",
+    onDraftChange: (String) -> Unit = {},
+) {
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
         when {
+            editing -> OutlinedTextField(
+                value = draft,
+                onValueChange = onDraftChange,
+                modifier = Modifier.fillMaxSize().padding(12.dp),
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+            )
             loading -> CircularProgressIndicator()
             error != null -> Text("Erro: $error")
             content != null -> {

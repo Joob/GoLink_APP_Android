@@ -28,6 +28,16 @@ interface FilesApi {
         @Body body: RenameItemRequest,
     ): Response<BrowseEntryEnvelope>
 
+    // Editor de texto: reescreve o conteúdo do MESMO ficheiro (id, partilhas e
+    // data key E2E mantêm-se). Com E2E o corpo vai já cifrado daqui.
+    @Multipart
+    @POST("api/file/{id}/content")
+    suspend fun updateFileContent(
+        @Path("id") id: String,
+        @Part content: MultipartBody.Part,
+        @Part("encrypted") encrypted: RequestBody,
+    ): Response<BrowseEntryEnvelope>
+
     @HTTP(method = "POST", path = "api/remove", hasBody = true)
     suspend fun remove(@Body body: DeleteItemsRequest): Response<ApiEnvelope<Unit>>
 

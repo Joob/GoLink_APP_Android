@@ -68,6 +68,7 @@ import androidx.compose.material.icons.outlined.DriveFolderUpload
 import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.GroupAdd
 import androidx.compose.material.icons.outlined.NoteAdd
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Download
@@ -156,6 +157,7 @@ import co.golink.tester.data.settings.SettingsRepository
 import co.golink.tester.data.user.UserRepository
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.TeamMember
+import co.golink.tester.domain.files.visibleTextExtensionsLabel
 import androidx.compose.foundation.isSystemInDarkTheme
 import co.golink.tester.domain.settings.StorageLevel
 import co.golink.tester.domain.settings.StorageUsage
@@ -215,7 +217,7 @@ class BrowseShellViewModel @Inject constructor(
     init { refreshStorage() }
 }
 
-private enum class ActionDialog { None, CreateFolder, Rename, Move, Delete, Share, PermanentDelete, EmptyTrash, RemoteUpload, Details, CreateTeamFolder, ConvertToTeamFolder, FileRequest, Logout }
+private enum class ActionDialog { None, CreateFolder, CreateTextFile, Rename, Move, Delete, Share, PermanentDelete, EmptyTrash, RemoteUpload, Details, CreateTeamFolder, ConvertToTeamFolder, FileRequest, Logout }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -268,6 +270,14 @@ fun BrowseScreen(
         val msg = state.toast ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(msg)
         viewModel.consumeToast()
+    }
+
+    // Ficheiro de texto acabado de criar: abre-o no viewer (que arranca já em
+    // modo de edição) assim que aparece na lista recarregada.
+    LaunchedEffect(state.openFileRequest) {
+        val id = state.openFileRequest ?: return@LaunchedEffect
+        viewModel.consumeOpenFileRequest()
+        onOpenFile(id)
     }
 
     // Storage em tempo real: recalcula o uso sempre que um upload termina.
@@ -644,6 +654,16 @@ fun BrowseScreen(
                                         onClick = { fabMenuOpen = false; activeDialog = ActionDialog.CreateFolder },
                                     )
                                     DropdownMenuItem(
+                                        text = { Text("Criar ficheiro de texto".tr(), style = MaterialTheme.typography.bodyMedium) },
+                                        leadingIcon = {
+                                            Box(
+                                                modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f)),
+                                                contentAlignment = Alignment.Center,
+                                            ) { Icon(Icons.Outlined.Description, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(18.dp)) }
+                                        },
+                                        onClick = { fabMenuOpen = false; activeDialog = ActionDialog.CreateTextFile },
+                                    )
+                                    DropdownMenuItem(
                                         text = { Text("Criar pasta de equipa".tr(), style = MaterialTheme.typography.bodyMedium) },
                                         leadingIcon = {
                                             Box(
@@ -991,6 +1011,16 @@ fun BrowseScreen(
             onDismiss = { activeDialog = ActionDialog.None },
             onConfirm = { name -> viewModel.createFolder(name) },
         )
+        ActionDialog.CreateTextFile -> TextInputDialog(
+            title = "Novo ficheiro de texto".tr(),
+            label = "Nome",
+            initialValue = "Novo ficheiro.txt",
+            helperText = "Formatos suportados: %s. Sem extensão, é usado .txt.".tr()
+                .format(visibleTextExtensionsLabel()),
+            confirmText = "Criar".tr(),
+            onDismiss = { activeDialog = ActionDialog.None },
+            onConfirm = { name -> viewModel.createTextFile(name) },
+        )
         ActionDialog.Rename -> actionTarget?.let { target ->
             TextInputDialog(
                 title = "Renomear".tr(),
@@ -1068,8 +1098,8 @@ fun BrowseScreen(
                         actionTarget = null
                         viewModel.closeShareDialog()
                     },
-                    onCreate = { pwd, perm, days, limit -> viewModel.createShare(pwd, perm, days, limit) },
-                    onUpdate = { pwd, perm, days, limit -> viewModel.updateCurrentShare(pwd, perm, days, limit) },
+                    onCreate = { pwd, perm, days, limit, single -> viewModel.createShare(pwd, perm, days, limit, single) },
+                    onUpdate = { pwd, perm, days, limit, single -> viewModel.updateCurrentShare(pwd, perm, days, limit, single) },
                     onCopy = { /* clipboard handled inside dialog */ },
                     onShowQr = viewModel::fetchQrCode,
                     onSendEmail = viewModel::sendShareEmail,

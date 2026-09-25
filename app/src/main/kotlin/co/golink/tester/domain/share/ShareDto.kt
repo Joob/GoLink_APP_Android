@@ -13,6 +13,8 @@ data class CreateShareRequest(
     val permission: String? = null,
     val expiration: Int? = null,
     val download_limit: Int? = null,
+    // Visualização única (só ficheiros): 1 ou null. Exclusivo de download_limit.
+    val view_limit: Int? = null,
     val emails: List<String>? = null,
 )
 
@@ -25,6 +27,7 @@ data class UpdateShareRequest(
     val permission: String? = null,
     val expiration: Int? = null,
     val download_limit: Int? = null,
+    val view_limit: Int? = null,
 )
 
 @Serializable
@@ -59,6 +62,8 @@ data class ShareResponseAttributes(
     val expires_at: String? = null,
     val download_limit: Int? = null,
     val download_count: Int? = null,
+    val view_limit: Int? = null,
+    val view_count: Int? = null,
     val token: String,
     val link: String? = null,
     val type: String,

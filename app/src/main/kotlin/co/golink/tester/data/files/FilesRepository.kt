@@ -11,7 +11,12 @@ import co.golink.tester.domain.files.RemoteUploadRequest
 import co.golink.tester.domain.files.RenameItemRequest
 import co.golink.tester.data.encryption.E2EKeyManager
 import co.golink.tester.data.encryption.E2EShareService
+import co.golink.tester.data.encryption.EncryptedFileCodec
 import co.golink.tester.network.FilesApi
+import co.golink.tester.network.UserEncryptionApi
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -22,6 +27,7 @@ class FilesRepository @Inject constructor(
     private val api: FilesApi,
     private val keys: E2EKeyManager,
     private val shareService: E2EShareService,
+    private val userEncryptionApi: UserEncryptionApi,
 ) {
     // E2E Fase 2: cifra o nome no espaço privado (encryptName) quando há chave.
     // A resposta traz o placeholder → repomos o nome em claro que definimos.
@@ -62,6 +68,42 @@ class FilesRepository @Inject constructor(
         if (enc == null) result else when (result) {
             is BrowseItem.Folder -> result.copy(name = newName)
             is BrowseItem.File -> result.copy(name = newName)
+        }
+    }
+
+    /**
+     * Reescreve o conteúdo de um ficheiro de texto. O id não muda — partilhas,
+     * favoritos e a data key E2E mantêm-se. Num ficheiro cifrado o texto é
+     * cifrado aqui com a data key que o ficheiro já tem: o servidor recebe
+     * ciphertext opaco.
+     */
+    suspend fun updateTextContent(file: BrowseItem.File, text: String): Result<Unit> = runCatching {
+        var bytes = text.toByteArray(Charsets.UTF_8)
+
+        if (file.encrypted) {
+            val wrapped = userEncryptionApi.fileKey(file.id).body()?.wrapped_data_key
+                ?: error("Sem chave para este ficheiro")
+            val dataKey = keys.openFileDataKey(wrapped)
+            bytes = EncryptedFileCodec.encrypt(bytes, dataKey)
+        }
+
+        val part = MultipartBody.Part.createFormData(
+            "content",
+            file.basename.ifBlank { file.name },
+            bytes.toRequestBody("application/octet-stream".toMediaTypeOrNull()),
+        )
+        val response = api.updateFileContent(
+            file.id,
+            part,
+            if (file.encrypted) "1".toRequestBody("text/plain".toMediaTypeOrNull())
+            else "0".toRequestBody("text/plain".toMediaTypeOrNull()),
+        )
+        check(response.isSuccessful) {
+            when (response.code()) {
+                507 -> "Sem espaço de armazenamento disponível"
+                403 -> "Sem permissão para editar este ficheiro"
+                else -> "HTTP ${response.code()}"
+            }
         }
     }
 

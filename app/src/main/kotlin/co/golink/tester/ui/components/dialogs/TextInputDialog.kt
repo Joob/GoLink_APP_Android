@@ -48,6 +48,7 @@ fun TextInputDialog(
     icon: ImageVector? = null,
     iconColor: Color? = null,
     multiLine: Boolean = false,
+    helperText: String? = null,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
@@ -118,6 +119,14 @@ fun TextInputDialog(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (helperText != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        helperText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Spacer(Modifier.height(20.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),

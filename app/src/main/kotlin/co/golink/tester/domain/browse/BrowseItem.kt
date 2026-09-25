@@ -14,6 +14,9 @@ data class ShareInfo(
     val expireIn: Int?,
     val downloadLimit: Int? = null,
     val downloadCount: Int? = null,
+    // Visualização única: o link morre na 1ª abertura da página da partilha.
+    val viewLimit: Int? = null,
+    val viewCount: Int? = null,
 )
 
 /** Horas (expire_in do backend) → dias, arredondando para cima; null/<=0 → null. */
@@ -114,6 +117,8 @@ private fun BrowseRelationships?.toShareInfo(): ShareInfo? {
         expireIn = expireHoursToDays(attrs.expire_in),
         downloadLimit = attrs.download_limit,
         downloadCount = attrs.download_count,
+        viewLimit = attrs.view_limit,
+        viewCount = attrs.view_count,
     )
 }
 

@@ -22,9 +22,13 @@ class ShareRepository @Inject constructor(
         permission: String?,
         expirationDays: Int?,
         downloadLimit: Int?,
+        singleView: Boolean,
         emails: List<String>?,
     ): Result<ShareInfo> = runCatching {
         val type = if (item is BrowseItem.Folder) "folder" else "file"
+        // Visualização única só existe para ficheiros e exclui o limite de
+        // downloads — é a mesma regra que o servidor aplica ao gravar.
+        val viewLimit = if (singleView && type == "file") 1 else null
         val body = CreateShareRequest(
             id = item.id,
             type = type,
@@ -33,7 +37,8 @@ class ShareRepository @Inject constructor(
             permission = permission,
             // Backend conta em HORAS; a UI é em dias.
             expiration = expirationDays?.takeIf { it > 0 }?.let { it * 24 },
-            download_limit = downloadLimit?.takeIf { it > 0 },
+            download_limit = if (viewLimit != null) null else downloadLimit?.takeIf { it > 0 },
+            view_limit = viewLimit,
             emails = emails?.filter { it.isNotBlank() },
         )
         val response = api.create(body)
@@ -52,14 +57,17 @@ class ShareRepository @Inject constructor(
         permission: String?,
         expirationDays: Int?,
         downloadLimit: Int?,
+        singleView: Boolean,
     ): Result<ShareInfo> = runCatching {
+        val viewLimit = if (singleView) 1 else null
         val body = UpdateShareRequest(
             protected = protected,
             protectedPasswordShow = false,
             password = password,
             permission = permission,
             expiration = expirationDays?.takeIf { it > 0 }?.let { it * 24 },
-            download_limit = downloadLimit?.takeIf { it > 0 },
+            download_limit = if (viewLimit != null) null else downloadLimit?.takeIf { it > 0 },
+            view_limit = viewLimit,
         )
         val response = api.update(token, body)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
@@ -91,5 +99,7 @@ class ShareRepository @Inject constructor(
         expireIn = expireHoursToDays(expire_in),
         downloadLimit = download_limit,
         downloadCount = download_count,
+        viewLimit = view_limit,
+        viewCount = view_count,
     )
 }
