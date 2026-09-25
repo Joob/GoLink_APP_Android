@@ -93,76 +93,6 @@ private fun AdminError(message: String, onRetry: () -> Unit) {
     }
 }
 
-@Composable
-private fun StatCard(label: String, value: String, modifier: Modifier = Modifier) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
-        modifier = modifier,
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                value,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                label,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun StatRow(left: String, value: String, right: String, value2: String) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        StatCard(left, value, modifier = Modifier.weight(1f))
-        StatCard(right, value2, modifier = Modifier.weight(1f))
-    }
-}
-
-@Composable
-private fun AdminSectionTitle(text: String) {
-    Text(
-        text,
-        modifier = Modifier.padding(start = 4.dp, top = 20.dp, bottom = 8.dp),
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-        fontWeight = FontWeight.SemiBold,
-    )
-}
-
-@Composable
-private fun InfoLine(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-    }
-}
-
-@Composable
-private fun RankedSection(title: String, items: List<RankedItem>, max: Int = 8) {
-    if (items.isEmpty()) return
-    AdminSectionTitle(title)
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
-            items.take(max).forEach { item ->
-                InfoLine(item.label ?: "—", "${item.value}  ·  ${item.percentage}%")
-            }
-        }
-    }
-}
-
 // ===========================================================================
 // Dashboard
 // ===========================================================================
@@ -192,45 +122,7 @@ class DashboardViewModel @Inject constructor(
     }
 }
 
-@Composable
-fun DashboardPane(viewModel: DashboardViewModel = hiltViewModel()) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
-    when {
-        state.isLoading -> AdminLoading()
-        state.error != null -> AdminError(state.error!!, viewModel::load)
-        else -> {
-            val d = state.data ?: return
-            Column(
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-            ) {
-                AdminSectionTitle("Utilizadores".tr())
-                StatRow("Total", d.users.total.toString(), "Online", d.users.online.toString())
-                Spacer(Modifier.height(12.dp))
-                StatRow("Convidados online".tr(), d.users.guests.toString(), "Premium", d.users.usersPremiumTotal.toString())
-
-                AdminSectionTitle("Armazenamento e tráfego".tr())
-                StatRow("Em uso".tr(), d.disk.used ?: "—", "Ganhos", d.app.earnings ?: "—")
-                Spacer(Modifier.height(12.dp))
-                StatRow("Upload total".tr(), d.disk.upload.total ?: "—", "Download total".tr(), d.disk.download.total ?: "—")
-
-                AdminSectionTitle("Aplicação".tr())
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        InfoLine("Versão".tr(), d.app.version ?: "—")
-                        InfoLine("Licença".tr(), d.app.license ?: "—")
-                        InfoLine("Cron", if (d.app.cron.isRunning) "A correr".tr() else "Parado")
-                    }
-                }
-                Spacer(Modifier.height(24.dp))
-            }
-        }
-    }
-}
+// DashboardPane vive em DashboardPane.kt (gráficos), a usar este ViewModel.
 
 // ===========================================================================
 // Analytics

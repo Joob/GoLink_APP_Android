@@ -61,8 +61,8 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 // Mesmas cores da web (Analytics/Overview.vue) para o relatório ler igual nos dois lados.
-private val VisitorsColor = Color(0xFF3B6CFF)
-private val VisitsColor = Color(0xFFF5365C)
+internal val VisitorsColor = Color(0xFF3B6CFF)
+internal val VisitsColor = Color(0xFFF5365C)
 
 private val RANGES = listOf("24h", "7d", "30d", "90d")
 
@@ -474,7 +474,7 @@ private fun BehaviorCard(newVisitors: Int, returning: Int) {
 }
 
 @Composable
-private fun LegendValue(label: String, value: Int, color: Color) {
+internal fun LegendValue(label: String, value: Int, color: Color) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(10.dp).clip(CircleShape).background(color))
         Spacer(Modifier.width(8.dp))
@@ -635,7 +635,7 @@ private fun RangeSelector(selected: String, onSelect: (String) -> Unit) {
 }
 
 @Composable
-private fun AnalyticsCard(content: @Composable () -> Unit) {
+internal fun AnalyticsCard(content: @Composable () -> Unit) {
     Surface(
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
