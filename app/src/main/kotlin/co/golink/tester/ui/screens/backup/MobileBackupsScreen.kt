@@ -440,8 +440,8 @@ fun MobileBackupsScreen(
                 emailDialogVisible = ss.emailDialogVisible,
             ),
             onDismiss = { viewModel.closeShareDialog() },
-            onCreate = { pwd, perm, days, limit, single -> viewModel.createShare(pwd, perm, days, limit, single) },
-            onUpdate = { pwd, perm, days, limit, single -> viewModel.updateCurrentShare(pwd, perm, days, limit, single) },
+            onCreate = { pwd, perm, minutes, limit, views -> viewModel.createShare(pwd, perm, minutes, limit, views) },
+            onUpdate = { pwd, perm, minutes, limit, views, prot -> viewModel.updateCurrentShare(pwd, perm, minutes, limit, views, prot) },
             onCopy = { /* clipboard handled inside dialog */ },
             onShowQr = viewModel::fetchQrCode,
             onSendEmail = viewModel::sendShareEmail,
@@ -505,6 +505,8 @@ fun MobileBackupsScreen(
             BrowseItemDetailsSheet(
                 item = target,
                 onDismiss = { activeDialog = BackupItemDialog.None; dialogTarget = null },
+                onShare = { viewModel.openShareDialog(target) },
+                fetchShare = viewModel::fetchShare,
             )
         }
         BackupItemDialog.ConvertToTeamFolder -> dialogTarget?.let { target ->

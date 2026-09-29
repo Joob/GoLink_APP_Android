@@ -157,6 +157,7 @@ import co.golink.tester.data.settings.SettingsRepository
 import co.golink.tester.data.user.UserRepository
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.TeamMember
+import co.golink.tester.domain.files.unsupportedExtension
 import co.golink.tester.domain.files.visibleTextExtensionsLabel
 import androidx.compose.foundation.isSystemInDarkTheme
 import co.golink.tester.domain.settings.StorageLevel
@@ -1017,6 +1018,12 @@ fun BrowseScreen(
             initialValue = "Novo ficheiro.txt",
             helperText = "Formatos suportados: %s. Sem extensão, é usado .txt.".tr()
                 .format(visibleTextExtensionsLabel()),
+            validate = { typed ->
+                unsupportedExtension(typed)?.let { extension ->
+                    "Ficheiros .%s não são suportados aqui. Usa %s, ou não escrevas extensão nenhuma.".tr()
+                        .format(extension, visibleTextExtensionsLabel())
+                }
+            },
             confirmText = "Criar".tr(),
             onDismiss = { activeDialog = ActionDialog.None },
             onConfirm = { name -> viewModel.createTextFile(name) },
@@ -1098,8 +1105,8 @@ fun BrowseScreen(
                         actionTarget = null
                         viewModel.closeShareDialog()
                     },
-                    onCreate = { pwd, perm, days, limit, single -> viewModel.createShare(pwd, perm, days, limit, single) },
-                    onUpdate = { pwd, perm, days, limit, single -> viewModel.updateCurrentShare(pwd, perm, days, limit, single) },
+                    onCreate = { pwd, perm, minutes, limit, views -> viewModel.createShare(pwd, perm, minutes, limit, views) },
+                    onUpdate = { pwd, perm, minutes, limit, views, prot -> viewModel.updateCurrentShare(pwd, perm, minutes, limit, views, prot) },
                     onCopy = { /* clipboard handled inside dialog */ },
                     onShowQr = viewModel::fetchQrCode,
                     onSendEmail = viewModel::sendShareEmail,
@@ -1158,6 +1165,15 @@ fun BrowseScreen(
             BrowseItemDetailsSheet(
                 item = target,
                 onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
+                fetchShare = viewModel::fetchShare,
+                // Fora do lixo, como a ação "Partilhar" do menu.
+                onShare = if (state.mode == BrowseMode.Trash) null else {
+                    {
+                        actionTarget = target
+                        viewModel.openShareDialog(target)
+                        activeDialog = ActionDialog.Share
+                    }
+                },
             )
         }
         ActionDialog.CreateTeamFolder -> CreateTeamFolderDialog(
@@ -2040,63 +2056,14 @@ private fun DrawerEncryptedIndicator(onUnlock: () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun BrowseItemDetailsSheet(item: BrowseItem, onDismiss: () -> Unit) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
-    ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp)) {
-            Text("Detalhes".tr(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(16.dp))
-            DetailRow("Nome", item.name)
-            when (item) {
-                is BrowseItem.File -> {
-                    DetailRow("Tipo", item.type.ifBlank { "—" })
-                    DetailRow("Mimetype", item.mimetype ?: "—")
-                    DetailRow("Tamanho", item.filesize ?: "—")
-                }
-                is BrowseItem.Folder -> {
-                    DetailRow("Itens".tr(), item.itemCount?.toString() ?: "—")
-                    DetailRow("Tamanho", item.filesize ?: "—")
-                    if (item.isTeamFolder) DetailRow("Tipo", "Pasta de equipa".tr())
-                }
-            }
-            DetailRow("Criado em".tr(), item.createdAt?.take(10) ?: "—")
-            DetailRow("Atualizado em".tr(), item.updatedAt?.take(10) ?: "—")
-            if (item.share != null) {
-                DetailRow("Partilhado".tr(), "Sim")
-                item.share!!.permission?.let { DetailRow("Permissão".tr(), if (it == "can-edit") "Pode editar".tr() else "Apenas ver".tr()) }
-                if (item.share!!.protected) DetailRow("Password", "Sim")
-                item.share!!.expireIn?.let { if (it > 0) DetailRow("Expira em".tr(), "${it} dias") }
-            }
-            Spacer(Modifier.height(24.dp))
-        }
-    }
-}
-
-@Composable
-private fun DetailRow(label: String, value: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            label,
-            modifier = Modifier.width(130.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.Medium,
-        )
-        Text(value, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-    }
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+internal fun BrowseItemDetailsSheet(
+    item: BrowseItem,
+    onDismiss: () -> Unit,
+    onShare: (() -> Unit)? = null,
+    fetchShare: (suspend (String) -> Result<co.golink.tester.domain.browse.ShareInfo?>)? = null,
+) {
+    co.golink.tester.ui.components.ItemDetailsSheet(item = item, onDismiss = onDismiss, onShare = onShare, fetchShare = fetchShare)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

@@ -601,10 +601,10 @@ class BrowseViewModel @Inject constructor(
     }
 
     /**
-     * E2E: a data key tem de viajar no fragmento (#k=) do link de partilha —
+     * E2E: a chave tem de viajar no fragmento (#k=) do link de partilha —
      * nunca chega ao servidor. Sem isto o destinatário recebia ciphertext que não
-     * conseguia abrir (igual ao CopyShareLink da Web). FICHEIRO: a própria data
-     * key; PASTA: uma chave de partilha que abre as data keys registadas no token.
+     * conseguia abrir (igual ao CopyShareLink da Web). Ficheiro ou pasta: uma
+     * chave da partilha que abre as data keys registadas no token.
      */
     private fun attachShareKeyFragment() {
         val st = _shareState.value ?: return
@@ -621,9 +621,13 @@ class BrowseViewModel @Inject constructor(
                             val wrapped = encryptionApi.fileKey(item.id).body()?.wrapped_data_key ?: return@runCatching
                             // Regista também o nome cifrado com esta chave: sem isso
                             // o visitante do link vê o placeholder ('•').
-                            val fragment = e2eShareService.buildFileShareFragment(
+                            val result = e2eShareService.buildFileShareFragment(
                                 item.id, share.token, wrapped, item.name,
-                            ) ?: return@runCatching
+                            )
+                            if (result.keyLost) {
+                                _state.update { it.copy(toast = "A chave desta partilha só existe no dispositivo onde criaste o link. Abre a conta lá uma vez para a recuperar — senão, revoga e volta a partilhar (o link antigo deixa de funcionar).".tr()) }
+                            }
+                            val fragment = result.fragment ?: return@runCatching
                             _shareState.update { cur ->
                                 cur?.copy(share = cur.share?.copy(link = cur.share.link + fragment))
                             }
@@ -657,15 +661,18 @@ class BrowseViewModel @Inject constructor(
         }
     }
 
+    /** Para os Detalhes atualizarem visualizações/downloads com a folha aberta. */
+    suspend fun fetchShare(token: String): Result<ShareInfo?> = shareRepository.get(token)
+
     fun closeShareDialog() {
         _shareState.value = null
     }
 
-    fun createShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?, singleView: Boolean) {
+    fun createShare(password: String?, permission: String?, expirationMinutes: Int?, downloadLimit: Int?, viewLimit: Int?) {
         val current = _shareState.value ?: return
         _shareState.value = current.copy(isWorking = true)
         viewModelScope.launch {
-            shareRepository.create(current.item, password, permission, expirationDays, downloadLimit, singleView, null)
+            shareRepository.create(current.item, password, permission, expirationMinutes, downloadLimit, viewLimit, null)
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
                     attachShareKeyFragment()
@@ -679,19 +686,21 @@ class BrowseViewModel @Inject constructor(
         }
     }
 
-    fun updateCurrentShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?, singleView: Boolean) {
+    fun updateCurrentShare(password: String?, permission: String?, expirationMinutes: Int?, downloadLimit: Int?, viewLimit: Int?, protected: Boolean) {
         val current = _shareState.value ?: return
         val token = current.share?.token ?: return
         _shareState.value = current.copy(isWorking = true)
         viewModelScope.launch {
             shareRepository.update(
                 token = token,
-                protected = !password.isNullOrBlank(),
+                protected = protected,
                 password = password?.takeIf { it.isNotBlank() },
                 permission = permission,
-                expirationDays = expirationDays,
+                expirationMinutes = expirationMinutes,
                 downloadLimit = downloadLimit,
-                singleView = singleView,
+                viewLimit = viewLimit,
+                passwordTipAllowed = current.share?.passwordTipAllowed ?: false,
+                passwordTip = current.share?.passwordTip,
             )
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }

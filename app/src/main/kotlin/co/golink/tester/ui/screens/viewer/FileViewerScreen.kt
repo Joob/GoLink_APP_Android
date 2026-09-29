@@ -100,6 +100,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import co.golink.tester.domain.browse.BrowseItem
+import co.golink.tester.ui.components.FileTypeIcon
 import co.golink.tester.ui.components.dialogs.ConfirmDialog
 import co.golink.tester.ui.components.dialogs.ShareDialog
 import co.golink.tester.ui.components.dialogs.ShareDialogState
@@ -160,18 +161,7 @@ fun FileViewerScreen(
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = when {
-                                current.isImageLike() -> Icons.Filled.Image
-                                current.isPdfLike() -> Icons.Filled.PictureAsPdf
-                                current.isAudioLike() -> Icons.Filled.MusicNote
-                                current.isVideoLike() -> Icons.Filled.PlayCircle
-                                else -> Icons.Filled.Description
-                            },
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp),
-                        )
+                        FileTypeIcon(current, Modifier.height(24.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(
                             text = current.name,
@@ -378,8 +368,8 @@ fun FileViewerScreen(
                 emailDialogVisible = ss.emailDialogVisible,
             ),
             onDismiss = { viewModel.closeShareDialog() },
-            onCreate = { pwd, perm, days, limit, single -> viewModel.createShare(pwd, perm, days, limit, single) },
-            onUpdate = { pwd, perm, days, limit, single -> viewModel.updateCurrentShare(pwd, perm, days, limit, single) },
+            onCreate = { pwd, perm, minutes, limit, views -> viewModel.createShare(pwd, perm, minutes, limit, views) },
+            onUpdate = { pwd, perm, minutes, limit, views, prot -> viewModel.updateCurrentShare(pwd, perm, minutes, limit, views, prot) },
             onCopy = { /* clipboard handled inside dialog */ },
             onShowQr = viewModel::fetchQrCode,
             onSendEmail = viewModel::sendShareEmail,
@@ -405,7 +395,12 @@ fun FileViewerScreen(
             onDismiss = { dialog = ViewerDialog.None },
             onConfirm = { viewModel.delete(); dialog = ViewerDialog.None },
         )
-        ViewerDialog.Details -> DetailsSheet(file = current, onDismiss = { dialog = ViewerDialog.None })
+        ViewerDialog.Details -> co.golink.tester.ui.components.ItemDetailsSheet(
+            item = current,
+            onDismiss = { dialog = ViewerDialog.None },
+            onShare = { viewModel.openShareDialog() },
+            fetchShare = viewModel::fetchShare,
+        )
         ViewerDialog.Move -> {
             var createInMoveFor by remember { mutableStateOf<Pair<Boolean, String?>?>(null) }
             co.golink.tester.ui.components.dialogs.MoveDestinationDialog(
@@ -952,25 +947,6 @@ private fun PdfViewer(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DetailsSheet(file: BrowseItem.File, onDismiss: () -> Unit) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)) {
-            Text("Detalhes".tr(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(12.dp))
-            DetailRow("Nome", file.name)
-            DetailRow("Tipo", file.type)
-            DetailRow("Mimetype", file.mimetype ?: "—")
-            DetailRow("Tamanho", file.filesize ?: "—")
-            DetailRow("Criado", file.createdAt ?: "—")
-            DetailRow("Atualizado", file.updatedAt ?: "—")
-            Spacer(Modifier.height(16.dp))
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
 private fun ViewerFileSheet(
     file: BrowseItem.File,
     onDismiss: () -> Unit,
@@ -1087,18 +1063,7 @@ private fun ViewerSheetHeader(file: BrowseItem.File) {
                 .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                imageVector = when {
-                    file.isImageLike() -> Icons.Filled.Image
-                    file.isPdfLike() -> Icons.Filled.PictureAsPdf
-                    file.isAudioLike() -> Icons.Filled.MusicNote
-                    file.isVideoLike() -> Icons.Filled.PlayCircle
-                    else -> Icons.Filled.Description
-                },
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(30.dp),
-            )
+            FileTypeIcon(file, Modifier.height(36.dp))
         }
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -1132,10 +1097,3 @@ private fun ViewerSheetHeader(file: BrowseItem.File) {
     )
 }
 
-@Composable
-private fun DetailRow(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-        Text(label, modifier = Modifier.width(110.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.bodyMedium)
-    }
-}

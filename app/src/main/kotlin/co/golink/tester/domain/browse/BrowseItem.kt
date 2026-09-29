@@ -14,9 +14,17 @@ data class ShareInfo(
     val expireIn: Int?,
     val downloadLimit: Int? = null,
     val downloadCount: Int? = null,
-    // Visualização única: o link morre na 1ª abertura da página da partilha.
+    // Limite de visualizações: o link morre ao gastar a última.
     val viewLimit: Int? = null,
     val viewCount: Int? = null,
+    // Validade escolhida, em minutos (o formulário volta a marcar a opção).
+    val expireInMinutes: Int? = null,
+    // Quando expira DE FACTO (ISO): gastar a última visualização encurta-a.
+    val expiresAt: String? = null,
+    // Dica da password (definida na web). A app não a edita, mas tem de a
+    // devolver ao gravar — senão cada edição feita aqui apagava-a.
+    val passwordTipAllowed: Boolean = false,
+    val passwordTip: String? = null,
 )
 
 /** Horas (expire_in do backend) → dias, arredondando para cima; null/<=0 → null. */
@@ -119,6 +127,10 @@ private fun BrowseRelationships?.toShareInfo(): ShareInfo? {
         downloadCount = attrs.download_count,
         viewLimit = attrs.view_limit,
         viewCount = attrs.view_count,
+        expireInMinutes = attrs.expire_in_minutes ?: attrs.expire_in?.takeIf { it > 0 }?.let { it * 60 },
+        expiresAt = attrs.expires_at,
+        passwordTipAllowed = attrs.protectedPasswordShow ?: false,
+        passwordTip = attrs.showpassword_in,
     )
 }
 

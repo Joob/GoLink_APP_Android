@@ -90,9 +90,8 @@ private fun FilePreview(
                 contentDescription = item.name,
                 modifier = Modifier.fillMaxSize(),
                 fallback = {
-                    val (icon, tint) = fileIcon(item.type)
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(iconSize))
+                        FileTypeIcon(item, Modifier.height(iconSize))
                     }
                 },
             )
@@ -106,9 +105,8 @@ private fun FilePreview(
     val candidates = remember(item.id, item.thumbnailUrl, item.fileUrl) { previewCandidates(item) }
     var index by remember(candidates) { mutableIntStateOf(0) }
     if (index >= candidates.size) {
-        val (icon, tint) = fileIcon(item.type)
         Box(modifier = modifier, contentAlignment = Alignment.Center) {
-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(iconSize))
+            FileTypeIcon(item, Modifier.height(iconSize))
         }
     } else {
         Box(modifier = modifier) {
@@ -460,7 +458,6 @@ private fun Leading(item: BrowseItem) {
                 }
             }
             is BrowseItem.File -> {
-                val (icon, tint) = fileIcon(item.type)
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
@@ -475,12 +472,7 @@ private fun Leading(item: BrowseItem) {
                                 .clip(RoundedCornerShape(8.dp)),
                         )
                     } else {
-                        Icon(
-                            icon,
-                            contentDescription = null,
-                            tint = tint,
-                            modifier = Modifier.size(iconSize),
-                        )
+                        FileTypeIcon(item, Modifier.height(iconSize))
                     }
                 }
             }
@@ -507,16 +499,6 @@ private fun ShareBadge(modifier: Modifier = Modifier) {
             modifier = Modifier.size(11.dp),
         )
     }
-}
-
-@Composable
-internal fun fileIcon(type: String): Pair<ImageVector, Color> = when (type) {
-    "image" -> Icons.Filled.Image to Color(0xFF9D66FE)
-    "video" -> Icons.Filled.Movie to Color(0xFFFE6057)
-    "audio" -> Icons.Filled.Audiotrack to Color(0xFFFE66A1)
-    "document" -> Icons.Filled.Description to Color(0xFF5578EB)
-    "pdf" -> Icons.Filled.PictureAsPdf to Color(0xFFFE6057)
-    else -> Icons.Filled.InsertDriveFile to Color(0xFFFFBD2D)
 }
 
 internal fun parseHexColor(hex: String?): Color? {

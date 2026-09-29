@@ -28,9 +28,24 @@ fun hasTextExtension(name: String): Boolean {
 
 /** Garante que o nome escrito pelo utilizador acaba numa extensão de texto. */
 fun withTextExtension(name: String): String {
-    val trimmed = name.trim()
+    val trimmed = normalizeName(name)
     return if (hasTextExtension(trimmed)) trimmed else "$trimmed.$DEFAULT_TEXT_EXTENSION"
 }
+
+/**
+ * Extensão escrita pelo utilizador que NÃO é de texto (ex.: "pdf"), ou null
+ * quando o nome é aceitável. Sem extensão é aceitável — leva `.txt`.
+ * O servidor recusa o resto com 422, por isso avisamos antes de criar.
+ */
+fun unsupportedExtension(name: String): String? {
+    val trimmed = normalizeName(name)
+    val dot = trimmed.lastIndexOf('.')
+    if (dot <= 0 || hasTextExtension(trimmed)) return null
+    return trimmed.substring(dot + 1).lowercase()
+}
+
+// Pontos finais soltos ("notas.") não são extensão nenhuma.
+private fun normalizeName(name: String): String = name.trim().trimEnd('.')
 
 /** O ficheiro pode ser gravado pelo editor (o servidor recusa o resto com 422). */
 fun BrowseItem.File.isEditableText(): Boolean {

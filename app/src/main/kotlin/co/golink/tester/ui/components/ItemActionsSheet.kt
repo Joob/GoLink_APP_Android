@@ -219,12 +219,7 @@ private fun SheetHeader(item: BrowseItem) {
                             modifier = Modifier.fillMaxSize(),
                         )
                     } else {
-                        Icon(
-                            Icons.Filled.InsertDriveFile,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(30.dp),
-                        )
+                        FileTypeIcon(item, Modifier.height(36.dp))
                     }
                 }
             }

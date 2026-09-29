@@ -17,6 +17,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.sample
 import co.golink.tester.domain.browse.BrowseItem
+import co.golink.tester.domain.browse.ShareInfo
 import co.golink.tester.domain.browse.NavigationSection
 import co.golink.tester.ui.screens.browse.ShareDialogUiState
 import co.golink.tester.ui.screens.browse.SortMode
@@ -330,15 +331,18 @@ class MobileBackupsViewModel @Inject constructor(
         _shareState.value = ShareDialogUiState(item = item, share = item.share)
     }
 
+    /** Para os Detalhes atualizarem visualizações/downloads com a folha aberta. */
+    suspend fun fetchShare(token: String): Result<ShareInfo?> = shareRepository.get(token)
+
     fun closeShareDialog() {
         _shareState.value = null
     }
 
-    fun createShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?, singleView: Boolean) {
+    fun createShare(password: String?, permission: String?, expirationMinutes: Int?, downloadLimit: Int?, viewLimit: Int?) {
         val current = _shareState.value ?: return
         _shareState.value = current.copy(isWorking = true)
         viewModelScope.launch {
-            shareRepository.create(current.item, password, permission, expirationDays, downloadLimit, singleView, null)
+            shareRepository.create(current.item, password, permission, expirationMinutes, downloadLimit, viewLimit, null)
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
                     _state.update { it.copy(toast = "Partilha criada".tr()) }
@@ -351,19 +355,21 @@ class MobileBackupsViewModel @Inject constructor(
         }
     }
 
-    fun updateCurrentShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?, singleView: Boolean) {
+    fun updateCurrentShare(password: String?, permission: String?, expirationMinutes: Int?, downloadLimit: Int?, viewLimit: Int?, protected: Boolean) {
         val current = _shareState.value ?: return
         val token = current.share?.token ?: return
         _shareState.value = current.copy(isWorking = true)
         viewModelScope.launch {
             shareRepository.update(
                 token = token,
-                protected = !password.isNullOrBlank(),
+                protected = protected,
                 password = password?.takeIf { it.isNotBlank() },
                 permission = permission,
-                expirationDays = expirationDays,
+                expirationMinutes = expirationMinutes,
                 downloadLimit = downloadLimit,
-                singleView = singleView,
+                viewLimit = viewLimit,
+                passwordTipAllowed = current.share?.passwordTipAllowed ?: false,
+                passwordTip = current.share?.passwordTip,
             )
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }

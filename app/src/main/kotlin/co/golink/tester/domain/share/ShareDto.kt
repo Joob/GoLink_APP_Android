@@ -12,8 +12,10 @@ data class CreateShareRequest(
     val passwordShow: String? = null,
     val permission: String? = null,
     val expiration: Int? = null,
+    // Validade em minutos (permite 15m/30m); o servidor dá-lhe prioridade.
+    val expiration_minutes: Int? = null,
     val download_limit: Int? = null,
-    // Visualização única (só ficheiros): 1 ou null. Exclusivo de download_limit.
+    // Máximo de visualizações (só ficheiros). Exclusivo de download_limit.
     val view_limit: Int? = null,
     val emails: List<String>? = null,
 )
@@ -26,6 +28,7 @@ data class UpdateShareRequest(
     val passwordShow: String? = null,
     val permission: String? = null,
     val expiration: Int? = null,
+    val expiration_minutes: Int? = null,
     val download_limit: Int? = null,
     val view_limit: Int? = null,
 )
@@ -58,7 +61,9 @@ data class ShareResponseAttributes(
     val protected: Boolean? = null,
     val item_id: String,
     val protectedPasswordShow: Boolean? = null,
+    val showpassword_in: String? = null,
     val expire_in: Int? = null,
+    val expire_in_minutes: Int? = null,
     val expires_at: String? = null,
     val download_limit: Int? = null,
     val download_count: Int? = null,

@@ -92,16 +92,24 @@ class FilesRepository @Inject constructor(
             file.basename.ifBlank { file.name },
             bytes.toRequestBody("application/octet-stream".toMediaTypeOrNull()),
         )
-        val response = api.updateFileContent(
-            file.id,
-            part,
-            if (file.encrypted) "1".toRequestBody("text/plain".toMediaTypeOrNull())
-            else "0".toRequestBody("text/plain".toMediaTypeOrNull()),
-        )
+        // Sem resposta = rede: mensagem legível em vez da da exceção.
+        val response = try {
+            api.updateFileContent(
+                file.id,
+                part,
+                if (file.encrypted) "1".toRequestBody("text/plain".toMediaTypeOrNull())
+                else "0".toRequestBody("text/plain".toMediaTypeOrNull()),
+            )
+        } catch (e: java.io.IOException) {
+            throw IllegalStateException("Falha de ligação. As alterações não foram gravadas, tenta novamente.", e)
+        }
         check(response.isSuccessful) {
             when (response.code()) {
                 507 -> "Sem espaço de armazenamento disponível"
                 403 -> "Sem permissão para editar este ficheiro"
+                413 -> "Ficheiro acima do limite de upload"
+                422 -> "Este tipo de ficheiro não pode ser editado"
+                404 -> "O ficheiro já não existe"
                 else -> "HTTP ${response.code()}"
             }
         }

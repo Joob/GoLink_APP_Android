@@ -190,15 +190,18 @@ class FileViewerViewModel @Inject constructor(
         _shareState.value = ShareDialogUiState(item = file, share = file.share)
     }
 
+    /** Para os Detalhes atualizarem visualizações/downloads com a folha aberta. */
+    suspend fun fetchShare(token: String): Result<ShareInfo?> = shareRepository.get(token)
+
     fun closeShareDialog() {
         _shareState.value = null
     }
 
-    fun createShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?, singleView: Boolean) {
+    fun createShare(password: String?, permission: String?, expirationMinutes: Int?, downloadLimit: Int?, viewLimit: Int?) {
         val cur = _shareState.value ?: return
         _shareState.value = cur.copy(isWorking = true)
         viewModelScope.launch {
-            shareRepository.create(cur.item, password, permission, expirationDays, downloadLimit, singleView, null)
+            shareRepository.create(cur.item, password, permission, expirationMinutes, downloadLimit, viewLimit, null)
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
                     applyShareToCurrent(info)
@@ -211,19 +214,21 @@ class FileViewerViewModel @Inject constructor(
         }
     }
 
-    fun updateCurrentShare(password: String?, permission: String?, expirationDays: Int?, downloadLimit: Int?, singleView: Boolean) {
+    fun updateCurrentShare(password: String?, permission: String?, expirationMinutes: Int?, downloadLimit: Int?, viewLimit: Int?, protected: Boolean) {
         val cur = _shareState.value ?: return
         val token = cur.share?.token ?: return
         _shareState.value = cur.copy(isWorking = true)
         viewModelScope.launch {
             shareRepository.update(
                 token = token,
-                protected = !password.isNullOrBlank(),
+                protected = protected,
                 password = password?.takeIf { it.isNotBlank() },
                 permission = permission,
-                expirationDays = expirationDays,
+                expirationMinutes = expirationMinutes,
                 downloadLimit = downloadLimit,
-                singleView = singleView,
+                viewLimit = viewLimit,
+                passwordTipAllowed = cur.share?.passwordTipAllowed ?: false,
+                passwordTip = cur.share?.passwordTip,
             )
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }

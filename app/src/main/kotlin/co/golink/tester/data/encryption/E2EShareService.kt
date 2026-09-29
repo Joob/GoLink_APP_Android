@@ -51,19 +51,28 @@ class E2EShareService @Inject constructor(
         shareKeyPrefs.edit().putString(token, Envelope.b64(key)).apply()
     }
 
-    /** Chave resolvida; `lost` = não existe em lado nenhum mas já há links lá fora. */
-    private data class ResolvedShareKey(val key: ByteArray?, val lost: Boolean = false)
+    /**
+     * Chave resolvida; `lost` = não existe em lado nenhum mas já há links lá
+     * fora; `legacy` = link de ficheiro do esquema antigo, que não se migra.
+     */
+    private data class ResolvedShareKey(val key: ByteArray?, val lost: Boolean = false, val legacy: Boolean = false)
 
-    /** Envia a chave selada ao cofre; em 409 adota a que já lá estava (é essa que está nos links). */
+    /**
+     * Envia a chave selada ao cofre; se já lá estava uma (200 com `wrapped_share_key`,
+     * ou 409 em servidores antigos), adota essa — é a que está nos links.
+     */
     private suspend fun putOwnerKey(token: String, key: ByteArray): ByteArray {
         val resp = filesApi.storeShareOwnerKey(token, StoreShareOwnerKeyBody(e2eKeyManager.sealForSelf(key)))
-        if (resp.isSuccessful) return key
+        val body = when {
+            resp.isSuccessful -> resp.body()?.string()
+            resp.code() == 409 -> resp.errorBody()?.string()
+            else -> null
+        }
+        val winner = body
+            ?.let { runCatching { json.decodeFromString(ShareOwnerKeyResponse.serializer(), it) }.getOrNull() }
+            ?.wrapped_share_key
 
-        val winner = if (resp.code() == 409) {
-            resp.errorBody()?.string()
-                ?.let { runCatching { json.decodeFromString(ShareOwnerKeyResponse.serializer(), it) }.getOrNull() }
-                ?.wrapped_share_key
-        } else null
+        if (resp.isSuccessful && winner == null) return key
         checkNotNull(winner) { "owner-key HTTP ${resp.code()}" }
 
         return e2eKeyManager.openFileDataKey(winner).also { cacheShareKey(token, it) }
@@ -92,6 +101,7 @@ class E2EShareService @Inject constructor(
         // Partilha anterior ao cofre: promove a chave local a portátil.
         if (local != null) return ResolvedShareKey(runCatching { putOwnerKey(token, local) }.getOrDefault(local))
 
+        if (remote.legacy_file_link) return ResolvedShareKey(null, legacy = true)
         if (!allowMint) return ResolvedShareKey(null)
         if (remote.has_file_keys) return ResolvedShareKey(null, lost = true)
 
@@ -100,8 +110,8 @@ class E2EShareService @Inject constructor(
         return ResolvedShareKey(runCatching { putOwnerKey(token, key) }.getOrDefault(key))
     }
 
-    /** Resultado do fragmento de pasta. `keyLost`: chave irrecuperável — avisar, não cunhar. */
-    data class FolderFragment(val fragment: String?, val keyLost: Boolean = false)
+    /** Resultado do fragmento #k=. `keyLost`: chave irrecuperável — avisar, não cunhar. */
+    data class ShareFragment(val fragment: String?, val keyLost: Boolean = false)
 
     /**
      * Fragmento #k= para o link público de uma PASTA cifrada: re-embrulha a data
@@ -109,11 +119,11 @@ class E2EShareService @Inject constructor(
      * (folder-keys). O fragmento leva só a chave de partilha — o servidor nunca a
      * vê. `fragment` null se o E2E estiver bloqueado ou a chave não for resolvida.
      */
-    suspend fun buildFolderShareFragment(folderId: String, token: String): FolderFragment = withContext(Dispatchers.IO) {
-        if (!e2eKeyManager.isUnlocked) return@withContext FolderFragment(null)
+    suspend fun buildFolderShareFragment(folderId: String, token: String): ShareFragment = withContext(Dispatchers.IO) {
+        if (!e2eKeyManager.isUnlocked) return@withContext ShareFragment(null)
 
         val resolved = runCatching { resolveShareKey(token) }.getOrDefault(ResolvedShareKey(null))
-        val shareKey = resolved.key ?: return@withContext FolderFragment(null, resolved.lost)
+        val shareKey = resolved.key ?: return@withContext ShareFragment(null, resolved.lost)
 
         val fileIds = runCatching { filesApi.folderEncryptedFileIds(folderId).body()?.file_ids }
             .getOrNull().orEmpty()
@@ -140,33 +150,65 @@ class E2EShareService @Inject constructor(
 
         registerFolderNames(folderId, token, shareKey)
 
-        FolderFragment("#k=" + java.net.URLEncoder.encode(Envelope.b64(shareKey), "UTF-8"))
+        ShareFragment("#k=" + java.net.URLEncoder.encode(Envelope.b64(shareKey), "UTF-8"))
     }
 
     /**
-     * Fragmento #k= de um FICHEIRO cifrado: a própria data key. Regista também o
-     * nome cifrado com essa chave — o `name_encrypted` do ficheiro está selado à
-     * pubkey do dono e é ilegível para o visitante.
+     * Fragmento #k= de um FICHEIRO cifrado: uma chave DA PARTILHA, não a data
+     * key do ficheiro. A data key vai embrulhada por ela no servidor
+     * (folder-keys, que morrem com a partilha) — assim revogar o link não deixa
+     * ao visitante uma chave que continuaria a abrir o ficheiro. Mesmo esquema
+     * das pastas e da web (`buildShareKeyFragment`); os dois clientes TÊM de
+     * concordar, porque escrevem no mesmo token.
+     *
+     * Regista também o nome cifrado com essa chave — o `name_encrypted` do
+     * ficheiro está selado à pubkey do dono e é ilegível para o visitante.
      */
     suspend fun buildFileShareFragment(
         fileId: String,
         token: String,
         wrappedDataKey: String,
         plainName: String?,
-    ): String? = withContext(Dispatchers.IO) {
-        if (!e2eKeyManager.isUnlocked) return@withContext null
+    ): ShareFragment = withContext(Dispatchers.IO) {
+        if (!e2eKeyManager.isUnlocked) return@withContext ShareFragment(null)
         val dataKey = runCatching { e2eKeyManager.openFileDataKey(wrappedDataKey) }.getOrNull()
-            ?: return@withContext null
+            ?: return@withContext ShareFragment(null)
+
+        val resolved = runCatching { resolveShareKey(token) }.getOrDefault(ResolvedShareKey(null))
+
+        // Partilha anterior à chave por-partilha: continua a dar o link de
+        // sempre (data key em bruto) para não partir o que já foi enviado.
+        if (resolved.legacy) {
+            if (!plainName.isNullOrBlank()) {
+                runCatching {
+                    val enc = Envelope.sealNameForShare(plainName, dataKey)
+                    filesApi.storeShareItemNames(token, StoreShareItemNamesBody(listOf(ShareItemNameEntry(fileId, enc))))
+                }
+            }
+            return@withContext ShareFragment("#k=" + java.net.URLEncoder.encode(Envelope.b64(dataKey), "UTF-8"))
+        }
+
+        val shareKey = resolved.key ?: return@withContext ShareFragment(null, resolved.lost)
+
+        // Sem a chave embrulhada registada o visitante não abre nada: aqui não
+        // é best-effort, falhar tem de impedir o link de sair.
+        val stored = runCatching {
+            filesApi.storeFolderShareKeys(
+                token,
+                StoreFolderKeysBody(listOf(FolderShareKeyEntry(fileId, Envelope.wrapKeyForShare(dataKey, shareKey)))),
+            ).isSuccessful
+        }.getOrDefault(false)
+        if (!stored) return@withContext ShareFragment(null)
 
         // O nome em claro vem da listagem (já decifrado com a privada do dono).
         if (!plainName.isNullOrBlank()) {
             runCatching {
-                val enc = Envelope.sealNameForShare(plainName, dataKey)
+                val enc = Envelope.sealNameForShare(plainName, shareKey)
                 filesApi.storeShareItemNames(token, StoreShareItemNamesBody(listOf(ShareItemNameEntry(fileId, enc))))
             }
         }
 
-        "#k=" + java.net.URLEncoder.encode(Envelope.b64(dataKey), "UTF-8")
+        ShareFragment("#k=" + java.net.URLEncoder.encode(Envelope.b64(shareKey), "UTF-8"))
     }
 
     /**

@@ -49,10 +49,14 @@ fun TextInputDialog(
     iconColor: Color? = null,
     multiLine: Boolean = false,
     helperText: String? = null,
+    // Devolve a mensagem de erro do que está escrito, ou null se estiver bom.
+    // Enquanto houver erro, o botão de confirmar fica desativado.
+    validate: ((String) -> String?)? = null,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
     var value by remember { mutableStateOf(initialValue) }
+    val errorText = validate?.invoke(value)
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -117,9 +121,17 @@ fun TextInputDialog(
                     singleLine = !multiLine,
                     maxLines = if (multiLine) 6 else 1,
                     shape = RoundedCornerShape(12.dp),
+                    isError = errorText != null,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                if (helperText != null) {
+                if (errorText != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        errorText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                } else if (helperText != null) {
                     Spacer(Modifier.height(8.dp))
                     Text(
                         helperText,
@@ -137,7 +149,7 @@ fun TextInputDialog(
                     }
                     Spacer(Modifier.width(8.dp))
                     Button(
-                        enabled = value.isNotBlank(),
+                        enabled = value.isNotBlank() && errorText == null,
                         onClick = { onConfirm(value.trim()); onDismiss() },
                         shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),

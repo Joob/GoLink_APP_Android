@@ -19,6 +19,9 @@ interface ShareApi {
     @POST("api/share")
     suspend fun create(@Body body: CreateShareRequest): Response<ShareResponseEnvelope>
 
+    @GET("api/share/{token}")
+    suspend fun show(@Path("token") token: String): Response<ShareResponseEnvelope>
+
     @PATCH("api/share/{token}")
     suspend fun update(
         @Path("token") token: String,

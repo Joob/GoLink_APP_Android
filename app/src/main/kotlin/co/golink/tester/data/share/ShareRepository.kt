@@ -20,25 +20,24 @@ class ShareRepository @Inject constructor(
         item: BrowseItem,
         password: String?,
         permission: String?,
-        expirationDays: Int?,
+        expirationMinutes: Int?,
         downloadLimit: Int?,
-        singleView: Boolean,
+        viewLimit: Int?,
         emails: List<String>?,
     ): Result<ShareInfo> = runCatching {
         val type = if (item is BrowseItem.Folder) "folder" else "file"
-        // Visualização única só existe para ficheiros e exclui o limite de
-        // downloads — é a mesma regra que o servidor aplica ao gravar.
-        val viewLimit = if (singleView && type == "file") 1 else null
+        // Limite de visualizações só existe para ficheiros e exclui o limite
+        // de downloads — é a mesma regra que o servidor aplica ao gravar.
+        val views = viewLimit?.takeIf { it > 0 && type == "file" }
         val body = CreateShareRequest(
             id = item.id,
             type = type,
             isPassword = !password.isNullOrBlank(),
             password = password?.takeIf { it.isNotBlank() },
             permission = permission,
-            // Backend conta em HORAS; a UI é em dias.
-            expiration = expirationDays?.takeIf { it > 0 }?.let { it * 24 },
-            download_limit = if (viewLimit != null) null else downloadLimit?.takeIf { it > 0 },
-            view_limit = viewLimit,
+            expiration_minutes = expirationMinutes?.takeIf { it > 0 },
+            download_limit = if (views != null) null else downloadLimit?.takeIf { it > 0 },
+            view_limit = views,
             emails = emails?.filter { it.isNotBlank() },
         )
         val response = api.create(body)
@@ -55,24 +54,39 @@ class ShareRepository @Inject constructor(
         protected: Boolean,
         password: String?,
         permission: String?,
-        expirationDays: Int?,
+        expirationMinutes: Int?,
         downloadLimit: Int?,
-        singleView: Boolean,
+        viewLimit: Int?,
+        passwordTipAllowed: Boolean = false,
+        passwordTip: String? = null,
     ): Result<ShareInfo> = runCatching {
-        val viewLimit = if (singleView) 1 else null
+        val views = viewLimit?.takeIf { it > 0 }
         val body = UpdateShareRequest(
             protected = protected,
-            protectedPasswordShow = false,
+            protectedPasswordShow = protected && passwordTipAllowed,
+            passwordShow = passwordTip.takeIf { protected && passwordTipAllowed },
             password = password,
             permission = permission,
-            expiration = expirationDays?.takeIf { it > 0 }?.let { it * 24 },
-            download_limit = if (viewLimit != null) null else downloadLimit?.takeIf { it > 0 },
-            view_limit = viewLimit,
+            expiration_minutes = expirationMinutes?.takeIf { it > 0 },
+            download_limit = if (views != null) null else downloadLimit?.takeIf { it > 0 },
+            view_limit = views,
         )
         val response = api.update(token, body)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val attrs = response.body()?.data?.attributes ?: error("Resposta vazia")
         attrs.toShareInfo()
+    }
+
+    /**
+     * Estado atual da partilha — as visualizações/downloads são gastos por quem
+     * abre o link, fora da app. null = já não existe (o servidor apaga-a depois
+     * de gasta a última visualização).
+     */
+    suspend fun get(token: String): Result<ShareInfo?> = runCatching {
+        val response = api.show(token)
+        if (response.code() == 404) return@runCatching null
+        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        response.body()?.data?.attributes?.toShareInfo()
     }
 
     suspend fun revoke(token: String): Result<Unit> = runCatching {
@@ -101,5 +115,9 @@ class ShareRepository @Inject constructor(
         downloadCount = download_count,
         viewLimit = view_limit,
         viewCount = view_count,
+        expireInMinutes = expire_in_minutes ?: expire_in?.takeIf { it > 0 }?.let { it * 60 },
+        expiresAt = expires_at,
+        passwordTipAllowed = protectedPasswordShow ?: false,
+        passwordTip = showpassword_in,
     )
 }

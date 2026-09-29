@@ -121,6 +121,9 @@ data class StoreFolderKeysBody(
 data class ShareOwnerKeyResponse(
     val wrapped_share_key: String? = null,
     val has_file_keys: Boolean = false,
+    // Partilha de ficheiro do esquema antigo (data key em bruto no #k=): não
+    // migrar, senão o link já enviado perdia o nome.
+    val legacy_file_link: Boolean = false,
 )
 
 @Serializable
