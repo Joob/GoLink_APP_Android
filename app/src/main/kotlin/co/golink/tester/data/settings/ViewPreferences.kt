@@ -33,8 +33,19 @@ class ViewPreferences @Inject constructor(
     fun setSortMode(scope: String, mode: SortMode) =
         prefs.edit { putString("${scope}_sort", mode.name) }
 
+    /** Nível de zoom por pinça (0 = lista grande … 4 = grelha de 5), por secção. */
+    fun zoomLevel(scope: String, default: Int): Int =
+        prefs.getInt("${scope}_zoom", default).coerceIn(ZOOM_MIN, ZOOM_MAX)
+
+    fun setZoomLevel(scope: String, level: Int) =
+        prefs.edit { putInt("${scope}_zoom", level.coerceIn(ZOOM_MIN, ZOOM_MAX)) }
+
     companion object {
         const val SCOPE_BROWSE = "browse"
         const val SCOPE_BACKUP = "backup"
+        const val ZOOM_MIN = 0
+        const val ZOOM_MAX = 4
+        const val ZOOM_LIST = 1
+        const val ZOOM_GRID = 2
     }
 }

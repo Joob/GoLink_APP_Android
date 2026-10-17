@@ -68,6 +68,7 @@ data class MobileBackupsState(
     // Vista (grelha/lista) e ordenação, iguais ao browser. Por omissão os
     // uploads aparecem do mais recente para o mais antigo (DATE_DESC).
     val viewMode: ViewMode = ViewMode.LIST,
+    val zoomLevel: Int = 1,
     val sortMode: SortMode = SortMode.DATE_DESC,
     // Cartões dos telemóveis (o deste aparelho vem marcado `current`).
     val summary: co.golink.tester.domain.backup.BackupSummary? = null,
@@ -112,6 +113,10 @@ class MobileBackupsViewModel @Inject constructor(
         // Restaura vista/ordenação guardadas (predefinição: lista + mais recente).
         _state.update {
             it.copy(
+                zoomLevel = viewPreferences.zoomLevel(
+                    co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP,
+                    if (viewPreferences.viewMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, ViewMode.LIST) == ViewMode.GRID) 2 else 1,
+                ),
                 viewMode = viewPreferences.viewMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, ViewMode.LIST),
                 sortMode = viewPreferences.sortMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, SortMode.DATE_DESC),
             )
@@ -182,14 +187,16 @@ class MobileBackupsViewModel @Inject constructor(
     // ---- Selecção múltipla (espelha o BrowseViewModel) ----
 
     // ---- Vista / ordenação (persistidas) ----
-    fun toggleViewMode() = _state.update {
-        val next = if (it.viewMode == ViewMode.GRID) ViewMode.LIST else ViewMode.GRID
-        viewPreferences.setViewMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, next)
-        it.copy(viewMode = next)
-    }
+    fun toggleViewMode() = setViewMode(if (_state.value.viewMode == ViewMode.GRID) ViewMode.LIST else ViewMode.GRID)
     fun setViewMode(mode: ViewMode) {
         viewPreferences.setViewMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, mode)
-        _state.update { it.copy(viewMode = mode) }
+        setZoomLevel(if (mode == ViewMode.GRID) 2 else 1)
+    }
+    /** Pinça: nível de zoom (0 lista grande … 4 grelha de 5). */
+    fun setZoomLevel(level: Int) {
+        val l = level.coerceIn(0, 4)
+        viewPreferences.setZoomLevel(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, l)
+        _state.update { it.copy(zoomLevel = l, viewMode = co.golink.tester.ui.screens.browse.viewModeFor(l)) }
     }
     fun setSortMode(mode: SortMode) {
         viewPreferences.setSortMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, mode)

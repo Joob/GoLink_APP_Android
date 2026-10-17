@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.browse
 
+import co.golink.tester.ui.components.pinchToZoomLevels
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import co.golink.tester.ui.components.SpeedDialFab
@@ -774,9 +775,31 @@ fun BrowseScreen(
                             var collapsed by remember(state.mode) { mutableStateOf(setOf<String>()) }
                             val toggleSection: (String) -> Unit = { k -> collapsed = if (k in collapsed) collapsed - k else collapsed + k }
                             val byDate = state.sortMode == SortMode.DATE_DESC || state.sortMode == SortMode.DATE_ASC
-                            val sections = remember(displayed, byDate) { browseSections(displayed, byDate) }
+                            // Pinça (estilo Google Fotos): 0 lista grande (por dia) · 1 lista · 2–3 grelha
+                            // (por mês) · 4 grelha de 5 (por ano, pastas em chips).
+                            val zoom = state.zoomLevel
+                            val granularity = when (zoom) { 0 -> DateGroup.DAY; 4 -> DateGroup.YEAR; else -> DateGroup.MONTH }
+                            val sections = remember(displayed, byDate, granularity) { browseSections(displayed, byDate, granularity) }
+                            val gridState = rememberLazyGridState()
+                            val listState = rememberLazyListState()
+                            // Mantém à vista o item que estava no topo quando o nível muda.
+                            var anchorKey by remember { mutableStateOf<Any?>(null) }
+                            val onZoom: (Int) -> Unit = { next ->
+                                anchorKey = if (state.viewMode == ViewMode.GRID) gridState.layoutInfo.visibleItemsInfo.firstOrNull()?.key
+                                else listState.layoutInfo.visibleItemsInfo.firstOrNull()?.key
+                                viewModel.setZoomLevel(next)
+                            }
+                            val keys = remember(sections, collapsed, zoom) { sectionKeys(sections, collapsed, strip = zoom >= 4) }
+                            LaunchedEffect(zoom) {
+                                val k = anchorKey ?: return@LaunchedEffect
+                                anchorKey = null
+                                val idx = keys.indexOf(k).takeIf { it >= 0 }
+                                    ?: (if (k == FOLDERS_STRIP_KEY) keys.indexOf("sec-folders") else keys.indexOf(FOLDERS_STRIP_KEY)).takeIf { it >= 0 }
+                                    ?: return@LaunchedEffect
+                                if (viewModeFor(zoom) == ViewMode.GRID) gridState.scrollToItem(idx) else listState.scrollToItem(idx)
+                            }
+                            Box(modifier = Modifier.fillMaxSize().pinchToZoomLevels(zoom, onChange = onZoom)) {
                             if (state.viewMode == ViewMode.GRID) {
-                                val gridState = rememberLazyGridState()
                                 val shouldLoadMore by remember {
                                     androidx.compose.runtime.derivedStateOf {
                                         val total = gridState.layoutInfo.totalItemsCount
@@ -787,16 +810,16 @@ fun BrowseScreen(
                                 LaunchedEffect(shouldLoadMore, state.currentPage, state.lastPage) {
                                     if (shouldLoadMore && state.currentPage < state.lastPage) viewModel.loadMore()
                                 }
+                                val gap = if (zoom >= 3) 4.dp else 8.dp
                                 LazyVerticalGrid(
                                     state = gridState,
-                                    columns = GridCells.Fixed(2),
+                                    columns = GridCells.Fixed(gridColumnsFor(zoom)),
                                     modifier = Modifier.fillMaxSize(),
-                                    contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 88.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    contentPadding = PaddingValues(start = if (zoom >= 3) 8.dp else 12.dp, end = if (zoom >= 3) 8.dp else 12.dp, top = 8.dp, bottom = 88.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(gap),
+                                    verticalArrangement = Arrangement.spacedBy(gap),
                                 ) {
-                                    // "Pastas" (cartões compactos) + secções por mês (data) ou
-                                    // "Ficheiros" (nome), recolhíveis — como na web.
+                                    // "Pastas" + secções por dia/mês/ano (data) ou "Ficheiros" (nome), recolhíveis.
                                     sections.forEach { section ->
                                     val isCollapsed = section.key in collapsed
                                     if (section.title != null) {
@@ -813,10 +836,26 @@ fun BrowseScreen(
                                             )
                                         }
                                     }
-                                    if (!isCollapsed) items(section.items, key = { it.id }, contentType = { if (section.folders) "folder" else "file" }) { item ->
+                                    if (!isCollapsed && section.folders && zoom >= 4) {
+                                        // Grelha compacta: as pastas numa faixa horizontal de chips.
+                                        item(
+                                            key = FOLDERS_STRIP_KEY,
+                                            span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) },
+                                            contentType = "folders-strip",
+                                        ) {
+                                            co.golink.tester.ui.components.FolderChipsRow(
+                                                folders = section.items.filterIsInstance<BrowseItem.Folder>(),
+                                                selectedIds = state.selectedIds,
+                                                selectionMode = state.selectMode,
+                                                onClick = onItemClick,
+                                                onLongClick = onItemLongClick,
+                                            )
+                                        }
+                                    } else if (!isCollapsed) items(section.items, key = { it.id }, contentType = { if (section.folders) "folder" else "file" }) { item ->
                                         BrowseItemGridCard(
                                             item = item,
                                             compactFolder = section.folders,
+                                            density = co.golink.tester.ui.components.cardDensityFor(zoom),
                                             selected = state.selectedIds.contains(item.id),
                                             selectionMode = state.selectMode,
                                             onClick = { onItemClick(item) },
@@ -833,7 +872,6 @@ fun BrowseScreen(
                                     }
                                 }
                             } else {
-                                val listState = rememberLazyListState()
                                 val shouldLoadMore by remember {
                                     androidx.compose.runtime.derivedStateOf {
                                         val total = listState.layoutInfo.totalItemsCount
@@ -848,7 +886,7 @@ fun BrowseScreen(
                                     state = listState,
                                     modifier = Modifier.fillMaxSize(),
                                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(if (zoom == 0) 8.dp else 6.dp),
                                 ) {
                                     // As mesmas secções recolhíveis da grelha.
                                     sections.forEach { section ->
@@ -866,6 +904,7 @@ fun BrowseScreen(
                                     if (!isCollapsed) items(section.items, key = { it.id }) { item ->
                                         BrowseItemRow(
                                             item = item,
+                                            large = zoom == 0,
                                             selected = state.selectedIds.contains(item.id),
                                             selectionMode = state.selectMode,
                                             onClick = { onItemClick(item) },
@@ -906,6 +945,8 @@ fun BrowseScreen(
                                         }
                                     }
                                 }
+                            }
+                            co.golink.tester.ui.components.ZoomLevelHint(zoom, Modifier.align(Alignment.TopCenter).padding(top = 12.dp))
                             }
                         }
                     }
@@ -1312,6 +1353,21 @@ private fun selectionSummary(selected: List<BrowseItem>): String? {
     return if (bytes > 0) "$label · ${co.golink.tester.ui.common.formatBytes(bytes)}" else label
 }
 
+private enum class DateGroup { DAY, MONTH, YEAR }
+
+private const val FOLDERS_STRIP_KEY = "folders-strip"
+
+// Keys pela ordem em que a grelha/lista os emite (para manter o item do topo ao mudar de zoom).
+private fun sectionKeys(sections: List<MonthSection>, collapsed: Set<String>, strip: Boolean): List<Any> {
+    val out = mutableListOf<Any>()
+    sections.forEach { s ->
+        if (s.title != null) out += "sec-${s.key}"
+        if (s.key in collapsed) return@forEach
+        if (s.folders && strip) out += FOLDERS_STRIP_KEY else s.items.forEach { out += it.id }
+    }
+    return out
+}
+
 private data class MonthSection(
     val key: String,
     val title: String?,
@@ -1322,7 +1378,7 @@ private data class MonthSection(
 
 // Secções (grelha e lista, como na web): "Pastas" à cabeça; ficheiros por mês
 // quando ordenado por data, senão numa secção "Ficheiros" (só se houver pastas).
-private fun browseSections(items: List<BrowseItem>, byDate: Boolean): List<MonthSection> {
+private fun browseSections(items: List<BrowseItem>, byDate: Boolean, granularity: DateGroup = DateGroup.MONTH): List<MonthSection> {
     val folders = items.filterIsInstance<BrowseItem.Folder>()
     val files = items.filterIsInstance<BrowseItem.File>()
     val out = mutableListOf<MonthSection>()
@@ -1336,10 +1392,15 @@ private fun browseSections(items: List<BrowseItem>, byDate: Boolean): List<Month
         else MonthSection("files", "Ficheiros".tr(), typeBreakdown(files), files)
         return out
     }
-    files.groupBy { (it.createdAtIso ?: it.updatedAtIso)?.take(7) ?: "" }.forEach { (ym, group) ->
-        val first = group.first()
-        val month = co.golink.tester.ui.common.formatMonth(first.createdAtIso ?: first.updatedAtIso).ifEmpty { "—" }
-        out += MonthSection("m-$ym", month, typeBreakdown(group), group)
+    val (len, prefix) = when (granularity) { DateGroup.DAY -> 10 to "d-"; DateGroup.MONTH -> 7 to "m-"; DateGroup.YEAR -> 4 to "y-" }
+    files.groupBy { (it.createdAtIso ?: it.updatedAtIso)?.take(len) ?: "" }.forEach { (k, group) ->
+        val iso = group.first().let { it.createdAtIso ?: it.updatedAtIso }
+        val title = when (granularity) {
+            DateGroup.DAY -> co.golink.tester.ui.common.formatDay(iso)
+            DateGroup.MONTH -> co.golink.tester.ui.common.formatMonth(iso)
+            DateGroup.YEAR -> k
+        }.ifEmpty { "—" }
+        out += MonthSection(prefix + k, title, typeBreakdown(group), group)
     }
     return out
 }

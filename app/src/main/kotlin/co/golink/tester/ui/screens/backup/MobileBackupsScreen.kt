@@ -1,5 +1,7 @@
 package co.golink.tester.ui.screens.backup
 
+import androidx.compose.ui.zIndex
+import co.golink.tester.ui.components.pinchToZoomLevels
 import co.golink.tester.ui.i18n.tr
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -297,8 +299,16 @@ fun MobileBackupsScreen(
             androidx.compose.material3.pulltorefresh.PullToRefreshBox(
                 isRefreshing = state.isRefreshing,
                 onRefresh = viewModel::pullRefresh,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    // Pinça (como nos Ficheiros): lista grande ↔ grelha de 5.
+                    .pinchToZoomLevels(state.zoomLevel, onChange = viewModel::setZoomLevel),
             ) {
+            co.golink.tester.ui.components.ZoomLevelHint(
+                state.zoomLevel,
+                Modifier.align(Alignment.TopCenter).padding(top = 12.dp).zIndex(1f),
+            )
             when {
                 state.isLoading -> Box(
                     modifier = Modifier.fillMaxSize(),
@@ -325,16 +335,18 @@ fun MobileBackupsScreen(
                     val gridData = remember(state.items, state.sortMode) {
                         sortBackupItems(state.items, state.sortMode)
                     }
+                    val gap = if (state.zoomLevel >= 3) 4.dp else 8.dp
                     LazyVerticalGrid(
-                        columns = GridCells.Fixed(2),
+                        columns = GridCells.Fixed(co.golink.tester.ui.screens.browse.gridColumnsFor(state.zoomLevel)),
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(if (state.zoomLevel >= 3) 8.dp else 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(gap),
+                        verticalArrangement = Arrangement.spacedBy(gap),
                     ) {
                         gridItems(gridData, key = { it.id }) { item ->
                             BrowseItemGridCard(
                                 item = item,
+                                density = co.golink.tester.ui.components.cardDensityFor(state.zoomLevel),
                                 onClick = { onItemClick(item) },
                                 onLongClick = { onItemLongClick(item) },
                                 onMoreClick = { sheetItem = item },
@@ -365,6 +377,7 @@ fun MobileBackupsScreen(
                                     val item = row.item
                                     BrowseItemRow(
                                         item = item,
+                                        large = state.zoomLevel == 0,
                                         onClick = { onItemClick(item) },
                                         onLongClick = { onItemLongClick(item) },
                                         onMoreClick = { sheetItem = item },

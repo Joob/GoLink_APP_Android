@@ -221,6 +221,10 @@ object I18nRedesign {
         r("%d pastas", "%d folders", "%d dossiers", "%d carpetas"),
         r("Mostrar secção", "Show section", "Afficher la section", "Mostrar sección"),
         r("Ocultar secção", "Hide section", "Masquer la section", "Ocultar sección"),
+        // Zoom por pinça
+        r("Lista grande", "Large list", "Grande liste", "Lista grande"),
+        r("Grelha · %d colunas", "Grid · %d columns", "Grille · %d colonnes", "Cuadrícula · %d columnas"),
+        r("Grelha compacta", "Compact grid", "Grille compacte", "Cuadrícula compacta"),
     )
 
     val en: Map<String, String> = rows.associate { it[0] to it[1] }

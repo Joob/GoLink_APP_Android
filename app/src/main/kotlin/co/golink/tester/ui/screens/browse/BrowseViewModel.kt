@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -57,6 +58,14 @@ sealed interface BrowseMode {
 }
 
 enum class ViewMode { LIST, GRID }
+
+private typealias VP = co.golink.tester.data.settings.ViewPreferences
+
+/** Níveis 0–1 são lista; 2–4 grelha. */
+fun viewModeFor(zoomLevel: Int): ViewMode = if (zoomLevel >= VP.ZOOM_GRID) ViewMode.GRID else ViewMode.LIST
+
+/** Colunas da grelha por nível (2 → 2, 3 → 3, 4 → 5). */
+fun gridColumnsFor(zoomLevel: Int): Int = when (zoomLevel) { 3 -> 3; 4 -> 5; else -> 2 }
 enum class SortMode { ALPHA_ASC, ALPHA_DESC, DATE_DESC, DATE_ASC }
 
 data class BrowseUiState(
@@ -75,6 +84,8 @@ data class BrowseUiState(
     val navigationTree: List<NavigationSection> = emptyList(),
     val processing: String? = null,
     val viewMode: ViewMode = ViewMode.LIST,
+    /** Zoom por pinça: 0 lista grande, 1 lista, 2–4 grelha de 2/3/5 (por secção). */
+    val zoomLevel: Int = 1,
     val sortMode: SortMode = SortMode.ALPHA_ASC,
     val selectedIds: Set<String> = emptySet(),
     val selectMode: Boolean = false,
@@ -211,6 +222,13 @@ class BrowseViewModel @Inject constructor(
                 viewMode = viewPreferences.viewMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BROWSE, ViewMode.LIST),
                 sortMode = viewPreferences.sortMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BROWSE, SortMode.ALPHA_ASC),
             )
+        }
+        // Zoom guardado por secção: ao trocar de secção (Files, Lixo…) repõe o seu nível.
+        viewModelScope.launch {
+            _state.map { zoomScope(it.mode) }.distinctUntilChanged().collect { scope ->
+                val level = viewPreferences.zoomLevel(scope, defaultZoom())
+                _state.update { it.copy(zoomLevel = level, viewMode = viewModeFor(level)) }
+            }
         }
         openRoot()
         viewModelScope.launch {
@@ -1392,13 +1410,29 @@ class BrowseViewModel @Inject constructor(
 
     fun setViewMode(mode: ViewMode) {
         viewPreferences.setViewMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BROWSE, mode)
-        _state.update { it.copy(viewMode = mode) }
+        setZoomLevel(if (mode == ViewMode.GRID) VP.ZOOM_GRID else VP.ZOOM_LIST)
     }
 
-    fun toggleViewMode() = _state.update {
-        val next = if (it.viewMode == ViewMode.GRID) ViewMode.LIST else ViewMode.GRID
-        viewPreferences.setViewMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BROWSE, next)
-        it.copy(viewMode = next)
+    fun toggleViewMode() = setViewMode(if (_state.value.viewMode == ViewMode.GRID) ViewMode.LIST else ViewMode.GRID)
+
+    /** Pinça: muda o nível de zoom da secção atual (e lista/grelha em conformidade). */
+    fun setZoomLevel(level: Int) {
+        val l = level.coerceIn(VP.ZOOM_MIN, VP.ZOOM_MAX)
+        viewPreferences.setZoomLevel(zoomScope(_state.value.mode), l)
+        _state.update { it.copy(zoomLevel = l, viewMode = viewModeFor(l)) }
+    }
+
+    private fun defaultZoom(): Int =
+        if (viewPreferences.viewMode(VP.SCOPE_BROWSE, ViewMode.LIST) == ViewMode.GRID) VP.ZOOM_GRID else VP.ZOOM_LIST
+
+    private fun zoomScope(mode: BrowseMode): String = "browse_" + when (mode) {
+        is BrowseMode.Folder, is BrowseMode.SearchResults -> "files"
+        BrowseMode.Latest -> "latest"
+        BrowseMode.Shared -> "shared"
+        BrowseMode.Favourites -> "favourites"
+        BrowseMode.Trash -> "trash"
+        is BrowseMode.TeamFolder -> "team"
+        is BrowseMode.SharedWithMe -> "shared_with_me"
     }
 
     fun toggleSelection(id: String) = _state.update {

@@ -1,5 +1,7 @@
 package co.golink.tester.ui.components
 
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.fillMaxHeight
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -163,6 +165,8 @@ fun BrowseItemRow(
     selectionMode: Boolean = false,
     // Itens partilhados: botão de copiar link ao lado do ⋮ (null = sem botão).
     onCopyLinkClick: (() -> Unit)? = null,
+    // Zoom por pinça, nível 0: miniatura grande e nome em 2 linhas.
+    large: Boolean = false,
 ) {
     Card(
         modifier = Modifier
@@ -177,20 +181,20 @@ fun BrowseItemRow(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 12.dp, end = 2.dp, top = 10.dp, bottom = 10.dp),
+                .padding(start = 12.dp, end = 2.dp, top = if (large) 12.dp else 10.dp, bottom = if (large) 12.dp else 10.dp),
         ) {
             if (selectionMode) {
                 Checkbox(checked = selected, onCheckedChange = { onClick() }, modifier = Modifier.size(32.dp))
                 Spacer(Modifier.width(6.dp))
             }
-            Leading(item)
-            Spacer(Modifier.width(12.dp))
+            Leading(item, large)
+            Spacer(Modifier.width(if (large) 14.dp else 12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     item.name,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = if (large) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
-                    maxLines = 1,
+                    maxLines = if (large) 2 else 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(3.dp))
@@ -238,11 +242,19 @@ fun BrowseItemGridCard(
     onCopyLinkClick: (() -> Unit)? = null,
     // Secção "Pastas": cartão horizontal compacto (ícone · nome · "2 itens · 8 MB" · ⋮).
     compactFolder: Boolean = false,
+    // Zoom por pinça: NORMAL (2 col.), SMALL (3 col.), TINY (5 col., só miniatura).
+    density: CardDensity = CardDensity.NORMAL,
 ) {
     if (compactFolder && item is BrowseItem.Folder) {
-        CompactFolderCard(item, onClick, onLongClick, onMoreClick, selected, selectionMode)
+        if (density == CardDensity.NORMAL) CompactFolderCard(item, onClick, onLongClick, onMoreClick, selected, selectionMode)
+        else FolderTile(item, onClick, onLongClick, selected, selectionMode)
         return
     }
+    if (density == CardDensity.TINY) {
+        TinyTile(item, onClick, onLongClick, selected, selectionMode)
+        return
+    }
+    val small = density == CardDensity.SMALL
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -252,16 +264,16 @@ fun BrowseItemGridCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         border = selectionBorder(selected && selectionMode),
     ) {
-        Column(modifier = Modifier.padding(8.dp)) {
+        Column(modifier = Modifier.padding(if (small) 6.dp else 8.dp)) {
             Box(modifier = Modifier.fillMaxWidth()) {
                 if (selectionMode) {
                     Checkbox(
                         checked = selected,
                         onCheckedChange = { onClick() },
-                        modifier = Modifier.align(Alignment.TopStart).size(24.dp),
+                        modifier = Modifier.align(Alignment.TopStart).size(if (small) 20.dp else 24.dp),
                     )
                 }
-                if (onCopyLinkClick != null && !selectionMode) {
+                if (onCopyLinkClick != null && !selectionMode && !small) {
                     CopyLinkButton(
                         onCopyLinkClick,
                         Modifier.align(Alignment.TopEnd).padding(end = 30.dp).size(28.dp),
@@ -271,13 +283,13 @@ fun BrowseItemGridCard(
                 IconButton(
                     onClick = onMoreClick,
                     enabled = !selectionMode,
-                    modifier = Modifier.align(Alignment.TopEnd).size(28.dp),
+                    modifier = Modifier.align(Alignment.TopEnd).size(if (small) 22.dp else 28.dp),
                 ) {
                     Icon(
                         Icons.Filled.MoreVert,
                         contentDescription = "Mais opções".tr(),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(if (small) 15.dp else 18.dp),
                     )
                 }
             }
@@ -286,8 +298,8 @@ fun BrowseItemGridCard(
                     .fillMaxWidth()
                     // Área de pré-visualização mais alta (era 1.6f) para caberem
                     // ícones/miniaturas maiores no modo grelha.
-                    .aspectRatio(1.25f)
-                    .clip(RoundedCornerShape(10.dp)),
+                    .aspectRatio(if (small) 1f else 1.25f)
+                    .clip(RoundedCornerShape(if (small) 8.dp else 10.dp)),
                 contentAlignment = Alignment.Center,
             ) {
                 when (item) {
@@ -320,13 +332,13 @@ fun BrowseItemGridCard(
                         if (item.type == "image" || item.type == "video" || item.type == "audio") {
                             FilePreview(
                                 item = item,
-                                iconSize = 80.dp,
+                                iconSize = if (small) 48.dp else 80.dp,
                                 modifier = Modifier.fillMaxSize(),
                             )
                         } else {
                             DocPlaceholder(item, Modifier.fillMaxSize())
                         }
-                        if (!item.filesize.isNullOrBlank()) {
+                        if (!item.filesize.isNullOrBlank() && !small) {
                             SizeBadge(item.filesize, Modifier.align(Alignment.BottomEnd))
                         }
                     }
@@ -335,15 +347,15 @@ fun BrowseItemGridCard(
                     ShareBadge(modifier = Modifier.align(Alignment.BottomStart).padding(6.dp))
                 }
             }
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(if (small) 4.dp else 6.dp))
             Text(
                 item.name,
-                style = MaterialTheme.typography.bodySmall,
+                style = if (small) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
+            if (!small) Text(
                 if (item is BrowseItem.File) gridMetaFor(item) else metaFor(item),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -426,6 +438,136 @@ private fun CompactFolderCard(
                     contentDescription = "Mais opções".tr(),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+    }
+}
+
+enum class CardDensity { NORMAL, SMALL, TINY }
+
+/** Nível de zoom (0–4) → densidade do cartão da grelha. */
+fun cardDensityFor(zoomLevel: Int): CardDensity = when (zoomLevel) {
+    3 -> CardDensity.SMALL
+    4 -> CardDensity.TINY
+    else -> CardDensity.NORMAL
+}
+
+// Grelha de 3: pasta em mosaico vertical (ícone + nome).
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun FolderTile(
+    item: BrowseItem.Folder,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    selected: Boolean,
+    selectionMode: Boolean,
+) {
+    val tint = parseHexColor(item.color) ?: MaterialTheme.colorScheme.primary
+    Card(
+        modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(containerColor = selectionContainer(selected && selectionMode)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = selectionBorder(selected && selectionMode),
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 10.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                if (!item.emoji.isNullOrBlank()) Text(item.emoji, fontSize = 28.sp)
+                else Icon(Icons.Filled.Folder, contentDescription = null, tint = tint, modifier = Modifier.size(36.dp))
+                if (selectionMode) {
+                    Checkbox(checked = selected, onCheckedChange = { onClick() }, modifier = Modifier.align(Alignment.TopStart).size(18.dp))
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                item.name,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+// Grelha de 5: só a miniatura (ícone da extensão nos documentos), sem texto nem ⋮.
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TinyTile(
+    item: BrowseItem,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    selected: Boolean,
+    selectionMode: Boolean,
+) {
+    val active = selected && selectionMode
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .then(if (active) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp)) else Modifier)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        when (item) {
+            is BrowseItem.Folder -> Icon(
+                Icons.Filled.Folder, contentDescription = item.name,
+                tint = parseHexColor(item.color) ?: MaterialTheme.colorScheme.primary,
+                modifier = Modifier.fillMaxSize(0.6f),
+            )
+            is BrowseItem.File ->
+                if (item.type == "image" || item.type == "video") FilePreview(item, iconSize = 32.dp, modifier = Modifier.fillMaxSize())
+                else FileTypeIcon(item, Modifier.fillMaxHeight(0.6f))
+        }
+        if (selectionMode) {
+            Checkbox(checked = selected, onCheckedChange = { onClick() }, modifier = Modifier.align(Alignment.TopStart).size(20.dp))
+        }
+    }
+}
+
+/** Grelha de 5: as pastas numa faixa horizontal de chips (ícone + nome). */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun FolderChipsRow(
+    folders: List<BrowseItem.Folder>,
+    selectedIds: Set<String>,
+    selectionMode: Boolean,
+    onClick: (BrowseItem) -> Unit,
+    onLongClick: (BrowseItem) -> Unit,
+) {
+    androidx.compose.foundation.lazy.LazyRow(
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        items(folders.size, key = { folders[it].id }) { i ->
+            val f = folders[i]
+            val active = selectionMode && f.id in selectedIds
+            val tint = parseHexColor(f.color) ?: MaterialTheme.colorScheme.primary
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                    .border(1.dp, if (active) MaterialTheme.colorScheme.primary else Color.Transparent, RoundedCornerShape(50))
+                    .combinedClickable(onClick = { onClick(f) }, onLongClick = { onLongClick(f) })
+                    .padding(start = 10.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+            ) {
+                if (!f.emoji.isNullOrBlank()) Text(f.emoji, fontSize = 14.sp)
+                else Icon(Icons.Filled.Folder, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    f.name,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 140.dp),
                 )
             }
         }
@@ -554,9 +696,9 @@ internal fun MemberAvatar(
 }
 
 @Composable
-private fun Leading(item: BrowseItem) {
-    val boxSize = 44.dp
-    val iconSize = 38.dp
+private fun Leading(item: BrowseItem, large: Boolean = false) {
+    val boxSize = if (large) 68.dp else 44.dp
+    val iconSize = if (large) 56.dp else 38.dp
     Box(modifier = Modifier.size(boxSize)) {
         when (item) {
             is BrowseItem.Folder -> {
@@ -566,7 +708,7 @@ private fun Leading(item: BrowseItem) {
                     contentAlignment = Alignment.Center,
                 ) {
                     if (!item.emoji.isNullOrBlank()) {
-                        Text(item.emoji, fontSize = 28.sp)
+                        Text(item.emoji, fontSize = if (large) 40.sp else 28.sp)
                     } else {
                         Icon(
                             Icons.Filled.Folder,
