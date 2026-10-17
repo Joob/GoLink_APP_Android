@@ -33,6 +33,25 @@ data class UserAttributes(
     val is_suspended: Boolean = false,
     val suspended_until: String? = null,
     val suspended_reason: String? = null,
+    // Eliminação confirmada via ticket de suporte, ainda cancelável (ISO-8601).
+    val deletion_scheduled_for: String? = null,
+    // Support Desk: null para utilizadores normais; permissões para admins/agentes.
+    val support_staff: SupportStaffPermissions? = null,
+)
+
+@Serializable
+data class SupportStaffPermissions(
+    val is_admin: Boolean = false,
+    val display_name: String? = null,
+    val title: String? = null,
+    val scope: String = "all",
+    val can_assign: Boolean = false,
+    val can_delete: Boolean = false,
+    val can_request_deletion: Boolean = false,
+    val can_view_user_email: Boolean = false,
+    val can_manage_team: Boolean = false,
+    /** Copiloto (Claude): rascunho de resposta e resumo do fio. */
+    val can_use_ai: Boolean = false,
 )
 
 @Serializable
@@ -147,6 +166,8 @@ data class User(
     val isPastDue: Boolean,
     val isPaymentSuspended: Boolean,
     val daysLeftToPay: Int,
+    val deletionScheduledFor: String? = null,
+    val supportStaff: SupportStaffPermissions? = null,
 ) {
     companion object {
         fun fromResponse(response: UserResponse): User {
@@ -186,6 +207,8 @@ data class User(
                 isPastDue = subscription?.attributes?.is_past_due == true,
                 isPaymentSuspended = subscription?.attributes?.is_suspended == true,
                 daysLeftToPay = subscription?.attributes?.days_left_to_pay ?: 0,
+                deletionScheduledFor = attrs.deletion_scheduled_for,
+                supportStaff = attrs.support_staff,
             )
         }
     }

@@ -7,7 +7,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
@@ -42,9 +44,9 @@ private val DarkColors = darkColorScheme(
     onBackground = DarkTextPrimary,
     surface = DarkForeground,
     onSurface = DarkTextPrimary,
-    surfaceVariant = DarkForeground,
+    surfaceVariant = DarkBackground,
     onSurfaceVariant = DarkTextSecondary,
-    outline = Color(0x14FFFFFF),
+    outline = DarkBorder,
     error = Danger,
     onError = Color.White,
 )
@@ -63,5 +65,13 @@ fun VueFileManagerTheme(
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
         }
     }
-    MaterialTheme(colorScheme = colors, typography = AppTypography, content = content)
+    CompositionLocalProvider(LocalDarkTheme provides darkTheme) {
+        MaterialTheme(colorScheme = colors, typography = AppTypography, content = content)
+    }
 }
+
+/**
+ * Tema efetivo da app (escolha Lua/Sol ou sistema). Usar em vez de
+ * isSystemInDarkTheme() e de recursos -night, que só seguem o sistema.
+ */
+val LocalDarkTheme = staticCompositionLocalOf { false }

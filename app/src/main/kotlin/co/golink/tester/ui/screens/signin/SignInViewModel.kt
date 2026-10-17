@@ -77,9 +77,9 @@ class SignInViewModel @Inject constructor(
     private fun readableError(t: Throwable): String = when (t) {
         is AuthError.InvalidCredentials -> "Email ou password incorrectos".tr()
         is AuthError.AccountNotFound -> "Conta não encontrada".tr()
-        is AuthError.Validation -> t.message ?: "Dados inválidos".tr()
+        is AuthError.Validation -> co.golink.tester.ui.i18n.ServerMessages.localize(t.fields.values.firstOrNull()?.firstOrNull() ?: t.message) ?: "Dados inválidos".tr()
         is AuthError.Network -> "Falha de rede".tr()
-        is AuthError -> t.message ?: "Erro"
-        else -> t.message ?: "Erro inesperado".tr()
+        is AuthError -> co.golink.tester.ui.i18n.ServerMessages.localize(t.message) ?: "Erro".tr()
+        else -> co.golink.tester.ui.i18n.ServerMessages.localize(t.message) ?: "Erro inesperado".tr()
     }
 }

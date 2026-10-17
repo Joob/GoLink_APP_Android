@@ -7,7 +7,39 @@ data class AppConfigResponse(
     val app: AppInfo? = null,
     val social_logins: SocialLogins? = null,
     val registration: RegistrationConfig? = null,
-    val recaptcha: RecaptchaConfig? = null,
+    val ai: AiConfig? = null,
+    val upload: UploadConfig? = null,
+    val trash: TrashConfig? = null,
+)
+
+/** Dias no lixo antes de a limpeza diária do servidor apagar de vez (0 = nunca). */
+@Serializable
+data class TrashConfig(
+    val retentionDays: Int = 30,
+)
+
+/**
+ * Limite de envio por ficheiro (definido no admin). O servidor manda `limit` em
+ * bytes, ou a string "undefined" quando não há limite — por isso JsonElement.
+ */
+@Serializable
+data class UploadConfig(
+    val limit: kotlinx.serialization.json.JsonElement? = null,
+    val limitFormatted: kotlinx.serialization.json.JsonElement? = null,
+) {
+    val limitBytes: Long?
+        get() = (limit as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()
+            ?.toLong()?.takeIf { it > 0L }
+    val limitLabel: String?
+        get() = (limitFormatted as? kotlinx.serialization.json.JsonPrimitive)?.content
+            ?.takeIf { it.isNotBlank() && it != "null" }
+}
+
+/** Funcionalidades de IA visíveis ao utilizador. */
+@Serializable
+data class AiConfig(
+    /** Resposta rápida (Claude + centro de ajuda) no novo ticket. */
+    val support_assist: Int = 0,
 )
 
 @Serializable
@@ -44,9 +76,3 @@ data class RegistrationConfig(
     val requiresVerification: Boolean get() = verification == 1
 }
 
-@Serializable
-data class RecaptchaConfig(
-    val allowed: Int = 0,
-    val is_configured: Int = 0,
-    val client_id: String? = null,
-)

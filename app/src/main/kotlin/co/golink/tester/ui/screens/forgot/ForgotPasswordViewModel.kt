@@ -4,6 +4,7 @@ import co.golink.tester.ui.i18n.tr
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import co.golink.tester.data.auth.AuthRepository
+import co.golink.tester.domain.auth.AuthError
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,7 +40,10 @@ class ForgotPasswordViewModel @Inject constructor(
         viewModelScope.launch {
             authRepository.recoverPassword(s.email)
                 .onSuccess { _state.update { it.copy(isLoading = false, sent = true) } }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, error = t.message ?: "Erro") } }
+                .onFailure { t ->
+                    val raw = (t as? AuthError.Validation)?.fields?.values?.firstOrNull()?.firstOrNull() ?: t.message
+                    _state.update { it.copy(isLoading = false, error = co.golink.tester.ui.i18n.ServerMessages.localize(raw) ?: "Erro".tr()) }
+                }
         }
     }
 }

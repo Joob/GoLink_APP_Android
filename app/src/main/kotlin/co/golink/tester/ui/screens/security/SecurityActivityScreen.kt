@@ -45,6 +45,9 @@ private val ALERTS = setOf(
     "account.new_device",
     "account.password_changed",
     "account.e2e_secret_rotated",
+    "account.email_changed",
+    "account.email_reverted",
+    "account.deletion_scheduled",
     "auth.login_failed",
     "auth.login_failed_repeated",
     "auth.otp_locked",
@@ -61,6 +64,10 @@ private fun eventLabel(event: String): String = when (event) {
     "account.password_changed" -> "Palavra-passe alterada".tr()
     "account.e2e_secret_rotated" -> "Segredo de encriptação alterado".tr()
     "account.new_device" -> "Novo dispositivo ou localização".tr()
+    "account.email_changed" -> "Email alterado".tr()
+    "account.email_reverted" -> "Email reposto".tr()
+    "account.deletion_scheduled" -> "Eliminação da conta agendada".tr()
+    "account.deletion_cancelled" -> "Eliminação da conta cancelada".tr()
     "share.created" -> "Link de partilha criado".tr()
     "share.updated" -> "Link de partilha alterado".tr()
     "team.invitation_accepted" -> "Convite de equipa aceite".tr()

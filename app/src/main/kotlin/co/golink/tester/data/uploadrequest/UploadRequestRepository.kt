@@ -21,6 +21,7 @@ class UploadRequestRepository @Inject constructor(
         email: String?,
         notes: String?,
         folderId: String?,
+        expiresInDays: Int? = null,
     ): Result<String> = runCatching {
         val response = api.createFileRequest(
             CreateUploadRequestBody(
@@ -28,6 +29,7 @@ class UploadRequestRepository @Inject constructor(
                 email = email?.takeIf { it.isNotBlank() },
                 notes = notes?.takeIf { it.isNotBlank() },
                 folder_id = folderId,
+                expires_in_days = expiresInDays,
             )
         )
         check(response.isSuccessful) { "HTTP ${response.code()}: ${response.errorBody()?.string()?.take(300)}" }

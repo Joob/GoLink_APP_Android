@@ -83,6 +83,13 @@ object Routes {
     fun socialite(provider: String) = "socialite/$provider"
     const val VIEWER = "viewer/{fileId}"
     fun viewer(id: String) = "viewer/$id"
+    const val SUPPORT = "support?admin={admin}&status={status}&assigned={assigned}&priority={priority}"
+    fun support(admin: Boolean = false, status: String? = null, assigned: String? = null, priority: String? = null) =
+        "support?admin=$admin&status=${status.orEmpty()}&assigned=${assigned.orEmpty()}&priority=${priority.orEmpty()}"
+    const val SUPPORT_DASHBOARD = "support_dashboard"
+    const val SUPPORT_TICKET = "support_ticket/{id}?admin={admin}"
+    fun supportTicket(id: String, admin: Boolean = false) = "support_ticket/$id?admin=$admin"
+    const val SUPPORT_NEW = "support_new"
 }
 
 enum class TopState { Loading, NeedsAuth, NeedsOtp, Authenticated, BootstrapFailed }
@@ -265,6 +272,10 @@ fun AppNavHost(
                     onOpenBilling = { navController.navigate(Routes.settings("billing")) },
                     onOpenAutoBackup = { navController.navigate(Routes.MOBILE_BACKUPS) },
                     onOpenFile = { fileId -> navController.navigate(Routes.viewer(fileId)) },
+                    onOpenProfile = { navController.navigate(Routes.settings("profile")) },
+                    onOpenSupport = { admin -> navController.navigate(Routes.support(admin)) },
+                    onOpenSupportDashboard = { navController.navigate(Routes.SUPPORT_DASHBOARD) },
+                    onOpenAdmin = { pane -> navController.navigate(Routes.settings(pane)) },
                 )
                 // Gate E2E: pede unlock/setup quando autenticado mas sem privada em memória.
                 co.golink.tester.ui.screens.encryption.E2EGate()
@@ -280,6 +291,7 @@ fun AppNavHost(
             NotificationsScreen(
                 onBack = { navController.popBackStack() },
                 onOpenSecurityActivity = { navController.navigate(Routes.SECURITY_ACTIVITY) },
+                onOpenSupportTicket = { id, admin -> navController.navigate(Routes.supportTicket(id, admin)) },
             )
         }
         composable(Routes.SECURITY_ACTIVITY) {
@@ -299,6 +311,62 @@ fun AppNavHost(
                 initialRoute = initial,
                 onOpenAutoBackup = { navController.navigate(Routes.MOBILE_BACKUPS) },
                 onOpenSecurityActivity = { navController.navigate(Routes.SECURITY_ACTIVITY) },
+                // Staff abre o Support Desk no Dashboard (como na web); utilizador vai aos seus tickets.
+                onOpenSupport = { admin ->
+                    navController.navigate(if (admin) Routes.SUPPORT_DASHBOARD else Routes.support(false))
+                },
+            )
+        }
+        composable(
+            route = Routes.SUPPORT,
+            arguments = listOf(
+                navArgument("admin") { type = NavType.BoolType; defaultValue = false },
+                navArgument("status") { type = NavType.StringType; defaultValue = "" },
+                navArgument("assigned") { type = NavType.StringType; defaultValue = "" },
+                navArgument("priority") { type = NavType.StringType; defaultValue = "" },
+            ),
+        ) { entry ->
+            val admin = entry.arguments?.getBoolean("admin") ?: false
+            co.golink.tester.ui.screens.support.SupportListScreen(
+                onBack = { navController.popBackStack() },
+                onOpenTicket = { id -> navController.navigate(Routes.supportTicket(id, admin)) },
+                onNewTicket = { navController.navigate(Routes.SUPPORT_NEW) },
+                onOpenDashboard = {
+                    // Veio do Dashboard: voltar; senão abrir.
+                    if (!navController.popBackStack(Routes.SUPPORT_DASHBOARD, inclusive = false)) {
+                        navController.navigate(Routes.SUPPORT_DASHBOARD)
+                    }
+                },
+            )
+        }
+        composable(Routes.SUPPORT_DASHBOARD) {
+            co.golink.tester.ui.screens.support.SupportDashboardScreen(
+                onBack = { navController.popBackStack() },
+                onOpenTicket = { id -> navController.navigate(Routes.supportTicket(id, true)) },
+                onOpenList = { status, assigned, priority ->
+                    navController.navigate(Routes.support(true, status, assigned, priority))
+                },
+            )
+        }
+        composable(
+            route = Routes.SUPPORT_TICKET,
+            arguments = listOf(
+                navArgument("id") { type = NavType.StringType },
+                navArgument("admin") { type = NavType.BoolType; defaultValue = false },
+            ),
+        ) {
+            co.golink.tester.ui.screens.support.SupportTicketScreen(
+                onBack = { navController.popBackStack() },
+                onNewTicket = { navController.navigate(Routes.SUPPORT_NEW) },
+            )
+        }
+        composable(Routes.SUPPORT_NEW) {
+            co.golink.tester.ui.screens.support.NewSupportTicketScreen(
+                onBack = { navController.popBackStack() },
+                onCreated = { id ->
+                    navController.popBackStack()
+                    navController.navigate(Routes.supportTicket(id))
+                },
             )
         }
         composable(Routes.AUTO_BACKUP) {

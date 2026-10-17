@@ -1,5 +1,7 @@
 package co.golink.tester.ui.screens.settings
 
+import androidx.compose.material.icons.outlined.People
+import androidx.compose.material.icons.outlined.MailOutline
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -89,7 +91,7 @@ private fun AdminError(message: String, onRetry: () -> Unit) {
     ) {
         Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(12.dp))
-        OutlinedButton(onClick = onRetry, shape = RoundedCornerShape(12.dp)) { Text("Tentar de novo".tr()) }
+        OutlinedButton(onClick = onRetry, shape = RoundedCornerShape(14.dp)) { Text("Tentar de novo".tr()) }
     }
 }
 
@@ -263,6 +265,10 @@ fun AdminUsersPane(viewModel: AdminUsersViewModel = hiltViewModel()) {
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+            item {
+                SettingsPaneHeader(androidx.compose.material.icons.Icons.Outlined.People, SettingsColors.Teal, "Utilizadores".tr(), "Contas registadas na plataforma.".tr())
+                Spacer(Modifier.height(12.dp))
+            }
                 items(state.users, key = { it.id }) { u ->
                     UserRow(u, onClick = { viewModel.openActions(u) })
                 }
@@ -270,7 +276,7 @@ fun AdminUsersPane(viewModel: AdminUsersViewModel = hiltViewModel()) {
                     item {
                         OutlinedButton(
                             onClick = viewModel::loadMore,
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             if (state.isLoadingMore) {
@@ -351,7 +357,7 @@ private fun SuspendUserSheet(
                     Button(
                         onClick = onUnsuspend,
                         enabled = !isSubmitting,
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         if (isSubmitting) {
@@ -394,7 +400,7 @@ private fun SuspendUserSheet(
                         onClick = { onSuspend(unit, value.toIntOrNull(), reason) },
                         // O backend exige value sempre que unit vier preenchido.
                         enabled = !isSubmitting && (unit == null || (value.toIntOrNull() ?: 0) > 0),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         if (isSubmitting) {
@@ -426,8 +432,9 @@ private fun formatSuspendedUntil(iso: String): String = runCatching {
 @Composable
 private fun UserRow(u: AdminUserItem, onClick: () -> Unit) {
     Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+        shape = RoundedCornerShape(18.dp),
+        color = settingsCardColor(),
+        border = settingsCardBorderStroke(),
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -559,6 +566,9 @@ fun InviteRegistersPane(viewModel: InviteRegistersViewModel = hiltViewModel()) {
     var pendingDelete by remember { mutableStateOf<InviteItem?>(null) }
 
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
+        SettingsPaneHeader(androidx.compose.material.icons.Icons.Outlined.MailOutline, SettingsColors.Orange, "Registos de Convite".tr(), "Convida pessoas e acompanha os registos.".tr())
+        Spacer(Modifier.height(16.dp))
+        SettingsCard(title = "Novo convite".tr(), description = "A pessoa recebe um email para criar conta.".tr()) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             OutlinedTextField(
                 value = state.newEmail,
@@ -572,7 +582,7 @@ fun InviteRegistersPane(viewModel: InviteRegistersViewModel = hiltViewModel()) {
             Button(
                 onClick = viewModel::createInvite,
                 enabled = !state.isSubmitting && state.newEmail.isNotBlank(),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(14.dp),
             ) {
                 if (state.isSubmitting) {
                     CircularProgressIndicator(strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(18.dp))
@@ -583,11 +593,12 @@ fun InviteRegistersPane(viewModel: InviteRegistersViewModel = hiltViewModel()) {
         }
 
         state.feedback?.let { msg ->
-            Spacer(Modifier.height(8.dp))
             Text(msg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(16.dp))
+        SettingsSectionTitle("Convites enviados".tr())
 
         when {
             state.isLoading -> AdminLoading()
@@ -624,8 +635,9 @@ fun InviteRegistersPane(viewModel: InviteRegistersViewModel = hiltViewModel()) {
 @Composable
 private fun InviteRow(invite: InviteItem, onDelete: () -> Unit) {
     Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+        shape = RoundedCornerShape(18.dp),
+        color = settingsCardColor(),
+        border = settingsCardBorderStroke(),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(

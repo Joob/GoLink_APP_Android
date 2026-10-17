@@ -20,11 +20,22 @@ interface TeamsApi {
         @Body body: ConvertToTeamFolderRequest,
     ): Response<Unit>
 
+    // Dono: dissolve (a pasta volta a ser pessoal). Membro: sai da equipa.
+    @retrofit2.http.DELETE("api/teams/folders/{id}")
+    suspend fun dissolveTeamFolder(@Path("id") id: String): Response<okhttp3.ResponseBody>
+
+    @retrofit2.http.DELETE("api/teams/folders/{id}/leave")
+    suspend fun leaveTeamFolder(@Path("id") id: String): Response<okhttp3.ResponseBody>
+
     @GET("api/teams/folders/{id}")
     suspend fun browseTeamFolder(
         @Path("id") id: String,
         @Query("page") page: String = "all",
         @Query("per_page") perPage: Int? = null,
+        // Filtro por tipo (chips) e ordenação no servidor, como na web.
+        @Query("type") type: String? = null,
+        @Query("sort") sort: String? = null,
+        @Query("direction") direction: String? = null,
     ): Response<BrowseListResponse>
 
     @GET("api/teams/shared-with-me/{id}")
@@ -32,5 +43,9 @@ interface TeamsApi {
         @Path("id") id: String,
         @Query("page") page: String = "all",
         @Query("per_page") perPage: Int? = null,
+        // Filtro por tipo (chips) e ordenação no servidor, como na web.
+        @Query("type") type: String? = null,
+        @Query("sort") sort: String? = null,
+        @Query("direction") direction: String? = null,
     ): Response<BrowseListResponse>
 }

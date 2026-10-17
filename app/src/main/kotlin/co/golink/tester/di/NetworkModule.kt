@@ -39,6 +39,14 @@ object NetworkModule {
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
+            // Identifica a app: o servidor isenta-a do Cloudflare Turnstile (só existe na web).
+            .addInterceptor { chain ->
+                chain.proceed(
+                    chain.request().newBuilder()
+                        .header("X-GoLink-Client", "android/${BuildConfig.VERSION_NAME}")
+                        .build()
+                )
+            }
         if (BuildConfig.DEBUG) {
             // HEADERS instead of BODY: BODY buffers the entire request/response body
             // in memory for inspection, which causes OOM and timeouts on large uploads.
@@ -85,6 +93,22 @@ object NetworkModule {
         .readTimeout(5, TimeUnit.MINUTES)
         .writeTimeout(5, TimeUnit.MINUTES)
         .callTimeout(10, TimeUnit.MINUTES)
+        .build()
+
+    // Downloads de ficheiros: SEM callTimeout — o do "longRunning" (10 min)
+    // abrangia a leitura do corpo inteiro e cortava qualquer download de vários
+    // GB. Fica só o timeout por leitura (ligação parada), e quem lê retoma com
+    // Range (ResumableHttpInputStream).
+    @Provides
+    @Singleton
+    @Named("download")
+    fun provideDownloadOkHttp(
+        @Named("authed") authed: OkHttpClient,
+    ): OkHttpClient = authed.newBuilder()
+        .readTimeout(2, TimeUnit.MINUTES)
+        .writeTimeout(2, TimeUnit.MINUTES)
+        .callTimeout(0, TimeUnit.MILLISECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 
     @Provides

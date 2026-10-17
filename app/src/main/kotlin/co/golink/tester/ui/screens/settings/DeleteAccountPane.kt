@@ -230,6 +230,8 @@ internal fun DeleteAccountPane(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        SettingsPaneHeader(androidx.compose.material.icons.Icons.Outlined.Delete, SettingsColors.Red, "Apagar conta".tr(), "Eliminação permanente da conta e de todos os dados.".tr())
+        Spacer(Modifier.height(16.dp))
         when (state.step) {
             DeleteAccountStep.Email -> {
                 Icon(
@@ -283,7 +285,7 @@ internal fun DeleteAccountPane(
                 Button(
                     onClick = { viewModel.sendCode(emailInput) },
                     enabled = !state.isLoading && emailInput.isNotBlank(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(14.dp),
                     contentPadding = PaddingValues(vertical = 14.dp),
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(
@@ -334,7 +336,7 @@ internal fun DeleteAccountPane(
                 Button(
                     onClick = { viewModel.confirm(codeInput) },
                     enabled = !state.isLoading && codeInput.length == 6,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(14.dp),
                     contentPadding = PaddingValues(vertical = 14.dp),
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(

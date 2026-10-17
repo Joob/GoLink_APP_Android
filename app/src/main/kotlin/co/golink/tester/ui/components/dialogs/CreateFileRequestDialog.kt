@@ -1,154 +1,94 @@
 package co.golink.tester.ui.components.dialogs
 
-import co.golink.tester.ui.i18n.tr
-import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.NoteAdd
-import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.unit.sp
+import co.golink.tester.ui.i18n.tr
 
+/**
+ * Pedido de ficheiros (como na web): nome, email a notificar, mensagem e
+ * prazo para aceitar ficheiros (0 = sem prazo, 1, 7 ou 30 dias).
+ */
 @Composable
 fun CreateFileRequestDialog(
     onDismiss: () -> Unit,
-    onCreate: (name: String?, email: String?, notes: String?) -> Unit,
+    onCreate: (name: String?, email: String?, notes: String?, expiresInDays: Int) -> Unit,
 ) {
     var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
+    var days by remember { mutableIntStateOf(7) }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+    DialogScaffold(
+        title = "Pedir ficheiros".tr(),
+        subtitle = "Quem tiver o link pode enviar-te ficheiros, sem conta.".tr(),
+        onDismiss = onDismiss,
+        confirmText = "Criar pedido".tr(),
+        onConfirm = {
+            onCreate(name.takeIf { it.isNotBlank() }, email.takeIf { it.isNotBlank() }, notes.takeIf { it.isNotBlank() }, days)
+            onDismiss()
+        },
     ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp),
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 0.dp,
-        ) {
-            Column(modifier = Modifier.padding(24.dp)) {
-                // Header
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Outlined.NoteAdd,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.tertiary,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Pedido de ficheiros".tr(),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            "A pasta atual será o destino dos uploads".tr(),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(20.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                Spacer(Modifier.height(16.dp))
-
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = { name = it },
-                        label = { Text("Nome do pedido (opcional)".tr()) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = email,
-                        onValueChange = { email = it },
-                        label = { Text("Notificar por email (opcional)".tr()) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = notes,
-                        onValueChange = { notes = it },
-                        label = { Text("Notas (opcional)".tr()) },
-                        singleLine = false,
-                        maxLines = 3,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-
-                Spacer(Modifier.height(16.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                Spacer(Modifier.height(12.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            label = { Text("Nome do pedido (opcional)".tr()) },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = email,
+            onValueChange = { email = it },
+            label = { Text("Notificar por email (opcional)".tr()) },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = notes,
+            onValueChange = { notes = it },
+            label = { Text("Mensagem (opcional)".tr()) },
+            maxLines = 3,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        SectionLabel("Aceitar ficheiros durante".tr())
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(1 to "1 dia".tr(), 7 to "7 dias".tr(), 30 to "30 dias".tr(), 0 to "Sem prazo".tr()).forEach { (value, label) ->
+                val active = days == value
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface,
+                    border = if (active) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.clip(RoundedCornerShape(50)).clickable { days = value },
                 ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancelar".tr(), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            onCreate(
-                                name.takeIf { it.isNotBlank() },
-                                email.takeIf { it.isNotBlank() },
-                                notes.takeIf { it.isNotBlank() },
-                            )
-                            onDismiss()
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-                    ) {
-                        Text("Criar pedido".tr(), fontWeight = FontWeight.SemiBold)
-                    }
+                    Text(
+                        label,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (active) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
                 }
             }
         }

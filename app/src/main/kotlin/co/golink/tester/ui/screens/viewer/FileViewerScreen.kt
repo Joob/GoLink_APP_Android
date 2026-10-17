@@ -1,5 +1,8 @@
 package co.golink.tester.ui.screens.viewer
 
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.border
+import androidx.compose.material.icons.outlined.Link
 import co.golink.tester.ui.i18n.tr
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
@@ -114,9 +117,10 @@ import androidx.media3.ui.PlayerView
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-private enum class ViewerDialog { None, Rename, Delete, Details, Move }
+private enum class ViewerDialog { None, Rename, Delete, DeleteForever, Details, Move }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -159,29 +163,57 @@ fun FileViewerScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                // Barra como na web: ‹, extensão, nome + "13.51 MB · 3 de 10",
+                // Partilhar, Detalhes e claro/escuro.
+                navigationIcon = {
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar".tr())
+                    }
+                },
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        FileTypeIcon(current, Modifier.height(24.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = current.name,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = "(${state.currentIndex + 1} de ${state.files.size})",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        val ext = current.name.substringAfterLast('.', "").take(4).uppercase()
+                        if (ext.isNotEmpty()) {
+                            Text(
+                                ext,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF1D4ED8),
+                                modifier = Modifier
+                                    .background(Color(0xFF3B82F6).copy(alpha = 0.14f), androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 6.dp, vertical = 3.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                        } else {
+                            FileTypeIcon(current, Modifier.height(24.dp))
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Column(Modifier.weight(1f, fill = false)) {
+                            Text(
+                                text = current.name,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                text = listOfNotNull(current.filesize, "%d de %d".tr().format(state.currentIndex + 1, state.files.size)).joinToString(" · "),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 },
                 actions = {
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Filled.Close, contentDescription = "Fechar".tr())
+                    if (!viewModel.fromTrash) {
+                        IconButton(onClick = { viewModel.openShareDialog() }) {
+                            Icon(Icons.Outlined.Link, contentDescription = "Partilhar".tr())
+                        }
+                        IconButton(onClick = { dialog = ViewerDialog.Details }) {
+                            Icon(Icons.Outlined.Info, contentDescription = "Detalhes".tr())
+                        }
                     }
+                    co.golink.tester.ui.theme.ThemeToggle(Modifier.padding(end = 8.dp))
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
@@ -237,9 +269,18 @@ fun FileViewerScreen(
                             }
                         }
                         Spacer(Modifier.weight(1f))
-                        IconButton(onClick = { fileSheetOpen = true }) {
-                            Icon(Icons.Filled.MoreVert, contentDescription = "Mais opções".tr())
+                        // No Lixo não há renomear/mover/partilhar: o menu fica só para o modo normal.
+                        if (!viewModel.fromTrash) {
+                            IconButton(onClick = { fileSheetOpen = true }) {
+                                Icon(Icons.Filled.MoreVert, contentDescription = "Mais opções".tr())
+                            }
                         }
+                    }
+                    if (viewModel.fromTrash) {
+                        TrashViewerBanner(
+                            onRestore = viewModel::restoreFromTrash,
+                            onDeleteForever = { dialog = ViewerDialog.DeleteForever },
+                        )
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
                 }
@@ -250,19 +291,28 @@ fun FileViewerScreen(
                     initialPage = state.currentIndex,
                     pageCount = { state.files.size },
                 )
-                LaunchedEffect(pagerState.currentPage) {
-                    if (pagerState.currentPage != state.currentIndex) {
-                        viewModel.goTo(pagerState.currentPage)
+                // O índice do ViewModel só muda quando o swipe ASSENTA (settledPage).
+                // Com currentPage mudava a meio do gesto (aos 50%), o que fazia
+                // recompor o ecrã todo durante o fling e, num swipe rápido, o
+                // efeito inverso fazia scrollToPage para a página antiga (salto).
+                val currentIndexState = androidx.compose.runtime.rememberUpdatedState(state.currentIndex)
+                LaunchedEffect(pagerState) {
+                    androidx.compose.runtime.snapshotFlow { pagerState.settledPage }.collect { page ->
+                        if (page != currentIndexState.value) viewModel.goTo(page)
                     }
                 }
+                // Setas/ações do ViewModel: anima até à página em vez de saltar.
                 LaunchedEffect(state.currentIndex) {
-                    if (pagerState.currentPage != state.currentIndex) {
-                        pagerState.scrollToPage(state.currentIndex)
+                    if (!pagerState.isScrollInProgress && pagerState.settledPage != state.currentIndex) {
+                        pagerState.animateScrollToPage(state.currentIndex)
                     }
                 }
                 androidx.compose.foundation.pager.HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.fillMaxSize(),
+                    // Pré-carrega a página de cada lado: ao começar o swipe a
+                    // imagem seguinte já está descodificada.
+                    beyondViewportPageCount = 1,
                     userScrollEnabled = state.zoom <= 1.01f,
                 ) { page ->
                     val file = state.files[page]
@@ -276,6 +326,7 @@ fun FileViewerScreen(
                             rotation = if (page == state.currentIndex) state.rotation else 0f,
                             onZoomChange = { if (page == state.currentIndex) viewModel.setZoom(it) },
                             decrypt = if (file.encrypted) { { c -> viewModel.decryptImageBytes(file, c) } } else null,
+                            cache = viewModel.bitmapCache,
                         )
                         file.isPdfLike() -> PdfViewer(
                             url = viewModel.authedUrlFor(file),
@@ -295,6 +346,9 @@ fun FileViewerScreen(
                             draft = state.draft,
                             onDraftChange = viewModel::updateDraft,
                         )
+                        // Vizinhos de áudio/vídeo não criam player nem decifram: só a
+                        // página ativa (senão o vídeo ao lado começava a descarregar).
+                        (file.isAudioLike() || file.isVideoLike()) && page != state.currentIndex -> MediaLoadingBox(showSpinner = false)
                         file.isAudioLike() -> {
                             val src = rememberPlayableUrl(file, viewModel)
                             if (src == null) MediaLoadingBox()
@@ -335,6 +389,10 @@ fun FileViewerScreen(
                         onClick = viewModel::next,
                     )
                 }
+            }
+            // Tira de miniaturas (como na web), só com vários ficheiros.
+            if (state.files.size > 1 && !state.editing) {
+                ThumbnailStrip(files = state.files, current = state.currentIndex, onSelect = viewModel::goTo)
             }
         }
     }
@@ -395,6 +453,14 @@ fun FileViewerScreen(
             onDismiss = { dialog = ViewerDialog.None },
             onConfirm = { viewModel.delete(); dialog = ViewerDialog.None },
         )
+        ViewerDialog.DeleteForever -> ConfirmDialog(
+            title = "Eliminar para sempre?".tr(),
+            message = "${current.name} " + "será eliminado definitivamente e não pode ser recuperado.".tr(),
+            confirmText = "Eliminar para sempre".tr(),
+            destructive = true,
+            onDismiss = { dialog = ViewerDialog.None },
+            onConfirm = { viewModel.deleteForever(); dialog = ViewerDialog.None },
+        )
         ViewerDialog.Details -> co.golink.tester.ui.components.ItemDetailsSheet(
             item = current,
             onDismiss = { dialog = ViewerDialog.None },
@@ -453,15 +519,21 @@ private fun ImageViewer(
     rotation: Float,
     onZoomChange: (Float) -> Unit,
     decrypt: (suspend (ByteArray) -> ByteArray?)? = null,
+    cache: android.util.LruCache<String, Bitmap>? = null,
 ) {
-    var bitmap by remember(file.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
-    var loading by remember(file.id) { mutableStateOf(true) }
+    // Voltar a uma imagem já vista é instantâneo: vem da cache do ViewModel.
+    var bitmap by remember(file.id) { mutableStateOf(cache?.get(file.id)) }
+    var loading by remember(file.id) { mutableStateOf(bitmap == null) }
     var error by remember(file.id) { mutableStateOf<String?>(null) }
+    val metrics = LocalContext.current.resources.displayMetrics
+    // Descodifica ao tamanho do ecrã (com margem para zoom), não à resolução
+    // original: uma foto de 12 MP eram ~48 MB por bitmap — pausas de GC no swipe.
+    val maxSide = (maxOf(metrics.widthPixels, metrics.heightPixels) * 1.5f).toInt()
 
     LaunchedEffect(file.id) {
+        if (bitmap != null) return@LaunchedEffect
         loading = true
         error = null
-        bitmap = null
         runCatching {
             withContext(Dispatchers.IO) {
                 val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
@@ -478,7 +550,7 @@ private fun ImageViewer(
                     val raw = input.readBytes()
                     // E2E: se cifrado, decifra os bytes antes de descodificar.
                     val bytes = if (decrypt != null) (decrypt(raw) ?: error("Falha ao decifrar".tr())) else raw
-                    val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    val bmp = decodeSampled(bytes, maxSide)
                         ?: error("Falha na descodificação".tr())
                     val orientation = runCatching {
                         android.media.ExifInterface(java.io.ByteArrayInputStream(bytes))
@@ -491,7 +563,7 @@ private fun ImageViewer(
                 }
             }
         }
-            .onSuccess { bmp -> bitmap = bmp; loading = false }
+            .onSuccess { bmp -> cache?.put(file.id, bmp); bitmap = bmp; loading = false }
             .onFailure { t -> error = t.message ?: "erro"; loading = false }
     }
 
@@ -518,20 +590,20 @@ private fun ImageViewer(
                             val z = event.calculateZoom()
                             val p = event.calculatePan()
                             if (z != 1f) {
-                                onZoomChangeState.value((currentZoom * z).coerceIn(0.2f, 8f))
+                                onZoomChangeState.value((currentZoom * z).coerceIn(1f, 8f))
                                 event.changes.forEach { it.consume() }
                             }
                             if (currentZoom > 1.01f && (p.x != 0f || p.y != 0f)) {
-                                offsetX += p.x
-                                offsetY += p.y
+                                offsetX = clampPan(offsetX + p.x, size.width, currentZoom)
+                                offsetY = clampPan(offsetY + p.y, size.height, currentZoom)
                                 event.changes.forEach { it.consume() }
                             }
                         } else if (pressedCount == 1 && currentZoom > 1.01f) {
                             val change = event.changes.first()
                             val delta = change.positionChange()
                             if (delta.x != 0f || delta.y != 0f) {
-                                offsetX += delta.x
-                                offsetY += delta.y
+                                offsetX = clampPan(offsetX + delta.x, size.width, currentZoom)
+                                offsetY = clampPan(offsetY + delta.y, size.height, currentZoom)
                                 change.consume()
                             }
                         }
@@ -541,6 +613,17 @@ private fun ImageViewer(
         contentAlignment = Alignment.Center,
     ) {
         when {
+            // Enquanto a original carrega, mostra a miniatura (já em cache do
+            // Coil, vinda da grelha) em vez de um ecrã vazio com spinner.
+            loading && !file.encrypted && !file.thumbnailUrl.isNullOrBlank() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                AsyncImage(
+                    model = file.thumbnailUrl,
+                    contentDescription = file.name,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
+            }
             loading -> CircularProgressIndicator()
             error != null -> Text("Erro: $error", color = MaterialTheme.colorScheme.onSurface)
             bitmap != null -> Image(
@@ -559,6 +642,24 @@ private fun ImageViewer(
             )
         }
     }
+}
+
+// Pan limitado às bordas do conteúdo ampliado (antes podia arrastar-se para fora).
+private fun clampPan(value: Float, extent: Int, zoom: Float): Float {
+    val max = extent * (zoom - 1f) / 2f
+    return value.coerceIn(-max, max)
+}
+
+// Descodifica com inSampleSize (potência de 2) para o lado maior ficar perto
+// de maxSide — muito menos memória e descodificação mais rápida.
+private fun decodeSampled(bytes: ByteArray, maxSide: Int): Bitmap? {
+    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    var sample = 1
+    val longest = maxOf(bounds.outWidth, bounds.outHeight)
+    if (maxSide > 0) while (longest / (sample * 2) >= maxSide) sample *= 2
+    val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+    return android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
 }
 
 // Roda/espelha o bitmap segundo a orientação EXIF para a foto aparecer direita.
@@ -591,11 +692,11 @@ private fun rememberPlayableUrl(file: BrowseItem.File, viewModel: FileViewerView
 }
 
 @Composable
-private fun MediaLoadingBox() {
-    // Só aparece enquanto um media E2E está a ser decifrado (os não cifrados têm
-    // URL imediato) — usa o mesmo efeito de decifra do gate/uploads.
+private fun MediaLoadingBox(showSpinner: Boolean = true) {
+    // Aparece enquanto um media E2E está a ser decifrado (os não cifrados têm
+    // URL imediato) e, sem spinner, nas páginas vizinhas de áudio/vídeo.
     Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(color = Color.White)
+        if (showSpinner) CircularProgressIndicator(color = Color.White)
     }
 }
 
@@ -657,7 +758,7 @@ private fun VideoViewer(url: String, token: String?, fileKey: String, isActive: 
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
             .build().apply {
                 setMediaItem(MediaItem.fromUri(url))
-                playWhenReady = true
+                playWhenReady = isActive
                 prepare()
             }
     }
@@ -801,7 +902,9 @@ private fun PdfViewer(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var pageBitmaps by remember(fileKey) { mutableStateOf<List<Bitmap>>(emptyList()) }
+    var pageCount by remember(fileKey) { mutableStateOf(0) }
+    // O PdfRenderer só deixa ter uma página aberta de cada vez.
+    val renderLock = remember(fileKey) { kotlinx.coroutines.sync.Mutex() }
     var error by remember(fileKey) { mutableStateOf<String?>(null) }
     var loading by remember(fileKey) { mutableStateOf(true) }
     var renderer by remember(fileKey) { mutableStateOf<PdfRenderer?>(null) }
@@ -810,7 +913,7 @@ private fun PdfViewer(
     DisposableEffect(fileKey) {
         loading = true
         error = null
-        pageBitmaps = emptyList()
+        pageCount = 0
         val job = scope.launch {
             try {
                 val file = withContext(Dispatchers.IO) {
@@ -819,38 +922,39 @@ private fun PdfViewer(
                     if (!token.isNullOrBlank()) conn.setRequestProperty("Authorization", "Bearer $token")
                     conn.connectTimeout = 20_000
                     conn.readTimeout = 60_000
-                    if (decrypt != null) {
-                        // E2E: o download é ciphertext — decifrar antes de dar ao PdfRenderer
-                        // (senão: "Unable to load the document").
-                        val cipher = conn.inputStream.use { it.readBytes() }
-                        val plain = decrypt(cipher) ?: error("decifra falhou (E2E bloqueado ou sem chave)")
-                        cacheFile.writeBytes(plain)
-                    } else {
-                        conn.inputStream.use { input ->
-                            cacheFile.outputStream().use { out -> input.copyTo(out) }
+                    try {
+                        if (decrypt != null) {
+                            // E2E: o download é ciphertext — decifrar antes de dar ao PdfRenderer
+                            // (senão: "Unable to load the document").
+                            val cipher = conn.inputStream.use { it.readBytes() }
+                            val plain = decrypt(cipher) ?: error("decifra falhou (E2E bloqueado ou sem chave)")
+                            cacheFile.writeBytes(plain)
+                            plain.fill(0)
+                        } else {
+                            conn.inputStream.use { input ->
+                                cacheFile.outputStream().use { out -> input.copyTo(out) }
+                            }
                         }
+                    } catch (t: Throwable) {
+                        cacheFile.delete()
+                        throw t
                     }
                     cacheFile
                 }
-                val openedPfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+                val openedPfd = try {
+                    ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+                } finally {
+                    // Só unlink (NÃO sobrescrever: o descritor aberto lê o mesmo inode).
+                    // O PdfRenderer continua a ler pelo descritor; o ficheiro em claro
+                    // deixa de existir na cache.
+                    withContext(Dispatchers.IO) { file.delete() }
+                }
                 val r = PdfRenderer(openedPfd)
                 pfd = openedPfd
                 renderer = r
-                val pages = withContext(Dispatchers.IO) {
-                    val list = mutableListOf<Bitmap>()
-                    for (i in 0 until r.pageCount) {
-                        r.openPage(i).use { page ->
-                            val w = page.width * 2
-                            val h = page.height * 2
-                            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                            bmp.eraseColor(android.graphics.Color.WHITE)
-                            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                            list.add(bmp)
-                        }
-                    }
-                    list
-                }
-                pageBitmaps = pages
+                // As páginas são renderizadas à medida que aparecem (PdfPage),
+                // não todas antes de mostrar a primeira.
+                pageCount = r.pageCount
                 loading = false
             } catch (t: Throwable) {
                 error = t.message ?: "erro"
@@ -859,8 +963,17 @@ private fun PdfViewer(
         }
         onDispose {
             job.cancel()
-            try { renderer?.close() } catch (_: Throwable) {}
-            try { pfd?.close() } catch (_: Throwable) {}
+            val r = renderer
+            val d = pfd
+            // Fecha depois de qualquer página que esteja a meio de renderizar
+            // (fechar com uma página aberta lança e deixava o renderer pendurado).
+            @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+            kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+                renderLock.withLock {
+                    try { r?.close() } catch (_: Throwable) {}
+                    try { d?.close() } catch (_: Throwable) {}
+                }
+            }
         }
     }
 
@@ -887,20 +1000,20 @@ private fun PdfViewer(
                             val z = event.calculateZoom()
                             val p = event.calculatePan()
                             if (z != 1f) {
-                                onZoomChangeState.value((currentZoom * z).coerceIn(0.2f, 8f))
+                                onZoomChangeState.value((currentZoom * z).coerceIn(1f, 8f))
                                 event.changes.forEach { it.consume() }
                             }
                             if (currentZoom > 1.01f && (p.x != 0f || p.y != 0f)) {
-                                offsetX += p.x
-                                offsetY += p.y
+                                offsetX = clampPan(offsetX + p.x, size.width, currentZoom)
+                                offsetY = clampPan(offsetY + p.y, size.height, currentZoom)
                                 event.changes.forEach { it.consume() }
                             }
                         } else if (pressedCount == 1 && currentZoom > 1.01f) {
                             val change = event.changes.first()
                             val delta = change.positionChange()
                             if (delta.x != 0f || delta.y != 0f) {
-                                offsetX += delta.x
-                                offsetY += delta.y
+                                offsetX = clampPan(offsetX + delta.x, size.width, currentZoom)
+                                offsetY = clampPan(offsetY + delta.y, size.height, currentZoom)
                                 change.consume()
                             }
                         }
@@ -912,7 +1025,7 @@ private fun PdfViewer(
         when {
             loading -> CircularProgressIndicator()
             error != null -> Text("Erro: $error", color = MaterialTheme.colorScheme.onSurface)
-            pageBitmaps.isEmpty() -> Text("PDF vazio".tr(), color = MaterialTheme.colorScheme.onSurface)
+            pageCount == 0 -> Text("PDF vazio".tr(), color = MaterialTheme.colorScheme.onSurface)
             else -> {
                 LazyColumn(
                     modifier = Modifier
@@ -927,21 +1040,55 @@ private fun PdfViewer(
                     contentPadding = PaddingValues(vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    items(pageBitmaps.size) { idx ->
-                        val bmp = pageBitmaps[idx]
-                        Image(
-                            bitmap = bmp.asImageBitmap(),
-                            contentDescription = "Página ${idx + 1}",
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(bmp.width.toFloat() / bmp.height.toFloat())
-                                .background(Color.White),
-                            contentScale = ContentScale.Fit,
-                        )
+                    items(pageCount) { idx ->
+                        val r = renderer
+                        if (r != null) PdfPage(r, renderLock, idx)
                     }
                 }
             }
         }
+    }
+}
+
+// Uma página do PDF, renderizada só quando entra no ecrã (o LazyColumn
+// descarta-a ao sair). Até lá ocupa o espaço com a proporção certa.
+@Composable
+private fun PdfPage(renderer: PdfRenderer, lock: kotlinx.coroutines.sync.Mutex, index: Int) {
+    val width = LocalContext.current.resources.displayMetrics.widthPixels
+    val bitmap by androidx.compose.runtime.produceState<Bitmap?>(null, renderer, index) {
+        value = withContext(Dispatchers.IO) {
+            lock.withLock {
+                runCatching {
+                    renderer.openPage(index).use { page ->
+                        // Largura do ecrã ×2 (nitidez com zoom), limitada ao dobro da página.
+                        val w = minOf(width * 2, page.width * 3).coerceAtLeast(1)
+                        val h = (w.toLong() * page.height / page.width).toInt().coerceAtLeast(1)
+                        Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { bmp ->
+                            bmp.eraseColor(android.graphics.Color.WHITE)
+                            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        }
+                    }
+                }.getOrNull()
+            }
+        }
+    }
+    val bmp = bitmap
+    if (bmp != null) {
+        Image(
+            bitmap = bmp.asImageBitmap(),
+            contentDescription = "Página ${index + 1}",
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(bmp.width.toFloat() / bmp.height.toFloat())
+                .background(Color.White),
+            contentScale = ContentScale.Fit,
+        )
+    } else {
+        Box(
+            // Proporção A4 até a página estar pronta.
+            modifier = Modifier.fillMaxWidth().aspectRatio(1f / 1.414f).background(Color.White),
+            contentAlignment = Alignment.Center,
+        ) { CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp) }
     }
 }
 
@@ -1097,3 +1244,75 @@ private fun ViewerSheetHeader(file: BrowseItem.File) {
     )
 }
 
+/** Faixa do modo Lixo: o ficheiro só pode ser visto; restaurar ou eliminar de vez. */
+@Composable
+private fun TrashViewerBanner(onRestore: () -> Unit, onDeleteForever: () -> Unit) {
+    val amber = androidx.compose.ui.graphics.Color(0xFFF59E0B)
+    androidx.compose.material3.Surface(
+        color = amber.copy(alpha = 0.12f),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+        border = androidx.compose.foundation.BorderStroke(0.5.dp, amber.copy(alpha = 0.35f)),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+        ) {
+            Icon(
+                Icons.Outlined.DeleteOutline,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "Está no Lixo — só pode ser visto.".tr(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            androidx.compose.material3.TextButton(onClick = onRestore) {
+                Text("Restaurar".tr(), style = MaterialTheme.typography.labelMedium)
+            }
+            androidx.compose.material3.TextButton(onClick = onDeleteForever) {
+                Text(
+                    "Eliminar".tr(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThumbnailStrip(files: List<BrowseItem.File>, current: Int, onSelect: (Int) -> Unit) {
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(current) { listState.animateScrollToItem((current - 2).coerceAtLeast(0)) }
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        androidx.compose.foundation.lazy.LazyRow(
+            state = listState,
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            items(files.size, key = { files[it].id }) { i ->
+                val active = i == current
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
+                        .border(
+                            if (active) 2.dp else 1.dp,
+                            if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                            androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+                        )
+                        .clickable { onSelect(i) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    co.golink.tester.ui.components.FilePreview(item = files[i], iconSize = 28.dp, modifier = Modifier.fillMaxSize())
+                }
+            }
+        }
+    }
+}

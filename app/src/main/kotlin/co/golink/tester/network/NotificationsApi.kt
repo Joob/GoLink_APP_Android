@@ -18,6 +18,9 @@ interface NotificationsApi {
     @POST("api/notifications/{id}/read")
     suspend fun markRead(@Path("id") id: String): Response<ApiEnvelope<Unit>>
 
+    @POST("api/notifications/{id}/unread")
+    suspend fun markUnread(@Path("id") id: String): Response<ApiEnvelope<Unit>>
+
     @POST("api/notifications/{id}/delete")
     suspend fun delete(@Path("id") id: String): Response<ApiEnvelope<Unit>>
 

@@ -42,7 +42,8 @@ class OtpViewModel @Inject constructor(
     }
 
     fun onCode(value: String) {
-        if (_state.value.expired) return
+        // Expirado ou já a validar: ignora (evita pedidos duplicados).
+        if (_state.value.expired || _state.value.isLoading) return
         val digits = value.filter { it.isDigit() }.take(6)
         _state.update { it.copy(code = digits, error = null) }
         if (digits.length == 6) validate()
@@ -74,7 +75,13 @@ class OtpViewModel @Inject constructor(
                     startCountdown(remaining)
                 }
                 .onFailure { t ->
-                    _state.update { it.copy(sending = false, error = t.message ?: "Erro ao enviar código".tr(), codeSentOnce = true) }
+                    // Erro do servidor (5xx): mensagem clara em vez de "Server Error (HTTP 500)".
+                    val msg = if (t is AuthError.Server && t.statusCode >= 500) {
+                        "Não foi possível enviar o código. Tenta novamente daqui a pouco.".tr()
+                    } else {
+                        co.golink.tester.ui.i18n.ServerMessages.localize(t.message) ?: "Erro ao enviar código".tr()
+                    }
+                    _state.update { it.copy(sending = false, error = msg, codeSentOnce = true) }
                 }
         }
     }

@@ -82,6 +82,7 @@ fun CreateNewPasswordScreen(
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Email,
                 capitalization = KeyboardCapitalization.None,
+                autoCorrectEnabled = false,
             ),
             shape = RoundedCornerShape(14.dp),
             modifier = Modifier.fillMaxWidth(),

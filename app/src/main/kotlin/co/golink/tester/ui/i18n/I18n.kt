@@ -47,9 +47,9 @@ object I18n {
 
     fun t(pt: String): String = when (lang) {
         PT -> pt
-        EN -> en[pt] ?: I18nDict.en[pt] ?: pt
-        FR -> fr[pt] ?: I18nDict.fr[pt] ?: pt
-        ES -> es[pt] ?: I18nDict.es[pt] ?: pt
+        EN -> en[pt] ?: I18nDict.en[pt] ?: I18nRedesign.en[pt] ?: pt
+        FR -> fr[pt] ?: I18nDict.fr[pt] ?: I18nRedesign.fr[pt] ?: pt
+        ES -> es[pt] ?: I18nDict.es[pt] ?: I18nRedesign.es[pt] ?: pt
         else -> pt
     }
 

@@ -151,6 +151,13 @@ interface FilesApi {
         // as pastas.
         @Part("folder") folder: RequestBody?,
         @Part file: MultipartBody.Part,
+        // Caminho real da pasta no telemóvel ("DCIM/Camera"), mostrado na web.
+        @Part("device_path") devicePath: RequestBody? = null,
+        // Backup E2E: ciphertext + data key selada + tipo real (o servidor não o vê).
+        @Part("encrypted") encrypted: RequestBody? = null,
+        @Part("wrapped_data_key") wrappedDataKey: RequestBody? = null,
+        @Part("media_type") mediaType: RequestBody? = null,
+        @Part("name_encrypted") nameEncrypted: RequestBody? = null,
     ): Response<BrowseEntryEnvelope>
 
     @Multipart
@@ -169,6 +176,7 @@ interface FilesApi {
         // o caminho por tipo a partir da pasta de origem ("folder").
         @Part("mobile_backup") mobileBackup: RequestBody? = null,
         @Part("folder") folder: RequestBody? = null,
+        @Part("device_path") devicePath: RequestBody? = null,
         // Caminho explícito — usado só pelos uploads normais (web) de pastas.
         @Part("path") path: RequestBody? = null,
         @Part chunk: MultipartBody.Part,

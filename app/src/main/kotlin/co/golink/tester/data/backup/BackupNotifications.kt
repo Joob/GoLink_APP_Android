@@ -148,6 +148,25 @@ object BackupNotifications {
         NotificationManagerCompat.from(context).notify(LOCKED_NOTIFICATION_ID, notification)
     }
 
+    /** Conta sem encriptação configurada: o backup não envia nada em claro. */
+    fun showE2ENotConfigured(context: Context) {
+        if (!canPostNotifications(context)) return
+        ensureChannels(context)
+        val title = "Backup automático em pausa".tr()
+        val text = "Cria a tua passphrase de encriptação para o backup automático começar.".tr()
+        val notification = NotificationCompat.Builder(context, CHANNEL_RESULT)
+            .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(openAppIntent(context))
+            .build()
+        // Mesmo id do aviso "trancada": o cancelE2ELocked limpa os dois.
+        NotificationManagerCompat.from(context).notify(LOCKED_NOTIFICATION_ID, notification)
+    }
+
     /** Chamada após o unlock: o aviso deixou de fazer sentido. */
     fun cancelE2ELocked(context: Context) {
         NotificationManagerCompat.from(context).cancel(LOCKED_NOTIFICATION_ID)

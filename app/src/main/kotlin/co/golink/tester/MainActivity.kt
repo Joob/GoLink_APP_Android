@@ -1,5 +1,6 @@
 package co.golink.tester
 
+import androidx.compose.foundation.layout.fillMaxSize
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -62,8 +63,14 @@ class MainActivity : ComponentActivity() {
             }
         })
         setContent {
-            VueFileManagerTheme {
-                AppNavHost()
+            VueFileManagerTheme(darkTheme = co.golink.tester.ui.theme.AppThemeMode.isDark()) {
+                androidx.compose.foundation.layout.Box(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
+                    AppNavHost()
+                    // Aviso de ligação por cima de tudo (offline / a tentar de novo / restabelecida).
+                    co.golink.tester.ui.components.ConnectivityBanner(
+                        modifier = androidx.compose.ui.Modifier.align(androidx.compose.ui.Alignment.TopCenter),
+                    )
+                }
             }
         }
     }

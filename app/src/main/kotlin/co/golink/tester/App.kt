@@ -17,6 +17,11 @@ class App : Application(), Configuration.Provider, ImageLoaderFactory {
         super.onCreate()
         // Carrega o idioma guardado antes de qualquer UI compor.
         co.golink.tester.ui.i18n.I18n.init(this)
+        // E o tema escolhido no botão Lua/Sol (por omissão segue o sistema).
+        co.golink.tester.ui.theme.AppThemeMode.init(this)
+        // Ficheiros desencriptados deixados por uma sessão que terminou mal.
+        val startedAt = System.currentTimeMillis()
+        Thread { co.golink.tester.data.encryption.PlaintextCache.sweep(this, olderThan = startedAt) }.start()
     }
 
     // AsyncImage usa o ImageLoader por omissão do Coil; sem isto o loader do

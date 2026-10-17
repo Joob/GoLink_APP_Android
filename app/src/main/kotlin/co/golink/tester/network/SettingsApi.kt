@@ -40,6 +40,19 @@ interface SettingsApi {
     @POST("api/user/password")
     suspend fun updatePassword(@Body body: UpdatePasswordRequest): Response<ApiEnvelope<Unit>>
 
+    @POST("api/user/email/change-request")
+    suspend fun requestEmailChange(
+        @Body body: co.golink.tester.domain.settings.EmailChangeRequest,
+    ): Response<co.golink.tester.domain.settings.EmailChangeResponse>
+
+    @POST("api/user/email/change-confirm")
+    suspend fun confirmEmailChange(
+        @Body body: co.golink.tester.domain.settings.EmailChangeConfirmRequest,
+    ): Response<co.golink.tester.domain.settings.EmailChangeResponse>
+
+    @POST("api/user/account/deletion/cancel")
+    suspend fun cancelScheduledDeletion(): Response<ApiEnvelope<Unit>>
+
     @PATCH("api/user/settings")
     suspend fun updateProfileField(@Body body: UpdateProfileFieldRequest): Response<ApiEnvelope<Unit>>
 

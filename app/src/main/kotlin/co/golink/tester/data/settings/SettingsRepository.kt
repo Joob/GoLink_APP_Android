@@ -23,6 +23,7 @@ data class SecurityEventsPage(
 @Singleton
 class SettingsRepository @Inject constructor(
     private val api: SettingsApi,
+    private val json: kotlinx.serialization.json.Json,
 ) {
     suspend fun storage(): Result<StorageUsage> = runCatching {
         val response = api.storage()
@@ -71,6 +72,32 @@ class SettingsRepository @Inject constructor(
             ),
         )
         check(response.isSuccessful) { "HTTP ${response.code()}" }
+    }
+
+    // Passo 1: password actual + novo email → servidor envia código ao NOVO email.
+    // Devolve a validade do código em segundos.
+    suspend fun requestEmailChange(email: String, password: String): Result<Int> = runCatching {
+        val response = api.requestEmailChange(
+            co.golink.tester.domain.settings.EmailChangeRequest(email = email.trim(), password = password),
+        )
+        check(response.isSuccessful) { serverMessage(response) }
+        response.body()?.expires_in ?: 120
+    }
+
+    // Passo 2: código → email alterado. Devolve o novo email.
+    suspend fun confirmEmailChange(code: String): Result<String> = runCatching {
+        val response = api.confirmEmailChange(co.golink.tester.domain.settings.EmailChangeConfirmRequest(code))
+        check(response.isSuccessful) { serverMessage(response) }
+        response.body()?.email.orEmpty()
+    }
+
+    private fun serverMessage(response: retrofit2.Response<*>): String {
+        val raw = runCatching { response.errorBody()?.string().orEmpty() }.getOrDefault("")
+        val parsed = runCatching {
+            json.decodeFromString(kotlinx.serialization.json.JsonObject.serializer(), raw)["message"]
+                ?.let { (it as kotlinx.serialization.json.JsonPrimitive).content }
+        }.getOrNull()
+        return parsed ?: "HTTP ${response.code()}"
     }
 
     suspend fun updateProfileField(name: String, value: String): Result<Unit> = runCatching {

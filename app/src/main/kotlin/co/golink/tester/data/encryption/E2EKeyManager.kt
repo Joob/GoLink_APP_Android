@@ -20,7 +20,19 @@ import kotlinx.coroutines.flow.asStateFlow
 class E2EKeyManager @Inject constructor(
     private val api: UserEncryptionApi,
     private val backendUrl: co.golink.tester.data.config.BackendUrlHolder,
+    @dagger.hilt.android.qualifiers.ApplicationContext context: android.content.Context,
 ) {
+    /**
+     * Chave PÚBLICA fixada no último desbloqueio. Não é segredo (só serve para
+     * cifrar), por isso pode ficar em disco: permite ao backup automático cifrar
+     * com a app trancada / processo morto. Antes de a usar sem a privada em
+     * memória, [verifyPinnedKey] confirma que o servidor ainda anuncia a mesma
+     * chave — se mudar (reset/troca), nada é enviado até novo desbloqueio.
+     */
+    private val pinPrefs = context.getSharedPreferences("e2e_public_pin", android.content.Context.MODE_PRIVATE)
+    @Volatile private var pinnedPublicKeyB64: String? = pinPrefs.getString(PIN_KEY, null)
+    @Volatile private var pinVerified = false
+
     private val _unlocked = MutableStateFlow(false)
     val unlocked: StateFlow<Boolean> = _unlocked.asStateFlow()
 
@@ -36,6 +48,33 @@ class E2EKeyManager @Inject constructor(
     val isUnlocked: Boolean get() = secretKey != null
     /** Sempre cifrado: basta a chave estar desbloqueada. */
     val shouldEncrypt: Boolean get() = isUnlocked
+
+    /** Chave pública usável para CIFRAR: a do desbloqueio, ou a fixada já verificada. */
+    private val sealingPublicKey: ByteArray?
+        get() = publicKey ?: pinnedPublicKeyB64?.takeIf { pinVerified }?.let { Envelope.unb64(it) }
+
+    /**
+     * Consegue cifrar uploads (ficheiro + nome) sem precisar da privada —
+     * desbloqueado, ou trancado com a chave pública fixada e verificada.
+     */
+    val canEncrypt: Boolean get() = sealingPublicKey != null
+
+    /** Há uma chave fixada neste dispositivo (ainda por verificar ou já verificada). */
+    val hasPinnedKey: Boolean get() = pinnedPublicKeyB64 != null
+
+    /**
+     * Confirma que a chave fixada é a que o servidor anuncia. Devolve false se
+     * não há pin, se o servidor não responde ou se a chave mudou (nesse caso o
+     * backup tem de esperar por um novo desbloqueio).
+     */
+    suspend fun verifyPinnedKey(): Boolean {
+        if (isUnlocked) return true
+        val pinned = pinnedPublicKeyB64 ?: return false
+        val serverKey = runCatching { api.get().body()?.public_key }.getOrNull() ?: return false
+        pinVerified = serverKey == pinned
+        if (pinVerified) _configured.value = true
+        return pinVerified
+    }
     val myPublicKeyB64: String? get() = publicKeyB64
 
     /**
@@ -175,8 +214,58 @@ class E2EKeyManager @Inject constructor(
         setKeys(body.public_key, sk)
     }
 
+    /**
+     * Confirma a passphrase ATUAL: tem de abrir a mesma privada que está em
+     * memória. Só o cliente o pode verificar (o servidor nunca a conhece).
+     */
+    suspend fun verifyCurrentSecret(secret: String): Boolean {
+        val sk = secretKey ?: return false
+        val resp = api.get()
+        if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code()}")
+        val body = resp.body() ?: throw java.io.IOException("resposta vazia do servidor")
+        return runCatching {
+            val key = Envelope.deriveKey(
+                secret,
+                Envelope.unb64(body.pwd_salt!!),
+                body.kdf_ops!!,
+                body.kdf_mem!!,
+                body.kdf_alg ?: Envelope.KDF_ALG_ARGON2,
+            )
+            Envelope.unwrapSecretKey(Envelope.unb64(body.wrapped_sk_password!!), Envelope.unb64(body.wrapped_sk_password_nonce!!), key)
+        }.getOrNull()?.contentEquals(sk) == true
+    }
+
+    /** Envia o código de confirmação para o email da conta. */
+    suspend fun requestSecretCode(): co.golink.tester.domain.encryption.SecretCodeResponse {
+        val resp = api.requestSecretCode()
+        val body = resp.body()
+        if (!resp.isSuccessful || body == null) {
+            val err = errorJson(resp.errorBody()?.string())
+            throw SecretCodeException(err.str("message"), err.str("resend_in")?.toIntOrNull())
+        }
+        return body
+    }
+
+    /** Valida o código e devolve o change_token de uso único. */
+    suspend fun confirmSecretCode(code: String): String {
+        val resp = api.confirmSecretCode(co.golink.tester.domain.encryption.SecretCodeConfirmBody(code))
+        val body = resp.body()
+        if (!resp.isSuccessful || body == null) {
+            val err = errorJson(resp.errorBody()?.string())
+            throw SecretCodeException(err.str("message"), null)
+        }
+        return body.change_token
+    }
+
+    private fun errorJson(raw: String?): kotlinx.serialization.json.JsonObject? = runCatching {
+        kotlinx.serialization.json.Json.parseToJsonElement(raw ?: "") as kotlinx.serialization.json.JsonObject
+    }.getOrNull()
+
+    private fun kotlinx.serialization.json.JsonObject?.str(key: String): String? =
+        (this?.get(key) as? kotlinx.serialization.json.JsonPrimitive)?.content
+
     /** Rotação: re-embrulha a privada (em memória) com um novo segredo. */
-    suspend fun rotateSecret(secret: String) {
+    suspend fun rotateSecret(secret: String, changeToken: String?) {
         val sk = secretKey ?: error("e2e locked")
         val salt = Envelope.generateSalt()
         val alg = Envelope.defaultKdfAlg()
@@ -200,8 +289,12 @@ class E2EKeyManager @Inject constructor(
                 kdf_ops = ops,
                 kdf_mem = mem,
                 kdf_alg = alg,
+                change_token = changeToken,
             )
         )
+        if (resp.code() == 422 && resp.errorBody()?.string()?.contains("change_token_required") == true) {
+            throw ChangeTokenExpiredException()
+        }
         // Sem isto, um 4xx/5xx passava despercebido e o utilizador ficava
         // convencido de que a passphrase tinha mudado.
         check(resp.isSuccessful) { "rotação falhou: HTTP ${resp.code()}" }
@@ -216,7 +309,7 @@ class E2EKeyManager @Inject constructor(
 
     /** Sela uma data key à própria chave pública (para upload). */
     fun sealForSelf(dataKey: ByteArray): String {
-        val pk = publicKey ?: error("e2e locked")
+        val pk = sealingPublicKey ?: error("e2e locked")
         return Envelope.b64(Envelope.sealDataKey(dataKey, pk))
     }
 
@@ -228,9 +321,12 @@ class E2EKeyManager @Inject constructor(
     /** Capaz de cifrar nomes: unlocked (par de chaves em memória). */
     val canSealNames: Boolean get() = publicKey != null && secretKey != null
 
+    /** Pode cifrar o nome de um upload (só precisa da pública). */
+    val canSealUploadNames: Boolean get() = sealingPublicKey != null
+
     /** Sela um nome à própria chave pública. Devolve base64 ou null se trancado. */
     fun sealName(name: String): String? {
-        val pub = publicKey ?: return null
+        val pub = sealingPublicKey ?: return null
         return Envelope.b64(Envelope.sealName(name, pub))
     }
 
@@ -290,13 +386,105 @@ class E2EKeyManager @Inject constructor(
         onLockCallbacks.add(callback)
     }
 
+    // ---- Manter desbloqueado neste dispositivo (como na web) -----------------
+    //
+    // A privada fica cifrada (AES-GCM) com uma chave do Android Keystore que
+    // nunca sai do hardware; dura 14 dias e é apagada no lock/logout. Ao abrir
+    // a app, [restoreFromDevice] repõe-na sem pedir a passphrase.
+
+    private val devicePrefs = context.getSharedPreferences("e2e_device_key", android.content.Context.MODE_PRIVATE)
+
+    val hasDeviceKey: Boolean
+        get() = (devicePrefs.getLong(DEVICE_EXPIRES, 0L) > System.currentTimeMillis()) && devicePrefs.contains(DEVICE_CIPHER)
+
+    /** Guarda a privada atual cifrada no dispositivo (14 dias). */
+    fun rememberOnDevice() {
+        val sk = secretKey ?: return
+        val pub = publicKeyB64 ?: return
+        runCatching {
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, deviceAesKey())
+            val sealed = cipher.doFinal(sk)
+            devicePrefs.edit()
+                .putString(DEVICE_CIPHER, Envelope.b64(sealed))
+                .putString(DEVICE_IV, Envelope.b64(cipher.iv))
+                .putString(DEVICE_PUB, pub)
+                .putString(DEVICE_BACKEND, backendUrl.current)
+                .putLong(DEVICE_EXPIRES, System.currentTimeMillis() + DEVICE_TTL_MS)
+                .apply()
+        }.onFailure { forgetDevice() }
+    }
+
+    /**
+     * Repõe a privada guardada. Só aceita se não expirou, se é do mesmo servidor
+     * e se o servidor ainda anuncia a mesma chave pública (senão esquece-a).
+     */
+    suspend fun restoreFromDevice(): Boolean {
+        if (isUnlocked) return true
+        if (!hasDeviceKey || devicePrefs.getString(DEVICE_BACKEND, null) != backendUrl.current) {
+            forgetDevice()
+            return false
+        }
+        val pub = devicePrefs.getString(DEVICE_PUB, null) ?: return false
+        val serverPub = runCatching { api.get().body()?.public_key }.getOrNull()
+        if (serverPub == null) return false // sem rede: tenta outra vez mais tarde
+        if (serverPub != pub) {
+            forgetDevice()
+            return false
+        }
+        return runCatching {
+            val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(
+                javax.crypto.Cipher.DECRYPT_MODE,
+                deviceAesKey(),
+                javax.crypto.spec.GCMParameterSpec(128, Envelope.unb64(devicePrefs.getString(DEVICE_IV, "")!!)),
+            )
+            val sk = cipher.doFinal(Envelope.unb64(devicePrefs.getString(DEVICE_CIPHER, "")!!))
+            setKeys(pub, sk)
+            true
+        }.getOrElse {
+            forgetDevice()
+            false
+        }
+    }
+
+    fun forgetDevice() {
+        devicePrefs.edit().clear().apply()
+        runCatching {
+            java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(DEVICE_ALIAS)
+        }
+    }
+
+    private fun deviceAesKey(): javax.crypto.SecretKey {
+        val ks = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (ks.getEntry(DEVICE_ALIAS, null) as? java.security.KeyStore.SecretKeyEntry)?.let { return it.secretKey }
+        val gen = javax.crypto.KeyGenerator.getInstance(android.security.keystore.KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        gen.init(
+            android.security.keystore.KeyGenParameterSpec.Builder(
+                DEVICE_ALIAS,
+                android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or android.security.keystore.KeyProperties.PURPOSE_DECRYPT,
+            )
+                .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .build(),
+        )
+        return gen.generateKey()
+    }
+
     fun lock() {
+        // "Manter desbloqueado" acaba no lock/logout.
+        forgetDevice()
         // Zera os bytes da privada antes de largar a referência (defesa contra
         // memory-scraping) — em vez de esperar pelo GC.
         secretKey?.fill(0)
         secretKey = null
         publicKey = null
         publicKeyB64 = null
+        // lock() só é chamado no logout: o pin pertence à conta que saiu.
+        pinnedPublicKeyB64 = null
+        pinVerified = false
+        pinPrefs.edit().remove(PIN_KEY).apply()
         _unlocked.value = false
         _configured.value = false
         onLockCallbacks.forEach { runCatching { it() } }
@@ -310,7 +498,28 @@ class E2EKeyManager @Inject constructor(
         publicKeyB64 = pubB64
         publicKey = pub
         secretKey = sk
+        // Fixa a pública (verificada contra a privada acima) para o backup trancado.
+        pinnedPublicKeyB64 = pubB64
+        pinVerified = true
+        pinPrefs.edit().putString(PIN_KEY, pubB64).apply()
         _unlocked.value = true
         _configured.value = true
     }
+
+    private companion object {
+        const val PIN_KEY = "public_key"
+        const val DEVICE_ALIAS = "golink_e2e_device_key"
+        const val DEVICE_CIPHER = "sk_cipher"
+        const val DEVICE_IV = "sk_iv"
+        const val DEVICE_PUB = "public_key"
+        const val DEVICE_BACKEND = "backend"
+        const val DEVICE_EXPIRES = "expires_at"
+        const val DEVICE_TTL_MS = 14L * 24 * 60 * 60 * 1000
+    }
 }
+
+/** Erro do passo do código (mensagem do servidor; resendIn em 429). */
+class SecretCodeException(message: String?, val resendIn: Int?) : Exception(message)
+
+/** O change_token expirou ou já foi usado: é preciso um código novo. */
+class ChangeTokenExpiredException : Exception("change_token_required")

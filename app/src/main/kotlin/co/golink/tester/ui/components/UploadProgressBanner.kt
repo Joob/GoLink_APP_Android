@@ -1,5 +1,11 @@
 package co.golink.tester.ui.components
 
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.ui.graphics.graphicsLayer
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -121,6 +127,7 @@ fun UploadProgressBanner(
             totalBytes = totalBytes,
             uploadedBytes = uploadedBytes,
             etaSeconds = etaSeconds,
+            encrypting = tasks.any { it.encrypted && it.state == UploadTask.State.Uploading },
             expanded = expanded,
             onToggleExpand = { expanded = !expanded },
             onDismiss = onDismiss,
@@ -135,7 +142,7 @@ fun UploadProgressBanner(
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
             )
             // Uploads E2E cifram no dispositivo — efeito "a encriptar" (igual à Web).
-            DecryptEffect(
+            if (tasks.any { it.encrypted }) DecryptEffect(
                 label = "A encriptar".tr(),
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
@@ -186,6 +193,7 @@ private fun BannerHeader(
     totalBytes: Long,
     uploadedBytes: Long,
     etaSeconds: Long?,
+    encrypting: Boolean = false,
     expanded: Boolean,
     onToggleExpand: () -> Unit,
     onDismiss: () -> Unit,
@@ -240,10 +248,15 @@ private fun BannerHeader(
             .clickable(onClick = onToggleExpand)
             .padding(horizontal = 12.dp, vertical = 12.dp),
     ) {
-        Box(
+        if (state == BannerState.Uploading) {
+            UploadRing(
+                progress = if (totalBytes > 0) uploadedBytes.toFloat() / totalBytes else 0f,
+                encrypting = encrypting,
+            )
+        } else Box(
             modifier = Modifier
                 .size(40.dp)
-                .clip(RoundedCornerShape(10.dp))
+                .clip(androidx.compose.foundation.shape.CircleShape)
                 .background(iconBg),
             contentAlignment = Alignment.Center,
         ) {
@@ -333,7 +346,11 @@ private fun UploadRow(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
+            // Badge da extensão (APK, JSON, PDF…), como no painel da web.
+            val ext = task.name.substringAfterLast('.', "").take(4).uppercase()
+            if (!isFailed && ext.isNotEmpty()) {
+                Text(ext, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else Icon(
                 Icons.Outlined.InsertDriveFile,
                 contentDescription = null,
                 tint = if (isFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -495,7 +512,9 @@ private fun rowSubtitle(task: UploadTask): String = when (task.state) {
     UploadTask.State.Completed -> "Concluído · ${humanBytes(task.sizeBytes)}"
     UploadTask.State.Failed -> task.errorMessage?.takeIf { it.isNotBlank() }?.let { "Falhou · $it" } ?: "Falhou · tentar de novo".tr()
     UploadTask.State.Conflict -> "Já existe · substituir?".tr()
-    UploadTask.State.Uploading -> {
+    UploadTask.State.Uploading -> if (task.waitingForNetwork) {
+        "Sem ligação · retoma automaticamente".tr()
+    } else {
         val uploaded = (task.progress.toDouble() * task.sizeBytes).roundToLong()
         "${humanBytes(uploaded)} de ${humanBytes(task.sizeBytes)}"
     }
@@ -517,4 +536,75 @@ private fun humanEta(seconds: Long): String = when {
     seconds < 60 -> "${seconds}s"
     seconds < 3600 -> "${seconds / 60}m"
     else -> "${seconds / 3600}h"
+}
+
+/**
+ * Anel de progresso com duas setas a subir sem parar (upload) e, quando o
+ * ficheiro vai cifrado, um cadeado a pulsar no canto — igual ao painel da web.
+ */
+@Composable
+private fun UploadRing(progress: Float, encrypting: Boolean) {
+    val primary = MaterialTheme.colorScheme.primary
+    val track = primary.copy(alpha = 0.15f)
+    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "upload-ring")
+    val t by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(1300, easing = androidx.compose.animation.core.LinearEasing),
+        ),
+        label = "arrows",
+    )
+    val pulse by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.12f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(800),
+            androidx.compose.animation.core.RepeatMode.Reverse,
+        ),
+        label = "lock",
+    )
+    Box(modifier = Modifier.size(42.dp), contentAlignment = Alignment.Center) {
+        androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+            val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.5.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+            drawArc(track, 0f, 360f, useCenter = false, style = stroke)
+            drawArc(primary, -90f, 360f * progress.coerceIn(0f, 1f), useCenter = false, style = stroke)
+        }
+        // Duas setas desfasadas numa janela recortada.
+        Box(Modifier.size(15.dp).clip(RoundedCornerShape(2.dp))) {
+            listOf(t, (t + 0.5f) % 1f).forEach { phase ->
+                Icon(
+                    Icons.Filled.ArrowUpward,
+                    contentDescription = null,
+                    tint = primary,
+                    modifier = Modifier
+                        .size(15.dp)
+                        .graphicsLayer {
+                            translationY = (1f - 2f * phase) * size.height
+                            alpha = when {
+                                phase < 0.3f -> phase / 0.3f
+                                phase > 0.7f -> (1f - phase) / 0.3f
+                                else -> 1f
+                            }
+                        },
+                )
+            }
+        }
+        if (encrypting) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .graphicsLayer { scaleX = pulse; scaleY = pulse }
+                    .size(17.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(2.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(primary),
+            ) {
+                Icon(Icons.Filled.Lock, contentDescription = null, tint = Color.White, modifier = Modifier.size(9.dp))
+            }
+        }
+    }
 }

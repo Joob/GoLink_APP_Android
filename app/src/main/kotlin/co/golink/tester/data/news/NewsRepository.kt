@@ -14,6 +14,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 @Singleton
 class NewsRepository @Inject constructor(
@@ -52,18 +56,38 @@ class NewsRepository @Inject constructor(
         val map = response.body() ?: error("Resposta vazia")
         val allowed = map["allowed_news"].let { it == "1" || it == "true" }
         val message = map["news_message"].orEmpty()
-        ImportantNews(allowed = allowed, message = message).also { _news.value = it }
+        val translations = parseTranslations(map["news_message_translations"])
+        ImportantNews(allowed = allowed, message = message, translations = translations).also { _news.value = it }
+    }
+
+    // Formato gravado pelo painel web: {"pt": {"message": "..."}, "en": {...}}
+    private fun parseTranslations(raw: String?): Map<String, String> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return runCatching {
+            Json.parseToJsonElement(raw).jsonObject.mapNotNull { (lang, value) ->
+                value.jsonObject["message"]?.jsonPrimitive?.contentOrNull?.let { lang to it }
+            }.toMap()
+        }.getOrDefault(emptyMap())
     }
 
     suspend fun save(message: String, allowed: Boolean): Result<Unit> = runCatching {
-        listOf(
-            UpdateSettingRequest("news_message", message),
-            UpdateSettingRequest("allowed_news", if (allowed) "1" else "0"),
-        ).forEach { body ->
+        val previous = _news.value
+        // Mensagem alterada: as traduções deixam de corresponder e apagam-se
+        // (mesma regra do painel web).
+        val messageChanged = previous == null || previous.message != message
+        buildList {
+            add(UpdateSettingRequest("news_message", message))
+            add(UpdateSettingRequest("allowed_news", if (allowed) "1" else "0"))
+            if (messageChanged) add(UpdateSettingRequest("news_message_translations", ""))
+        }.forEach { body ->
             val response = api.updateSetting(body)
             if (!response.isSuccessful) error("HTTP ${response.code()}")
         }
-        _news.value = ImportantNews(allowed = allowed, message = message)
+        _news.value = ImportantNews(
+            allowed = allowed,
+            message = message,
+            translations = if (messageChanged) emptyMap() else previous?.translations.orEmpty(),
+        )
         _dismissed.value = false
     }
 }

@@ -42,6 +42,25 @@ data class UpdateSecretBody(
     val kdf_ops: Long,
     val kdf_mem: Long,
     val kdf_alg: String,
+    // Token de uso único do passo "código por email" (obrigatório no servidor).
+    val change_token: String? = null,
+)
+
+@Serializable
+data class SecretCodeResponse(
+    val type: String? = null,
+    val expires_in: Int = 120,
+    val resend_in: Int = 60,
+    val email: String? = null,
+)
+
+@Serializable
+data class SecretCodeConfirmBody(val code: String)
+
+@Serializable
+data class SecretCodeConfirmResponse(
+    val change_token: String,
+    val expires_in: Int = 300,
 )
 
 @Serializable
@@ -216,6 +235,14 @@ data class NameIndexItem(
 data class SearchByIdsBody(
     val file_ids: List<String> = emptyList(),
     val folder_ids: List<String> = emptyList(),
+    // Filtros do parser local aplicados pelo servidor aos ids (omitidos quando null).
+    val kind: String? = null,
+    val types: List<String>? = null,
+    val extensions: List<String>? = null,
+    val date_from: String? = null,
+    val date_to: String? = null,
+    val size_min: Long? = null,
+    val size_max: Long? = null,
 )
 
 @Serializable

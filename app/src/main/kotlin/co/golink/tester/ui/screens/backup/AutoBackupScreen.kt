@@ -128,6 +128,41 @@ fun AutoBackupScreen(
     // Only show backup-tagged uploads here — user-initiated uploads belong in
     // the browser's global banner.
     val tasks = remember(allTasks) { allTasks.filter { it.mobileBackup } }
+
+    // O backup envia sempre cifrado: sem passphrase criada não pode ser ativado.
+    // "Criar passphrase" abre o mesmo diálogo do ecrã inicial (E2EGate), que fica
+    // montado até fechar sozinho (mostra a chave de recuperação no fim); quando
+    // a encriptação fica configurada, o backup é ativado.
+    val needsE2ESetup by viewModel.needsE2ESetup.collectAsStateWithLifecycle()
+    val e2eConfigured by viewModel.e2eConfigured.collectAsStateWithLifecycle()
+    var showE2ESetup by remember { mutableStateOf(false) }
+    var enableAfterSetup by remember { mutableStateOf(false) }
+    LaunchedEffect(e2eConfigured, enableAfterSetup) {
+        if (e2eConfigured && enableAfterSetup) {
+            enableAfterSetup = false
+            viewModel.enable()
+        }
+    }
+    if (needsE2ESetup && !showE2ESetup) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = viewModel::dismissE2ESetup,
+            title = { Text("Encriptação necessária".tr()) },
+            text = {
+                Text(
+                    "O backup automático envia as tuas fotos e vídeos sempre cifrados. Cria primeiro a tua passphrase de encriptação.".tr(),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.dismissE2ESetup()
+                    enableAfterSetup = true
+                    showE2ESetup = true
+                }) { Text("Criar passphrase".tr()) }
+            },
+            dismissButton = { TextButton(onClick = viewModel::dismissE2ESetup) { Text("Cancelar".tr()) } },
+        )
+    }
+    if (showE2ESetup) co.golink.tester.ui.screens.encryption.E2EGate()
     val runState by viewModel.runState.collectAsStateWithLifecycle()
     val runProgress by viewModel.runProgress.collectAsStateWithLifecycle()
     val context = LocalContext.current

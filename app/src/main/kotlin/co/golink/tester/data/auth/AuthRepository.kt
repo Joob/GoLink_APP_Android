@@ -20,14 +20,23 @@ class AuthRepository @Inject constructor(
     private val errorParser: ApiErrorParser,
     private val e2eKeyManager: co.golink.tester.data.encryption.E2EKeyManager,
 ) {
+    /**
+     * Email como o servidor o espera: sem espaços nem caracteres invisíveis
+     * (zero-width que alguns teclados/autofill inserem) e em minúsculas — o
+     * servidor compara sem distinguir maiúsculas. Sem isto, um email com um
+     * carácter invisível dava "conta não encontrada" apesar de existir.
+     */
+    private fun normalizeEmail(email: String): String =
+        email.replace(Regex("[\\s\\u200B-\\u200D\\u2060\\uFEFF]"), "").lowercase()
+
     suspend fun checkAccount(email: String): Result<CheckAccountResponse> = runCatching {
-        val response = api.checkAccount(CheckAccountRequest(email = email))
+        val response = api.checkAccount(CheckAccountRequest(email = normalizeEmail(email)))
         if (!response.isSuccessful) throw errorParser.parse(response)
         response.body() ?: throw AuthError.Unknown("Resposta vazia")
     }.recoverCatching { throw errorParser.fromThrowable(it) }
 
     suspend fun login(email: String, password: String): Result<Unit> = runCatching {
-        val response = api.login(LoginRequest(email = email, password = password))
+        val response = api.login(LoginRequest(email = normalizeEmail(email), password = password))
         if (!response.isSuccessful) throw errorParser.parse(response)
         val token = response.body()?.data?.token
             ?: throw AuthError.Unknown("Sem token na resposta")
@@ -40,16 +49,14 @@ class AuthRepository @Inject constructor(
         password: String,
         passwordConfirmation: String,
         invitationToken: String? = null,
-        recaptcha: String? = null,
     ): Result<Unit> = runCatching {
         val response = api.register(
             RegisterRequest(
                 name = name,
-                email = email,
+                email = normalizeEmail(email),
                 password = password,
                 password_confirmation = passwordConfirmation,
                 invitation_token = invitationToken,
-                reCaptcha = recaptcha,
             )
         )
         if (!response.isSuccessful) {
@@ -60,7 +67,7 @@ class AuthRepository @Inject constructor(
     }.recoverCatching { throw errorParser.fromThrowable(it) }
 
     suspend fun recoverPassword(email: String): Result<Unit> = runCatching {
-        val response = api.recoverPassword(ForgotPasswordRequest(email = email))
+        val response = api.recoverPassword(ForgotPasswordRequest(email = normalizeEmail(email)))
         if (!response.isSuccessful) throw errorParser.parse(response)
     }.recoverCatching { throw errorParser.fromThrowable(it) }
 
@@ -72,7 +79,7 @@ class AuthRepository @Inject constructor(
     ): Result<Unit> = runCatching {
         val response = api.resetPassword(
             ResetPasswordRequest(
-                email = email,
+                email = normalizeEmail(email),
                 token = token,
                 password = password,
                 password_confirmation = passwordConfirmation,

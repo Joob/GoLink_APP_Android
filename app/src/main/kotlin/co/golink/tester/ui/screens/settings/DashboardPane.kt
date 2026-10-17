@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.settings
 
+import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -62,7 +63,7 @@ fun DashboardPane(viewModel: DashboardViewModel = hiltViewModel()) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(12.dp))
-            OutlinedButton(onClick = viewModel::load, shape = RoundedCornerShape(12.dp)) {
+            OutlinedButton(onClick = viewModel::load, shape = RoundedCornerShape(14.dp)) {
                 Text("Tentar de novo".tr())
             }
         }
@@ -76,6 +77,8 @@ private fun DashboardContent(d: DashboardResponse) {
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
+        SettingsPaneHeader(androidx.compose.material.icons.Icons.Outlined.Dashboard, SettingsColors.Blue, "Painel".tr(), "Visão geral da plataforma.".tr())
+        Spacer(Modifier.height(16.dp))
         UsersCard(d)
         Spacer(Modifier.height(16.dp))
         TrafficCard(d)

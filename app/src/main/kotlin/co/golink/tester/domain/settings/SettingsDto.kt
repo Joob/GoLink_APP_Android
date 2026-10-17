@@ -58,6 +58,8 @@ data class StorageAttributes(
     val percentage: Float,
     val used_bytes: Long? = null,
     val capacity_bytes: Long? = null,
+    /** Há teto de espaço a verificar antes de enviar (falso em metered / sem limite). */
+    val has_limit: Boolean? = null,
 )
 
 @Serializable
@@ -122,6 +124,24 @@ data class UpdatePasswordRequest(
 )
 
 @Serializable
+data class EmailChangeRequest(
+    val email: String,
+    val password: String,
+)
+
+@Serializable
+data class EmailChangeConfirmRequest(
+    val code: String,
+)
+
+@Serializable
+data class EmailChangeResponse(
+    val type: String? = null,
+    val expires_in: Int? = null,
+    val email: String? = null,
+)
+
+@Serializable
 data class UpdateProfileFieldRequest(
     val name: String,
     val value: String,
@@ -135,6 +155,8 @@ data class MobileBackupSettingRequest(
 @Serializable
 data class MobileBackupSettingResponse(
     val mobile_backup_enabled: Boolean = false,
+    // Pausa só deste telemóvel (cartão na web), pelo X-Device-Id.
+    val device_paused: Boolean = false,
 )
 
 @Serializable
@@ -164,6 +186,7 @@ data class StorageUsage(
     val percentage: Float,
     val usedBytes: Long? = null,
     val capacityBytes: Long? = null,
+    val hasLimit: Boolean = false,
     val trafficUpload: String?,
     val trafficDownload: String?,
     val trafficChartUpload: List<TrafficChartPoint>?,
@@ -192,6 +215,7 @@ data class StorageUsage(
             percentage = response.data.attributes.percentage,
             usedBytes = response.data.attributes.used_bytes,
             capacityBytes = response.data.attributes.capacity_bytes,
+            hasLimit = response.data.attributes.has_limit == true,
             trafficUpload = response.data.meta?.traffic?.upload,
             trafficDownload = response.data.meta?.traffic?.download,
             trafficChartUpload = response.data.meta?.traffic?.chart?.upload,

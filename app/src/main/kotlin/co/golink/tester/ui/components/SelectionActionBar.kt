@@ -17,6 +17,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.DriveFileMove
+import androidx.compose.material.icons.outlined.Restore
+import androidx.compose.material.icons.outlined.DeleteForever
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -40,6 +43,13 @@ fun SelectionActionBar(
     onDelete: () -> Unit,
     trashMode: Boolean = false,
     selectedCount: Int = 0,
+    // Só leitura: apenas Descarregar.
+    readOnly: Boolean = false,
+    // "1 vídeo selecionado · 19.30 MB" (como na web); null = "N selecionados".
+    summary: String? = null,
+    // Partilhar (só com 1 item) e Restaurar (Lixo).
+    onShare: (() -> Unit)? = null,
+    onRestore: (() -> Unit)? = null,
 ) {
     Box(
         modifier = Modifier
@@ -60,7 +70,7 @@ fun SelectionActionBar(
                 // Quantos itens estão selecionados.
                 if (selectedCount > 0) {
                     Text(
-                        if (selectedCount == 1) "1 ${"selecionado".tr()}"
+                        summary ?: if (selectedCount == 1) "1 ${"selecionado".tr()}"
                         else "$selectedCount ${"selecionados".tr()}",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
@@ -78,11 +88,16 @@ fun SelectionActionBar(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (trashMode) {
-                        // No lixo só "Mover" (restaurar); a eliminação permanente é
-                        // feita em bloco pelo botão "Esvaziar lixo" (Flush).
+                        // Lixo: Restaurar (para o sítio de origem) ou mover para outra pasta,
+                        // e eliminar de vez.
+                        onRestore?.let { SelectionAction(Icons.Outlined.Restore, "Restaurar".tr(), it) }
                         SelectionAction(Icons.Outlined.DriveFileMove, "Mover".tr(), onMove)
+                        SelectionAction(Icons.Outlined.DeleteForever, "Eliminar".tr(), onDelete)
+                    } else if (readOnly) {
+                        SelectionAction(Icons.Outlined.Download, "Descarregar".tr(), onDownload)
                     } else {
                         SelectionAction(Icons.Outlined.Download, "Descarregar".tr(), onDownload)
+                        if (onShare != null && selectedCount == 1) SelectionAction(Icons.Outlined.Link, "Partilhar".tr(), onShare)
                         SelectionAction(Icons.Outlined.DriveFileMove, "Mover".tr(), onMove)
                         SelectionAction(Icons.Outlined.DeleteOutline, "Eliminar".tr(), onDelete)
                     }

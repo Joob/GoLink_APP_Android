@@ -52,6 +52,12 @@ class NotificationsViewModel @Inject constructor(
         repository.markRead(id)
     }
 
+    /** Alterna lida / não lida (botão por notificação, como na web). */
+    fun toggleRead(n: Notification) = viewModelScope.launch {
+        val result = if (n.isRead) repository.markUnread(n.id) else repository.markRead(n.id)
+        result.onFailure { t -> _state.update { it.copy(toast = t.message) } }
+    }
+
     fun delete(id: String) = viewModelScope.launch {
         repository.delete(id).onFailure { t -> _state.update { it.copy(toast = t.message) } }
     }

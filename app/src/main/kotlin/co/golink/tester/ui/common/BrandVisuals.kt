@@ -114,16 +114,21 @@ fun EncryptedPill(
     modifier: Modifier = Modifier,
     text: String = "Encriptado ponta-a-ponta".tr(),
 ) {
+    // Contraste: o verde da marca sobre verde-claro ficava ~2,3:1. Claro: verde
+    // escuro sobre verde suave (~6:1); escuro: verde claro sobre verde translúcido.
+    val dark = co.golink.tester.ui.theme.LocalDarkTheme.current
+    val background = if (dark) BrandGreen.copy(alpha = 0.16f) else BrandGreen.copy(alpha = 0.12f)
+    val content = if (dark) androidx.compose.ui.graphics.Color(0xFF6EE7B7) else androidx.compose.ui.graphics.Color(0xFF046C4E)
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(999.dp))
-            .background(BrandGreenLight.copy(alpha = 0.6f))
+            .background(background)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Outlined.Lock, contentDescription = null, tint = BrandGreen, modifier = Modifier.size(14.dp))
+        Icon(Icons.Outlined.Lock, contentDescription = null, tint = content, modifier = Modifier.size(14.dp))
         Spacer(Modifier.width(6.dp))
-        Text(text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = BrandGreen)
+        Text(text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = content)
     }
 }
 

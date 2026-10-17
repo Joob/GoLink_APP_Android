@@ -42,7 +42,7 @@ fun SplashScreen() {
                 verticalArrangement = Arrangement.Center,
             ) {
                 Image(
-                    painter = painterResource(R.drawable.logo_wordmark),
+                    painter = painterResource(if (co.golink.tester.ui.theme.LocalDarkTheme.current) R.drawable.logo_wordmark_dark else R.drawable.logo_wordmark),
                     contentDescription = "golink",
                     modifier = Modifier
                         .fillMaxWidth(0.7f)
@@ -57,7 +57,7 @@ fun SplashScreen() {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Bottom,
             ) {
-                Text("Decentralized Storage", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("Encrypted Cloud Storage", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))
                 Text("Encrypted & Private", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(48.dp))

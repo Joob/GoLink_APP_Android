@@ -15,7 +15,6 @@ data class RegisterRequest(
     val password: String,
     val password_confirmation: String,
     val invitation_token: String? = null,
-    val reCaptcha: String? = null,
 )
 
 @Serializable

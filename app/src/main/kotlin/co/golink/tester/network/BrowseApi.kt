@@ -16,6 +16,10 @@ interface BrowseApi {
         @Path("id") id: String,
         @Query("page") page: String = "all",
         @Query("per_page") perPage: Int? = null,
+        // Filtro por tipo (chips) e ordenação no servidor, como na web.
+        @Query("type") type: String? = null,
+        @Query("sort") sort: String? = null,
+        @Query("direction") direction: String? = null,
     ): Response<BrowseListResponse>
 
     @GET("api/browse/folders/{id}/fingerprint")
@@ -36,6 +40,10 @@ interface BrowseApi {
     suspend fun shared(
         @Query("page") page: String = "all",
         @Query("per_page") perPage: Int? = null,
+        // Filtro por tipo (chips) e ordenação no servidor, como na web.
+        @Query("type") type: String? = null,
+        @Query("sort") sort: String? = null,
+        @Query("direction") direction: String? = null,
     ): Response<BrowseListResponse>
 
     @GET("api/browse/mobile-backup")
@@ -51,10 +59,28 @@ interface BrowseApi {
         @Query("count_only") countOnly: Boolean? = null,
     ): Response<BrowseListResponse>
 
+    // Cartões dos telemóveis (nome, último envio, totais, pausa por aparelho).
+    @GET("api/browse/mobile-backup/summary")
+    suspend fun mobileBackupSummary(): Response<co.golink.tester.domain.backup.BackupSummary>
+
+    @POST("api/browse/mobile-backup/devices/{id}/pause")
+    suspend fun pauseBackupDevice(
+        @Path("id") id: String,
+        @Body body: co.golink.tester.domain.backup.PauseDeviceBody,
+    ): Response<okhttp3.ResponseBody>
+
     @GET("api/search")
     suspend fun search(
-        @Query("query") query: String,
+        @Query("query") query: String?,
         @Query("filter") filter: String? = null,
+        // Filtros do parser local (SearchQueryParser) — sem IA.
+        @Query("kind") kind: String? = null,
+        @Query("types[]") types: List<String>? = null,
+        @Query("extensions[]") extensions: List<String>? = null,
+        @Query("date_from") dateFrom: String? = null,
+        @Query("date_to") dateTo: String? = null,
+        @Query("size_min") sizeMin: Long? = null,
+        @Query("size_max") sizeMax: Long? = null,
     ): Response<BrowseListResponse>
 
     // E2E Fase 2 — pesquisa client-side: entradas completas para os ids que o

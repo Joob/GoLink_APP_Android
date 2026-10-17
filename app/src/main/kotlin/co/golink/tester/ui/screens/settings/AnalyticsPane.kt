@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.settings
 
+import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -88,7 +89,7 @@ fun AnalyticsPane(viewModel: AnalyticsViewModel = hiltViewModel()) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(12.dp))
-                OutlinedButton(onClick = viewModel::load, shape = RoundedCornerShape(12.dp)) {
+                OutlinedButton(onClick = viewModel::load, shape = RoundedCornerShape(14.dp)) {
                     Text("Tentar de novo".tr())
                 }
             }
@@ -103,6 +104,8 @@ private fun AnalyticsContent(d: AnalyticsResponse) {
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp),
     ) {
+        SettingsPaneHeader(androidx.compose.material.icons.Icons.Outlined.Insights, SettingsColors.Purple, "Análises".tr(), "Visitas e visitantes no período escolhido.".tr())
+        Spacer(Modifier.height(16.dp))
         OverviewCard(d)
 
         Spacer(Modifier.height(16.dp))
@@ -138,6 +141,7 @@ private fun OverviewCard(d: AnalyticsResponse) {
                 value = selected.takeIf { it >= 0 }?.let { visitors.getOrNull(it) } ?: d.cards.visitors,
                 change = d.cards.visitorsChange.takeIf { selected < 0 },
                 color = VisitorsColor,
+                hint = "Pessoas únicas — um utilizador com sessão ou um browser conta uma vez, por mais vezes que volte.".tr(),
                 modifier = Modifier.weight(1f),
             )
             MetricCounter(
@@ -145,6 +149,7 @@ private fun OverviewCard(d: AnalyticsResponse) {
                 value = selected.takeIf { it >= 0 }?.let { visits.getOrNull(it) } ?: d.cards.visits,
                 change = d.cards.visitsChange.takeIf { selected < 0 },
                 color = VisitsColor,
+                hint = "Sessões — cada pessoa conta no máximo uma vez a cada 30 minutos. Os bots ficam fora dos dois números.".tr(),
                 modifier = Modifier.weight(1f),
             )
         }
@@ -195,6 +200,8 @@ private fun MetricCounter(
     change: Double?,
     color: Color,
     modifier: Modifier = Modifier,
+    // Explicação curta (visitantes únicos vs. visitas), como na web.
+    hint: String? = null,
 ) {
     Column(modifier = modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -217,6 +224,14 @@ private fun MetricCounter(
                 Spacer(Modifier.width(6.dp))
                 ChangePill(change)
             }
+        }
+        if (hint != null) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                hint,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+            )
         }
     }
 }
@@ -638,7 +653,8 @@ private fun RangeSelector(selected: String, onSelect: (String) -> Unit) {
 internal fun AnalyticsCard(content: @Composable () -> Unit) {
     Surface(
         shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+        color = settingsCardColor(),
+        border = settingsCardBorderStroke(),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(16.dp)) { content() }

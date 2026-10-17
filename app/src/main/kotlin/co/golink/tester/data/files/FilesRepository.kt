@@ -31,13 +31,14 @@ class FilesRepository @Inject constructor(
 ) {
     // E2E Fase 2: cifra o nome no espaço privado (encryptName) quando há chave.
     // A resposta traz o placeholder → repomos o nome em claro que definimos.
-    suspend fun createFolder(name: String, parentId: String?, encryptName: Boolean = true): Result<BrowseItem.Folder> = runCatching {
+    suspend fun createFolder(name: String, parentId: String?, encryptName: Boolean = true, color: String? = null): Result<BrowseItem.Folder> = runCatching {
         val enc = if (encryptName && keys.canSealNames) keys.sealName(name) else null
         val response = api.createFolder(
             CreateFolderRequest(
                 name = if (enc != null) NAME_PLACEHOLDER else name,
                 parent_id = parentId,
                 name_encrypted = enc,
+                color = color,
             )
         )
         check(response.isSuccessful) { "HTTP ${response.code()}" }
@@ -49,7 +50,12 @@ class FilesRepository @Inject constructor(
         if (enc != null) folder.copy(name = name) else folder
     }
 
-    suspend fun rename(item: BrowseItem, newName: String, encryptName: Boolean = true): Result<BrowseItem> = runCatching {
+    suspend fun rename(
+        item: BrowseItem,
+        newName: String,
+        encryptName: Boolean = true,
+        appearance: co.golink.tester.domain.files.FolderAppearance? = null,
+    ): Result<BrowseItem> = runCatching {
         val type = if (item is BrowseItem.Folder) "folder" else "file"
         val enc = if (encryptName && keys.canSealNames) keys.sealName(newName) else null
         val response = api.rename(
@@ -58,6 +64,8 @@ class FilesRepository @Inject constructor(
                 name = if (enc != null) NAME_PLACEHOLDER else newName,
                 type = type,
                 name_encrypted = enc,
+                color = appearance?.let { a -> a.color?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: kotlinx.serialization.json.JsonNull },
+                emoji = appearance?.let { a -> a.emoji?.let { emojiPayload(it) } ?: kotlinx.serialization.json.JsonNull },
             )
         )
         check(response.isSuccessful) { "HTTP ${response.code()}" }
@@ -69,6 +77,15 @@ class FilesRepository @Inject constructor(
             is BrowseItem.Folder -> result.copy(name = newName)
             is BrowseItem.File -> result.copy(name = newName)
         }
+    }
+
+    // Mesmo formato do seletor da web (public/assets/emojis.json): {codes, char, name}.
+    private fun emojiPayload(char: String) = kotlinx.serialization.json.buildJsonObject {
+        put("codes", kotlinx.serialization.json.JsonPrimitive(
+            char.codePoints().toArray().joinToString(" ") { Integer.toHexString(it).uppercase() }
+        ))
+        put("char", kotlinx.serialization.json.JsonPrimitive(char))
+        put("name", kotlinx.serialization.json.JsonPrimitive(char))
     }
 
     /**

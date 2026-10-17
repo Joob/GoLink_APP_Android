@@ -1,5 +1,21 @@
 package co.golink.tester.ui.screens.browse
 
+import co.golink.tester.ui.components.SpeedDialFab
+import co.golink.tester.ui.components.drawer.AdaptiveNavigationDrawer
+import co.golink.tester.ui.components.drawer.AppDrawerContent
+import co.golink.tester.ui.components.drawer.DrawerArea
+import co.golink.tester.ui.components.drawer.DrawerItem
+import co.golink.tester.ui.components.drawer.DrawerSection
+import androidx.compose.material.icons.outlined.Campaign
+import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.material.icons.outlined.Inbox
+import androidx.compose.material.icons.outlined.Insights
+import androidx.compose.material.icons.outlined.MailOutline
+import androidx.compose.material.icons.outlined.People
+import androidx.compose.material.icons.outlined.PhoneAndroid
+import androidx.compose.material.icons.outlined.SupportAgent
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import co.golink.tester.ui.i18n.tr
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -35,6 +51,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.ui.platform.LocalContext
 import co.golink.tester.data.encryption.E2EShareService
@@ -140,6 +157,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -159,7 +177,6 @@ import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.TeamMember
 import co.golink.tester.domain.files.unsupportedExtension
 import co.golink.tester.domain.files.visibleTextExtensionsLabel
-import androidx.compose.foundation.isSystemInDarkTheme
 import co.golink.tester.domain.settings.StorageLevel
 import co.golink.tester.domain.settings.StorageUsage
 import co.golink.tester.domain.user.User
@@ -218,7 +235,7 @@ class BrowseShellViewModel @Inject constructor(
     init { refreshStorage() }
 }
 
-private enum class ActionDialog { None, CreateFolder, CreateTextFile, Rename, Move, Delete, Share, PermanentDelete, EmptyTrash, RemoteUpload, Details, CreateTeamFolder, ConvertToTeamFolder, FileRequest, Logout }
+private enum class ActionDialog { None, CreateFolder, CreateTextFile, Rename, Move, Delete, Share, PermanentDelete, EmptyTrash, RemoteUpload, Details, CreateTeamFolder, ConvertToTeamFolder, FileRequest, Logout, DissolveTeam, LeaveTeam }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -228,15 +245,42 @@ fun BrowseScreen(
     onOpenBilling: () -> Unit = {},
     onOpenAutoBackup: () -> Unit = {},
     onOpenFile: (String) -> Unit = {},
+    onOpenProfile: () -> Unit = {},
+    onOpenSupport: (admin: Boolean) -> Unit = {},
+    onOpenSupportDashboard: () -> Unit = {},
+    onOpenAdmin: (pane: String) -> Unit = {},
     viewModel: BrowseViewModel = hiltViewModel(),
     shell: BrowseShellViewModel = hiltViewModel(),
 ) {
+    val openActivityFile: (BrowseItem.File) -> Unit = { file ->
+        val viewable = viewModel.activity.value.sections.values
+            .flatMap { it.entries }
+            .filter { !it.itemTrashed }
+            .mapNotNull { it.item as? BrowseItem.File }
+            .filter { it.isViewable() }
+            .distinctBy { it.id }
+        viewModel.prepareViewer(viewable.ifEmpty { listOf(file) }, file.id)
+        onOpenFile(file.id)
+    }
     val openFile: (BrowseItem.File) -> Unit = { file ->
         val viewable = viewModel.state.value.items.filterIsInstance<BrowseItem.File>().filter { it.isViewable() }
         viewModel.prepareViewer(viewable, file.id)
         onOpenFile(file.id)
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val feedState by viewModel.feed.collectAsStateWithLifecycle()
+    val activityState by viewModel.activity.collectAsStateWithLifecycle()
+    // Só o dono copia o link (a chave #k= só se monta com as chaves dele) — igual
+    // à web ($checkPermission('master')). No lixo e em "Partilhado comigo" não.
+    val canCopyLinks = state.mode != BrowseMode.Trash && state.mode !is BrowseMode.SharedWithMe
+    // Atividade: itens de outros (Team Folders / Partilhado comigo) também abrem o menu.
+    val foreignActivityIds = remember(activityState.sections) {
+        val me = viewModel.currentUserId()
+        activityState.sections.values.flatMap { it.entries }
+            .filter { it.itemOwnerId != null && it.itemOwnerId != me }
+            .mapNotNull { it.item?.id }
+            .toSet()
+    }
     val uploads by viewModel.uploads.collectAsStateWithLifecycle()
     val user by shell.user.collectAsStateWithLifecycle()
     val unread by shell.unreadNotifications.collectAsStateWithLifecycle()
@@ -273,6 +317,16 @@ fun BrowseScreen(
         viewModel.consumeToast()
     }
 
+    // Lote recusado antes de enviar (limite de envio / sem espaço): nada foi enviado (igual à web).
+    state.uploadBlocked?.let { block ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = viewModel::dismissUploadBlocked,
+            title = { Text(block.title) },
+            text = { Text(block.message) },
+            confirmButton = { TextButton(onClick = viewModel::dismissUploadBlocked) { Text("OK") } },
+        )
+    }
+
     // Ficheiro de texto acabado de criar: abre-o no viewer (que arranca já em
     // modo de edição) assim que aparece na lista recarregada.
     LaunchedEffect(state.openFileRequest) {
@@ -298,6 +352,8 @@ fun BrowseScreen(
     var activeDialog by remember { mutableStateOf(ActionDialog.None) }
     var createInMoveFor by remember { mutableStateOf<Pair<Boolean, String?>?>(null) }
     var fabMenuOpen by remember { mutableStateOf(false) }
+    // "Pesquisar ficheiros" na gaveta: incrementa → a SearchRow pede o foco.
+    var searchFocusRequest by remember { mutableStateOf(0) }
     var membersPopupFolder by remember { mutableStateOf<BrowseItem.Folder?>(null) }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -321,199 +377,117 @@ fun BrowseScreen(
         }
     }
 
-    ModalNavigationDrawer(
+    val permanentDrawer = co.golink.tester.ui.components.drawer.isPermanentDrawer()
+    val isAdmin = user?.role == "admin"
+    val secondaryArea = when {
+        isAdmin -> DrawerArea.Admin
+        user?.supportStaff != null -> DrawerArea.Support
+        else -> null
+    }
+    var drawerArea by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(DrawerArea.Drive) }
+    if (secondaryArea == null && drawerArea != DrawerArea.Drive) drawerArea = DrawerArea.Drive
+    val closeDrawer: () -> Unit = { scope.launch { drawerState.close() } }
+    val go: (() -> Unit) -> () -> Unit = { action -> { closeDrawer(); action() } }
+    val supportSection = DrawerSection(
+        "Suporte".tr(),
+        listOf(
+            DrawerItem("Painel do suporte".tr(), Icons.Outlined.SupportAgent, onClick = go(onOpenSupportDashboard)),
+            DrawerItem("Tickets".tr(), Icons.Outlined.Inbox, onClick = go { onOpenSupport(true) }),
+        ),
+    )
+    val drawerSections = when (drawerArea) {
+        DrawerArea.Drive -> listOf(
+            DrawerSection("O meu drive".tr(), listOf(
+                DrawerItem("Todos os ficheiros".tr(), Icons.Outlined.Folder, selected = state.mode is BrowseMode.Folder, onClick = go(viewModel::openRoot)),
+                DrawerItem("Recentes".tr(), Icons.Outlined.History, selected = state.mode == BrowseMode.Latest, onClick = go(viewModel::openLatest)),
+                DrawerItem(
+                    "Favoritos".tr(), Icons.Outlined.Star,
+                    selected = state.mode == BrowseMode.Favourites,
+                    count = favourites.size,
+                    // As pastas favoritas logo por baixo (até 6), como na web.
+                    children = favourites.take(6).map { folder ->
+                        DrawerItem(
+                            folder.name, Icons.Outlined.Folder,
+                            selected = (state.mode as? BrowseMode.Folder)?.id == folder.id,
+                            onClick = go { viewModel.openFolder(folder) },
+                        )
+                    },
+                    onClick = go(viewModel::openFavourites),
+                ),
+            )),
+            DrawerSection("Partilha".tr(), listOf(
+                DrawerItem("Pastas de equipa".tr(), Icons.Outlined.Groups, selected = state.mode is BrowseMode.TeamFolder, onClick = go(viewModel::openTeamFolders)),
+                DrawerItem("Partilhado comigo".tr(), Icons.Outlined.PeopleAlt, selected = state.mode is BrowseMode.SharedWithMe, onClick = go(viewModel::openSharedWithMe)),
+                DrawerItem("Links públicos".tr(), Icons.Outlined.Link, selected = state.mode == BrowseMode.Shared, onClick = go(viewModel::openShared)),
+            )),
+            DrawerSection("Backups".tr(), listOf(
+                DrawerItem("Telemóvel".tr(), Icons.Outlined.PhoneAndroid, statusDot = autoBackupEnabled, onClick = go(onOpenAutoBackup)),
+            )),
+            DrawerSection("Suporte".tr(), listOf(
+                DrawerItem("Os meus pedidos".tr(), Icons.Outlined.SupportAgent, onClick = go { onOpenSupport(false) }),
+            )),
+            DrawerSection(null, listOf(
+                DrawerItem("Lixo".tr(), Icons.Outlined.Delete, selected = state.mode == BrowseMode.Trash, onClick = go(viewModel::openTrash)),
+            )),
+        )
+        DrawerArea.Admin -> listOf(
+            DrawerSection("Visão geral".tr(), listOf(
+                DrawerItem("Painel".tr(), Icons.Outlined.Dashboard, onClick = go { onOpenAdmin("dashboard") }),
+                DrawerItem("Análises".tr(), Icons.Outlined.Insights, onClick = go { onOpenAdmin("analytics") }),
+            )),
+            DrawerSection("Utilizadores".tr(), listOf(
+                DrawerItem("Todos os utilizadores".tr(), Icons.Outlined.People, onClick = go { onOpenAdmin("users") }),
+                DrawerItem("Convites".tr(), Icons.Outlined.MailOutline, onClick = go { onOpenAdmin("invites") }),
+            )),
+            DrawerSection("Conteúdo".tr(), listOf(
+                DrawerItem("Notícias".tr(), Icons.Outlined.Campaign, onClick = go { onOpenAdmin("news") }),
+            )),
+            supportSection,
+        )
+        DrawerArea.Support -> listOf(supportSection)
+    }
+
+    AdaptiveNavigationDrawer(
+        permanent = permanentDrawer,
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet(drawerContainerColor = MaterialTheme.colorScheme.surface) {
-              Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
-                            .clickable {
-                                avatarPicker.launch(
-                                    androidx.activity.result.PickVisualMediaRequest(
-                                        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly,
-                                    ),
-                                )
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        val avatarUrl = user?.avatar
-                        if (!avatarUrl.isNullOrBlank()) {
-                            AsyncImage(
-                                model = avatarUrl,
-                                contentDescription = null,
-                                modifier = Modifier.fillMaxSize().clip(CircleShape),
-                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                            )
-                        } else {
-                            Text(
-                                user?.name?.firstOrNull()?.uppercase() ?: "U",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-                        // Selo de câmara.
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .size(16.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                Icons.Filled.PhotoCamera,
-                                contentDescription = "Alterar imagem".tr(),
-                                tint = Color.White,
-                                modifier = Modifier.size(10.dp),
-                            )
-                        }
+            AppDrawerContent(
+                user = user,
+                area = drawerArea,
+                onAreaChange = { drawerArea = it },
+                secondaryArea = secondaryArea,
+                sections = drawerSections,
+                unreadNotifications = unread,
+                onOpenNotifications = go(onOpenNotifications),
+                storage = storage,
+                onUpgrade = go(onOpenBilling),
+                appVersion = co.golink.tester.BuildConfig.VERSION_NAME,
+                onProfile = go(onOpenProfile),
+                onAvatarClick = {
+                    avatarPicker.launch(
+                        androidx.activity.result.PickVisualMediaRequest(
+                            androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly,
+                        ),
+                    )
+                },
+                onHelp = go { if (user?.supportStaff != null) onOpenSupportDashboard() else onOpenSupport(false) },
+                onSettings = go(onOpenSettings),
+                onLogout = go { activeDialog = ActionDialog.Logout },
+                onNewUpload = go {
+                    if (state.mode !is BrowseMode.Folder) viewModel.openRoot()
+                    viewModel.exitSelectMode()
+                    fabMenuOpen = true
+                },
+                onSearch = go { searchFocusRequest++ },
+                lockedContent = if (e2eLocked) {
+                    {
+                        DrawerEncryptedIndicator(onUnlock = {
+                            closeDrawer()
+                            gateVm.reopen()
+                        })
                     }
-                    Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = user?.name ?: "VueFileManager",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        user?.email?.let {
-                            Text(
-                                it,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    // Seletor de idioma ao lado do nome/email no menu principal.
-                    co.golink.tester.ui.i18n.LanguageMenu()
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), modifier = Modifier.padding(horizontal = 16.dp))
-                Spacer(Modifier.height(8.dp))
-                if (e2eLocked) {
-                    DrawerEncryptedIndicator(onUnlock = {
-                        scope.launch { drawerState.close() }
-                        gateVm.reopen()
-                    })
-                } else {
-                DrawerSectionHeader("BASE")
-                DrawerEntry(Icons.Outlined.Folder, "Ficheiros".tr(), state.mode is BrowseMode.Folder) {
-                    viewModel.openRoot(); scope.launch { drawerState.close() }
-                }
-                DrawerEntry(Icons.Outlined.History, "Carregamentos recentes".tr(), state.mode == BrowseMode.Latest) {
-                    viewModel.openLatest(); scope.launch { drawerState.close() }
-                }
-                DrawerEntry(Icons.Outlined.Link, "Partilhado publicamente".tr(), state.mode == BrowseMode.Shared) {
-                    viewModel.openShared(); scope.launch { drawerState.close() }
-                }
-                DrawerEntry(Icons.Outlined.Delete, "Lixeira".tr(), state.mode == BrowseMode.Trash) {
-                    viewModel.openTrash(); scope.launch { drawerState.close() }
-                }
-                Spacer(Modifier.height(6.dp))
-                DrawerSectionHeader("PARTILHAS")
-                DrawerEntry(Icons.Outlined.Groups, "Pastas de equipa".tr(), state.mode is BrowseMode.TeamFolder) {
-                    viewModel.openTeamFolders(); scope.launch { drawerState.close() }
-                }
-                DrawerEntry(Icons.Outlined.PeopleAlt, "Partilhado comigo".tr(), state.mode is BrowseMode.SharedWithMe) {
-                    viewModel.openSharedWithMe(); scope.launch { drawerState.close() }
-                }
-                Spacer(Modifier.height(8.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), modifier = Modifier.padding(horizontal = 16.dp))
-                Spacer(Modifier.height(6.dp))
-                var myFilesExpanded by remember { mutableStateOf(false) }
-                DrawerExpandableHeader(
-                    title = "Os meus ficheiros".tr(),
-                    expanded = myFilesExpanded,
-                    onClick = {
-                        myFilesExpanded = !myFilesExpanded
-                        if (myFilesExpanded && state.navigationTree.isEmpty()) viewModel.loadNavigationTree()
-                    },
-                )
-                if (myFilesExpanded) {
-                    val tree = state.navigationTree.flatMap { it.folders }
-                    if (tree.isEmpty()) {
-                        DrawerHint("Sem pastas".tr())
-                    } else {
-                        tree.forEach { folder ->
-                            NavFolderTreeItem(
-                                folder = folder,
-                                depth = 0,
-                                onOpen = { id, name ->
-                                    viewModel.openFolderById(id, name)
-                                    scope.launch { drawerState.close() }
-                                },
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(4.dp))
-                var favExpanded by remember { mutableStateOf(false) }
-                DrawerExpandableHeader(
-                    title = "Favoritos".tr(),
-                    expanded = favExpanded,
-                    onClick = { favExpanded = !favExpanded },
-                )
-                if (favExpanded) {
-                    val favs = favourites
-                    if (favs.isEmpty()) {
-                        DrawerHint("Arrasta aqui as tuas pastas favoritas".tr())
-                    } else {
-                        favs.forEach { folder ->
-                            DrawerFolderItem(label = folder.name) {
-                                viewModel.openFolder(folder); scope.launch { drawerState.close() }
-                            }
-                        }
-                    }
-                }
-                }
-                Spacer(Modifier.height(8.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), modifier = Modifier.padding(horizontal = 16.dp))
-                Spacer(Modifier.height(8.dp))
-                // Backups Automáticos revela estado/conteúdo da conta: só disponível com o cofre aberto.
-                if (!e2eLocked) {
-                    DrawerEntry(
-                        Icons.Outlined.CloudUpload,
-                        "Backups Automáticos".tr(),
-                        selected = false,
-                        badge = { OnOffBadge(on = autoBackupEnabled) },
-                    ) {
-                        scope.launch { drawerState.close() }
-                        onOpenAutoBackup()
-                    }
-                }
-                DrawerEntry(Icons.Outlined.Settings, "Definições".tr(), false) {
-                    scope.launch { drawerState.close() }
-                    onOpenSettings()
-                }
-                Spacer(Modifier.height(10.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), modifier = Modifier.padding(horizontal = 16.dp))
-                Spacer(Modifier.height(10.dp))
-                DrawerEntry(Icons.AutoMirrored.Filled.Logout, "Sair da Conta".tr(), false, destructive = true) {
-                    scope.launch { drawerState.close() }
-                    activeDialog = ActionDialog.Logout
-                }
-                Spacer(Modifier.height(12.dp))
-              }
-              StorageFooter(
-                  storage = storage,
-                  onUpgrade = {
-                      scope.launch { drawerState.close() }
-                      onOpenBilling()
-                  },
-              )
-            }
+                } else null,
+            )
         },
     ) {
         val openShareForSelected: () -> Unit = {
@@ -558,20 +532,28 @@ fun BrowseScreen(
             }
         }
 
+        Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             topBar = {
                 TopAppBar(
                     title = {
                         // E2E trancado: sem breadcrumb (esconde o nome da pasta).
-                        if (!e2eLocked) TopBarTitle(state = state, onCrumb = viewModel::goToCrumb)
+                        // Com o cabeçalho de pasta, o caminho está nele: aqui só a secção.
+                        if (!e2eLocked) {
+                            if (hasFolderHeader(state)) Text(sectionTitle(state.mode), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            else TopBarTitle(state = state, onCrumb = viewModel::goToCrumb)
+                        }
                     },
                     navigationIcon = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Icon(Icons.Filled.Menu, contentDescription = "Menu".tr())
+                        // Gaveta fixa (ecrã largo): sem botão de menu.
+                        if (!permanentDrawer) {
+                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                Icon(Icons.Filled.Menu, contentDescription = "Menu".tr())
+                            }
                         }
                     },
                     actions = {
-                        IconButton(onClick = onOpenNotifications) {
+                        if (!permanentDrawer) IconButton(onClick = onOpenNotifications) {
                             BadgedBox(badge = {
                                 if (unread > 0) Badge { Text(if (unread > 99) "99+" else unread.toString()) }
                             }) {
@@ -584,7 +566,7 @@ fun BrowseScreen(
                         // E2E trancado: esconde as ações de ficheiros (selecionar,
                         // esvaziar lixo, adicionar). Mantém notificações e o menu.
                         if (!e2eLocked) {
-                        if (!state.selectMode) {
+                        if (!state.selectMode && state.mode != BrowseMode.Latest) {
                             IconButton(onClick = { viewModel.enterSelectMode() }) {
                                 Icon(Icons.Outlined.CheckBox, contentDescription = "Selecionar")
                             }
@@ -595,97 +577,6 @@ fun BrowseScreen(
                                 enabled = !state.isEmptyingTrash && state.items.isNotEmpty(),
                             ) {
                                 Icon(Icons.Filled.DeleteSweep, contentDescription = "Esvaziar lixo".tr())
-                            }
-                        }
-                        if (state.mode is BrowseMode.Folder) {
-                            Box {
-                                IconButton(onClick = { fabMenuOpen = true }) {
-                                    Icon(Icons.Filled.Add, contentDescription = "Adicionar".tr())
-                                }
-                                DropdownMenu(
-                                    expanded = fabMenuOpen,
-                                    onDismissRequest = { fabMenuOpen = false },
-                                    shape = RoundedCornerShape(20.dp),
-                                    containerColor = MaterialTheme.colorScheme.surface,
-                                    tonalElevation = 0.dp,
-                                    shadowElevation = 16.dp,
-                                    modifier = Modifier.widthIn(min = 260.dp).padding(vertical = 4.dp),
-                                ) {
-                                    FabSectionHeader("Mais usados".tr())
-                                    DropdownMenuItem(
-                                        text = { Text("Carregar ficheiros".tr(), style = MaterialTheme.typography.bodyMedium) },
-                                        leadingIcon = {
-                                            Box(
-                                                modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
-                                                contentAlignment = Alignment.Center,
-                                            ) { Icon(Icons.Outlined.FileUpload, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
-                                        },
-                                        onClick = { fabMenuOpen = false; filePicker.launch(arrayOf("*/*")) },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Carregar pasta".tr(), style = MaterialTheme.typography.bodyMedium) },
-                                        leadingIcon = {
-                                            Box(
-                                                modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
-                                                contentAlignment = Alignment.Center,
-                                            ) { Icon(Icons.Outlined.DriveFolderUpload, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
-                                        },
-                                        onClick = { fabMenuOpen = false; folderPicker.launch(null) },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Carregamento remoto".tr(), style = MaterialTheme.typography.bodyMedium) },
-                                        leadingIcon = {
-                                            Box(
-                                                modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f)),
-                                                contentAlignment = Alignment.Center,
-                                            ) { Icon(Icons.Outlined.Link, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(18.dp)) }
-                                        },
-                                        onClick = { fabMenuOpen = false; activeDialog = ActionDialog.RemoteUpload },
-                                    )
-                                    HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                                    FabSectionHeader("Outros")
-                                    DropdownMenuItem(
-                                        text = { Text("Criar pasta".tr(), style = MaterialTheme.typography.bodyMedium) },
-                                        leadingIcon = {
-                                            Box(
-                                                modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f)),
-                                                contentAlignment = Alignment.Center,
-                                            ) { Icon(Icons.Outlined.CreateNewFolder, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(18.dp)) }
-                                        },
-                                        onClick = { fabMenuOpen = false; activeDialog = ActionDialog.CreateFolder },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Criar ficheiro de texto".tr(), style = MaterialTheme.typography.bodyMedium) },
-                                        leadingIcon = {
-                                            Box(
-                                                modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f)),
-                                                contentAlignment = Alignment.Center,
-                                            ) { Icon(Icons.Outlined.Description, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(18.dp)) }
-                                        },
-                                        onClick = { fabMenuOpen = false; activeDialog = ActionDialog.CreateTextFile },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Criar pasta de equipa".tr(), style = MaterialTheme.typography.bodyMedium) },
-                                        leadingIcon = {
-                                            Box(
-                                                modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f)),
-                                                contentAlignment = Alignment.Center,
-                                            ) { Icon(Icons.Outlined.GroupAdd, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(18.dp)) }
-                                        },
-                                        onClick = { fabMenuOpen = false; activeDialog = ActionDialog.CreateTeamFolder },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Criar pedido de ficheiros".tr(), style = MaterialTheme.typography.bodyMedium) },
-                                        leadingIcon = {
-                                            Box(
-                                                modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f)),
-                                                contentAlignment = Alignment.Center,
-                                            ) { Icon(Icons.Outlined.NoteAdd, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(18.dp)) }
-                                        },
-                                        onClick = { fabMenuOpen = false; actionTarget = null; activeDialog = ActionDialog.FileRequest },
-                                    )
-                                    Spacer(Modifier.height(4.dp))
-                                }
                             }
                         }
                         }
@@ -705,15 +596,12 @@ fun BrowseScreen(
                             onDelete = if (state.mode == BrowseMode.Trash) permanentDeleteSelectedConfirm else deleteSelectedConfirm,
                             trashMode = state.mode == BrowseMode.Trash,
                             selectedCount = state.selectedIds.size,
+                            readOnly = state.readOnly,
+                            summary = selectionSummary(state.items.filter { it.id in state.selectedIds }),
+                            onShare = if (state.mode is BrowseMode.Folder || state.mode is BrowseMode.TeamFolder || state.mode == BrowseMode.Shared) openShareForSelected else null,
+                            onRestore = { viewModel.restoreSelected() },
                         )
                     }
-                    BrowseBottomBar(
-                        mode = state.mode,
-                        onHome = viewModel::openLatest,
-                        onFavourites = viewModel::openFavourites,
-                        onShared = viewModel::openShared,
-                        onFiles = viewModel::openRoot,
-                    )
                 }
             },
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -732,8 +620,33 @@ fun BrowseScreen(
                     )
                 }
                 NewsBanner()
+                co.golink.tester.ui.components.DeletionScheduledBanner()
                 co.golink.tester.ui.screens.encryption.E2EMigrationBanner()
                 co.golink.tester.ui.screens.encryption.E2ENameMigrationBanner()
+                // Cabeçalho da pasta (igual à web): caminho, ícone, ★, menu, estado e chips.
+                if (hasFolderHeader(state)) {
+                    val inside = isInsideFolder(state.mode)
+                    val root = state.root.takeIf { inside }
+                    co.golink.tester.ui.components.FolderHeader(
+                        title = if (inside) root?.name ?: state.crumbs.lastOrNull()?.name.orEmpty() else sectionTitle(state.mode),
+                        crumbs = if (inside) state.crumbs.map { it.name } else emptyList(),
+                        section = headerSection(state.mode),
+                        folder = root,
+                        badge = folderBadge(state, root),
+                        stats = state.stats,
+                        typeFilter = state.typeFilter,
+                        isFavourite = root != null && favourites.any { it.id == root.id },
+                        canFavourite = root != null && state.mode is BrowseMode.Folder,
+                        canFolderMenu = root != null && !state.readOnly,
+                        onBack = if (inside && state.crumbs.size > 1) {
+                            { viewModel.goToCrumb(state.crumbs.size - 2) }
+                        } else null,
+                        onCrumb = viewModel::goToCrumb,
+                        onToggleFavourite = { root?.let(viewModel::toggleFavourite) },
+                        onFolderMenu = { sheetItem = root },
+                        onTypeFilter = viewModel::setTypeFilter,
+                    )
+                }
                 SearchRow(
                     query = state.searchQuery,
                     onQueryChange = viewModel::setSearchQuery,
@@ -742,7 +655,18 @@ fun BrowseScreen(
                     sortMode = state.sortMode,
                     onSetViewMode = viewModel::setViewMode,
                     onSetSortMode = viewModel::setSortMode,
+                    showViewControls = state.mode != BrowseMode.Latest,
+                    focusRequest = searchFocusRequest,
                 )
+                // Filtros reconhecidos na frase (parser local, sem IA): "PDF · março 2026".
+                if (state.mode is BrowseMode.SearchResults && state.searchChips.isNotEmpty()) {
+                    Text(
+                        "Filtros".tr() + ": " + state.searchChips.joinToString(" · "),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+                }
                 if (state.selectMode) QuickActionsChips(
                     filesOnly = state.filesOnly,
                     inSelectionMode = state.selectMode,
@@ -756,6 +680,15 @@ fun BrowseScreen(
                     onDone = viewModel::exitSelectMode,
                     onView = viewModel::toggleViewMode,
                 )
+                // Lixo: aviso de retenção entre a barra e a lista (como na web) —
+                // o servidor apaga de vez o que lá está há mais de N dias.
+                val trashRetentionDays by viewModel.trashRetentionDays.collectAsStateWithLifecycle()
+                if (state.mode == BrowseMode.Trash && state.items.isNotEmpty() && trashRetentionDays > 0 && !state.selectMode) {
+                    TrashRetentionNotice(
+                        days = trashRetentionDays,
+                        onEmptyNow = { activeDialog = ActionDialog.EmptyTrash },
+                    )
+                }
                 PullToRefreshBox(
                     isRefreshing = state.isRefreshing,
                     onRefresh = viewModel::refresh,
@@ -765,6 +698,41 @@ fun BrowseScreen(
                         .then(if (state.isEmptyingTrash) Modifier.blur(14.dp) else Modifier),
                 ) {
                     when {
+                        state.mode == BrowseMode.Latest -> when {
+                            !feedState.loaded && feedState.isLoading -> FileListSkeleton(modifier = Modifier.fillMaxSize())
+                            !feedState.loaded && feedState.error != null ->
+                                EmptyState(title = "Não foi possível carregar".tr(), subtitle = feedState.error ?: "")
+                            else -> co.golink.tester.ui.components.ActivityFeedContent(
+                                entries = feedState.entries,
+                                tab = feedState.tab,
+                                hasMore = feedState.hasMore,
+                                loadingMore = feedState.loadingMore,
+                                summary = feedState.summary,
+                                onTab = viewModel::setActivityTab,
+                                onOpen = { entry ->
+                                    when (val item = entry.item) {
+                                        null -> Unit
+                                        // No lixo: ficheiro visualizável abre "só ver" (como na web); o resto → Lixo.
+                                        else -> if (entry.itemTrashed) {
+                                            if (item is BrowseItem.File && item.isViewable()) {
+                                                viewModel.prepareViewer(listOf(item), item.id, fromTrash = true)
+                                                onOpenFile(item.id)
+                                            } else viewModel.openTrash()
+                                        } else when (item) {
+                                            is BrowseItem.Folder -> viewModel.openActivityFolder(
+                                                item,
+                                                ownedByMe = entry.itemOwnerId != null && entry.itemOwnerId == viewModel.currentUserId(),
+                                            )
+                                            is BrowseItem.File -> if (item.isViewable()) openActivityFile(item) else sheetItem = item
+                                        }
+                                    }
+                                },
+                                onOpenFolder = { folder, ownerId -> viewModel.openActivityFolder(folder, ownedByMe = ownerId == null || ownerId == viewModel.currentUserId()) },
+                                onRestore = { item -> viewModel.restore(item) },
+                                onMore = { entry -> entry.item?.let { sheetItem = it } },
+                                onLoadMore = viewModel::loadMoreFeed,
+                            )
+                        }
                         state.isLoading && state.items.isEmpty() -> {
                             FileListSkeleton(modifier = Modifier.fillMaxSize())
                         }
@@ -785,7 +753,8 @@ fun BrowseScreen(
                                 if (state.selectMode) {
                                     viewModel.toggleSelection(item.id)
                                 } else if (state.mode == BrowseMode.Trash) {
-                                    sheetItem = item
+                                    // Ficheiro visualizável: abre "só ver"; pastas e o resto → ações.
+                                    if (item is BrowseItem.File && item.isViewable()) openFile(item) else sheetItem = item
                                 } else when (item) {
                                     is BrowseItem.Folder -> viewModel.openFolder(item)
                                     is BrowseItem.File -> if (item.isViewable()) openFile(item) else sheetItem = item
@@ -814,11 +783,30 @@ fun BrowseScreen(
                                     state = gridState,
                                     columns = GridCells.Fixed(2),
                                     modifier = Modifier.fillMaxSize(),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                    contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 88.dp),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
-                                    items(displayed, key = { it.id }) { item ->
+                                    // Ordenado por data: secções "Setembro 2026 · 3 vídeos" (como na web);
+                                    // pastas à cabeça, sem título. Por nome: grelha plana.
+                                    val byMonth = state.sortMode == SortMode.DATE_DESC || state.sortMode == SortMode.DATE_ASC
+                                    val sections = if (byMonth) monthSections(displayed) else listOf(null to displayed)
+                                    sections.forEach { (header, sectionItems) ->
+                                    if (header != null) {
+                                        item(
+                                            key = "month-$header",
+                                            span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) },
+                                            contentType = "month",
+                                        ) {
+                                            Text(
+                                                header,
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.SemiBold,
+                                                modifier = Modifier.padding(start = 4.dp, top = 10.dp, bottom = 2.dp),
+                                            )
+                                        }
+                                    }
+                                    items(sectionItems, key = { it.id }) { item ->
                                         BrowseItemGridCard(
                                             item = item,
                                             selected = state.selectedIds.contains(item.id),
@@ -829,7 +817,11 @@ fun BrowseScreen(
                                             onMembersClick = if (item is BrowseItem.Folder && item.members.isNotEmpty()) {
                                                 { membersPopupFolder = item }
                                             } else null,
+                                            onCopyLinkClick = if (canCopyLinks && !item.share?.link.isNullOrBlank()) {
+                                                { viewModel.copyShareLink(item) }
+                                            } else null,
                                         )
+                                    }
                                     }
                                 }
                             } else {
@@ -847,8 +839,8 @@ fun BrowseScreen(
                                 LazyColumn(
                                     state = listState,
                                     modifier = Modifier.fillMaxSize(),
-                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
                                 ) {
                                     items(displayed, key = { it.id }) { item ->
                                         BrowseItemRow(
@@ -861,7 +853,21 @@ fun BrowseScreen(
                                             onMembersClick = if (item is BrowseItem.Folder && item.members.isNotEmpty()) {
                                                 { membersPopupFolder = item }
                                             } else null,
+                                            onCopyLinkClick = if (canCopyLinks && !item.share?.link.isNullOrBlank()) {
+                                                { viewModel.copyShareLink(item) }
+                                            } else null,
                                         )
+                                    }
+                                    // Rodapé "N itens" (como a tabela da web), só com a lista completa.
+                                    if (!state.isLoadingMore && state.currentPage >= state.lastPage) {
+                                        item(key = "list-footer") {
+                                            Text(
+                                                "%d itens".tr().format(displayed.size),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(start = 4.dp, top = 4.dp),
+                                            )
+                                        }
                                     }
                                     if (state.isLoadingMore) {
                                         item {
@@ -905,6 +911,46 @@ fun BrowseScreen(
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
             }
+        }
+
+        // Botão "+" por cima do separador "Ficheiros", com as ações em bolhas.
+        // Só no separador Ficheiros (como o antigo "+" da barra de cima).
+        if (state.mode is BrowseMode.Folder && !e2eLocked && !state.selectMode) {
+            val primary = MaterialTheme.colorScheme.primary
+            val secondary = MaterialTheme.colorScheme.secondary
+            val tertiary = MaterialTheme.colorScheme.tertiary
+            SpeedDialFab(
+                open = fabMenuOpen,
+                onOpenChange = { fabMenuOpen = it },
+                // Sem barra de baixo desde o redesign 2026-10.
+                bottomOffset = 0.dp,
+                actions = listOf(
+                    co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.NoteAdd, "Criar pedido de ficheiros".tr(), tertiary) {
+                        actionTarget = null; activeDialog = ActionDialog.FileRequest
+                    },
+                    co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.GroupAdd, "Criar pasta de equipa".tr(), tertiary) {
+                        activeDialog = ActionDialog.CreateTeamFolder
+                    },
+                    co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.Description, "Criar ficheiro de texto".tr(), tertiary) {
+                        activeDialog = ActionDialog.CreateTextFile
+                    },
+                    co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.CreateNewFolder, "Criar pasta".tr(), tertiary) {
+                        activeDialog = ActionDialog.CreateFolder
+                    },
+                    co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.Link, "Carregamento remoto".tr(), secondary) {
+                        activeDialog = ActionDialog.RemoteUpload
+                    },
+                    co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.DriveFolderUpload, "Carregar pasta".tr(), primary) {
+                        folderPicker.launch(null)
+                    },
+                    co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.FileUpload, "Carregar ficheiros".tr(), primary) {
+                        filePicker.launch(arrayOf("*/*"))
+                    },
+                ),
+            )
+        } else if (fabMenuOpen) {
+            LaunchedEffect(Unit) { fabMenuOpen = false }
+        }
         }
     }
 
@@ -991,9 +1037,17 @@ fun BrowseScreen(
             onRestore = { viewModel.restore(target) },
             onPermanentDelete = { actionTarget = target; activeDialog = ActionDialog.PermanentDelete },
             onDetails = { actionTarget = target; activeDialog = ActionDialog.Details },
+            onCopyLink = if (canCopyLinks && target.id !in foreignActivityIds) { { viewModel.copyShareLink(target) } } else null,
+            canEdit = !state.readOnly,
             onComingSoon = { viewModel.notifyComingSoon() },
             onConvertToTeamFolder = { actionTarget = target; activeDialog = ActionDialog.ConvertToTeamFolder },
             onFileRequest = { actionTarget = target; activeDialog = ActionDialog.FileRequest },
+            onDissolveTeam = (target as? BrowseItem.Folder)?.takeIf { state.mode is BrowseMode.TeamFolder && it.isTeamFolder }?.let { f ->
+                { actionTarget = f; activeDialog = ActionDialog.DissolveTeam }
+            },
+            onLeaveTeam = (target as? BrowseItem.Folder)?.takeIf { state.mode is BrowseMode.SharedWithMe && (state.mode as BrowseMode.SharedWithMe).id == null || it.id == state.crumbs.getOrNull(1)?.id && state.mode is BrowseMode.SharedWithMe }?.let { f ->
+                { actionTarget = f; activeDialog = ActionDialog.LeaveTeam }
+            },
         )
     }
 
@@ -1005,37 +1059,21 @@ fun BrowseScreen(
     }
 
     when (activeDialog) {
-        ActionDialog.CreateFolder -> TextInputDialog(
-            title = "Nova pasta".tr(),
-            label = "Nome",
-            confirmText = "Criar".tr(),
+        ActionDialog.CreateFolder -> co.golink.tester.ui.components.dialogs.CreateFolderDialog(
+            location = state.crumbs.lastOrNull()?.name ?: "O meu Drive".tr(),
             onDismiss = { activeDialog = ActionDialog.None },
-            onConfirm = { name -> viewModel.createFolder(name) },
+            onCreate = { name, color -> viewModel.createFolder(name, color) },
         )
-        ActionDialog.CreateTextFile -> TextInputDialog(
-            title = "Novo ficheiro de texto".tr(),
-            label = "Nome",
-            initialValue = "Novo ficheiro.txt",
-            helperText = "Formatos suportados: %s. Sem extensão, é usado .txt.".tr()
-                .format(visibleTextExtensionsLabel()),
-            validate = { typed ->
-                unsupportedExtension(typed)?.let { extension ->
-                    "Ficheiros .%s não são suportados aqui. Usa %s, ou não escrevas extensão nenhuma.".tr()
-                        .format(extension, visibleTextExtensionsLabel())
-                }
-            },
-            confirmText = "Criar".tr(),
+        ActionDialog.CreateTextFile -> co.golink.tester.ui.components.dialogs.CreateTextFileDialog(
+            location = state.crumbs.lastOrNull()?.name ?: "O meu Drive".tr(),
             onDismiss = { activeDialog = ActionDialog.None },
-            onConfirm = { name -> viewModel.createTextFile(name) },
+            onCreate = { filename, openEditor -> viewModel.createTextFile(filename, openEditor) },
         )
         ActionDialog.Rename -> actionTarget?.let { target ->
-            TextInputDialog(
-                title = "Renomear".tr(),
-                label = "Novo nome".tr(),
-                initialValue = target.name,
-                confirmText = "Guardar".tr(),
+            co.golink.tester.ui.components.dialogs.EditItemDialog(
+                item = target,
                 onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
-                onConfirm = { name -> viewModel.rename(target, name) },
+                onSave = { name, appearance -> viewModel.rename(target, name, appearance) },
             )
         }
         ActionDialog.Delete -> {
@@ -1134,16 +1172,10 @@ fun BrowseScreen(
                 )
             }
         }
-        ActionDialog.RemoteUpload -> TextInputDialog(
-            title = "Carregamento remoto".tr(),
-            label = "URL(s)",
-            confirmText = "Iniciar".tr(),
-            subtitle = "Insere os URLs separados por vírgula ou nova linha".tr(),
-            icon = Icons.Outlined.CloudUpload,
-            iconColor = MaterialTheme.colorScheme.primary,
-            multiLine = true,
+        ActionDialog.RemoteUpload -> co.golink.tester.ui.components.dialogs.RemoteUploadDialog(
+            location = state.crumbs.lastOrNull()?.name ?: "O meu Drive".tr(),
             onDismiss = { activeDialog = ActionDialog.None },
-            onConfirm = { input -> viewModel.remoteUpload(input) },
+            onImport = { urls -> viewModel.remoteUpload(urls.joinToString("\n")) },
         )
         ActionDialog.EmptyTrash -> ConfirmDialog(
             title = "Esvaziar lixo?".tr(),
@@ -1153,6 +1185,26 @@ fun BrowseScreen(
             onDismiss = { activeDialog = ActionDialog.None },
             onConfirm = viewModel::emptyTrash,
         )
+        ActionDialog.DissolveTeam -> (actionTarget as? BrowseItem.Folder)?.let { folder ->
+            ConfirmDialog(
+                title = "Dissolver a equipa?".tr(),
+                message = "Os membros deixam de ter acesso e a pasta volta para os teus ficheiros.".tr(),
+                confirmText = "Dissolver".tr(),
+                destructive = true,
+                onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
+                onConfirm = { viewModel.dissolveTeam(folder) },
+            )
+        }
+        ActionDialog.LeaveTeam -> (actionTarget as? BrowseItem.Folder)?.let { folder ->
+            ConfirmDialog(
+                title = "Sair da pasta de equipa?".tr(),
+                message = "Deixas de ver esta pasta. Só o dono te pode voltar a convidar.".tr(),
+                confirmText = "Sair".tr(),
+                destructive = true,
+                onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
+                onConfirm = { viewModel.leaveTeam(folder) },
+            )
+        }
         ActionDialog.Logout -> ConfirmDialog(
             title = "Sair da Conta?".tr(),
             message = "Tens a certeza que queres sair da tua conta?".tr(),
@@ -1166,6 +1218,26 @@ fun BrowseScreen(
                 item = target,
                 onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
                 fetchShare = viewModel::fetchShare,
+                fetchActivity = { page -> viewModel.itemActivity(target, page) },
+                location = if (state.mode is BrowseMode.Folder || state.mode is BrowseMode.TeamFolder || state.mode is BrowseMode.SharedWithMe) {
+                    state.crumbs.lastOrNull()?.name
+                } else null,
+                onDownload = if (state.mode == BrowseMode.Trash) null else {
+                    { viewModel.downloadItem(target) }
+                },
+                onMove = if (state.readOnly || state.mode == BrowseMode.Trash) null else {
+                    {
+                        viewModel.loadNavigationTree()
+                        actionTarget = target
+                        activeDialog = ActionDialog.Move
+                    }
+                },
+                onDelete = if (state.readOnly) null else {
+                    {
+                        actionTarget = target
+                        activeDialog = if (state.mode == BrowseMode.Trash) ActionDialog.PermanentDelete else ActionDialog.Delete
+                    }
+                },
                 // Fora do lixo, como a ação "Partilhar" do menu.
                 onShare = if (state.mode == BrowseMode.Trash) null else {
                     {
@@ -1193,204 +1265,104 @@ fun BrowseScreen(
         ActionDialog.FileRequest -> CreateFileRequestDialog(
             onDismiss = { activeDialog = ActionDialog.None },
             // actionTarget definido = pedido para essa pasta (menu "…"); null = pasta actual (botão +).
-            onCreate = { name, email, notes -> viewModel.createFileRequest(name, email, notes, actionTarget?.id) },
+            onCreate = { name, email, notes, days -> viewModel.createFileRequest(name, email, notes, actionTarget?.id, days) },
         )
         ActionDialog.None -> Unit
     }
 }
 
+// "1 vídeo selecionado · 19.30 MB", "3 itens selecionados · 4.10 MB".
+private fun selectionSummary(selected: List<BrowseItem>): String? {
+    if (selected.isEmpty()) return null
+    val n = selected.size
+    val type = selected.map { (it as? BrowseItem.File)?.type ?: "folder" }.distinct().singleOrNull()
+    val label = when (type) {
+        "video" -> if (n == 1) "1 vídeo selecionado".tr() else "%d vídeos selecionados".tr().format(n)
+        "image" -> if (n == 1) "1 imagem selecionada".tr() else "%d imagens selecionadas".tr().format(n)
+        "folder" -> if (n == 1) "1 pasta selecionada".tr() else "%d pastas selecionadas".tr().format(n)
+        else -> if (n == 1) "1 item selecionado".tr() else "%d itens selecionados".tr().format(n)
+    }
+    val bytes = selected.sumOf { if (it is BrowseItem.File) it.filesizeBytes else (it as BrowseItem.Folder).filesizeBytes }
+    return if (bytes > 0) "$label · ${co.golink.tester.ui.common.formatBytes(bytes)}" else label
+}
+
+// Grelha por mês: pastas primeiro (sem título), depois "Setembro 2026 · 3 vídeos".
+private fun monthSections(items: List<BrowseItem>): List<Pair<String?, List<BrowseItem>>> {
+    val folders = items.filterIsInstance<BrowseItem.Folder>()
+    val files = items.filterIsInstance<BrowseItem.File>()
+    val groups = files.groupBy { (it.createdAtIso ?: it.updatedAtIso)?.take(7) ?: "" }
+    val out = mutableListOf<Pair<String?, List<BrowseItem>>>()
+    if (folders.isNotEmpty()) out += null to folders
+    groups.forEach { (_, group) ->
+        val first = group.first()
+        val month = co.golink.tester.ui.common.formatMonth(first.createdAtIso ?: first.updatedAtIso)
+        val types = group.map { it.type }.distinct()
+        val count = when {
+            types == listOf("video") -> if (group.size == 1) "1 vídeo".tr() else "%d vídeos".tr().format(group.size)
+            types == listOf("image") -> if (group.size == 1) "1 imagem".tr() else "%d imagens".tr().format(group.size)
+            else -> if (group.size == 1) "1 item".tr() else "%d itens".tr().format(group.size)
+        }
+        out += (if (month.isNotEmpty()) "$month · $count" else count) to group
+    }
+    return out
+}
+
+// Vistas com o cabeçalho de pasta (como na web).
+private fun hasFolderHeader(state: BrowseUiState): Boolean = when (state.mode) {
+    is BrowseMode.Folder, is BrowseMode.TeamFolder, is BrowseMode.SharedWithMe, BrowseMode.Shared, BrowseMode.Trash -> true
+    else -> false
+}
+
+private fun isInsideFolder(mode: BrowseMode): Boolean = when (mode) {
+    is BrowseMode.Folder -> mode.id != null
+    is BrowseMode.TeamFolder -> mode.id != null
+    is BrowseMode.SharedWithMe -> mode.id != null
+    else -> false
+}
+
+private fun sectionTitle(mode: BrowseMode): String = when (mode) {
+    is BrowseMode.Folder -> "O meu Drive".tr()
+    is BrowseMode.TeamFolder -> "Pastas de equipa".tr()
+    is BrowseMode.SharedWithMe -> "Partilhado comigo".tr()
+    BrowseMode.Shared -> "Links públicos".tr()
+    BrowseMode.Trash -> "Lixo".tr()
+    BrowseMode.Latest -> "Atividade".tr()
+    BrowseMode.Favourites -> "Favoritos".tr()
+    is BrowseMode.SearchResults -> "Resultados".tr()
+}
+
+private fun headerSection(mode: BrowseMode) = when (mode) {
+    is BrowseMode.TeamFolder -> co.golink.tester.ui.components.HeaderSection.Team
+    is BrowseMode.SharedWithMe -> co.golink.tester.ui.components.HeaderSection.SharedWithMe
+    BrowseMode.Shared -> co.golink.tester.ui.components.HeaderSection.Links
+    BrowseMode.Trash -> co.golink.tester.ui.components.HeaderSection.Trash
+    else -> co.golink.tester.ui.components.HeaderSection.Drive
+}
+
+// Privada / Partilhada (link) / Equipa · permissão.
+private fun folderBadge(state: BrowseUiState, root: BrowseItem.Folder?): co.golink.tester.ui.components.FolderBadge? {
+    return when (state.mode) {
+        is BrowseMode.Folder -> when {
+            root?.share != null -> co.golink.tester.ui.components.FolderBadge(Icons.Outlined.Link, "Partilhada".tr(), co.golink.tester.ui.components.FolderBadge.Tone.Green)
+            else -> co.golink.tester.ui.components.FolderBadge(Icons.Outlined.Lock, "Privada".tr(), co.golink.tester.ui.components.FolderBadge.Tone.Gray)
+        }
+        is BrowseMode.TeamFolder, is BrowseMode.SharedWithMe -> if (root != null) {
+            val label = if (state.readOnly) "Equipa · só ver".tr() else "Equipa".tr()
+            co.golink.tester.ui.components.FolderBadge(Icons.Outlined.Groups, label, co.golink.tester.ui.components.FolderBadge.Tone.Blue)
+        } else null
+        else -> null
+    }
+}
+
 private fun topBarTitle(state: BrowseUiState): String = when (val mode = state.mode) {
     is BrowseMode.Folder -> mode.name
-    BrowseMode.Latest -> "Recentes"
-    BrowseMode.Shared -> "Partilhado comigo".tr()
+    BrowseMode.Latest -> "Atividade".tr()
+    BrowseMode.Shared -> "Partilhado".tr()
     BrowseMode.Favourites -> "Favoritos".tr()
     BrowseMode.Trash -> "Lixo".tr()
     is BrowseMode.SearchResults -> "Resultados: ${mode.query}"
     is BrowseMode.TeamFolder -> mode.name
     is BrowseMode.SharedWithMe -> mode.name
-}
-
-@Composable
-private fun DrawerSectionHeader(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 1.2.sp,
-        modifier = Modifier.padding(start = 28.dp, end = 16.dp, top = 10.dp, bottom = 4.dp),
-    )
-}
-
-@Composable
-private fun DrawerExpandableHeader(title: String, expanded: Boolean, onClick: () -> Unit) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(horizontal = 28.dp, vertical = 8.dp),
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.weight(1f),
-        )
-        Icon(
-            if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(18.dp),
-        )
-    }
-}
-
-@Composable
-private fun DrawerFolderItem(
-    label: String,
-    depth: Int = 0,
-    hasChildren: Boolean = false,
-    expanded: Boolean = false,
-    onToggle: (() -> Unit)? = null,
-    onClick: () -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(
-                start = (16 + depth * 14).dp,
-                end = 16.dp,
-                top = 6.dp,
-                bottom = 6.dp,
-            ),
-    ) {
-        if (hasChildren && onToggle != null) {
-            IconButton(
-                onClick = onToggle,
-                modifier = Modifier.size(24.dp),
-            ) {
-                Icon(
-                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ChevronRight,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-            Spacer(Modifier.width(4.dp))
-        } else {
-            Spacer(Modifier.width(28.dp))
-        }
-        Icon(
-            Icons.Outlined.Folder,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-@Composable
-private fun NavFolderTreeItem(
-    folder: co.golink.tester.domain.browse.NavFolder,
-    depth: Int,
-    onOpen: (String, String) -> Unit,
-) {
-    var expanded by remember(folder.id) { mutableStateOf(false) }
-    val hasChildren = folder.folders.isNotEmpty()
-    DrawerFolderItem(
-        label = folder.name,
-        depth = depth,
-        hasChildren = hasChildren,
-        expanded = expanded,
-        onToggle = if (hasChildren) ({ expanded = !expanded }) else null,
-        onClick = { onOpen(folder.id, folder.name) },
-    )
-    if (expanded) {
-        folder.folders.forEach { child ->
-            NavFolderTreeItem(folder = child, depth = depth + 1, onOpen = onOpen)
-        }
-    }
-}
-
-@Composable
-private fun DrawerHint(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 44.dp, end = 16.dp, top = 4.dp, bottom = 8.dp),
-    )
-}
-
-@Composable
-private fun DrawerEntry(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    selected: Boolean,
-    destructive: Boolean = false,
-    badge: (@Composable () -> Unit)? = null,
-    onClick: () -> Unit,
-) {
-    // Custom compact row instead of NavigationDrawerItem (whose fixed 56dp
-    // height made the drawer feel oversized). ~42dp tall keeps it tighter.
-    val unselectedContent = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-    val content = if (selected) MaterialTheme.colorScheme.primary else unselectedContent
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 1.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(MaterialTheme.colorScheme.primary.copy(alpha = if (selected) 0.12f else 0f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 9.dp),
-    ) {
-        Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(21.dp))
-        Spacer(Modifier.width(14.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = content,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        badge?.let {
-            Spacer(Modifier.width(8.dp))
-            it()
-        }
-    }
-}
-
-/** Pill "On"/"Off" para indicar o estado de uma funcionalidade no menu. */
-@Composable
-private fun OnOffBadge(on: Boolean) {
-    val color = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(color.copy(alpha = 0.15f))
-            .padding(horizontal = 10.dp, vertical = 3.dp),
-    ) {
-        Text(
-            if (on) "On" else "Off",
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            color = color,
-        )
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1470,18 +1442,6 @@ private fun QuickActionsChips(
 }
 
 @Composable
-private fun FabSectionHeader(text: String) {
-    Text(
-        text = text.uppercase(),
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.primary,
-        fontWeight = FontWeight.Bold,
-        letterSpacing = androidx.compose.ui.unit.TextUnit(0.8f, androidx.compose.ui.unit.TextUnitType.Sp),
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 2.dp),
-    )
-}
-
-@Composable
 private fun ActionChip(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
@@ -1522,7 +1482,13 @@ private fun SearchRow(
     sortMode: SortMode,
     onSetViewMode: (ViewMode) -> Unit,
     onSetSortMode: (SortMode) -> Unit,
+    showViewControls: Boolean = true,
+    focusRequest: Int = 0,
 ) {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(focusRequest) {
+        if (focusRequest > 0) runCatching { focusRequester.requestFocus() }
+    }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -1559,8 +1525,10 @@ private fun SearchRow(
             ),
             modifier = Modifier
                 .weight(1f)
-                .height(52.dp),
+                .height(50.dp)
+                .focusRequester(focusRequester),
         )
+        if (!showViewControls) return@Row
         var menuOpen by remember { mutableStateOf(false) }
         Box(
             modifier = Modifier
@@ -1770,7 +1738,7 @@ private fun BreadcrumbsRow(crumbs: List<Crumb>, onSelect: (Int) -> Unit) {
  */
 @Composable
 private fun storageAccent(level: StorageLevel): Color {
-    val dark = isSystemInDarkTheme()
+    val dark = co.golink.tester.ui.theme.LocalDarkTheme.current
     return when (level) {
         StorageLevel.OK -> MaterialTheme.colorScheme.primary
         StorageLevel.WARNING -> if (dark) Color(0xFFFBBF24) else Color(0xFFD97706)
@@ -1824,130 +1792,6 @@ private fun LowStorageBanner(
             style = MaterialTheme.typography.labelMedium,
             color = color,
             fontWeight = FontWeight.SemiBold,
-        )
-    }
-}
-
-@Composable
-private fun StorageFooter(
-    storage: StorageUsage?,
-    onUpgrade: () -> Unit,
-) {
-    val level = storage?.level ?: StorageLevel.OK
-    val isLow = storage?.isLow == true
-    val accent = storageAccent(level)
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 12.dp),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .background(accent.copy(alpha = 0.08f))
-                .padding(16.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    if (isLow) Icons.Outlined.Warning else Icons.Outlined.CloudQueue,
-                    contentDescription = null,
-                    tint = accent,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "Armazenamento".tr(),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (isLow) accent else MaterialTheme.colorScheme.onSurface,
-                )
-            }
-            Spacer(Modifier.height(12.dp))
-            val pct = (storage?.percentage ?: 0f).coerceIn(0f, 100f) / 100f
-            LinearProgressIndicator(
-                progress = { pct },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(4.dp)),
-                color = accent,
-                trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f),
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = storage?.let { "${it.used} ${"de".tr()} ${it.capacity} ${"usados".tr()}" } ?: "—",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (isLow) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = "Pouco espaço disponível. Considere fazer upgrade.".tr(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = accent,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-            Spacer(Modifier.height(12.dp))
-            Button(
-                onClick = onUpgrade,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = accent,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
-            ) {
-                Text("Obter mais espaço".tr(), fontWeight = FontWeight.SemiBold)
-            }
-        }
-    }
-}
-
-@Composable
-private fun BrowseBottomBar(
-    mode: BrowseMode,
-    onHome: () -> Unit,
-    onFavourites: () -> Unit,
-    onShared: () -> Unit,
-    onFiles: () -> Unit,
-) {
-    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-        val itemColors = NavigationBarItemDefaults.colors(
-            selectedIconColor = MaterialTheme.colorScheme.primary,
-            selectedTextColor = MaterialTheme.colorScheme.primary,
-            indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        NavigationBarItem(
-            selected = mode == BrowseMode.Latest,
-            onClick = onHome,
-            icon = { Icon(Icons.Filled.Home, contentDescription = null) },
-            label = { Text("Recentes") },
-            colors = itemColors,
-        )
-        NavigationBarItem(
-            selected = mode == BrowseMode.Favourites,
-            onClick = onFavourites,
-            icon = { Icon(Icons.Filled.Star, contentDescription = null) },
-            label = { Text("Favoritos".tr()) },
-            colors = itemColors,
-        )
-        NavigationBarItem(
-            selected = mode == BrowseMode.Shared,
-            onClick = onShared,
-            icon = { Icon(Icons.Filled.PeopleAlt, contentDescription = null) },
-            label = { Text("Partilhado".tr()) },
-            colors = itemColors,
-        )
-        NavigationBarItem(
-            selected = mode is BrowseMode.Folder,
-            onClick = onFiles,
-            icon = { Icon(Icons.Filled.Folder, contentDescription = null) },
-            label = { Text("Ficheiros".tr()) },
-            colors = itemColors,
         )
     }
 }
@@ -2062,8 +1906,23 @@ internal fun BrowseItemDetailsSheet(
     onDismiss: () -> Unit,
     onShare: (() -> Unit)? = null,
     fetchShare: (suspend (String) -> Result<co.golink.tester.domain.browse.ShareInfo?>)? = null,
+    fetchActivity: (suspend (Int) -> Result<co.golink.tester.domain.activity.ActivityPage>)? = null,
+    onDownload: (() -> Unit)? = null,
+    onMove: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null,
+    location: String? = null,
 ) {
-    co.golink.tester.ui.components.ItemDetailsSheet(item = item, onDismiss = onDismiss, onShare = onShare, fetchShare = fetchShare)
+    co.golink.tester.ui.components.ItemDetailsSheet(
+        item = item,
+        onDismiss = onDismiss,
+        onShare = onShare,
+        fetchShare = fetchShare,
+        fetchActivity = fetchActivity,
+        onDownload = onDownload,
+        onMove = onMove,
+        onDelete = onDelete,
+        location = location,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -2123,6 +1982,19 @@ private fun TeamMembersPopup(
                 )
                 Spacer(Modifier.height(4.dp))
             }
+            // Convites ainda por aceitar (como no Info panel da web).
+            if (folder.pendingInvites.isNotEmpty()) {
+                Text(
+                    "Convites pendentes".tr(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                )
+                folder.pendingInvites.forEach { invite ->
+                    Box(modifier = Modifier.alpha(0.65f)) { MemberRow(member = invite) }
+                    Spacer(Modifier.height(4.dp))
+                }
+            }
         }
     }
 }
@@ -2176,6 +2048,62 @@ private fun MemberRow(member: TeamMember, onGrant: (() -> Unit)? = null) {
                 contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
             ) {
                 Text(label, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+/** Aviso do Lixo: itens com mais de [days] dias são apagados automaticamente. */
+@Composable
+private fun TrashRetentionNotice(days: Int, onEmptyNow: () -> Unit) {
+    // Cartão de aviso (como na web): ícone âmbar, título, explicação e Esvaziar.
+    androidx.compose.material3.Surface(
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(12.dp),
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(36.dp)
+                    .background(co.golink.tester.ui.theme.Warning.copy(alpha = 0.16f), androidx.compose.foundation.shape.RoundedCornerShape(10.dp)),
+            ) {
+                Icon(
+                    androidx.compose.material.icons.Icons.Outlined.Schedule,
+                    contentDescription = null,
+                    tint = Color(0xFFB45309),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Eliminados ao fim de %d dias".tr().format(days),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "Os itens que estão no Lixo há mais de %d dias são eliminados automaticamente.".tr().format(days),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(6.dp))
+            androidx.compose.material3.OutlinedButton(
+                onClick = onEmptyNow,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, co.golink.tester.ui.theme.Danger.copy(alpha = 0.4f)),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.height(32.dp),
+            ) {
+                Text("Esvaziar".tr(), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = co.golink.tester.ui.theme.Danger)
             }
         }
     }

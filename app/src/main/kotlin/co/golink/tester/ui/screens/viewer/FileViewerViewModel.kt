@@ -40,7 +40,11 @@ class FileViewerViewModel @Inject constructor(
     private val shareRepository: ShareRepository,
     private val e2eKeyManager: co.golink.tester.data.encryption.E2EKeyManager,
     private val userEncryptionApi: co.golink.tester.network.UserEncryptionApi,
+    private val trashRepository: co.golink.tester.data.trash.TrashRepository,
 ) : ViewModel() {
+
+    /** Aberto a partir do Lixo: só ver; restaurar ou eliminar de vez. */
+    val fromTrash: Boolean = session.fromTrash
 
     data class UiState(
         val files: List<BrowseItem.File> = emptyList(),
@@ -112,7 +116,7 @@ class FileViewerViewModel @Inject constructor(
         }
     }
 
-    fun setZoom(z: Float) = _state.update { it.copy(zoom = z.coerceIn(0.2f, 8f)) }
+    fun setZoom(z: Float) = _state.update { it.copy(zoom = z.coerceIn(1f, 8f)) }
     fun zoomIn() = setZoom(_state.value.zoom * 1.25f)
     fun zoomOut() = setZoom(_state.value.zoom / 1.25f)
     fun resetView() = _state.update { it.copy(zoom = 1f, rotation = 0f) }
@@ -129,11 +133,48 @@ class FileViewerViewModel @Inject constructor(
 
     // ----- E2E preview -----
 
+    /**
+     * Bitmaps já descodificados (por id), para voltar atrás no swipe sem
+     * descarregar/descodificar de novo. 1/8 da heap da app.
+     */
+    val bitmapCache = object : android.util.LruCache<String, android.graphics.Bitmap>(
+        (Runtime.getRuntime().maxMemory() / 1024 / 8).toInt(),
+    ) {
+        override fun sizeOf(key: String, value: android.graphics.Bitmap): Int = value.byteCount / 1024
+    }
+
+    /** Data keys já abertas nesta sessão do viewer (evita 1 pedido à API por página). */
+    private val dataKeys = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+
+    /** Ficheiros desencriptados escritos por este viewer — apagados ao fechar. */
+    private val plaintextFiles = mutableSetOf<java.io.File>()
+
+    override fun onCleared() {
+        super.onCleared()
+        bitmapCache.evictAll()
+        dataKeys.values.forEach { it.fill(0) }
+        dataKeys.clear()
+        val files = synchronized(plaintextFiles) { plaintextFiles.toList().also { plaintextFiles.clear() } }
+        if (files.isNotEmpty()) {
+            Thread { files.forEach(co.golink.tester.data.encryption.PlaintextCache::wipe) }.start()
+        }
+    }
+
     /** Data key do ficheiro (null se não cifrado ou E2E bloqueado). */
     private suspend fun dataKeyFor(file: BrowseItem.File): ByteArray? {
         if (!file.encrypted || !e2eKeyManager.isUnlocked) return null
-        val wrapped = runCatching { userEncryptionApi.fileKey(file.id).body()?.wrapped_data_key }.getOrNull() ?: return null
-        return runCatching { e2eKeyManager.openFileDataKey(wrapped) }.getOrNull()
+        dataKeys[file.id]?.let { return it }
+        val resp = runCatching { userEncryptionApi.fileKey(file.id) }.getOrNull()
+        // Sem linha de chave para esta conta (ex.: membro de Team Folder a quem o
+        // dono ainda não concedeu acesso): diz porquê em vez de ficar em branco.
+        if (resp?.code() == 404) {
+            _state.update { it.copy(toast = "Ainda não tens a chave de encriptação deste ficheiro. Numa pasta de equipa, o dono tem de conceder o acesso de encriptação.".tr()) }
+            return null
+        }
+        val wrapped = resp?.body()?.wrapped_data_key ?: return null
+        val key = runCatching { e2eKeyManager.openFileDataKey(wrapped) }.getOrNull() ?: return null
+        dataKeys[file.id] = key
+        return key
     }
 
     /** Decifra bytes de imagem já descarregados (ciphertext) — usado no ImageViewer. */
@@ -150,6 +191,7 @@ class FileViewerViewModel @Inject constructor(
         val key = dataKeyFor(file) ?: return@withContext null
         val url = authedUrlForDownload(file)
         val out = java.io.File(appContext.cacheDir, "e2e_view_${file.id}.tmp")
+        synchronized(plaintextFiles) { plaintextFiles.add(out) }
         runCatching {
             // Authorization no HEADER: o ?token= da query não é aceite pelo
             // backend → 401 → a decifra falhava e o viewer ficava "a decifrar"
@@ -168,7 +210,7 @@ class FileViewerViewModel @Inject constructor(
             }
             out
         }.getOrElse { t ->
-            out.delete()
+            co.golink.tester.data.encryption.PlaintextCache.wipe(out)
             _state.update { it.copy(toast = "Falha a decifrar o media: ${t.message}") }
             null
         }
@@ -348,6 +390,29 @@ class FileViewerViewModel @Inject constructor(
         }
     }
 
+    /** Lixo: repõe o ficheiro no sítio de onde veio e fecha o viewer. */
+    fun restoreFromTrash() {
+        val file = current ?: return
+        viewModelScope.launch {
+            trashRepository.restore(listOf(file))
+                .onSuccess { _state.update { it.copy(toast = "Restaurado".tr(), closeRequested = true) } }
+                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+        }
+    }
+
+    /** Lixo: apaga de vez e fecha o viewer. */
+    fun deleteForever() {
+        val file = current ?: return
+        viewModelScope.launch {
+            filesRepository.delete(listOf(file), permanent = true)
+                .onSuccess {
+                    trashRepository.notifyChanged()
+                    _state.update { it.copy(toast = "Eliminado para sempre".tr(), closeRequested = true) }
+                }
+                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+        }
+    }
+
     fun delete() {
         val file = current ?: return
         viewModelScope.launch {
@@ -376,6 +441,7 @@ class FileViewerViewModel @Inject constructor(
      * O servidor volta a validar (can-edit, extensão, quota).
      */
     fun canEditText(): Boolean {
+        if (fromTrash) return false
         val file = current ?: return false
         if (!file.isEditableText()) return false
         if (file.encrypted && !e2eKeyManager.isUnlocked) return false

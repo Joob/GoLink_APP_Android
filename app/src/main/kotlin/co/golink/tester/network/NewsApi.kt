@@ -11,7 +11,7 @@ import retrofit2.http.Query
 interface NewsApi {
     @GET("api/settings")
     suspend fun newsSettings(
-        @Query("column") column: String = "allowed_news|news_message",
+        @Query("column") column: String = "allowed_news|news_message|news_message_translations",
     ): Response<Map<String, String?>>
 
     @PATCH("api/admin/settings")

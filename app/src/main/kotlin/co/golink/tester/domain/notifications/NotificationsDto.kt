@@ -38,6 +38,9 @@ data class Notification(
     val title: String,
     val description: String,
     val actionType: String?,
+    /** Rota web do action (ex.: AdminSupportTicketDetail) e o id associado. */
+    val actionRoute: String? = null,
+    val actionId: String? = null,
     val createdAt: String?,
     val isRead: Boolean,
 ) {
@@ -50,10 +53,18 @@ data class Notification(
                 title = attrs.title.orEmpty(),
                 description = attrs.description.orEmpty(),
                 actionType = extractActionType(attrs.action),
+                actionRoute = actionParam(attrs.action, "route"),
+                actionId = actionParam(attrs.action, "id"),
                 createdAt = attrs.created_at,
                 isRead = attrs.read_at != null,
             )
         }
+
+        private fun actionParam(action: JsonElement?, key: String): String? =
+            ((action as? JsonObject)?.get("params") as? JsonObject)?.get(key)
+                ?.let { it as? JsonPrimitive }
+                ?.takeIf { it.isString }
+                ?.content
 
         private fun extractActionType(action: JsonElement?): String? = when (action) {
             null -> null

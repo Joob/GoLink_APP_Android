@@ -51,7 +51,11 @@ class EncryptedThumbnailLoader @Inject constructor(
         if (!e2eKeyManager.isUnlocked) return@withContext null
         if (failed.contains(fileId)) return@withContext null
 
+        // No máximo 4 miniaturas a descarregar/decifrar ao mesmo tempo (uma
+        // grelha grande disparava dezenas de pares de pedidos em simultâneo).
+        permits.acquire()
         try {
+            cache.get(fileId)?.let { return@withContext it }
             val wrapped = userEncryptionApi.fileKey(fileId).body()?.wrapped_data_key
                 ?: return@withContext null.also { failed.add(fileId) }
             val dataKey = e2eKeyManager.openFileDataKey(wrapped)
@@ -66,11 +70,18 @@ class EncryptedThumbnailLoader @Inject constructor(
             val bmp = BitmapFactory.decodeByteArray(plain, 0, plain.size)
                 ?: return@withContext null.also { failed.add(fileId) }
             bmp.asImageBitmap().also { cache.put(fileId, it) }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Saiu do ecrã (scroll): não é falha — volta a tentar quando reaparecer.
+            throw e
         } catch (e: Throwable) {
             failed.add(fileId)
             null
+        } finally {
+            permits.release()
         }
     }
+
+    private val permits = kotlinx.coroutines.sync.Semaphore(4)
 
     @EntryPoint
     @InstallIn(SingletonComponent::class)

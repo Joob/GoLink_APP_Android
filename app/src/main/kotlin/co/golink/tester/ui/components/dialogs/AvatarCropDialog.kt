@@ -22,7 +22,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ZoomIn
+import androidx.compose.material.icons.outlined.ZoomOut
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -61,9 +67,10 @@ import kotlin.math.roundToInt
 
 /**
  * Popup para recortar/redimensionar a imagem antes de a enviar como avatar.
- * O utilizador arrasta e faz pinça para enquadrar; o recorte é sempre quadrado
- * (o círculo é só o guia visual, já que o avatar é mostrado redondo). Confirmar
- * devolve o JPEG (512×512) pronto para upload.
+ * O utilizador arrasta e faz pinça (ou usa a barra de zoom) para enquadrar; o
+ * recorte é sempre quadrado (o círculo é só o guia visual, já que o avatar é
+ * mostrado redondo). "Alterar imagem" escolhe outra sem fechar o popup;
+ * "Guardar" devolve o JPEG (512×512) pronto para upload.
  */
 @Composable
 fun AvatarCropDialog(
@@ -72,14 +79,32 @@ fun AvatarCropDialog(
     onConfirm: (ByteArray) -> Unit,
 ) {
     val context = LocalContext.current
+    // Imagem atual (pode ser trocada em "Alterar imagem" sem fechar o popup).
+    var currentUri by remember { mutableStateOf(imageUri) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     // Tamanho (px) do viewport quadrado, capturado no layout para a matemática do recorte.
     var viewportPx by remember { mutableFloatStateOf(0f) }
 
-    LaunchedEffect(imageUri) {
-        bitmap = withContext(Dispatchers.IO) { runCatching { decodeSampled(context, imageUri) }.getOrNull() }
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia(),
+    ) { uri -> if (uri != null) currentUri = uri }
+
+    LaunchedEffect(currentUri) {
+        bitmap = null
+        scale = 1f
+        offset = Offset.Zero
+        bitmap = withContext(Dispatchers.IO) { runCatching { decodeSampled(context, currentUri) }.getOrNull() }
+    }
+
+    // Mantém a imagem a cobrir o quadrado quando o zoom muda pela barra.
+    fun clampOffset(bmp: Bitmap, newScale: Float, desired: Offset): Offset {
+        val d = viewportPx
+        val baseScale = d / minOf(bmp.width, bmp.height).toFloat()
+        val maxX = max(0f, (bmp.width * baseScale * newScale - d) / 2f)
+        val maxY = max(0f, (bmp.height * baseScale * newScale - d) / 2f)
+        return Offset(desired.x.coerceIn(-maxX, maxX), desired.y.coerceIn(-maxY, maxY))
     }
 
     Dialog(onDismissRequest = onCancel) {
@@ -96,7 +121,7 @@ fun AvatarCropDialog(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    "Arrasta e faz pinça para enquadrar".tr(),
+                    "Arrasta e faz pinça (ou usa o zoom) para enquadrar".tr(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -160,7 +185,35 @@ fun AvatarCropDialog(
                     }
                 }
 
-                Spacer(Modifier.height(16.dp))
+                // Zoom pela barra (alternativa à pinça).
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                    Icon(Icons.Outlined.ZoomOut, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                    Slider(
+                        value = scale,
+                        onValueChange = { value ->
+                            val bmp = bitmap ?: return@Slider
+                            scale = value
+                            offset = clampOffset(bmp, value, offset)
+                        },
+                        valueRange = 1f..6f,
+                        enabled = bitmap != null,
+                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                    )
+                    Icon(Icons.Outlined.ZoomIn, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                }
+
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        picker.launch(
+                            androidx.activity.result.PickVisualMediaRequest(
+                                androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly,
+                            ),
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Alterar imagem".tr()) }
+                Spacer(Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
@@ -175,7 +228,7 @@ fun AvatarCropDialog(
                             val jpeg = cropToJpeg(bmp, viewportPx, scale, offset)
                             if (jpeg != null) onConfirm(jpeg) else onCancel()
                         },
-                    ) { Text("Confirmar".tr()) }
+                    ) { Text("Guardar".tr()) }
                 }
             }
         }

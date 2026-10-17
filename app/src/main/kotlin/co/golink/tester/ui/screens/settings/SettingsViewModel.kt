@@ -47,6 +47,12 @@ data class SettingsUiState(
     val isLoadingTransactions: Boolean = false,
     val isLoadingTokens: Boolean = false,
     val isUpdatingPassword: Boolean = false,
+    // Alteração de email: idle → code (código enviado ao novo email).
+    val emailChangeStep: String = "idle",
+    val emailChangeTarget: String = "",
+    val emailChangeExpiresAt: Long = 0L,
+    val isChangingEmail: Boolean = false,
+    val emailChangeError: String? = null,
     val isChangingPassphrase: Boolean = false,
     val isUpdatingProfile: Boolean = false,
     val biometricEnabled: Boolean = false,
@@ -220,18 +226,73 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    // Muda a passphrase E2E: re-embrulha a chave privada (em memória) com o novo
-    // segredo. NÃO re-cifra ficheiros — continuam selados à mesma chave pública.
-    fun changeEncryptionPassphrase(secret: String) {
-        if (secret.length < 8) {
-            _state.update { it.copy(toast = "Mínimo 8 caracteres".tr()) }
-            return
+    fun requestEmailChange(email: String, password: String) {
+        _state.update { it.copy(isChangingEmail = true, emailChangeError = null) }
+        viewModelScope.launch {
+            repository.requestEmailChange(email, password)
+                .onSuccess { ttl ->
+                    _state.update {
+                        it.copy(
+                            isChangingEmail = false,
+                            emailChangeStep = "code",
+                            emailChangeTarget = email.trim(),
+                            emailChangeExpiresAt = System.currentTimeMillis() + ttl * 1000L,
+                        )
+                    }
+                }
+                .onFailure { t -> _state.update { it.copy(isChangingEmail = false, emailChangeError = t.message) } }
         }
+    }
+
+    fun confirmEmailChange(code: String) {
+        _state.update { it.copy(isChangingEmail = true, emailChangeError = null) }
+        viewModelScope.launch {
+            repository.confirmEmailChange(code)
+                .onSuccess {
+                    sessionManager.refreshUser()
+                    _state.update {
+                        it.copy(
+                            isChangingEmail = false,
+                            emailChangeStep = "idle",
+                            emailChangeTarget = "",
+                            toast = "Email alterado. As outras sessões foram terminadas.".tr(),
+                        )
+                    }
+                }
+                .onFailure { t -> _state.update { it.copy(isChangingEmail = false, emailChangeError = t.message) } }
+        }
+    }
+
+    fun cancelEmailChange() {
+        _state.update { it.copy(emailChangeStep = "idle", emailChangeTarget = "", emailChangeError = null) }
+    }
+
+    // Mudança da passphrase E2E em 3 passos (atual → código por email → nova).
+    suspend fun verifyCurrentPassphrase(secret: String): Boolean = e2eKeyManager.verifyCurrentSecret(secret)
+    suspend fun requestPassphraseCode() = e2eKeyManager.requestSecretCode()
+    suspend fun confirmPassphraseCode(code: String): String = e2eKeyManager.confirmSecretCode(code)
+
+    // Re-embrulha a chave privada (em memória) com o novo segredo. NÃO re-cifra
+    // ficheiros — continuam selados à mesma chave pública. `onDone(ok, tokenExpired)`.
+    fun changeEncryptionPassphrase(secret: String, changeToken: String, onDone: (Boolean, Boolean) -> Unit) {
         _state.update { it.copy(isChangingPassphrase = true) }
         viewModelScope.launch {
-            runCatching { e2eKeyManager.rotateSecret(secret) }
-                .onSuccess { _state.update { it.copy(isChangingPassphrase = false, toast = "Passphrase alterada".tr()) } }
-                .onFailure { t -> _state.update { it.copy(isChangingPassphrase = false, toast = t.message ?: "Falha ao alterar passphrase".tr()) } }
+            runCatching { e2eKeyManager.rotateSecret(secret, changeToken) }
+                .onSuccess {
+                    _state.update { it.copy(isChangingPassphrase = false, toast = "Passphrase alterada".tr()) }
+                    onDone(true, false)
+                }
+                .onFailure { t ->
+                    val expired = t is co.golink.tester.data.encryption.ChangeTokenExpiredException
+                    _state.update {
+                        it.copy(
+                            isChangingPassphrase = false,
+                            toast = if (expired) "A confirmação expirou. Confirma de novo com um código.".tr()
+                            else t.message ?: "Falha ao alterar passphrase".tr(),
+                        )
+                    }
+                    onDone(false, expired)
+                }
         }
     }
 

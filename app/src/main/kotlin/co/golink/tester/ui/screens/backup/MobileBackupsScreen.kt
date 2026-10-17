@@ -272,6 +272,19 @@ fun MobileBackupsScreen(
         Column(
             modifier = Modifier.fillMaxSize(),
         ) {
+            // Cartões dos telemóveis (só na raiz), como na web.
+            if (state.folderStack.isEmpty()) {
+                state.summary?.let { summary ->
+                    BackupDeviceCards(
+                        summary = summary,
+                        accountEnabled = summary.enabled,
+                        busy = state.pausingDevice,
+                        onSetPaused = { device, paused -> viewModel.setDevicePaused(device.id, paused) },
+                        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                    )
+                }
+            }
+
             // Tabs só na raiz — dentro de uma subpasta a navegação é da pasta.
             if (state.folderStack.isEmpty()) {
                 DivisionTabs(
@@ -524,8 +537,8 @@ fun MobileBackupsScreen(
         BackupItemDialog.FileRequest -> dialogTarget?.let { target ->
             CreateFileRequestDialog(
                 onDismiss = { activeDialog = BackupItemDialog.None; dialogTarget = null },
-                onCreate = { name, email, notes ->
-                    viewModel.createFileRequest(name, email, notes, target.id)
+                onCreate = { name, email, notes, days ->
+                    viewModel.createFileRequest(name, email, notes, target.id, days)
                     activeDialog = BackupItemDialog.None
                     dialogTarget = null
                 },

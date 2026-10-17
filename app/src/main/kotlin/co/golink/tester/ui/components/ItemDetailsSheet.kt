@@ -1,6 +1,11 @@
 package co.golink.tester.ui.components
 
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.DriveFileMove
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,7 +70,16 @@ fun ItemDetailsSheet(
     onShare: (() -> Unit)? = null,
     // Lê a partilha de novo no servidor. Result null = já não existe.
     fetchShare: (suspend (String) -> Result<ShareInfo?>)? = null,
+    // Histórico do item (separador Atividade). Null = sem separador.
+    fetchActivity: (suspend (Int) -> Result<co.golink.tester.domain.activity.ActivityPage>)? = null,
+    // Botões de ação no topo (como o painel Detalhes da web). Null = escondido.
+    onDownload: (() -> Unit)? = null,
+    onMove: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null,
+    // Pasta onde está (Localização).
+    location: String? = null,
 ) {
+    var tab by remember(item.id) { mutableStateOf(DetailsTab.DETAILS) }
     // Visualizações/downloads são gastos por quem abre o link, fora da app:
     // com limites ativos a folha vai buscar o estado de 8 em 8 s, para o
     // "0/2" mudar à frente do dono em vez de ficar parado.
@@ -99,9 +113,20 @@ fun ItemDetailsSheet(
         ) {
             DetailsHeader(item)
 
+            if (onDownload != null || onShare != null || onMove != null || onDelete != null) {
+                DetailsActions(onDownload = onDownload, onShare = onShare, onMove = onMove, onDelete = onDelete)
+            }
+
+            if (fetchActivity != null) {
+                DetailsTabs(selected = tab, onSelect = { tab = it })
+            }
+
+            if (fetchActivity != null && tab == DetailsTab.ACTIVITY) {
+                ItemActivityTimeline(itemKey = item.id, fetch = fetchActivity)
+            } else {
             Section("Detalhes".tr()) {
                 Card {
-                    detailRows(item).forEachIndexed { i, (label, value) ->
+                    detailRows(item, location).forEachIndexed { i, (label, value) ->
                         if (i > 0) RowDivider()
                         InfoRow(label, value)
                     }
@@ -133,6 +158,41 @@ fun ItemDetailsSheet(
                     }
                 }
             }
+            }
+        }
+    }
+}
+
+private enum class DetailsTab { DETAILS, ACTIVITY }
+
+/** Separadores Detalhes | Atividade (mesmo estilo do Info Panel da web). */
+@Composable
+private fun DetailsTabs(selected: DetailsTab, onSelect: (DetailsTab) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+            .padding(4.dp),
+    ) {
+        DetailsTab.entries.forEach { t ->
+            val active = t == selected
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(if (active) MaterialTheme.colorScheme.surface else androidx.compose.ui.graphics.Color.Transparent)
+                    .clickable { onSelect(t) }
+                    .padding(vertical = 8.dp),
+            ) {
+                Text(
+                    if (t == DetailsTab.DETAILS) "Detalhes".tr() else "Atividade".tr(),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -140,39 +200,63 @@ fun ItemDetailsSheet(
 @Composable
 private fun DetailsHeader(item: BrowseItem) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-        Box(modifier = Modifier.height(96.dp), contentAlignment = Alignment.Center) {
+        val hasMedia = item is BrowseItem.File && (item.type == "image" || item.type == "video")
+        if (hasMedia) {
+            // Imagem/vídeo: miniatura real (cifrada → decifrada em memória), como
+            // no painel da web; sem miniatura cai para o ícone do tipo.
+            FilePreview(
+                item = item as BrowseItem.File,
+                iconSize = 72.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(190.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+            )
+        } else
+        Box(modifier = Modifier.height(80.dp), contentAlignment = Alignment.Center) {
             when (item) {
                 is BrowseItem.Folder -> when {
                     // O mesmo ícone da listagem: emoji personalizado primeiro.
-                    !item.emoji.isNullOrBlank() -> Text(item.emoji, fontSize = 64.sp)
+                    !item.emoji.isNullOrBlank() -> Text(item.emoji, fontSize = 54.sp)
                     else -> Icon(
                         Icons.Filled.Folder,
                         contentDescription = null,
                         tint = parseHexColor(item.color) ?: MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(96.dp),
+                        modifier = Modifier.size(80.dp),
                     )
                 }
-                is BrowseItem.File -> FileTypeIcon(item, Modifier.height(88.dp))
+                is BrowseItem.File -> FileTypeIcon(item, Modifier.height(72.dp))
             }
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
         Text(
             item.name,
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(6.dp))
-        Text(
-            typeLabel(item).uppercase(),
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
-                .padding(horizontal = 8.dp, vertical = 3.dp),
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                typeLabel(item).uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 7.dp, vertical = 2.dp),
+            )
+            val size = when (item) {
+                is BrowseItem.File -> item.filesize
+                is BrowseItem.Folder -> item.filesize
+            }
+            if (!size.isNullOrBlank()) {
+                Spacer(Modifier.width(8.dp))
+                Text(size, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 }
 
@@ -181,16 +265,69 @@ private fun typeLabel(item: BrowseItem): String = when (item) {
     is BrowseItem.File -> fileExtension(item.name, item.mimetype).ifBlank { item.type }
 }
 
-private fun detailRows(item: BrowseItem): List<Pair<String, String>> = buildList {
+// Gravado / Carregado / Localização / Encriptação (como o painel da web).
+private fun detailRows(item: BrowseItem, location: String?): List<Pair<String, String>> = buildList {
     when (item) {
-        is BrowseItem.File -> add("Tamanho".tr() to (item.filesize ?: "—"))
+        is BrowseItem.File -> {
+            add("Tamanho".tr() to (item.filesize ?: "—"))
+            item.capturedAtIso?.let { add("Gravado".tr() to co.golink.tester.ui.common.formatDay(it) + ", " + co.golink.tester.ui.common.formatTime(it)) }
+        }
         is BrowseItem.Folder -> {
             add("Tamanho".tr() to (item.filesize ?: "—"))
             add("Itens".tr() to (item.itemCount?.toString() ?: "—"))
+            item.devicePath?.let { add("No telemóvel".tr() to it) }
         }
     }
-    add("Criado em".tr() to (item.createdAt ?: "—"))
+    val uploaded = item.createdAtIso?.let { co.golink.tester.ui.common.formatDay(it) + ", " + co.golink.tester.ui.common.formatTime(it) }
+    add("Carregado".tr() to (uploaded ?: item.createdAt ?: "—"))
     item.updatedAt?.takeIf { it != item.createdAt }?.let { add("Atualizado em".tr() to it) }
+    location?.takeIf { it.isNotBlank() }?.let { add("Localização".tr() to it) }
+    if (item is BrowseItem.File) add("Encriptação".tr() to if (item.encrypted) "AES-256 ✓" else "—")
+}
+
+// Transferir · Partilhar · Mover · Apagar (vermelho), em quadrículas.
+@Composable
+private fun DetailsActions(
+    onDownload: (() -> Unit)?,
+    onShare: (() -> Unit)?,
+    onMove: (() -> Unit)?,
+    onDelete: (() -> Unit)?,
+) {
+    androidx.compose.foundation.layout.Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        onDownload?.let { DetailsActionTile(androidx.compose.material.icons.Icons.Outlined.Download, "Transferir".tr(), it, Modifier.weight(1f)) }
+        onShare?.let { DetailsActionTile(androidx.compose.material.icons.Icons.Outlined.Link, "Partilhar".tr(), it, Modifier.weight(1f)) }
+        onMove?.let { DetailsActionTile(androidx.compose.material.icons.Icons.Outlined.DriveFileMove, "Mover".tr(), it, Modifier.weight(1f)) }
+        onDelete?.let { DetailsActionTile(androidx.compose.material.icons.Icons.Outlined.DeleteOutline, "Apagar".tr(), it, Modifier.weight(1f), danger = true) }
+    }
+}
+
+@Composable
+private fun DetailsActionTile(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier,
+    danger: Boolean = false,
+) {
+    val color = if (danger) co.golink.tester.ui.theme.Danger else MaterialTheme.colorScheme.onSurface
+    androidx.compose.material3.Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = if (danger) co.golink.tester.ui.theme.Danger.copy(alpha = 0.06f) else MaterialTheme.colorScheme.surface,
+        modifier = modifier,
+    ) {
+        Column(
+            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+            modifier = Modifier.padding(vertical = 10.dp),
+        ) {
+            androidx.compose.material3.Icon(icon, contentDescription = null, tint = color, modifier = Modifier.padding(bottom = 4.dp))
+            Text(label, style = MaterialTheme.typography.labelSmall, color = color)
+        }
+    }
 }
 
 @Composable

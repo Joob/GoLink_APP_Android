@@ -90,8 +90,8 @@
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
 
-        <!-- Zip de pastas / vários ficheiros E2E: mantém o processo vivo e a
-             notificação de progresso enquanto decifra + zipa (pode demorar). -->
+        <!-- Transferências (ficheiros e zips): mantém o processo vivo e a
+             notificação de progresso (%) enquanto descarrega/decifra. -->
         <service
             android:name="co.golink.tester.data.download.ZipDownloadService"
             android:exported="false"

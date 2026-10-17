@@ -27,6 +27,7 @@ import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -66,10 +67,17 @@ fun ItemActionsSheet(
     onRestore: () -> Unit = {},
     onPermanentDelete: () -> Unit = {},
     onDetails: () -> Unit = {},
+    // Itens partilhados: copia o link (com #k= quando é preciso).
+    onCopyLink: (() -> Unit)? = null,
+    // false = só leitura (membro can-view): esconde editar/mover/eliminar.
+    canEdit: Boolean = true,
     onComingSoon: () -> Unit = {},
     onConvertToTeamFolder: () -> Unit = {},
     onFileRequest: () -> Unit = {},
     showFolderCollaboration: Boolean = true,
+    // Pastas de equipa (raiz): dono dissolve, membro sai — como na web.
+    onDissolveTeam: (() -> Unit)? = null,
+    onLeaveTeam: (() -> Unit)? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -103,6 +111,7 @@ fun ItemActionsSheet(
                     ) { onRestore(); onDismiss() }
                 }
             } else {
+                if (canEdit) {
                 Spacer(Modifier.height(4.dp))
                 ActionGroup {
                     ActionItem(
@@ -127,6 +136,30 @@ fun ItemActionsSheet(
                         labelColor = MaterialTheme.colorScheme.error,
                     ) { onDelete(); onDismiss() }
                 }
+                }
+                if (onDissolveTeam != null || onLeaveTeam != null) {
+                    Spacer(Modifier.height(8.dp))
+                    ActionGroup {
+                        onDissolveTeam?.let { dissolve ->
+                            ActionItem(
+                                icon = Icons.Outlined.DeleteOutline,
+                                label = "Dissolver equipa".tr(),
+                                iconBg = MaterialTheme.colorScheme.error.copy(alpha = 0.10f),
+                                iconTint = MaterialTheme.colorScheme.error,
+                                labelColor = MaterialTheme.colorScheme.error,
+                            ) { dissolve(); onDismiss() }
+                        }
+                        onLeaveTeam?.let { leave ->
+                            ActionItem(
+                                icon = Icons.Outlined.DeleteOutline,
+                                label = "Sair da pasta de equipa".tr(),
+                                iconBg = MaterialTheme.colorScheme.error.copy(alpha = 0.10f),
+                                iconTint = MaterialTheme.colorScheme.error,
+                                labelColor = MaterialTheme.colorScheme.error,
+                            ) { leave(); onDismiss() }
+                        }
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
                 ActionGroup {
                     ActionItem(
@@ -142,7 +175,16 @@ fun ItemActionsSheet(
                         iconBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
                         iconTint = MaterialTheme.colorScheme.primary,
                     ) { onShare(); onDismiss() }
-                    if (item is BrowseItem.File) {
+                    if (isShared && onCopyLink != null) {
+                        SheetDivider()
+                        ActionItem(
+                            icon = Icons.Outlined.Link,
+                            label = "Copiar link".tr(),
+                            iconBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                            iconTint = MaterialTheme.colorScheme.primary,
+                        ) { onCopyLink(); onDismiss() }
+                    }
+                    run {
                         SheetDivider()
                         ActionItem(
                             icon = Icons.Outlined.Info,

@@ -1,5 +1,6 @@
 package co.golink.tester.ui.components.dialogs
 
+import androidx.compose.material.icons.outlined.Download
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -289,6 +290,8 @@ private fun PermissionChip(
 private fun PermissionSection(
     permission: String,
     onPermissionChange: (String) -> Unit,
+    // Ficheiros: só Ver / Transferir (editar é só em pastas).
+    isFolder: Boolean = true,
 ) {
     Column(
         modifier = Modifier
@@ -303,18 +306,36 @@ private fun PermissionSection(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontWeight = FontWeight.SemiBold,
         )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            when (permission) {
+                "viewer" -> "Só pré-visualizar".tr()
+                "editor" -> "Carregar e alterar".tr()
+                else -> "Ver e descarregar".tr()
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // viewer = só pré-visualizar (sem transferir), como na web.
             PermissionChip(
                 icon = Icons.Outlined.RemoveRedEye,
-                label = "Apenas ver".tr(),
+                label = "Ver".tr(),
+                selected = permission == "viewer",
+                modifier = Modifier.weight(1f),
+                onClick = { onPermissionChange("viewer") },
+            )
+            PermissionChip(
+                icon = Icons.Outlined.Download,
+                label = "Transferir".tr(),
                 selected = permission == "visitor",
                 modifier = Modifier.weight(1f),
                 onClick = { onPermissionChange("visitor") },
             )
-            PermissionChip(
+            if (isFolder) PermissionChip(
                 icon = Icons.Outlined.Edit,
-                label = "Pode editar".tr(),
+                label = "Editar".tr(),
                 selected = permission == "editor",
                 modifier = Modifier.weight(1f),
                 onClick = { onPermissionChange("editor") },
@@ -498,9 +519,7 @@ private fun CreateShareForm(
             )
         }
 
-        if (isFolder) {
-            PermissionSection(permission = permission, onPermissionChange = { permission = it })
-        }
+        PermissionSection(permission = permission, onPermissionChange = { permission = it }, isFolder = isFolder)
 
         ShareLimitsFields(
             isFolder = isFolder,
@@ -524,7 +543,7 @@ private fun CreateShareForm(
                 val views = viewLimit.takeIf { hasViewLimit && !isFolder }
                 onCreate(
                     password.takeIf { protectWithPassword && it.isNotBlank() },
-                    if (isFolder) permission else null,
+                    permission,
                     expirationMinutes.takeIf { hasExpiration },
                     downloadLimit.toIntOrNull()?.takeIf { hasDownloadLimit && views == null && it > 0 },
                     views,
@@ -734,9 +753,7 @@ private fun ExistingShareView(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                if (isFolder) {
-                    PermissionSection(permission = permission, onPermissionChange = { permission = it })
-                }
+                PermissionSection(permission = permission, onPermissionChange = { permission = it }, isFolder = isFolder)
                 ShareLimitsFields(
                     isFolder = isFolder,
                     hasExpiration = hasExpiration,
@@ -757,7 +774,7 @@ private fun ExistingShareView(
                         val views = viewLimit.takeIf { hasViewLimit && !isFolder }
                         onUpdate(
                             password.takeIf { hasPassword && it.isNotBlank() },
-                            if (isFolder) permission else null,
+                            permission,
                             expirationMinutes.takeIf { hasExpiration },
                             downloadLimit.toIntOrNull()?.takeIf { hasDownloadLimit && views == null && it > 0 },
                             views,
@@ -941,6 +958,7 @@ private fun EmailRecipientsDialog(
 
 private fun prettyPermission(p: String): String = when (p) {
     "editor" -> "Pode editar".tr()
-    "visitor" -> "Apenas ver".tr()
+    "visitor" -> "Ver e transferir".tr()
+    "viewer" -> "Só ver".tr()
     else -> p
 }

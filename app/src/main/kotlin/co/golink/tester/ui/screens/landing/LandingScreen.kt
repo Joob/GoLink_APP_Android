@@ -67,7 +67,11 @@ fun LandingScreen(
             androidx.compose.foundation.layout.Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                // Tema (Lua/Sol) ao lado do idioma, como no menu lateral.
+                co.golink.tester.ui.theme.ThemeToggle()
+                androidx.compose.foundation.layout.Spacer(Modifier.width(6.dp))
                 co.golink.tester.ui.i18n.LanguageMenu()
             }
             Spacer(Modifier.weight(1f))
@@ -78,7 +82,7 @@ fun LandingScreen(
             Spacer(Modifier.height(28.dp))
 
             Image(
-                painter = painterResource(R.drawable.logo_wordmark),
+                painter = painterResource(if (co.golink.tester.ui.theme.LocalDarkTheme.current) R.drawable.logo_wordmark_dark else R.drawable.logo_wordmark),
                 contentDescription = "GoLink",
                 modifier = Modifier.height(30.dp),
             )
@@ -108,28 +112,8 @@ fun LandingScreen(
 
             Spacer(Modifier.height(18.dp))
 
-            // E2E reassurance pill
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(BrandGreenLight.copy(alpha = 0.55f))
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Lock,
-                    contentDescription = null,
-                    tint = BrandGreen,
-                    modifier = Modifier.size(14.dp),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = "Encriptado ponta-a-ponta".tr(),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = BrandGreen,
-                )
-            }
+            // E2E reassurance pill (mesmo componente do login/registo, com contraste nos dois temas)
+            co.golink.tester.ui.common.EncryptedPill()
 
             Spacer(Modifier.weight(1f))
 

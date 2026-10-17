@@ -1,5 +1,8 @@
 package co.golink.tester.ui.screens.settings
 
+import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.activity.compose.BackHandler
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -64,6 +67,8 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Insights
+import androidx.compose.material.icons.outlined.Email
+import androidx.compose.material.icons.outlined.SupportAgent
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MailOutline
 import androidx.compose.material.icons.outlined.MusicNote
@@ -171,6 +176,7 @@ fun SettingsScreen(
     initialRoute: String? = null,
     onOpenAutoBackup: () -> Unit = {},
     onOpenSecurityActivity: () -> Unit = {},
+    onOpenSupport: (admin: Boolean) -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val user by viewModel.user.collectAsStateWithLifecycle()
@@ -178,16 +184,22 @@ fun SettingsScreen(
     val backendUrl by viewModel.backendUrl.collectAsStateWithLifecycle()
     val e2eUnlocked by viewModel.e2eUnlocked.collectAsStateWithLifecycle()
     val snackbarHost = remember { SnackbarHostState() }
-    var route by remember {
-        mutableStateOf<SettingsRoute>(
-            when (initialRoute) {
-                "billing" -> SettingsRoute.Billing
-                "profile" -> SettingsRoute.Profile
-                "storage" -> SettingsRoute.Storage
-                else -> SettingsRoute.Menu
-            }
-        )
+    // Painel aberto diretamente (gaveta / rodapé de armazenamento): o "voltar"
+    // desse painel sai das Definições em vez de passar pelo menu.
+    val entryRoute = remember(initialRoute) {
+        when (initialRoute) {
+            "billing" -> SettingsRoute.Billing
+            "profile" -> SettingsRoute.Profile
+            "storage" -> SettingsRoute.Storage
+            "dashboard" -> SettingsRoute.Dashboard
+            "analytics" -> SettingsRoute.Analytics
+            "users" -> SettingsRoute.Users
+            "invites" -> SettingsRoute.InviteRegisters
+            "news" -> SettingsRoute.News
+            else -> SettingsRoute.Menu
+        }
     }
+    var route by remember { mutableStateOf<SettingsRoute>(entryRoute) }
 
     LaunchedEffect(state.toast) {
         state.toast?.let { snackbarHost.showSnackbar(it); viewModel.consumeToast() }
@@ -222,7 +234,7 @@ fun SettingsScreen(
         )
     }
 
-    BackHandler(enabled = route != SettingsRoute.Menu) {
+    BackHandler(enabled = route != SettingsRoute.Menu && route != entryRoute) {
         route = SettingsRoute.Menu
     }
 
@@ -250,7 +262,7 @@ fun SettingsScreen(
                 title = { Text(title) },
                 navigationIcon = {
                     IconButton(onClick = {
-                        if (route == SettingsRoute.Menu) onBack() else route = SettingsRoute.Menu
+                        if (route == SettingsRoute.Menu || route == entryRoute) onBack() else route = SettingsRoute.Menu
                     }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar".tr())
                     }
@@ -260,11 +272,29 @@ fun SettingsScreen(
         snackbarHost = { SnackbarHost(snackbarHost) },
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            when (route) {
+            // Entrar num submenu desliza da direita; voltar ao menu, da esquerda.
+            androidx.compose.animation.AnimatedContent(
+                targetState = route,
+                transitionSpec = {
+                    val forward = targetState != SettingsRoute.Menu
+                    val dir = if (forward) 1 else -1
+                    (androidx.compose.animation.slideInHorizontally(androidx.compose.animation.core.tween(260)) { it * dir / 4 } +
+                        androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(220)))
+                        .togetherWith(
+                            androidx.compose.animation.slideOutHorizontally(androidx.compose.animation.core.tween(260)) { -it * dir / 4 } +
+                                androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(160)),
+                        )
+                },
+                label = "settings-route",
+            ) { current ->
+            when (current) {
                 SettingsRoute.Menu -> MenuPane(
                     user = user,
+                    storage = state.storage,
+                    activeSessions = state.sessions.size,
                     onNavigate = { route = it },
                     onOpenAutoBackup = onOpenAutoBackup,
+                    onOpenSupport = onOpenSupport,
                     onLogout = viewModel::logout,
                     onUpdateAvatar = viewModel::updateAvatar,
                 )
@@ -274,6 +304,11 @@ fun SettingsScreen(
                     onUpdateField = viewModel::updateProfileField,
                 )
                 SettingsRoute.Password -> PasswordPane(
+                    currentEmail = user?.email.orEmpty(),
+                    emailChange = state,
+                    onRequestEmailChange = viewModel::requestEmailChange,
+                    onConfirmEmailChange = viewModel::confirmEmailChange,
+                    onCancelEmailChange = viewModel::cancelEmailChange,
                     isLoading = state.isUpdatingPassword,
                     onSubmit = viewModel::updatePassword,
                     tokens = state.tokens,
@@ -291,6 +326,9 @@ fun SettingsScreen(
                     e2eUnlocked = e2eUnlocked,
                     e2eFingerprint = if (e2eUnlocked) viewModel.e2eFingerprint() else null,
                     isChanging = state.isChangingPassphrase,
+                    onVerifyCurrent = viewModel::verifyCurrentPassphrase,
+                    requestCode = viewModel::requestPassphraseCode,
+                    confirmCode = viewModel::confirmPassphraseCode,
                     onChangePassphrase = viewModel::changeEncryptionPassphrase,
                 )
                 SettingsRoute.Storage -> StoragePane(
@@ -342,6 +380,7 @@ fun SettingsScreen(
                     onClearLog = viewModel::clearLog,
                 )
             }
+            }
 
             // Overlay de saída: revoke da sessão atual (→ logout automático via
             // RootGate) ou revoke de todas as outras (fica logado no fim).
@@ -375,8 +414,11 @@ fun SettingsScreen(
 @Composable
 private fun MenuPane(
     user: User?,
+    storage: co.golink.tester.domain.settings.StorageUsage?,
+    activeSessions: Int,
     onNavigate: (SettingsRoute) -> Unit,
     onOpenAutoBackup: () -> Unit,
+    onOpenSupport: (admin: Boolean) -> Unit,
     onLogout: () -> Unit,
     onUpdateAvatar: (ByteArray) -> Unit,
 ) {
@@ -433,13 +475,16 @@ private fun MenuPane(
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         user?.let { u ->
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = settingsCardColor(),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+            Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
-                    .padding(16.dp),
+                modifier = Modifier.fillMaxWidth(),
             ) {
                 // Clicar no avatar → escolher/recortar/enviar nova imagem.
                 Box(
@@ -527,69 +572,88 @@ private fun MenuPane(
                     }
                 }
             }
+            // Espaço usado, com a cor do nível (verde / âmbar / vermelho).
+            storage?.let { st ->
+                val barColor = when (st.level) {
+                    co.golink.tester.domain.settings.StorageLevel.DANGER -> SettingsColors.Red
+                    co.golink.tester.domain.settings.StorageLevel.WARNING -> SettingsColors.Amber
+                    else -> SettingsColors.Green
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(modifier = Modifier.fillMaxWidth().clickable { onNavigate(SettingsRoute.Storage) }) {
+                    Text(
+                        "%s de %s".tr().format(st.used, st.capacity),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        "${st.percentage.toInt()}%",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = barColor,
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                androidx.compose.material3.LinearProgressIndicator(
+                    progress = { (st.percentage / 100f).coerceIn(0f, 1f) },
+                    color = barColor,
+                    trackColor = barColor.copy(alpha = 0.15f),
+                    strokeCap = androidx.compose.ui.graphics.StrokeCap.Round,
+                    modifier = Modifier.fillMaxWidth().height(6.dp),
+                )
+            }
+            }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        AutoBackupFeaturedRow(onClick = onOpenAutoBackup)
+
+        Spacer(Modifier.height(20.dp))
+
+        SettingsGroup(title = "Conta".tr()) {
+            SettingsNavRow(Icons.Outlined.AccountCircle, SettingsColors.Blue, "Perfil".tr(), "Nome e detalhes da conta".tr()) { onNavigate(SettingsRoute.Profile) }
+            SettingsNavRow(Icons.Outlined.Lock, SettingsColors.Indigo, "Password", "Password, email e tokens".tr()) { onNavigate(SettingsRoute.Password) }
+            SettingsNavRow(Icons.Outlined.VpnKey, SettingsColors.Green, "Encriptação".tr(), "Impressão da chave e passphrase".tr()) { onNavigate(SettingsRoute.Encryption) }
+            SettingsNavRow(
+                Icons.Outlined.CloudQueue, SettingsColors.Teal, "Armazenamento".tr(), "Espaço utilizado e disponível".tr(),
+                trailing = storage?.let { "${it.percentage.toInt()}%" }, showDivider = false,
+            ) { onNavigate(SettingsRoute.Storage) }
         }
 
         Spacer(Modifier.height(20.dp))
 
-        AutoBackupFeaturedRow(onClick = onOpenAutoBackup)
-
-        Spacer(Modifier.height(16.dp))
-
-        MenuGroup {
-            MenuRow(Icons.Outlined.AccountCircle, "Perfil".tr(), "Nome e detalhes da conta".tr()) { onNavigate(SettingsRoute.Profile) }
-            MenuDivider()
-            MenuRow(Icons.Outlined.Lock, "Password", "Alterar a tua password".tr()) { onNavigate(SettingsRoute.Password) }
-            MenuDivider()
-            MenuRow(Icons.Outlined.VpnKey, "Encriptação".tr(), "Impressão da chave e passphrase".tr()) { onNavigate(SettingsRoute.Encryption) }
-            MenuDivider()
-            MenuRow(Icons.Outlined.CloudQueue, "Armazenamento".tr(), "Espaço utilizado e disponível".tr()) { onNavigate(SettingsRoute.Storage) }
-            MenuDivider()
-            MenuRow(Icons.Outlined.Devices, "Sessões".tr(), "Dispositivos e sessões activas".tr()) { onNavigate(SettingsRoute.Sessions) }
-            MenuDivider()
-            MenuRow(Icons.Outlined.Shield, "Atividade de segurança".tr(), "Inícios de sessão e alterações à conta".tr()) { onNavigate(SettingsRoute.SecurityActivity) }
+        SettingsGroup(title = "Segurança".tr()) {
+            SettingsNavRow(
+                Icons.Outlined.Devices, SettingsColors.Orange, "Sessões".tr(), "Dispositivos e sessões activas".tr(),
+                trailing = activeSessions.takeIf { it > 0 }?.toString(),
+            ) { onNavigate(SettingsRoute.Sessions) }
+            SettingsNavRow(Icons.Outlined.Shield, SettingsColors.Red, "Atividade de segurança".tr(), "Inícios de sessão e alterações à conta".tr()) { onNavigate(SettingsRoute.SecurityActivity) }
+            SettingsNavRow(Icons.Outlined.ShieldMoon, SettingsColors.Purple, "Segurança da app".tr(), "Biométrico e PIN".tr(), showDivider = false) { onNavigate(SettingsRoute.AppSecurity) }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(20.dp))
 
-        MenuGroup {
-            MenuRow(Icons.Outlined.Receipt, "Faturação".tr(), "Histórico de transações".tr()) { onNavigate(SettingsRoute.Billing) }
-            MenuDivider()
-            MenuRow(Icons.Outlined.ShieldMoon, "Segurança da app".tr(), "Biométrico e PIN".tr()) { onNavigate(SettingsRoute.AppSecurity) }
-        }
-
-        if (user?.role == "admin") {
-            Spacer(Modifier.height(20.dp))
-            SectionLabel("Administração".tr())
-            MenuGroup {
-                MenuRow(Icons.Outlined.Dashboard, "Painel".tr(), "Visão geral e estatísticas".tr()) { onNavigate(SettingsRoute.Dashboard) }
-                MenuDivider()
-                MenuRow(Icons.Outlined.Insights, "Análises".tr(), "Visitas e visitantes".tr()) { onNavigate(SettingsRoute.Analytics) }
-                MenuDivider()
-                MenuRow(Icons.Outlined.People, "Utilizadores".tr(), "Lista de utilizadores".tr()) { onNavigate(SettingsRoute.Users) }
-                MenuDivider()
-                MenuRow(Icons.Outlined.MailOutline, "Registos de Convite".tr(), "Convidar e gerir registos".tr()) { onNavigate(SettingsRoute.InviteRegisters) }
-            }
-
-            Spacer(Modifier.height(16.dp))
-            MenuGroup {
-                MenuRow(Icons.Outlined.Campaign, "Notícias".tr(), "Notícia importante na zona de files".tr()) { onNavigate(SettingsRoute.News) }
+        SettingsGroup(title = "Faturação e ajuda".tr()) {
+            val hasSupport = user?.role != "admin"
+            SettingsNavRow(Icons.Outlined.Receipt, SettingsColors.Amber, "Faturação".tr(), "Plano e histórico de transações".tr(), showDivider = hasSupport) { onNavigate(SettingsRoute.Billing) }
+            // Como na web: o admin não abre tickets. A Administração e o Support Desk
+            // vivem agora na gaveta (toggle Drive | Admin / Support).
+            if (hasSupport) {
+                SettingsNavRow(Icons.Outlined.SupportAgent, SettingsColors.Pink, "Suporte".tr(), "Os teus tickets de suporte".tr(), showDivider = false) { onOpenSupport(false) }
             }
         }
 
         Spacer(Modifier.height(24.dp))
 
-        OutlinedButton(
+        SettingsOutlinedButton(
+            text = "Terminar sessão".tr(),
             onClick = { showLogoutConfirm = true },
-            shape = RoundedCornerShape(12.dp),
-            contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
-        ) {
-            Icon(Icons.Filled.Logout, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text("Terminar sessão".tr())
-        }
+            destructive = true,
+            icon = Icons.Filled.Logout,
+        )
 
         // Zona de perigo: escondida para admins e, para os restantes, atrás de um
         // link discreto que é preciso abrir antes de ver o botão de eliminação.
@@ -625,18 +689,12 @@ private fun MenuPane(
                         modifier = Modifier.padding(start = 4.dp, bottom = 10.dp),
                     )
                     // Eliminação permanente da conta (fluxo igual à web).
-                    OutlinedButton(
+                    SettingsOutlinedButton(
+                        text = "Apagar conta permanentemente".tr(),
                         onClick = { showDeleteAccountConfirm = true },
-                        shape = RoundedCornerShape(12.dp),
-                        contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
-                    ) {
-                        Icon(Icons.Outlined.Delete, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Apagar conta permanentemente".tr())
-                    }
+                        destructive = true,
+                        icon = Icons.Outlined.Delete,
+                    )
                 }
             }
         }
@@ -792,15 +850,7 @@ private fun AutoBackupFeaturedRow(onClick: () -> Unit) {
 }
 
 @Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text,
-        modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-        fontWeight = FontWeight.SemiBold,
-    )
-}
+private fun SectionLabel(text: String) = SettingsSectionTitle(text)
 
 @Composable
 private fun ProfilePane(
@@ -831,36 +881,14 @@ private fun ProfilePane(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        SectionLabel("Email")
-        Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = user.email,
-                    onValueChange = {},
-                    label = { Text("Email") },
-                    readOnly = true,
-                    enabled = false,
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Text(
-                    "O email não pode ser alterado".tr(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-
-        Spacer(Modifier.height(20.dp))
+        SettingsPaneHeader(Icons.Outlined.AccountCircle, SettingsColors.Blue, "Perfil".tr(), "O teu nome, fuso horário e dados de faturação.".tr())
+        Spacer(Modifier.height(16.dp))
+        // O email muda-se no menu Password (código de verificação), não aqui.
         SectionLabel("Definições da conta".tr())
         Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+            shape = RoundedCornerShape(18.dp),
+            color = settingsCardColor(),
+            border = settingsCardBorderStroke(),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -893,8 +921,8 @@ private fun ProfilePane(
                         if (timezone.isNotBlank()) onUpdateField("timezone", timezone.trim())
                     },
                     enabled = !isUpdating,
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(vertical = 12.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(vertical = 14.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     if (isUpdating) {
@@ -913,8 +941,9 @@ private fun ProfilePane(
         Spacer(Modifier.height(20.dp))
         SectionLabel("Informações de faturação".tr())
         Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+            shape = RoundedCornerShape(18.dp),
+            color = settingsCardColor(),
+            border = settingsCardBorderStroke(),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -972,8 +1001,8 @@ private fun ProfilePane(
                         if (phoneNumber.isNotBlank()) onUpdateField("phone_number", phoneNumber.trim())
                     },
                     enabled = !isUpdating,
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(vertical = 12.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(vertical = 14.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     if (isUpdating) {
@@ -1127,6 +1156,11 @@ private fun CountryDropdown(value: String, onValueChange: (String) -> Unit) {
 
 @Composable
 private fun PasswordPane(
+    currentEmail: String,
+    emailChange: SettingsUiState,
+    onRequestEmailChange: (email: String, password: String) -> Unit,
+    onConfirmEmailChange: (code: String) -> Unit,
+    onCancelEmailChange: () -> Unit,
     isLoading: Boolean,
     onSubmit: (current: String, new: String) -> Unit,
     tokens: List<AccessToken>,
@@ -1216,6 +1250,7 @@ private fun PasswordPane(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        SettingsPaneHeader(Icons.Outlined.Lock, SettingsColors.Indigo, "Password e acesso".tr(), "Muda a password, o email da conta e gere tokens de acesso.".tr())
         // 2FA Card
         InfoCard(
             icon = Icons.Outlined.Security,
@@ -1292,8 +1327,9 @@ private fun PasswordPane(
         // Existing tokens list (if any)
         if (tokens.isNotEmpty()) {
             Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                shape = RoundedCornerShape(18.dp),
+                color = settingsCardColor(),
+                border = settingsCardBorderStroke(),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column {
@@ -1349,6 +1385,14 @@ private fun PasswordPane(
             },
         )
 
+        EmailChangeSection(
+            currentEmail = currentEmail,
+            state = emailChange,
+            onRequest = onRequestEmailChange,
+            onConfirm = onConfirmEmailChange,
+            onCancel = onCancelEmailChange,
+        )
+
         // Alterar password section
         Spacer(Modifier.height(8.dp))
         Text(
@@ -1387,6 +1431,134 @@ private fun PasswordPane(
         }
 
         Spacer(Modifier.height(16.dp))
+    }
+}
+
+/**
+ * Alterar email: password actual + novo email → código (2 min) enviado ao
+ * novo endereço. Countdown e limpeza automática do código como no OTP de login.
+ */
+@Composable
+private fun EmailChangeSection(
+    currentEmail: String,
+    state: SettingsUiState,
+    onRequest: (email: String, password: String) -> Unit,
+    onConfirm: (code: String) -> Unit,
+    onCancel: () -> Unit,
+) {
+    var editing by remember { mutableStateOf(false) }
+    var newEmail by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
+    var secondsLeft by remember { mutableStateOf(0) }
+    val inCodeStep = state.emailChangeStep == "code"
+
+    LaunchedEffect(state.emailChangeExpiresAt, inCodeStep) {
+        if (!inCodeStep) return@LaunchedEffect
+        code = ""
+        while (true) {
+            secondsLeft = ((state.emailChangeExpiresAt - System.currentTimeMillis()) / 1000).toInt().coerceAtLeast(0)
+            if (secondsLeft == 0) { code = ""; break }
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+    LaunchedEffect(state.emailChangeStep) {
+        if (state.emailChangeStep == "idle" && !state.isChangingEmail && state.emailChangeError == null) {
+            editing = false; newEmail = ""; password = ""; code = ""
+        }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "Endereço de email".tr(),
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        fontWeight = FontWeight.SemiBold,
+    )
+
+    if (!editing && !inCodeStep) {
+        InfoCard(
+            icon = Icons.Outlined.Email,
+            iconTint = MaterialTheme.colorScheme.primary,
+            iconBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+            title = currentEmail,
+            description = "Para alterar é preciso a password e um código enviado para o novo endereço.".tr(),
+            trailing = { TextButton(onClick = { editing = true }) { Text("Alterar".tr()) } },
+        )
+        return
+    }
+
+    if (!inCodeStep) {
+        Column {
+            Text("Novo endereço de email".tr(), style = MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.height(4.dp))
+            OutlinedTextField(
+                value = newEmail,
+                onValueChange = { newEmail = it },
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Email,
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        PasswordField(label = "Password actual".tr(), value = password, onChange = { password = it })
+    } else {
+        Text(
+            "Enviámos um código de 6 dígitos para %s.".tr().format(state.emailChangeTarget),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+            value = code,
+            onValueChange = { v -> code = v.filter { it.isDigit() }.take(6) },
+            singleLine = true,
+            label = { Text("Código de confirmação".tr()) },
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword,
+            ),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            if (secondsLeft > 0) "O código expira em %ds".tr().format(secondsLeft)
+            else "O código expirou. Pede um novo.".tr(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+
+    state.emailChangeError?.let {
+        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    }
+
+    val canSubmit = !state.isChangingEmail && if (inCodeStep) code.length == 6 && secondsLeft > 0
+        else android.util.Patterns.EMAIL_ADDRESS.matcher(newEmail.trim()).matches() && password.isNotBlank()
+
+    Button(
+        onClick = { if (inCodeStep) onConfirm(code) else onRequest(newEmail, password) },
+        enabled = canSubmit,
+        shape = RoundedCornerShape(28.dp),
+        contentPadding = PaddingValues(vertical = 14.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        if (state.isChangingEmail) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+            Spacer(Modifier.width(8.dp))
+        }
+        Text(if (inCodeStep) "Confirmar alteração".tr() else "Enviar código".tr(), fontWeight = FontWeight.SemiBold)
+    }
+    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+        if (inCodeStep) {
+            TextButton(
+                onClick = { onRequest(state.emailChangeTarget, password) },
+                enabled = !state.isChangingEmail,
+            ) { Text("Reenviar código".tr()) }
+        }
+        TextButton(onClick = { onCancel(); editing = false; newEmail = ""; password = ""; code = "" }) {
+            Text("Cancelar".tr())
+        }
     }
 }
 
@@ -1482,10 +1654,12 @@ private fun StoragePane(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        SettingsPaneHeader(Icons.Outlined.CloudQueue, SettingsColors.Teal, "Armazenamento".tr(), "Quanto espaço usas e em que tipo de ficheiros.".tr())
         if (isLoading && storage == null) {
             Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                shape = RoundedCornerShape(18.dp),
+                color = settingsCardColor(),
+                border = settingsCardBorderStroke(),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
@@ -1586,8 +1760,9 @@ private fun StoragePane(
             if (fileTypes.isNotEmpty()) {
                 var detailsExpanded by remember { mutableStateOf(true) }
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                    shape = RoundedCornerShape(18.dp),
+                    color = settingsCardColor(),
+                    border = settingsCardBorderStroke(),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column {
@@ -1659,7 +1834,7 @@ private fun StoragePane(
         OutlinedButton(
             onClick = onRefresh,
             enabled = !isLoading,
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(14.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             if (isLoading) {
@@ -1692,8 +1867,9 @@ private fun StorageFeatureCard(
     chartData: List<Float>? = null,
 ) {
     Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+        shape = RoundedCornerShape(18.dp),
+        color = settingsCardColor(),
+        border = settingsCardBorderStroke(),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -1803,10 +1979,12 @@ private fun SessionsPane(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        SettingsPaneHeader(Icons.Outlined.Devices, SettingsColors.Orange, "Sessões".tr(), "Dispositivos com sessão iniciada na tua conta.".tr())
         if (isLoading && sessions.isEmpty()) {
             Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                shape = RoundedCornerShape(18.dp),
+                color = settingsCardColor(),
+                border = settingsCardBorderStroke(),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -1837,7 +2015,7 @@ private fun SessionsPane(
             OutlinedButton(
                 onClick = onRefresh,
                 enabled = !isLoading,
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.weight(1f),
             ) {
                 if (isLoading) {
@@ -1855,7 +2033,7 @@ private fun SessionsPane(
         if (hasOthers) {
             Button(
                 onClick = { showRevokeAll = true },
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                 modifier = Modifier.fillMaxWidth(),
             ) {
@@ -1882,6 +2060,9 @@ private val SECURITY_ALERT_EVENTS = setOf(
     "auth.otp_locked",
     "account.password_changed",
     "account.e2e_secret_rotated",
+    "account.email_changed",
+    "account.email_reverted",
+    "account.deletion_scheduled",
 )
 
 private fun securityEventLabel(event: String): String = when (event) {
@@ -1892,6 +2073,10 @@ private fun securityEventLabel(event: String): String = when (event) {
     "account.new_device" -> "Início de sessão de um dispositivo novo".tr()
     "account.password_changed" -> "Password alterada".tr()
     "account.e2e_secret_rotated" -> "Segredo de encriptação alterado".tr()
+    "account.email_changed" -> "Email alterado".tr()
+    "account.email_reverted" -> "Email reposto".tr()
+    "account.deletion_scheduled" -> "Eliminação da conta agendada".tr()
+    "account.deletion_cancelled" -> "Eliminação da conta cancelada".tr()
     else -> "Evento de segurança".tr()
 }
 
@@ -1922,6 +2107,7 @@ private fun SecurityActivityPane(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        SettingsPaneHeader(Icons.Outlined.Shield, SettingsColors.Red, "Atividade de segurança".tr(), "Inícios de sessão e alterações importantes na conta.".tr())
         Text(
             "Eventos de segurança recentes na tua conta. Se vires algo que não reconheces, altera a password e revê as sessões activas.".tr(),
             style = MaterialTheme.typography.bodySmall,
@@ -1930,8 +2116,9 @@ private fun SecurityActivityPane(
 
         if (isLoading && events.isEmpty()) {
             Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                shape = RoundedCornerShape(18.dp),
+                color = settingsCardColor(),
+                border = settingsCardBorderStroke(),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -1942,8 +2129,9 @@ private fun SecurityActivityPane(
 
         if (!isLoading && events.isEmpty()) {
             Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                shape = RoundedCornerShape(18.dp),
+                color = settingsCardColor(),
+                border = settingsCardBorderStroke(),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -1961,8 +2149,9 @@ private fun SecurityActivityPane(
             val isAlert = attrs.event in SECURITY_ALERT_EVENTS
 
             Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                shape = RoundedCornerShape(18.dp),
+                color = settingsCardColor(),
+                border = settingsCardBorderStroke(),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Row(
@@ -2028,8 +2217,9 @@ private fun SessionsGroup(
         }
         Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+            shape = RoundedCornerShape(18.dp),
+            color = settingsCardColor(),
+            border = settingsCardBorderStroke(),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column {
@@ -2147,6 +2337,8 @@ private fun BillingPane(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
+        SettingsPaneHeader(Icons.Outlined.Receipt, SettingsColors.Amber, "Faturação".tr(), "O teu plano, pagamentos e histórico.".tr())
+        Spacer(Modifier.height(16.dp))
         if (user?.isPastDue == true || user?.isPaymentSuspended == true) {
             PaymentOverdueBanner(
                 isSuspended = user.isPaymentSuspended,
@@ -2509,14 +2701,29 @@ private fun EncryptionPane(
     e2eUnlocked: Boolean,
     e2eFingerprint: String?,
     isChanging: Boolean,
-    onChangePassphrase: (String) -> Unit,
+    onVerifyCurrent: suspend (String) -> Boolean,
+    requestCode: suspend () -> co.golink.tester.domain.encryption.SecretCodeResponse,
+    confirmCode: suspend (String) -> String,
+    onChangePassphrase: (String, String, (Boolean, Boolean) -> Unit) -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    // Passos: "current" (passphrase atual) → "code" (email) → "new".
+    var step by remember { mutableStateOf("current") }
+    var currentPass by remember { mutableStateOf("") }
+    var currentError by remember { mutableStateOf<String?>(null) }
+    var verifying by remember { mutableStateOf(false) }
+    var changeToken by remember { mutableStateOf<String?>(null) }
     var newPass by remember { mutableStateOf("") }
     var confirmPass by remember { mutableStateOf("") }
-    val tooShort = newPass.isNotEmpty() && newPass.length < 8
+    val minLen = 12
+    val tooShort = newPass.isNotEmpty() && newPass.length < minLen
+    val sameAsCurrent = newPass.isNotEmpty() && newPass == currentPass
     val mismatch = confirmPass.isNotEmpty() && newPass != confirmPass
-    val canSubmit = newPass.length >= 8 && newPass == confirmPass && !isChanging
+    val canSubmit = newPass.length >= minLen && !sameAsCurrent && newPass == confirmPass && !isChanging && changeToken != null
+    fun resetFlow() {
+        step = "current"; currentPass = ""; currentError = null; changeToken = null; newPass = ""; confirmPass = ""
+    }
 
     Column(
         modifier = Modifier
@@ -2524,11 +2731,14 @@ private fun EncryptionPane(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
+        SettingsPaneHeader(Icons.Outlined.VpnKey, SettingsColors.Green, "Encriptação".tr(), "Os ficheiros são cifrados no dispositivo. Gere aqui a chave e a passphrase.".tr())
+        Spacer(Modifier.height(16.dp))
         // Impressão da chave pública (deteta key-substitution).
         SectionLabel("Impressão da chave de encriptação".tr())
         Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+            shape = RoundedCornerShape(18.dp),
+            color = settingsCardColor(),
+            border = settingsCardBorderStroke(),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -2588,36 +2798,102 @@ private fun EncryptionPane(
                 )
             }
         } else {
-            PasswordField(
-                label = "Nova passphrase".tr(),
-                value = newPass,
-                onChange = { newPass = it },
-                isError = tooShort,
-                errorText = if (tooShort) "Mínimo 8 caracteres".tr() else null,
+            Text(
+                when (step) {
+                    "current" -> "Passo 1 de 3 · Passphrase atual".tr()
+                    "code" -> "Passo 2 de 3 · Código enviado para o teu email".tr()
+                    else -> "Passo 3 de 3 · Nova passphrase".tr()
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
             )
-            PasswordField(
-                label = "Confirmar nova passphrase".tr(),
-                value = confirmPass,
-                onChange = { confirmPass = it },
-                isError = mismatch,
-                errorText = if (mismatch) "Não coincide".tr() else null,
-            )
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = { onChangePassphrase(newPass); newPass = ""; confirmPass = "" },
-                enabled = canSubmit,
-                shape = RoundedCornerShape(28.dp),
-                contentPadding = PaddingValues(vertical = 14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                if (isChanging) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
+            when (step) {
+                "current" -> {
+                    PasswordField(
+                        label = "Passphrase atual".tr(),
+                        value = currentPass,
+                        onChange = { currentPass = it; currentError = null },
+                        isError = currentError != null,
+                        errorText = currentError,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            verifying = true
+                            scope.launch {
+                                val ok = runCatching { onVerifyCurrent(currentPass) }.getOrDefault(false)
+                                verifying = false
+                                if (ok) step = "code" else currentError = "A passphrase atual está incorreta.".tr()
+                            }
+                        },
+                        enabled = currentPass.isNotEmpty() && !verifying,
+                        shape = RoundedCornerShape(28.dp),
+                        contentPadding = PaddingValues(vertical = 14.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        if (verifying) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text("Continuar".tr(), fontWeight = FontWeight.SemiBold)
+                    }
                 }
-                Icon(Icons.Outlined.VpnKey, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Alterar passphrase".tr(), fontWeight = FontWeight.SemiBold)
+                "code" -> co.golink.tester.ui.components.SecretCodeStep(
+                    requestCode = requestCode,
+                    confirmCode = confirmCode,
+                    onConfirmed = { token -> changeToken = token; step = "new" },
+                )
+                else -> {
+                    PasswordField(
+                        label = "Nova passphrase".tr(),
+                        value = newPass,
+                        onChange = { newPass = it },
+                        isError = tooShort || sameAsCurrent,
+                        errorText = when {
+                            tooShort -> "Mínimo %d caracteres".tr().format(minLen)
+                            sameAsCurrent -> "A nova passphrase tem de ser diferente da atual.".tr()
+                            else -> null
+                        },
+                    )
+                    PasswordField(
+                        label = "Confirmar nova passphrase".tr(),
+                        value = confirmPass,
+                        onChange = { confirmPass = it },
+                        isError = mismatch,
+                        errorText = if (mismatch) "Não coincide".tr() else null,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            onChangePassphrase(newPass, changeToken.orEmpty()) { ok, expired ->
+                                when {
+                                    ok -> resetFlow()
+                                    expired -> { changeToken = null; step = "code" }
+                                }
+                            }
+                        },
+                        enabled = canSubmit,
+                        shape = RoundedCornerShape(28.dp),
+                        contentPadding = PaddingValues(vertical = 14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        if (isChanging) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Icon(Icons.Outlined.VpnKey, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Alterar passphrase".tr(), fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+            if (step != "current") {
+                TextButton(onClick = ::resetFlow, modifier = Modifier.align(Alignment.End)) {
+                    Text("Cancelar".tr())
+                }
             }
         }
 
@@ -2766,10 +3042,13 @@ private fun AppSecurityPane(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
+        SettingsPaneHeader(Icons.Outlined.ShieldMoon, SettingsColors.Purple, "Segurança da app".tr(), "Bloqueio por biometria ou PIN neste dispositivo.".tr())
+        Spacer(Modifier.height(16.dp))
         SectionLabel("Segurança".tr())
         Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+            shape = RoundedCornerShape(18.dp),
+            color = settingsCardColor(),
+            border = settingsCardBorderStroke(),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column {
@@ -2837,8 +3116,9 @@ private fun AppSecurityPane(
         Spacer(Modifier.height(24.dp))
         SectionLabel("Dados")
         Surface(
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+            shape = RoundedCornerShape(18.dp),
+            color = settingsCardColor(),
+            border = settingsCardBorderStroke(),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column {

@@ -69,6 +69,9 @@ data class MobileBackupsState(
     // uploads aparecem do mais recente para o mais antigo (DATE_DESC).
     val viewMode: ViewMode = ViewMode.LIST,
     val sortMode: SortMode = SortMode.DATE_DESC,
+    // Cartões dos telemóveis (o deste aparelho vem marcado `current`).
+    val summary: co.golink.tester.domain.backup.BackupSummary? = null,
+    val pausingDevice: Boolean = false,
 )
 
 @HiltViewModel
@@ -115,6 +118,7 @@ class MobileBackupsViewModel @Inject constructor(
         }
         selectTab(MobileBackupTab.Images)
         loadCounts()
+        loadSummary()
         observeUploadsForCounts()
     }
 
@@ -127,9 +131,33 @@ class MobileBackupsViewModel @Inject constructor(
             uploadManager.completedTick.sample(2000).collect { t ->
                 if (t > 0) {
                     loadCounts()
+                    loadSummary()
                     load()
                 }
             }
+        }
+    }
+
+    fun loadSummary() {
+        viewModelScope.launch {
+            repository.mobileBackupSummary().onSuccess { summary ->
+                _state.update { it.copy(summary = summary) }
+            }
+        }
+    }
+
+    /** Pausar / retomar só este telemóvel (o mesmo botão do cartão na web). */
+    fun setDevicePaused(deviceId: String, paused: Boolean) {
+        if (_state.value.pausingDevice) return
+        _state.update { it.copy(pausingDevice = true) }
+        viewModelScope.launch {
+            repository.pauseBackupDevice(deviceId, paused)
+                .onSuccess {
+                    _state.update { it.copy(toast = (if (paused) "Backup deste telemóvel em pausa" else "Backup retomado").tr()) }
+                    loadSummary()
+                }
+                .onFailure { _state.update { it.copy(toast = "Não foi possível alterar o backup.".tr()) } }
+            _state.update { it.copy(pausingDevice = false) }
         }
     }
 
@@ -217,6 +245,7 @@ class MobileBackupsViewModel @Inject constructor(
         // start another — just let it finish (avoids the resume->reload loop).
         if (loadJob?.isActive != true) load()
         loadCounts()
+        loadSummary()
     }
 
     private fun loadCounts() {
@@ -239,6 +268,7 @@ class MobileBackupsViewModel @Inject constructor(
             .filterIsInstance<BrowseItem.File>()
             .filter { it.isViewable() }
         fileViewerSession.startId = start.id
+        fileViewerSession.fromTrash = false
     }
 
     fun download(item: BrowseItem.File) {
@@ -291,9 +321,9 @@ class MobileBackupsViewModel @Inject constructor(
         }
     }
 
-    fun createFileRequest(name: String?, email: String?, notes: String?, folderId: String?) {
+    fun createFileRequest(name: String?, email: String?, notes: String?, folderId: String?, expiresInDays: Int? = null) {
         viewModelScope.launch {
-            uploadRequestRepository.createFileRequest(name, email, notes, folderId)
+            uploadRequestRepository.createFileRequest(name, email, notes, folderId, expiresInDays)
                 .onSuccess { link ->
                     runCatching {
                         val cm = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -470,6 +500,7 @@ class MobileBackupsViewModel @Inject constructor(
     fun pullRefresh() {
         _state.update { it.copy(isRefreshing = true) }
         loadCounts()
+        loadSummary()
         load()
     }
 }

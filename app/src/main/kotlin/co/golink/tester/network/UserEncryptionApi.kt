@@ -27,6 +27,15 @@ interface UserEncryptionApi {
     @PUT("api/user/encryption/secret")
     suspend fun updateSecret(@Body body: UpdateSecretBody): Response<EncryptionStatusResponse>
 
+    // Mudança do segredo: código por email → change_token → PUT acima.
+    @POST("api/user/encryption/secret/request-code")
+    suspend fun requestSecretCode(): Response<co.golink.tester.domain.encryption.SecretCodeResponse>
+
+    @POST("api/user/encryption/secret/confirm-code")
+    suspend fun confirmSecretCode(
+        @Body body: co.golink.tester.domain.encryption.SecretCodeConfirmBody,
+    ): Response<co.golink.tester.domain.encryption.SecretCodeConfirmResponse>
+
     @GET("api/user/encryption/public-key/{id}")
     suspend fun publicKey(@Path("id") id: String): Response<PublicKeyResponse>
 

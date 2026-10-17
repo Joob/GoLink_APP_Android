@@ -91,6 +91,12 @@ class NotificationsRepository @Inject constructor(
         _items.value = _items.value.map { if (it.id == id) it.copy(isRead = true) else it }
     }
 
+    suspend fun markUnread(id: String): Result<Unit> = runCatching {
+        val response = api.markUnread(id)
+        if (!response.isSuccessful) error("HTTP ${response.code()}")
+        _items.value = _items.value.map { if (it.id == id) it.copy(isRead = false) else it }
+    }
+
     suspend fun delete(id: String): Result<Unit> = runCatching {
         val response = api.delete(id)
         if (!response.isSuccessful) error("HTTP ${response.code()}")

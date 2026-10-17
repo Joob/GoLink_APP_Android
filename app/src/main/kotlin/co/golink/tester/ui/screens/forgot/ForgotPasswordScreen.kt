@@ -61,6 +61,7 @@ fun ForgotPasswordScreen(
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Email,
                 capitalization = KeyboardCapitalization.None,
+                autoCorrectEnabled = false,
             ),
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth(),

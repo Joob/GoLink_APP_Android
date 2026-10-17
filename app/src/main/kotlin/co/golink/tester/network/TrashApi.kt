@@ -17,6 +17,9 @@ interface TrashApi {
     suspend fun list(
         @Path("id") id: String = "root",
         @Query("page") page: String = "all",
+        @Query("type") type: String? = null,
+        @Query("sort") sort: String? = null,
+        @Query("direction") direction: String? = null,
     ): Response<BrowseListResponse>
 
     @POST("api/trash/restore")

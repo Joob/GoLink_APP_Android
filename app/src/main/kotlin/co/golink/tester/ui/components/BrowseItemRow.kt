@@ -77,7 +77,7 @@ private fun previewCandidates(item: BrowseItem.File): List<String> = when (item.
 // ainda por gerar, URL assinado expirado), tenta o seguinte; esgotados todos,
 // volta ao ícone genérico do tipo.
 @Composable
-private fun FilePreview(
+internal fun FilePreview(
     item: BrowseItem.File,
     iconSize: Dp,
     modifier: Modifier = Modifier,
@@ -160,38 +160,39 @@ fun BrowseItemRow(
     onMembersClick: ((List<TeamMember>) -> Unit)? = null,
     selected: Boolean = false,
     selectionMode: Boolean = false,
+    // Itens partilhados: botão de copiar link ao lado do ⋮ (null = sem botão).
+    onCopyLinkClick: (() -> Unit)? = null,
 ) {
-    val containerColor = MaterialTheme.colorScheme.surface
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = containerColor),
+        colors = CardDefaults.cardColors(containerColor = selectionContainer(selected && selectionMode)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
+        border = selectionBorder(selected && selectionMode),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 14.dp),
+                .padding(start = 12.dp, end = 2.dp, top = 10.dp, bottom = 10.dp),
         ) {
             if (selectionMode) {
-                Checkbox(checked = selected, onCheckedChange = { onClick() })
-                Spacer(Modifier.width(4.dp))
+                Checkbox(checked = selected, onCheckedChange = { onClick() }, modifier = Modifier.size(32.dp))
+                Spacer(Modifier.width(6.dp))
             }
             Leading(item)
-            Spacer(Modifier.width(14.dp))
+            Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     item.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(3.dp))
                 val members = (item as? BrowseItem.Folder)?.members.orEmpty()
                 if (item is BrowseItem.Folder && members.isNotEmpty()) {
                     MemberAvatarRow(
@@ -201,18 +202,22 @@ fun BrowseItemRow(
                 } else {
                     Text(
                         metaFor(item),
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
-            IconButton(onClick = onMoreClick) {
+            if (onCopyLinkClick != null && !selectionMode) {
+                CopyLinkButton(onCopyLinkClick, Modifier.size(40.dp), iconSize = 18.dp)
+            }
+            IconButton(onClick = onMoreClick, enabled = !selectionMode, modifier = Modifier.size(40.dp)) {
                 Icon(
                     Icons.Filled.MoreVert,
                     contentDescription = "Mais opções".tr(),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
                 )
             }
         }
@@ -229,16 +234,16 @@ fun BrowseItemGridCard(
     onMembersClick: ((List<TeamMember>) -> Unit)? = null,
     selected: Boolean = false,
     selectionMode: Boolean = false,
+    onCopyLinkClick: (() -> Unit)? = null,
 ) {
-    val containerColor = MaterialTheme.colorScheme.surface
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = containerColor),
+        colors = CardDefaults.cardColors(containerColor = selectionContainer(selected && selectionMode)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
+        border = selectionBorder(selected && selectionMode),
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
             Box(modifier = Modifier.fillMaxWidth()) {
@@ -249,8 +254,16 @@ fun BrowseItemGridCard(
                         modifier = Modifier.align(Alignment.TopStart).size(24.dp),
                     )
                 }
+                if (onCopyLinkClick != null && !selectionMode) {
+                    CopyLinkButton(
+                        onCopyLinkClick,
+                        Modifier.align(Alignment.TopEnd).padding(end = 30.dp).size(28.dp),
+                        iconSize = 16.dp,
+                    )
+                }
                 IconButton(
                     onClick = onMoreClick,
+                    enabled = !selectionMode,
                     modifier = Modifier.align(Alignment.TopEnd).size(28.dp),
                 ) {
                     Icon(
@@ -301,6 +314,9 @@ fun BrowseItemGridCard(
                             iconSize = 80.dp,
                             modifier = Modifier.fillMaxSize(),
                         )
+                        if (!item.filesize.isNullOrBlank() && (item.type == "image" || item.type == "video")) {
+                            SizeBadge(item.filesize, Modifier.align(Alignment.BottomStart))
+                        }
                     }
                 }
                 if (item.share != null) {
@@ -311,7 +327,7 @@ fun BrowseItemGridCard(
             Text(
                 item.name,
                 style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -391,8 +407,10 @@ internal fun MemberAvatar(
         .size(size)
         .clip(CircleShape)
         .background(MaterialTheme.colorScheme.surface)
+    // Avatar que não carrega (link expirado, ficheiro em falta): mostra as iniciais.
+    var avatarFailed by remember(member.avatarUrl) { androidx.compose.runtime.mutableStateOf(false) }
     Box(modifier = modifier.then(borderMod).padding(1.dp)) {
-        if (!member.avatarUrl.isNullOrBlank()) {
+        if (!member.avatarUrl.isNullOrBlank() && !avatarFailed) {
             val ctx = LocalContext.current
             val req = remember(member.avatarUrl) {
                 ImageRequest.Builder(ctx)
@@ -404,6 +422,7 @@ internal fun MemberAvatar(
                 model = req,
                 contentDescription = member.name,
                 contentScale = ContentScale.Crop,
+                onError = { avatarFailed = true },
                 modifier = Modifier
                     .fillMaxSize()
                     .clip(CircleShape),
@@ -435,8 +454,8 @@ internal fun MemberAvatar(
 
 @Composable
 private fun Leading(item: BrowseItem) {
-    val boxSize = 56.dp
-    val iconSize = 48.dp
+    val boxSize = 44.dp
+    val iconSize = 38.dp
     Box(modifier = Modifier.size(boxSize)) {
         when (item) {
             is BrowseItem.Folder -> {
@@ -446,7 +465,7 @@ private fun Leading(item: BrowseItem) {
                     contentAlignment = Alignment.Center,
                 ) {
                     if (!item.emoji.isNullOrBlank()) {
-                        Text(item.emoji, fontSize = 36.sp)
+                        Text(item.emoji, fontSize = 28.sp)
                     } else {
                         Icon(
                             Icons.Filled.Folder,
@@ -483,6 +502,29 @@ private fun Leading(item: BrowseItem) {
     }
 }
 
+// Seleção (multi-select): fundo verde suave + contorno do tema, como na web.
+@Composable
+private fun selectionContainer(active: Boolean): Color =
+    if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.07f) else MaterialTheme.colorScheme.surface
+
+@Composable
+private fun selectionBorder(active: Boolean) = androidx.compose.foundation.BorderStroke(
+    1.dp,
+    if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+)
+
+@Composable
+private fun CopyLinkButton(onClick: () -> Unit, modifier: Modifier, iconSize: Dp) {
+    IconButton(onClick = onClick, modifier = modifier) {
+        Icon(
+            Icons.Outlined.Link,
+            contentDescription = "Copiar link".tr(),
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(iconSize),
+        )
+    }
+}
+
 @Composable
 private fun ShareBadge(modifier: Modifier = Modifier) {
     Box(
@@ -513,10 +555,39 @@ internal fun parseHexColor(hex: String?): Color? {
     }.getOrNull()
 }
 
+// Sub-linha (como na web): "Vídeo · 13.51 MB · 16 out 2026" (data da captura
+// EXIF, senão do upload); pastas: "3 itens · 8.74 MB" ou o caminho no telemóvel.
 internal fun metaFor(item: BrowseItem): String = when (item) {
     is BrowseItem.Folder -> {
-        val count = item.itemCount?.let { "$it itens" }
-        listOfNotNull(count, item.filesize, item.createdAt).joinToString(" • ")
+        val count = item.itemCount?.let { if (it == 1) "1 item".tr() else "%d itens".tr().format(it) }
+        listOfNotNull(item.devicePath, count, item.filesize?.takeIf { item.filesizeBytes > 0 || item.devicePath == null })
+            .joinToString(" · ")
     }
-    is BrowseItem.File -> listOfNotNull(item.filesize, item.createdAt).joinToString(" • ")
+    is BrowseItem.File -> {
+        val date = (item.capturedAtIso ?: item.createdAtIso)?.let { co.golink.tester.ui.common.formatDay(it) }
+            ?.takeIf { it.isNotEmpty() } ?: item.createdAt
+        listOfNotNull(fileTypeLabel(item), item.filesize, date).joinToString(" · ")
+    }
+}
+
+internal fun fileTypeLabel(item: BrowseItem.File): String = when (item.type) {
+    "image" -> "Imagem".tr()
+    "video" -> "Vídeo".tr()
+    "audio" -> "Áudio".tr()
+    else -> item.name.substringAfterLast('.', "").takeIf { it.isNotEmpty() && it.length <= 5 }?.uppercase() ?: "Ficheiro".tr()
+}
+
+// Pílula escura com o tamanho, no canto da miniatura (grelha, como na web).
+@Composable
+private fun SizeBadge(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = Color.White,
+        modifier = modifier
+            .padding(6.dp)
+            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(50))
+            .padding(horizontal = 7.dp, vertical = 2.dp),
+    )
 }

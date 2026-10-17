@@ -15,4 +15,7 @@ class FileViewerSession @Inject constructor() {
      * modo de edição. Consumido uma vez, na primeira carga do texto.
      */
     var startInEditMode: Boolean = false
+
+    /** Aberto a partir do Lixo: só ver (sem editar, mover, partilhar ou renomear). */
+    var fromTrash: Boolean = false
 }

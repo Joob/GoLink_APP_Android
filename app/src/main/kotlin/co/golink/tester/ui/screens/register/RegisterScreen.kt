@@ -170,7 +170,12 @@ private fun Field(
         supportingText = error?.let { { Text(it) } },
         leadingIcon = { Icon(icon, contentDescription = null) },
         visualTransformation = if (password) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
-        keyboardOptions = KeyboardOptions(keyboardType = type, capitalization = cap),
+        // Email/password: sem correção automática (o teclado alterava o email).
+        keyboardOptions = KeyboardOptions(
+            keyboardType = type,
+            capitalization = cap,
+            autoCorrectEnabled = type != KeyboardType.Email && type != KeyboardType.Password,
+        ),
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier.fillMaxWidth(),
     )

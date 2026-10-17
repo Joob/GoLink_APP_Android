@@ -55,6 +55,11 @@ object ApiModule {
 
     @Provides
     @Singleton
+    fun provideActivityApi(retrofit: Retrofit): co.golink.tester.network.ActivityApi =
+        retrofit.create(co.golink.tester.network.ActivityApi::class.java)
+
+    @Provides
+    @Singleton
     fun provideFilesApi(@Named("longRunningRetrofit") retrofit: Retrofit): FilesApi = retrofit.create(FilesApi::class.java)
 
     @Provides
@@ -100,4 +105,9 @@ object ApiModule {
     @Provides
     @Singleton
     fun provideAdminApi(retrofit: Retrofit): AdminApi = retrofit.create(AdminApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideSupportApi(retrofit: Retrofit): co.golink.tester.network.SupportApi =
+        retrofit.create(co.golink.tester.network.SupportApi::class.java)
 }

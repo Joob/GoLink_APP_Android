@@ -26,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -39,7 +40,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-enum class GateMode { Checking, Prompt, ShowRecovery, Recover, Reset, Done }
+enum class GateMode { Checking, Prompt, ShowRecovery, Recover, ResetCode, Reset, Done }
 
 @HiltViewModel
 class E2EGateViewModel @Inject constructor(
@@ -57,6 +58,8 @@ class E2EGateViewModel @Inject constructor(
     var error by mutableStateOf<String?>(null); private set
     /** Incrementa a cada falha: dispara o shake do campo (mesmo erro repetido). */
     var errorPulse by mutableStateOf(0); private set
+    /** "Manter desbloqueado neste dispositivo" (14 dias), como na web. */
+    var keepUnlocked by mutableStateOf(true)
 
     /** Ao entrar no ecrã autenticado: se já desbloqueado, nada; senão pede. */
     fun start() {
@@ -65,6 +68,11 @@ class E2EGateViewModel @Inject constructor(
         // o reopen() a partir do placeholder tem de voltar a abrir o prompt.
         if (mode != GateMode.Checking && mode != GateMode.Done) return
         viewModelScope.launch {
+            // Chave guardada neste dispositivo ("manter desbloqueado"): sem passphrase.
+            if (keys.hasDeviceKey && keys.restoreFromDevice()) {
+                mode = GateMode.Done
+                return@launch
+            }
             configured = runCatching { keys.isConfigured() }.getOrDefault(false)
             mode = GateMode.Prompt
         }
@@ -84,6 +92,7 @@ class E2EGateViewModel @Inject constructor(
         }
         run("segredo errado".tr()) {
             val rk = keys.setupOrUnlock(secret)
+            if (keepUnlocked) keys.rememberOnDevice() else keys.forgetDevice()
             // A mudança de modo (fechar o gate) só corre DEPOIS do delay — senão
             // o diálogo desaparecia no instante do unlock e a animação era cortada.
             val finish: () -> Unit = {
@@ -124,19 +133,41 @@ class E2EGateViewModel @Inject constructor(
         if (rk.isBlank() || working) return
         run("recovery key inválida".tr()) {
             keys.recoverWithKey(rk)
-            val finish: () -> Unit = { mode = GateMode.Reset } // nova password (pós-delay)
+            // Nova password (pós-delay) — depois do código enviado para o email.
+            val finish: () -> Unit = { mode = GateMode.ResetCode }
             finish
         }
     }
 
+    // Passo do código (reset pós-recuperação): change_token de uso único.
+    private var changeToken: String? = null
+    suspend fun requestResetCode() = keys.requestSecretCode()
+    suspend fun confirmResetCode(code: String): String = keys.confirmSecretCode(code)
+    fun onResetCodeConfirmed(token: String) {
+        changeToken = token
+        error = null
+        mode = GateMode.Reset
+    }
+
     fun submitReset(secret: String) {
         if (secret.isBlank() || working) return
-        if (secret.length < 8) {
-            error = "A passphrase tem de ter pelo menos 8 caracteres.".tr()
+        if (secret.length < 12) {
+            error = "Mínimo %d caracteres".tr().format(12)
             return
         }
         run("falhou".tr()) {
-            keys.rotateSecret(secret)
+            try {
+                keys.rotateSecret(secret, changeToken)
+            } catch (e: co.golink.tester.data.encryption.ChangeTokenExpiredException) {
+                // Token expirado (5 min): volta a pedir um código.
+                changeToken = null
+                val back: () -> Unit = {
+                    mode = GateMode.ResetCode
+                    error = "A confirmação expirou. Confirma de novo com um código.".tr()
+                }
+                return@run back
+            }
+            changeToken = null
             val finish: () -> Unit = { mode = GateMode.Done }
             finish
         }
@@ -152,7 +183,9 @@ class E2EGateViewModel @Inject constructor(
         submitMinMillis = 0L
         viewModelScope.launch {
             val t0 = System.currentTimeMillis()
-            val result = runCatching { block() }
+            // KDF (PBKDF2 600k / Argon2) e unwrap fora da main thread: antes
+            // congelavam a UI e a animação de decifra.
+            val result = runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { block() } }
             // Em sucesso, segura a animação até ao mínimo pedido; em erro mostra já.
             if (result.isSuccess && minMillis > 0) {
                 kotlinx.coroutines.delay((minMillis - (System.currentTimeMillis() - t0)).coerceAtLeast(0L))
@@ -207,6 +240,19 @@ fun E2EGate(viewModel: E2EGateViewModel = hiltViewModel()) {
                 when (mode) {
                     GateMode.ShowRecovery -> RecoveryContent(viewModel)
                     GateMode.Recover -> RecoverContent(viewModel)
+                    GateMode.ResetCode -> Column {
+                        Text("Confirma que és tu".tr(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(12.dp))
+                        co.golink.tester.ui.components.SecretCodeStep(
+                            requestCode = viewModel::requestResetCode,
+                            confirmCode = viewModel::confirmResetCode,
+                            onConfirmed = viewModel::onResetCodeConfirmed,
+                        )
+                        viewModel.error?.let {
+                            Spacer(Modifier.height(8.dp))
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
                     GateMode.Reset -> SecretContent(
                         title = "Define uma nova password".tr(),
                         desc = "Escolhe uma nova password de encriptação.".tr(),
@@ -349,6 +395,19 @@ private fun SecretContent(
                 .offset { androidx.compose.ui.unit.IntOffset(shake.value.toInt(), 0) },
         )
         viewModel.error?.let { Spacer(Modifier.height(6.dp)); Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        if (showForgot) {
+            // Só no desbloqueio (conta já configurada).
+            androidx.compose.foundation.layout.Row(
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            ) {
+                androidx.compose.material3.Checkbox(checked = viewModel.keepUnlocked, onCheckedChange = { viewModel.keepUnlocked = it })
+                Column {
+                    Text("Manter desbloqueado neste dispositivo".tr(), style = MaterialTheme.typography.bodyMedium)
+                    Text("Durante 14 dias ou até terminares sessão.".tr(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
         Spacer(Modifier.height(14.dp))
         GateButton(button, enabled = secret.isNotBlank()) { onSubmit(secret) }
     }

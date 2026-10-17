@@ -10,11 +10,13 @@ val BrandGreenLight = Color(0xFFECF7F2)
 val TextPrimary = Color(0xFF1B2539)
 val TextMuted = Color(0xCC1B2539)
 
-val LightBackground = Color(0xFFF4F5F6)
-val LightBorder = Color(0xFFE8E9EB)
+// Redesign 2026-10 (igual à web): fundo "canvas" e bordas neutras.
+val LightBackground = Color(0xFFF7F7F7)
+val LightBorder = Color(0xFFEBEBEB)
 
-val DarkBackground = Color(0xFF151515)
-val DarkForeground = Color(0xFF1E2024)
+val DarkBackground = Color(0xFF121314)
+val DarkForeground = Color(0xFF1A1B1E)
+val DarkBorder = Color(0xFF2A2B2F)
 val DarkTextPrimary = Color(0xFFBEC6CF)
 val DarkTextSecondary = Color(0xFF7D858C)
 

@@ -21,6 +21,15 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.MarkEmailUnread
+import androidx.compose.material3.Badge
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -50,16 +59,22 @@ private val SYSTEM_CATEGORIES =
     setOf("storage-full", "billing-alert", "payment-alert", "insufficient-balance", "security-alert")
 
 @Composable
-private fun SectionHeader(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelMedium,
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+private fun NotificationTab(label: String, unread: Int, selected: Boolean, onClick: () -> Unit) {
+    Tab(
+        selected = selected,
+        onClick = onClick,
+        text = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(label, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+                if (unread > 0) {
+                    Spacer(Modifier.width(6.dp))
+                    Badge(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ) { Text(if (unread > 99) "99+" else unread.toString()) }
+                }
+            }
+        },
     )
 }
 
@@ -68,6 +83,7 @@ private fun SectionHeader(text: String) {
 fun NotificationsScreen(
     onBack: () -> Unit,
     onOpenSecurityActivity: () -> Unit = {},
+    onOpenSupportTicket: (id: String, admin: Boolean) -> Unit = { _, _ -> },
     viewModel: NotificationsViewModel = hiltViewModel(),
 ) {
     val items by viewModel.items.collectAsStateWithLifecycle()
@@ -106,44 +122,41 @@ fun NotificationsScreen(
                 else -> {
                     val systemItems = items.filter { it.category in SYSTEM_CATEGORIES }
                     val otherItems = items.filter { it.category !in SYSTEM_CATEGORIES }
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        // Secção Sistema — sempre visível
-                        item(key = "system-header") { SectionHeader("Sistema".tr()) }
-                        if (systemItems.isEmpty()) {
-                            item(key = "system-empty") {
-                                Text(
-                                    "Ainda não tem notificações de sistema".tr(),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                )
-                            }
-                        } else {
-                            items(systemItems, key = { it.id }) { n ->
+                    val systemUnread = systemItems.count { !it.isRead }
+                    val otherUnread = otherItems.count { !it.isRead }
+                    // Duas tabs (como na web) em vez de uma lista longa. Abre na
+                    // que tem novidades; Sistema tem prioridade.
+                    var tab by rememberSaveable { mutableIntStateOf(if (systemUnread == 0 && otherUnread > 0) 1 else 0) }
+                    val visible = if (tab == 0) systemItems else otherItems
+
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        TabRow(selectedTabIndex = tab) {
+                            NotificationTab("Sistema".tr(), systemUnread, tab == 0) { tab = 0 }
+                            NotificationTab("Outros".tr(), otherUnread, tab == 1) { tab = 1 }
+                        }
+                        if (visible.isEmpty()) {
+                            Text(
+                                if (tab == 0) "Ainda não tem notificações de sistema".tr() else "Sem notificações".tr(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp, horizontal = 16.dp),
+                            )
+                        }
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            items(visible, key = { it.id }) { n ->
                                 NotificationRow(
                                     notification = n,
                                     onTap = {
                                         if (!n.isRead) viewModel.markRead(n.id)
                                         if (n.category == "security-alert") onOpenSecurityActivity()
+                                        openSupportTicket(n, onOpenSupportTicket)
                                     },
+                                    onToggleRead = { viewModel.toggleRead(n) },
                                     onDelete = { viewModel.delete(n.id) },
                                 )
                                 HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
                             }
-                        }
-                        if (otherItems.isNotEmpty()) {
-                            item(key = "others-header") { SectionHeader("Outros".tr()) }
-                        }
-                        items(otherItems, key = { it.id }) { n ->
-                            NotificationRow(
-                                notification = n,
-                                onTap = {
-                                    if (!n.isRead) viewModel.markRead(n.id)
-                                    if (n.category == "security-alert") onOpenSecurityActivity()
-                                },
-                                onDelete = { viewModel.delete(n.id) },
-                            )
-                            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
                         }
                     }
                 }
@@ -160,6 +173,7 @@ fun NotificationsScreen(
 private fun NotificationRow(
     notification: Notification,
     onTap: () -> Unit,
+    onToggleRead: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Row(
@@ -206,8 +220,27 @@ private fun NotificationRow(
                 )
             }
         }
-        IconButton(onClick = onDelete) {
-            Icon(Icons.Filled.Close, contentDescription = "Apagar", modifier = Modifier.size(18.dp))
+        IconButton(onClick = onToggleRead) {
+            Icon(
+                if (notification.isRead) Icons.Filled.MarkEmailUnread else Icons.Filled.Done,
+                contentDescription = if (notification.isRead) "Marcar como não lida".tr() else "Marcar como lida".tr(),
+                modifier = Modifier.size(18.dp),
+            )
         }
+        IconButton(onClick = onDelete) {
+            Icon(Icons.Filled.Close, contentDescription = "Eliminar".tr(), modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+/** Notificações de suporte: o action web traz a rota (fila do staff ou do user) e o id do ticket. */
+private fun openSupportTicket(
+    n: co.golink.tester.domain.notifications.Notification,
+    open: (String, Boolean) -> Unit,
+) {
+    val id = n.actionId ?: return
+    when (n.actionRoute) {
+        "AdminSupportTicketDetail" -> open(id, true)
+        "SupportTicketDetail" -> open(id, false)
     }
 }

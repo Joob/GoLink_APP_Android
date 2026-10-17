@@ -36,7 +36,18 @@ class AutoBackupViewModel @Inject constructor(
     private val settingsApi: SettingsApi,
     private val uploadManager: UploadManager,
     private val mediaScanner: MediaScanner,
+    private val e2eKeyManager: co.golink.tester.data.encryption.E2EKeyManager,
 ) : ViewModel() {
+    /**
+     * O backup automático envia sempre cifrado: sem encriptação configurada na
+     * conta não pode ser ativado. true = mostrar o aviso "cria a passphrase".
+     */
+    private val _needsE2ESetup = MutableStateFlow(false)
+    val needsE2ESetup: StateFlow<Boolean> = _needsE2ESetup.asStateFlow()
+    val e2eConfigured: StateFlow<Boolean> = e2eKeyManager.configured
+
+    fun dismissE2ESetup() { _needsE2ESetup.value = false }
+
 
     val state: StateFlow<AutoBackupState> = preferences.state
 
@@ -88,6 +99,17 @@ class AutoBackupViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, manager.runProgress.value)
 
     fun enable() {
+        viewModelScope.launch {
+            if (!e2eKeyManager.isConfiguredOrUnknown()) {
+                _needsE2ESetup.value = true
+                return@launch
+            }
+            _needsE2ESetup.value = false
+            enableNow()
+        }
+    }
+
+    private fun enableNow() {
         // Guard every call: WorkManager.enqueue* and SharedPreferences.edit
         // are normally safe, but on some OEM builds (Samsung restricted mode,
         // Xiaomi MIUI, custom Android 14 ROMs) they can throw synchronously —

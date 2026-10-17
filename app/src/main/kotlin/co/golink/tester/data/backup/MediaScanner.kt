@@ -29,6 +29,8 @@ data class BackupItem(
     // Pasta de origem (BUCKET_DISPLAY_NAME: "Camera", "Screenshots", …) —
     // enviada ao servidor para organizar o backup em subpastas.
     val bucket: String? = null,
+    // Caminho relativo real no telemóvel ("DCIM/Camera") — mostrado na web.
+    val devicePath: String? = null,
 ) {
     val isVideo: Boolean get() = collection == BackupCollection.VIDEOS
 }
@@ -164,6 +166,15 @@ class MediaScanner @Inject constructor(
         else -> null
     }?.takeIf { it.isNotBlank() }
 
+    /** "DCIM/Camera/" → "DCIM/Camera"; antes do Android 10, a partir do DATA. */
+    private fun devicePathFrom(c: android.database.Cursor, relIdx: Int, dataIdx: Int): String? = when {
+        relIdx >= 0 && !c.isNull(relIdx) -> c.getString(relIdx)
+        dataIdx >= 0 && !c.isNull(dataIdx) -> c.getString(dataIdx)
+            ?.substringBeforeLast('/')
+            ?.substringAfter("/emulated/0/", missingDelimiterValue = "")
+        else -> null
+    }?.trim('/', ' ')?.takeIf { it.isNotBlank() }?.take(255)
+
     @Suppress("DEPRECATION")
     private fun query(collection: BackupCollection, sinceId: Long, limit: Int, folders: Set<String>?): List<BackupItem> {
         val out = mutableListOf<BackupItem>()
@@ -177,6 +188,7 @@ class MediaScanner @Inject constructor(
             add(MediaStore.MediaColumns.SIZE)
             if (hasBucketColumn) add(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) add(MediaStore.MediaColumns.DATA)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(MediaStore.MediaColumns.RELATIVE_PATH)
         }.toTypedArray()
         val (selection, selectionArgs) = selectionFor(collection, sinceId, folders)
         val sortOrder = "${MediaStore.MediaColumns._ID} ASC"
@@ -211,6 +223,7 @@ class MediaScanner @Inject constructor(
             val sizeIdx = c.getColumnIndex(MediaStore.MediaColumns.SIZE)
             val bucketIdx = c.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
             val dataIdx = c.getColumnIndex(MediaStore.MediaColumns.DATA)
+            val relIdx = c.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
             while (c.moveToNext()) {
                 val id = c.getLong(idIdx)
                 val name = c.getString(nameIdx) ?: "media-$id"
@@ -223,6 +236,7 @@ class MediaScanner @Inject constructor(
                     displayName = name,
                     sizeBytes = size,
                     bucket = bucket,
+                    devicePath = devicePathFrom(c, relIdx, dataIdx),
                 )
             }
         }

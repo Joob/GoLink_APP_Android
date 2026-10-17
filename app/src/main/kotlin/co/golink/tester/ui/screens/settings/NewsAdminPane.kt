@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.settings
 
+import androidx.compose.material.icons.outlined.Campaign
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
@@ -100,6 +101,8 @@ fun NewsAdminPane(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
+        SettingsPaneHeader(androidx.compose.material.icons.Icons.Outlined.Campaign, SettingsColors.Amber, "Notícias".tr(), "Aviso mostrado a todos na zona de ficheiros.".tr())
+        Spacer(Modifier.height(16.dp))
         Text(
             "Notícia importante".tr(),
             style = MaterialTheme.typography.titleMedium,
@@ -172,7 +175,7 @@ fun NewsAdminPane(
         Button(
             onClick = viewModel::save,
             enabled = !state.isLoading && !state.isSaving,
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(14.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             if (state.isSaving) {

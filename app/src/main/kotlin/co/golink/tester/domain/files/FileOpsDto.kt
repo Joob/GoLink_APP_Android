@@ -8,6 +8,8 @@ data class CreateFolderRequest(
     val parent_id: String? = null,
     // E2E Fase 2: nome cifrado (opcional). Presente → `name` fica placeholder.
     val name_encrypted: String? = null,
+    // Cor da pasta (hex, ex. "#3b82f6"); null = cor do tema.
+    val color: String? = null,
 )
 
 @Serializable
@@ -15,7 +17,13 @@ data class RenameItemRequest(
     val name: String,
     val type: String,
     val name_encrypted: String? = null,
+    // Só pastas: aparência. JsonNull limpa (volta ao tema); ausente = não mexe.
+    val color: kotlinx.serialization.json.JsonElement? = null,
+    val emoji: kotlinx.serialization.json.JsonElement? = null,
 )
+
+/** Aparência de uma pasta: emoji (carácter) OU cor; ambos null = cor do tema. */
+data class FolderAppearance(val color: String?, val emoji: String?)
 
 @Serializable
 data class MoveItemsRequest(

@@ -78,6 +78,11 @@ sealed interface BrowseItem {
         val filesize: String?,
         val members: List<TeamMember> = emptyList(),
         override val nameEncrypted: String? = null,
+        /** Convites ainda por aceitar (Team Folder). */
+        val pendingInvites: List<TeamMember> = emptyList(),
+        val filesizeBytes: Long = 0,
+        /** Backups do telemóvel: caminho real ("DCIM/Camera"). */
+        val devicePath: String? = null,
     ) : BrowseItem
 
     @Immutable
@@ -98,8 +103,26 @@ sealed interface BrowseItem {
         val fileUrl: String?,
         val encrypted: Boolean = false,
         override val nameEncrypted: String? = null,
+        val filesizeBytes: Long = 0,
+        /** Data da captura (EXIF), ISO; null → createdAtIso. */
+        val capturedAtIso: String? = null,
     ) : BrowseItem
 }
+
+private fun BrowseRelationships?.toPendingInvites(): List<TeamMember> =
+    this?.invitations?.data
+        ?.filter { it.data.attributes.status.isNullOrBlank() || it.data.attributes.status == "pending" }
+        ?.map { envelope ->
+            val entry = envelope.data
+            TeamMember(
+                id = entry.id,
+                email = entry.attributes.email,
+                name = null,
+                avatarUrl = null,
+                color = entry.attributes.color,
+                permission = entry.attributes.permission,
+            )
+        } ?: emptyList()
 
 private fun BrowseRelationships?.toMembers(): List<TeamMember> =
     this?.members?.data?.map { envelope ->
@@ -112,7 +135,7 @@ private fun BrowseRelationships?.toMembers(): List<TeamMember> =
             color = entry.attributes.color,
             permission = entry.attributes.permission,
         )
-    } ?: emptyList()
+    }?.distinctBy { it.id } ?: emptyList() // o dono chegou a vir 2× do servidor
 
 private fun BrowseRelationships?.toShareInfo(): ShareInfo? {
     val attrs = this?.shared?.data?.attributes ?: return null
@@ -151,6 +174,9 @@ fun BrowseEntry.toItem(): BrowseItem = if (type == "folder") {
         filesize = attributes.filesize,
         members = relationships.toMembers(),
         nameEncrypted = attributes.name_encrypted,
+        pendingInvites = relationships.toPendingInvites(),
+        filesizeBytes = attributes.filesize_bytes ?: 0,
+        devicePath = attributes.device_path,
     )
 } else {
     BrowseItem.File(
@@ -170,5 +196,7 @@ fun BrowseEntry.toItem(): BrowseItem = if (type == "folder") {
         fileUrl = attributes.file_url,
         encrypted = attributes.encrypted,
         nameEncrypted = attributes.name_encrypted,
+        filesizeBytes = attributes.filesize_bytes ?: 0,
+        capturedAtIso = attributes.captured_at_iso,
     )
 }

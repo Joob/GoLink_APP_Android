@@ -115,12 +115,16 @@ class AutoBackupWorker @AssistedInject constructor(
         // the outer try/catch in doWork can't tell the difference between "user
         // cancelled" and "network failed", and we end up showing "Sem ligação ao
         // servidor: Job was cancelled" with the work in a retry loop.
+        var devicePaused = false
         val serverEnabled = try {
             val response = settingsApi.getMobileBackupSetting()
             when {
                 // Falha de leitura é tratada como "manter ligado" para não
                 // interromper backups por um corpo malformado.
-                response.isSuccessful -> response.body()?.mobile_backup_enabled ?: true
+                response.isSuccessful -> {
+                    devicePaused = response.body()?.device_paused == true
+                    response.body()?.mobile_backup_enabled ?: true
+                }
                 response.code() == 401 -> {
                     preferences.lastError = "Sessão expirou — volta a iniciar sessão."
                     return Result.retry()
@@ -147,6 +151,14 @@ class AutoBackupWorker @AssistedInject constructor(
             return Result.success()
         }
 
+        // Pausa só deste telemóvel (na web): não desliga localmente — o próximo
+        // ciclo retoma sozinho quando for retomado na web.
+        if (devicePaused) {
+            logger.log("AutoBackup", "Backup deste aparelho em pausa na Web")
+            preferences.lastError = "Backup deste telemóvel em pausa na Web."
+            return Result.success()
+        }
+
         // Snapshot total work for accurate "X of N" progress. Cancellation must
         // still propagate; only treat genuine MediaStore errors as "0 pending".
         val sources = enabledSources()
@@ -166,11 +178,26 @@ class AutoBackupWorker @AssistedInject constructor(
             return Result.success()
         }
 
-        // E2E trancada: os ficheiros teriam de ir em claro, por isso nem começamos.
-        // Sem UI não há como pedir a passphrase — retry() para retomar sozinho
-        // depois do próximo unlock, sem marcar centenas de itens como falhados.
-        if (!e2eKeyManager.isUnlocked && e2eKeyManager.isConfiguredOrUnknown()) {
-            logger.log("AutoBackup", "E2E trancada — backup adiado até desbloqueares")
+        // Sem encriptação configurada na conta: o backup automático nunca envia
+        // em claro. Fica em pausa até o utilizador criar a passphrase.
+        if (!e2eKeyManager.isConfiguredOrUnknown()) {
+            logger.log("AutoBackup", "E2E não configurada — backup em pausa (nunca envia em claro)")
+            preferences.lastError = "Cria a tua passphrase de encriptação para o backup automático começar.".tr()
+            BackupNotifications.cancelProgress(applicationContext)
+            BackupNotifications.showE2ENotConfigured(applicationContext)
+            return Result.retry()
+        }
+
+        // E2E com a app trancada: o backup cifra só com a chave PÚBLICA fixada
+        // no último desbloqueio (não é segredo). Antes, confirma no servidor que
+        // a chave não mudou. Sem pin, ou se mudou/não deu para confirmar, adia
+        // (retry) até ao próximo desbloqueio — nunca envia em claro.
+        if (!e2eKeyManager.isUnlocked && e2eKeyManager.isConfiguredOrUnknown() && !e2eKeyManager.verifyPinnedKey()) {
+            logger.log(
+                "AutoBackup",
+                if (e2eKeyManager.hasPinnedKey) "Chave pública fixada não confirmada — backup adiado"
+                else "E2E sem chave fixada — backup adiado até desbloqueares",
+            )
             preferences.lastError = "Encriptação trancada — abre a app e introduz a passphrase.".tr()
             BackupNotifications.cancelProgress(applicationContext)
             BackupNotifications.showE2ELocked(applicationContext)
@@ -245,6 +272,7 @@ class AutoBackupWorker @AssistedInject constructor(
                                     parentId = null,
                                     mobileBackup = true,
                                     backupFolder = item.bucket ?: item.collection.defaultFolder,
+                                    backupPath = item.devicePath,
                                 )
                                 job.join()
                                 val task = uploadManager.tasks.value.firstOrNull { it.id == taskId }

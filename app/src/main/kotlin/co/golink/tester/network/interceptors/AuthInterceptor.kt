@@ -4,6 +4,7 @@ import android.os.Build
 import co.golink.tester.BuildConfig
 import co.golink.tester.data.auth.TokenStore
 import co.golink.tester.data.config.BackendUrlHolder
+import co.golink.tester.data.device.DeviceIdentity
 import javax.inject.Inject
 import javax.inject.Singleton
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -14,6 +15,7 @@ import okhttp3.Response
 class AuthInterceptor @Inject constructor(
     private val tokenStore: TokenStore,
     private val backendUrlHolder: BackendUrlHolder,
+    private val deviceIdentity: DeviceIdentity,
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
@@ -34,6 +36,10 @@ class AuthInterceptor @Inject constructor(
         if (request.header("User-Agent") == null) {
             builder.header("User-Agent", USER_AGENT)
         }
+        // Backups por dispositivo: o servidor associa cada envio a esta
+        // instalação (cartão do aparelho, pausa por aparelho na web).
+        builder.header("X-Device-Id", deviceIdentity.id)
+        builder.header("X-Device-Name", deviceIdentity.name)
         if (request.header("Authorization") == null) {
             tokenStore.token?.let { builder.header("Authorization", "Bearer $it") }
         }

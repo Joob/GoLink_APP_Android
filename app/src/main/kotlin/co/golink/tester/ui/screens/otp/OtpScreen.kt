@@ -53,7 +53,8 @@ fun OtpScreen(
             value = state.code,
             onValueChange = viewModel::onCode,
             isError = state.error != null,
-            enabled = !state.expired,
+            // Bloqueado enquanto valida (valida sozinho ao 6.º dígito).
+            enabled = !state.expired && !state.isLoading,
             modifier = Modifier.fillMaxWidth(),
         )
 
@@ -82,25 +83,28 @@ fun OtpScreen(
             )
         }
 
-        Spacer(Modifier.height(20.dp))
-        Button(
-            onClick = viewModel::validate,
-            enabled = !state.isLoading && state.code.length == 6 && !state.expired,
-            shape = RoundedCornerShape(12.dp),
-            contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            if (state.isLoading) {
+        // Sem botão: o código valida-se sozinho quando fica completo.
+        Spacer(Modifier.height(16.dp))
+        if (state.isLoading) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(18.dp),
-                    color = MaterialTheme.colorScheme.onPrimary,
+                    color = MaterialTheme.colorScheme.primary,
                     strokeWidth = 2.dp,
                 )
                 Spacer(Modifier.width(8.dp))
+                Text(
+                    "A validar…".tr(),
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             }
-            Text("Validar")
+            Spacer(Modifier.height(8.dp))
         }
-        Spacer(Modifier.height(8.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -190,5 +194,7 @@ private fun OtpCodeInput(
         },
     )
 
-    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
+    // Ao abrir e sempre que volta a ficar ativo (ex.: código errado limpo depois
+    // da validação automática), volta a pôr o cursor/teclado no código.
+    LaunchedEffect(enabled) { if (enabled) runCatching { focusRequester.requestFocus() } }
 }

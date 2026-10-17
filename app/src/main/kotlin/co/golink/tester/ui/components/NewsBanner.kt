@@ -1,5 +1,6 @@
 package co.golink.tester.ui.components
 
+import co.golink.tester.ui.i18n.I18n
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Row
@@ -50,6 +51,7 @@ fun NewsBanner(
     val dismissed by viewModel.dismissed.collectAsState()
     val current = news
     if (dismissed || current == null || !current.allowed || current.message.isBlank()) return
+    val message = current.messageFor(I18n.lang)
 
     Row(
         verticalAlignment = Alignment.Top,
@@ -61,7 +63,7 @@ fun NewsBanner(
             .padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
     ) {
         Text(
-            current.message,
+            message,
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,

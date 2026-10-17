@@ -102,14 +102,14 @@ class RegisterViewModel @Inject constructor(
                         is AuthError.Validation -> _state.update {
                             it.copy(
                                 isLoading = false,
-                                fieldErrors = t.fields.mapValues { (_, msgs) -> msgs.firstOrNull().orEmpty() },
-                                error = if (t.fields.isEmpty()) t.message else null,
+                                fieldErrors = t.fields.mapValues { (_, msgs) -> co.golink.tester.ui.i18n.ServerMessages.localize(msgs.firstOrNull()).orEmpty() },
+                                error = if (t.fields.isEmpty()) co.golink.tester.ui.i18n.ServerMessages.localize(t.message) else null,
                             )
                         }
                         is AuthError.RegistrationDisabled -> _state.update {
-                            it.copy(isLoading = false, error = t.message)
+                            it.copy(isLoading = false, error = co.golink.tester.ui.i18n.ServerMessages.localize(t.message))
                         }
-                        else -> _state.update { it.copy(isLoading = false, error = t.message) }
+                        else -> _state.update { it.copy(isLoading = false, error = co.golink.tester.ui.i18n.ServerMessages.localize(t.message)) }
                     }
                 }
         }

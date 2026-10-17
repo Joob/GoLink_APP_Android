@@ -27,6 +27,27 @@ data class BrowseEntry(
 data class BrowseRelationships(
     val shared: SharedRelationship? = null,
     val members: TeamMembersRelationship? = null,
+    // Convites por aceitar da Team Folder (mesma forma: email, cor, permissão + status).
+    val invitations: TeamMembersRelationship? = null,
+    // Pasta-mãe (id + nome, possivelmente cifrado). Usado pela Atividade recente.
+    val parent: ParentRelationship? = null,
+)
+
+@Serializable
+data class ParentRelationship(
+    val data: ParentRefData? = null,
+)
+
+@Serializable
+data class ParentRefData(
+    val id: String? = null,
+    val attributes: ParentRefAttributes? = null,
+)
+
+@Serializable
+data class ParentRefAttributes(
+    val name: String? = null,
+    val name_encrypted: String? = null,
 )
 
 @Serializable
@@ -53,6 +74,8 @@ data class TeamMemberAttributes(
     val avatar: String? = null,
     val color: String? = null,
     val permission: String? = null,
+    // Só nos convites: pending / accepted / rejected.
+    val status: String? = null,
 )
 
 @Serializable
@@ -109,12 +132,33 @@ data class BrowseAttributes(
     val updated_at_iso: String? = null,
     val deleted_at: String? = null,
     val encrypted: Boolean = false,
+    // Tamanho em bytes (o `filesize` vem formatado): barra relativa e somas.
+    val filesize_bytes: Long? = null,
+    // Data da foto/vídeo (EXIF) — coluna "Gravado"; null → created_at.
+    val captured_at_iso: String? = null,
+    // Backups do telemóvel: caminho real da pasta ("DCIM/Camera").
+    val device_path: String? = null,
 )
 
 @Serializable
 data class BrowseMeta(
     val paginate: PaginateMeta? = null,
     val root: BrowseEntryEnvelope? = null,
+    // Partilhado comigo: a Team Folder raiz com os membros (e permissões).
+    val teamFolder: BrowseEntryEnvelope? = null,
+    // Chips do cabeçalho: contagens por tipo e bytes da pasta (independentes do filtro).
+    val stats: BrowseStats? = null,
+)
+
+@Serializable
+data class BrowseStats(
+    val folders: Int = 0,
+    val video: Int = 0,
+    val image: Int = 0,
+    val audio: Int = 0,
+    val file: Int = 0,
+    val files: Int = 0,
+    val bytes: Long = 0,
 )
 
 @Serializable
@@ -142,4 +186,11 @@ data class NavFolder(
     val name_encrypted: String? = null,
     val team_folder: Boolean? = null,
     val folders: List<NavFolder> = emptyList(),
+)
+
+/** Filtro por tipo (video|image|file) e ordenação pedidos ao servidor. */
+data class BrowseQuery(
+    val type: String? = null,
+    val sort: String? = null,
+    val direction: String? = null,
 )
