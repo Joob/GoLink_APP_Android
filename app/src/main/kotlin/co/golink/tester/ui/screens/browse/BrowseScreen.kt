@@ -396,7 +396,7 @@ fun BrowseScreen(
         ),
     )
     val drawerSections = when (drawerArea) {
-        DrawerArea.Drive -> listOf(
+        DrawerArea.Drive -> listOfNotNull(
             DrawerSection("O meu drive".tr(), listOf(
                 DrawerItem("Todos os ficheiros".tr(), Icons.Outlined.Folder, selected = state.mode is BrowseMode.Folder, onClick = go(viewModel::openRoot)),
                 DrawerItem("Recentes".tr(), Icons.Outlined.History, selected = state.mode == BrowseMode.Latest, onClick = go(viewModel::openLatest)),
@@ -423,9 +423,10 @@ fun BrowseScreen(
             DrawerSection("Backups".tr(), listOf(
                 DrawerItem("Telemóvel".tr(), Icons.Outlined.PhoneAndroid, statusDot = autoBackupEnabled, onClick = go(onOpenAutoBackup)),
             )),
-            DrawerSection("Suporte".tr(), listOf(
+            // Administradores tratam o suporte na área Suporte: sem "Os meus pedidos".
+            if (!isAdmin) DrawerSection("Suporte".tr(), listOf(
                 DrawerItem("Os meus pedidos".tr(), Icons.Outlined.SupportAgent, onClick = go { onOpenSupport(false) }),
-            )),
+            )) else null,
             DrawerSection(null, listOf(
                 DrawerItem("Lixo".tr(), Icons.Outlined.Delete, selected = state.mode == BrowseMode.Trash, onClick = go(viewModel::openTrash)),
             )),
@@ -790,20 +791,16 @@ fun BrowseScreen(
                                     // Ordenado por data: secções "Setembro 2026 · 3 vídeos" (como na web);
                                     // pastas à cabeça, sem título. Por nome: grelha plana.
                                     val byMonth = state.sortMode == SortMode.DATE_DESC || state.sortMode == SortMode.DATE_ASC
-                                    val sections = if (byMonth) monthSections(displayed) else listOf(null to displayed)
-                                    sections.forEach { (header, sectionItems) ->
-                                    if (header != null) {
+                                    val sections = if (byMonth) monthSections(displayed) else listOf(MonthSection(null, null, displayed))
+                                    sections.forEach { section ->
+                                    val sectionItems = section.items
+                                    if (section.title != null) {
                                         item(
-                                            key = "month-$header",
+                                            key = "month-${section.title}",
                                             span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) },
                                             contentType = "month",
                                         ) {
-                                            Text(
-                                                header,
-                                                style = MaterialTheme.typography.labelLarge,
-                                                fontWeight = FontWeight.SemiBold,
-                                                modifier = Modifier.padding(start = 4.dp, top = 10.dp, bottom = 2.dp),
-                                            )
+                                            MonthHeader(section.title, section.count, Modifier.padding(top = 12.dp, bottom = 2.dp))
                                         }
                                     }
                                     items(sectionItems, key = { it.id }) { item ->
@@ -842,7 +839,16 @@ fun BrowseScreen(
                                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp),
                                     verticalArrangement = Arrangement.spacedBy(6.dp),
                                 ) {
-                                    items(displayed, key = { it.id }) { item ->
+                                    // Ordenado por data: as mesmas secções por mês da grelha.
+                                    val listByMonth = state.sortMode == SortMode.DATE_DESC || state.sortMode == SortMode.DATE_ASC
+                                    val listSections = if (listByMonth) monthSections(displayed) else listOf(MonthSection(null, null, displayed))
+                                    listSections.forEach { section ->
+                                    if (section.title != null) {
+                                        item(key = "month-${section.title}", contentType = "month") {
+                                            MonthHeader(section.title, section.count, Modifier.padding(top = 10.dp, bottom = 2.dp))
+                                        }
+                                    }
+                                    items(section.items, key = { it.id }) { item ->
                                         BrowseItemRow(
                                             item = item,
                                             selected = state.selectedIds.contains(item.id),
@@ -857,6 +863,7 @@ fun BrowseScreen(
                                                 { viewModel.copyShareLink(item) }
                                             } else null,
                                         )
+                                    }
                                     }
                                     // Rodapé "N itens" (como a tabela da web), só com a lista completa.
                                     if (!state.isLoadingMore && state.currentPage >= state.lastPage) {
@@ -1286,25 +1293,49 @@ private fun selectionSummary(selected: List<BrowseItem>): String? {
     return if (bytes > 0) "$label · ${co.golink.tester.ui.common.formatBytes(bytes)}" else label
 }
 
-// Grelha por mês: pastas primeiro (sem título), depois "Setembro 2026 · 3 vídeos".
-private fun monthSections(items: List<BrowseItem>): List<Pair<String?, List<BrowseItem>>> {
+private data class MonthSection(val title: String?, val count: String?, val items: List<BrowseItem>)
+
+// Por mês (grelha e lista): pastas primeiro (sem título), depois "Setembro 2026" + "3 vídeos".
+private fun monthSections(items: List<BrowseItem>): List<MonthSection> {
     val folders = items.filterIsInstance<BrowseItem.Folder>()
     val files = items.filterIsInstance<BrowseItem.File>()
     val groups = files.groupBy { (it.createdAtIso ?: it.updatedAtIso)?.take(7) ?: "" }
-    val out = mutableListOf<Pair<String?, List<BrowseItem>>>()
-    if (folders.isNotEmpty()) out += null to folders
+    val out = mutableListOf<MonthSection>()
+    if (folders.isNotEmpty()) out += MonthSection(null, null, folders)
     groups.forEach { (_, group) ->
         val first = group.first()
-        val month = co.golink.tester.ui.common.formatMonth(first.createdAtIso ?: first.updatedAtIso)
+        val month = co.golink.tester.ui.common.formatMonth(first.createdAtIso ?: first.updatedAtIso).ifEmpty { "—" }
         val types = group.map { it.type }.distinct()
         val count = when {
             types == listOf("video") -> if (group.size == 1) "1 vídeo".tr() else "%d vídeos".tr().format(group.size)
             types == listOf("image") -> if (group.size == 1) "1 imagem".tr() else "%d imagens".tr().format(group.size)
             else -> if (group.size == 1) "1 item".tr() else "%d itens".tr().format(group.size)
         }
-        out += (if (month.isNotEmpty()) "$month · $count" else count) to group
+        out += MonthSection(month, count, group)
     }
     return out
+}
+
+// Título de secção bem visível: mês a negrito, contagem em pílula e uma linha.
+@Composable
+private fun MonthHeader(title: String, count: String?, modifier: Modifier = Modifier) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+        Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.2).sp)
+        if (count != null) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                count,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), androidx.compose.foundation.shape.RoundedCornerShape(50))
+                    .padding(horizontal = 9.dp, vertical = 2.dp),
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        androidx.compose.material3.HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
+    }
 }
 
 // Vistas com o cabeçalho de pasta (como na web).

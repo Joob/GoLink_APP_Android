@@ -1,5 +1,12 @@
 package co.golink.tester.ui.screens.viewer
 
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.border
 import androidx.compose.material.icons.outlined.Link
@@ -240,6 +247,8 @@ fun FileViewerScreen(
                             IconButton(onClick = viewModel::rotateRight) {
                                 Icon(Icons.Outlined.RotateRight, contentDescription = "Rodar à direita".tr())
                             }
+                            // PDF: o zoom está na barra flutuante do leitor.
+                            if (current.isImageLike()) {
                             IconButton(
                                 onClick = { viewModel.setZoom((state.zoom / 1.25f).coerceAtLeast(0.2f)) },
                                 enabled = state.zoom > 0.25f,
@@ -252,20 +261,45 @@ fun FileViewerScreen(
                             ) {
                                 Icon(Icons.Outlined.ZoomIn, contentDescription = "Aumentar zoom".tr())
                             }
+                            }
                         }
                         // Editor de texto: editar / guardar em linha.
+                        // Ver | Editar (como na web); a editar, Guardar ao lado.
                         if (current.isTextLike() && viewModel.canEditText()) {
-                            if (!state.editing) {
-                                IconButton(onClick = viewModel::startEditing) {
-                                    Icon(Icons.Outlined.Edit, contentDescription = "Editar".tr())
+                            Row(
+                                modifier = Modifier
+                                    .padding(start = 6.dp)
+                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+                                    .padding(3.dp),
+                            ) {
+                                listOf(false to "Ver".tr(), true to "Editar".tr()).forEach { (edit, label) ->
+                                    val active = state.editing == edit
+                                    Text(
+                                        label,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier
+                                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                                            .background(if (active) MaterialTheme.colorScheme.surface else Color.Transparent)
+                                            .clickable(enabled = !state.saving) {
+                                                if (edit && !state.editing) viewModel.startEditing()
+                                                if (!edit && state.editing) viewModel.cancelEditing()
+                                            }
+                                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    )
                                 }
-                            } else {
-                                IconButton(onClick = viewModel::cancelEditing, enabled = !state.saving) {
-                                    Icon(Icons.Outlined.Close, contentDescription = "Cancelar".tr())
-                                }
-                                IconButton(onClick = viewModel::saveText, enabled = !state.saving) {
-                                    Icon(Icons.Outlined.Save, contentDescription = "Guardar".tr())
-                                }
+                            }
+                            if (state.editing) {
+                                Spacer(Modifier.width(6.dp))
+                                androidx.compose.material3.Button(
+                                    onClick = viewModel::saveText,
+                                    enabled = !state.saving && state.dirty,
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(34.dp),
+                                ) { Text(if (state.saving) "A guardar…".tr() else "Guardar".tr(), fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold) }
                             }
                         }
                         Spacer(Modifier.weight(1f))
@@ -337,10 +371,11 @@ fun FileViewerScreen(
                             onZoomChange = { if (page == state.currentIndex) viewModel.setZoom(it) },
                             decrypt = if (file.encrypted) { { c -> viewModel.decryptImageBytes(file, c) } } else null,
                         )
-                        file.isTextLike() -> TextViewer(
-                            if (page == state.currentIndex) state.textContent else null,
-                            if (page == state.currentIndex) state.textLoading else false,
-                            if (page == state.currentIndex) state.textError else null,
+                        file.isTextLike() -> TextReader(
+                            name = file.name,
+                            content = if (page == state.currentIndex) state.textContent else null,
+                            loading = if (page == state.currentIndex) state.textLoading else false,
+                            error = if (page == state.currentIndex) state.textError else null,
                             encrypted = file.encrypted,
                             editing = page == state.currentIndex && state.editing,
                             draft = state.draft,
@@ -981,13 +1016,26 @@ private fun PdfViewer(
     var offsetY by remember(fileKey) { mutableStateOf(0f) }
     LaunchedEffect(zoom) { if (zoom == 1f) { offsetX = 0f; offsetY = 0f } }
 
+    // Leitor (como na web): página atual, miniaturas e fundo de leitura.
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val currentPage by remember { androidx.compose.runtime.derivedStateOf { listState.firstVisibleItemIndex + 1 } }
+    var readingTheme by remember { mutableStateOf(PdfReaderPrefs.theme(context)) }
+    var showPages by remember(fileKey) { mutableStateOf(false) }
+    val pageFilter = remember(readingTheme) { pdfThemeFilter(readingTheme) }
+
     val zoomState = androidx.compose.runtime.rememberUpdatedState(zoom)
     val onZoomChangeState = androidx.compose.runtime.rememberUpdatedState(onZoomChange)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Transparent)
+            .background(
+                when (readingTheme) {
+                    "sepia" -> Color(0xFFE9E3D6)
+                    "dark" -> Color(0xFF18191B)
+                    else -> if (co.golink.tester.ui.theme.LocalDarkTheme.current) Color(0xFF0D0E10) else Color(0xFFEBECEE)
+                },
+            )
             .clipToBounds()
             .pointerInput(fileKey) {
                 awaitEachGesture {
@@ -1028,6 +1076,7 @@ private fun PdfViewer(
             pageCount == 0 -> Text("PDF vazio".tr(), color = MaterialTheme.colorScheme.onSurface)
             else -> {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer(
@@ -1037,13 +1086,36 @@ private fun PdfViewer(
                             translationX = offsetX,
                             translationY = offsetY,
                         ),
-                    contentPadding = PaddingValues(vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(start = 10.dp, end = 10.dp, top = 10.dp, bottom = 88.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(pageCount) { idx ->
                         val r = renderer
-                        if (r != null) PdfPage(r, renderLock, idx)
+                        if (r != null) PdfPage(r, renderLock, idx, filter = pageFilter)
                     }
+                }
+                // Barra flutuante: páginas · ⌃ 2 de 6 ⌄ · − % + · fundo de leitura.
+                PdfReaderBar(
+                    page = currentPage,
+                    total = pageCount,
+                    zoom = zoom,
+                    theme = readingTheme,
+                    onPages = { showPages = true },
+                    onGoTo = { n -> scope.launch { listState.animateScrollToItem((n - 1).coerceIn(0, pageCount - 1)) } },
+                    onZoom = { z -> onZoomChangeState.value(z.coerceIn(1f, 8f)) },
+                    onTheme = { t -> readingTheme = t; PdfReaderPrefs.setTheme(context, t) },
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp),
+                )
+                if (showPages) {
+                    val r = renderer
+                    if (r != null) PdfPagesSheet(
+                        renderer = r,
+                        lock = renderLock,
+                        pageCount = pageCount,
+                        current = currentPage,
+                        onDismiss = { showPages = false },
+                        onSelect = { n -> showPages = false; scope.launch { listState.scrollToItem(n - 1) } },
+                    )
                 }
             }
         }
@@ -1053,15 +1125,22 @@ private fun PdfViewer(
 // Uma página do PDF, renderizada só quando entra no ecrã (o LazyColumn
 // descarta-a ao sair). Até lá ocupa o espaço com a proporção certa.
 @Composable
-private fun PdfPage(renderer: PdfRenderer, lock: kotlinx.coroutines.sync.Mutex, index: Int) {
-    val width = LocalContext.current.resources.displayMetrics.widthPixels
+private fun PdfPage(
+    renderer: PdfRenderer,
+    lock: kotlinx.coroutines.sync.Mutex,
+    index: Int,
+    filter: androidx.compose.ui.graphics.ColorFilter? = null,
+    // Miniaturas: renderiza pequeno (bem mais leve).
+    targetWidthPx: Int? = null,
+) {
+    val width = targetWidthPx ?: LocalContext.current.resources.displayMetrics.widthPixels
     val bitmap by androidx.compose.runtime.produceState<Bitmap?>(null, renderer, index) {
         value = withContext(Dispatchers.IO) {
             lock.withLock {
                 runCatching {
                     renderer.openPage(index).use { page ->
                         // Largura do ecrã ×2 (nitidez com zoom), limitada ao dobro da página.
-                        val w = minOf(width * 2, page.width * 3).coerceAtLeast(1)
+                        val w = (if (targetWidthPx != null) width else minOf(width * 2, page.width * 3)).coerceAtLeast(1)
                         val h = (w.toLong() * page.height / page.width).toInt().coerceAtLeast(1)
                         Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { bmp ->
                             bmp.eraseColor(android.graphics.Color.WHITE)
@@ -1080,8 +1159,10 @@ private fun PdfPage(renderer: PdfRenderer, lock: kotlinx.coroutines.sync.Mutex, 
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(bmp.width.toFloat() / bmp.height.toFloat())
+                .shadow(if (targetWidthPx == null) 3.dp else 0.dp, androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
                 .background(Color.White),
             contentScale = ContentScale.Fit,
+            colorFilter = filter,
         )
     } else {
         Box(
@@ -1311,6 +1392,164 @@ private fun ThumbnailStrip(files: List<BrowseItem.File>, current: Int, onSelect:
                     contentAlignment = Alignment.Center,
                 ) {
                     co.golink.tester.ui.components.FilePreview(item = files[i], iconSize = 28.dp, modifier = Modifier.fillMaxSize())
+                }
+            }
+        }
+    }
+}
+
+// ---- Leitor de PDF: barra flutuante, miniaturas e fundos de leitura ----------------
+
+private object PdfReaderPrefs {
+    fun theme(context: android.content.Context): String =
+        context.getSharedPreferences("pdf_reader", android.content.Context.MODE_PRIVATE).getString("theme", "light") ?: "light"
+
+    fun setTheme(context: android.content.Context, theme: String) {
+        context.getSharedPreferences("pdf_reader", android.content.Context.MODE_PRIVATE).edit().putString("theme", theme).apply()
+    }
+}
+
+// Sépia (tom quente) e escuro (inverte as cores da página), como na web.
+private fun pdfThemeFilter(theme: String): androidx.compose.ui.graphics.ColorFilter? = when (theme) {
+    "sepia" -> androidx.compose.ui.graphics.ColorFilter.colorMatrix(
+        androidx.compose.ui.graphics.ColorMatrix(
+            floatArrayOf(
+                0.92f, 0.08f, 0.02f, 0f, 0f,
+                0.06f, 0.86f, 0.04f, 0f, 0f,
+                0.04f, 0.06f, 0.70f, 0f, 0f,
+                0f, 0f, 0f, 1f, 0f,
+            ),
+        ),
+    )
+    "dark" -> androidx.compose.ui.graphics.ColorFilter.colorMatrix(
+        androidx.compose.ui.graphics.ColorMatrix(
+            floatArrayOf(
+                -0.85f, 0f, 0f, 0f, 235f,
+                0f, -0.85f, 0f, 0f, 235f,
+                0f, 0f, -0.85f, 0f, 235f,
+                0f, 0f, 0f, 1f, 0f,
+            ),
+        ),
+    )
+    else -> null
+}
+
+@Composable
+private fun PdfReaderBar(
+    page: Int,
+    total: Int,
+    zoom: Float,
+    theme: String,
+    onPages: () -> Unit,
+    onGoTo: (Int) -> Unit,
+    onZoom: (Float) -> Unit,
+    onTheme: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val fg = Color(0xFFE5E7EB)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .shadow(10.dp, androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+            .background(Color(0xFF111827), androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+    ) {
+        IconButton(onClick = onPages, modifier = Modifier.size(34.dp)) {
+            Icon(Icons.Outlined.GridView, contentDescription = "Páginas".tr(), tint = fg, modifier = Modifier.size(17.dp))
+        }
+        BarDivider()
+        IconButton(onClick = { onGoTo(page - 1) }, enabled = page > 1, modifier = Modifier.size(34.dp)) {
+            Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Página anterior".tr(), tint = fg.copy(alpha = if (page > 1) 1f else 0.35f))
+        }
+        Text("%d de %d".tr().format(page, total), color = Color.White, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+        IconButton(onClick = { onGoTo(page + 1) }, enabled = page < total, modifier = Modifier.size(34.dp)) {
+            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Página seguinte".tr(), tint = fg.copy(alpha = if (page < total) 1f else 0.35f))
+        }
+        BarDivider()
+        IconButton(onClick = { onZoom(zoom / 1.25f) }, enabled = zoom > 1.01f, modifier = Modifier.size(34.dp)) {
+            Icon(Icons.Filled.Remove, contentDescription = "Reduzir zoom".tr(), tint = fg.copy(alpha = if (zoom > 1.01f) 1f else 0.35f), modifier = Modifier.size(16.dp))
+        }
+        Text(
+            "${(zoom * 100).toInt()}%",
+            color = Color.White,
+            fontSize = 12.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.clickable { onZoom(1f) }.padding(horizontal = 2.dp),
+        )
+        IconButton(onClick = { onZoom(zoom * 1.25f) }, modifier = Modifier.size(34.dp)) {
+            Icon(Icons.Filled.Add, contentDescription = "Aumentar zoom".tr(), tint = fg, modifier = Modifier.size(16.dp))
+        }
+        BarDivider()
+        listOf("light" to Color.White, "sepia" to Color(0xFFEFE6D2), "dark" to Color(0xFF26282B)).forEach { (key, color) ->
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 3.dp)
+                    .size(22.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(if (theme == key) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.25f))
+                    .padding(2.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(color)
+                    .clickable { onTheme(key) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun BarDivider() {
+    Box(Modifier.padding(horizontal = 4.dp).size(width = 1.dp, height = 18.dp).background(Color.White.copy(alpha = 0.16f)))
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PdfPagesSheet(
+    renderer: PdfRenderer,
+    lock: kotlinx.coroutines.sync.Mutex,
+    pageCount: Int,
+    current: Int,
+    onDismiss: () -> Unit,
+    onSelect: (Int) -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Text(
+            "Páginas".tr(),
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 20.dp, bottom = 8.dp),
+        )
+        val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState(initialFirstVisibleItemIndex = (current - 1).coerceAtLeast(0))
+        androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+            state = gridState,
+            columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(96.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.heightIn(max = 560.dp),
+        ) {
+            items(pageCount) { idx ->
+                val active = idx + 1 == current
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { onSelect(idx + 1) }) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(
+                                if (active) 2.dp else 1.dp,
+                                if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                            )
+                            .padding(2.dp),
+                    ) {
+                        PdfPage(renderer, lock, idx, targetWidthPx = 240)
+                    }
+                    Text(
+                        "${idx + 1}",
+                        fontSize = 11.5.sp,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                        color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
                 }
             }
         }
