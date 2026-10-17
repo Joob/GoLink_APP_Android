@@ -1,5 +1,8 @@
 package co.golink.tester.ui.components.dialogs
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.outlined.Download
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.animation.AnimatedVisibility
@@ -87,6 +90,7 @@ data class ShareDialogState(
     val keyPending: Boolean = false,
 )
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ShareDialog(
     state: ShareDialogState,
@@ -104,59 +108,33 @@ fun ShareDialog(
     val clipboard = LocalClipboardManager.current
     val context = androidx.compose.ui.platform.LocalContext.current
 
-    Dialog(
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
     ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp),
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 0.dp,
-        ) {
-            Column(modifier = Modifier.padding(24.dp)) {
-                // Header
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Outlined.Share,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Partilhar".tr(),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            item.name,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(20.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                Spacer(Modifier.height(16.dp))
+        run {
+            Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
+                // Cabeçalho: Partilhar "Pasta 1" · estado do link
+                Text(
+                    "Partilhar “%s”".tr().format(item.name),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    if (state.share != null) "Link ativo · qualquer pessoa com o link".tr() else "Cria um link para partilhar".tr(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(14.dp))
 
                 Column(
                     modifier = Modifier
-                        .heightIn(max = 520.dp)
+                        .heightIn(max = 620.dp)
                         .verticalScroll(rememberScrollState()),
                 ) {
                     if (state.share == null) {
@@ -185,13 +163,6 @@ fun ShareDialog(
                     }
                 }
 
-                Spacer(Modifier.height(8.dp))
-                TextButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.align(Alignment.End),
-                ) {
-                    Text("Fechar".tr(), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
             }
         }
     }
@@ -595,90 +566,91 @@ private fun ExistingShareView(
     var viewLimit by remember(share.viewLimit) { mutableStateOf(share.viewLimit?.takeIf { it > 0 } ?: 1) }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        // Link box
+        // Link: endereço, etiquetas e "Copiar link" em destaque.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
+                .clip(RoundedCornerShape(16.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                 .padding(14.dp),
         ) {
             Text(
-                "Link público".tr(),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.SemiBold,
+                (share.link ?: "(sem URL)").removePrefix("https://").removePrefix("http://"),
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    share.link ?: "(sem URL)",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
-                        .clickable(enabled = !keyPending, onClick = onCopy),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (keyPending) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
-                        Icon(
-                            Icons.Filled.ContentCopy,
-                            contentDescription = "Copiar",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
-                }
-            }
-            if (keyPending) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "A preparar a chave de encriptação…".tr(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
             val timeLeft = shareTimeLeft(share.expiresAt)
             if (share.protected || timeLeft != null ||
                 (share.downloadLimit != null && share.downloadLimit > 0) ||
                 (share.viewLimit != null && share.viewLimit > 0) || !share.permission.isNullOrBlank()
             ) {
                 Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (share.protected) TagChip("Com password".tr())
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    if (share.protected) TagChip("Com senha".tr())
+                    if (!share.permission.isNullOrBlank()) TagChip(prettyPermission(share.permission))
                     timeLeft?.let { TagChip(if (it.expired) it.text else "Expira em".tr() + " " + it.text) }
                     if (share.downloadLimit != null && share.downloadLimit > 0) {
                         TagChip("${share.downloadCount ?: 0}/${share.downloadLimit} downloads")
                     }
-                    // Saldo de visualizações: sem isto o dono não sabe se o link
-                    // ainda está de pé.
                     if (share.viewLimit != null && share.viewLimit > 0) {
                         TagChip("${share.viewCount ?: 0}/${share.viewLimit} " + "visualizações".tr())
                     }
-                    if (!share.permission.isNullOrBlank()) TagChip(prettyPermission(share.permission))
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = onCopy,
+                enabled = !keyPending,
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(vertical = 13.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (keyPending) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("A preparar a chave de encriptação…".tr(), fontWeight = FontWeight.SemiBold)
+                } else {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Copiar link".tr(), fontWeight = FontWeight.SemiBold)
                 }
             }
         }
 
-        // Action buttons row
+        // E2E: o link leva a chave (#k=).
+        if (share.link?.contains("#k=") == true) {
+            Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(horizontal = 4.dp)) {
+                Icon(Icons.Filled.Warning, contentDescription = null, tint = Color(0xFFB45309), modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "O link inclui a chave para abrir os ficheiros. Envia-o só a quem confias.".tr(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF92400E),
+                )
+            }
+        }
+
+        // Enviar… · Código QR · E-mail · Definições
+        val shareContext = androidx.compose.ui.platform.LocalContext.current
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ShareActionButton(
+                icon = Icons.Filled.Send,
+                label = "Enviar…".tr(),
+                modifier = Modifier.weight(1f),
+                enabled = !keyPending && !share.link.isNullOrBlank(),
+                onClick = {
+                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(android.content.Intent.EXTRA_TEXT, share.link)
+                    }
+                    runCatching { shareContext.startActivity(android.content.Intent.createChooser(send, null)) }
+                },
+            )
+            ShareActionButton(
                 icon = Icons.Filled.QrCode2,
-                label = "QR code".tr(),
+                label = "Código QR".tr(),
                 modifier = Modifier.weight(1f),
                 active = showQr,
                 enabled = !keyPending,
@@ -686,7 +658,7 @@ private fun ExistingShareView(
             )
             ShareActionButton(
                 icon = Icons.Filled.Email,
-                label = "Email",
+                label = "E-mail",
                 modifier = Modifier.weight(1f),
                 enabled = !sendingEmail && !keyPending,
                 onClick = {
@@ -696,12 +668,10 @@ private fun ExistingShareView(
             )
             ShareActionButton(
                 icon = Icons.Outlined.Tune,
-                label = "Editar".tr(),
+                label = "Definições".tr(),
                 modifier = Modifier.weight(1f),
                 active = editMode,
-                onClick = {
-                    activePanel = if (editMode) SharePanel.None else SharePanel.Edit
-                },
+                onClick = { activePanel = if (editMode) SharePanel.None else SharePanel.Edit },
             )
         }
 
@@ -806,31 +776,19 @@ private fun ExistingShareView(
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
-        // Revoke
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
+        // Desativar link (texto vermelho, como no mockup)
+        Text(
+            "Desativar link".tr(),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.error,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.error.copy(alpha = 0.06f))
-                .border(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(10.dp))
                 .clickable(onClick = onRevoke)
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-        ) {
-            Icon(
-                Icons.Filled.Delete,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(Modifier.width(10.dp))
-            Text(
-                "Revogar partilha".tr(),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.error,
-                fontWeight = FontWeight.Medium,
-            )
-        }
+                .padding(vertical = 12.dp),
+        )
     }
 }
 

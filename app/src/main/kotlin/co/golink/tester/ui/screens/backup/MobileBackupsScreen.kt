@@ -525,6 +525,7 @@ fun MobileBackupsScreen(
         BackupItemDialog.ConvertToTeamFolder -> dialogTarget?.let { target ->
             CreateTeamFolderDialog(
                 isConvert = true,
+                folderName = target.name,
                 onDismiss = { activeDialog = BackupItemDialog.None; dialogTarget = null },
                 onCreate = { _, _ -> },
                 onConvert = { invites ->
@@ -537,6 +538,7 @@ fun MobileBackupsScreen(
         BackupItemDialog.FileRequest -> dialogTarget?.let { target ->
             CreateFileRequestDialog(
                 onDismiss = { activeDialog = BackupItemDialog.None; dialogTarget = null },
+                folderName = target.name,
                 onCreate = { name, email, notes, days ->
                     viewModel.createFileRequest(name, email, notes, target.id, days)
                     activeDialog = BackupItemDialog.None

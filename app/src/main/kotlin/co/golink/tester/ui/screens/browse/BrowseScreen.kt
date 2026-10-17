@@ -1260,6 +1260,7 @@ fun BrowseScreen(
             onDismiss = { activeDialog = ActionDialog.None },
             onCreate = { name, invites -> viewModel.createTeamFolder(name, invites) },
             onConvert = {},
+            ownerName = user?.name.orEmpty(),
         )
         ActionDialog.ConvertToTeamFolder -> actionTarget?.let { target ->
             CreateTeamFolderDialog(
@@ -1267,10 +1268,13 @@ fun BrowseScreen(
                 onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
                 onCreate = { _, _ -> },
                 onConvert = { invites -> viewModel.convertToTeamFolder(target.id, invites) },
+                folderName = target.name,
+                ownerName = user?.name.orEmpty(),
             )
         }
         ActionDialog.FileRequest -> CreateFileRequestDialog(
             onDismiss = { activeDialog = ActionDialog.None },
+            folderName = actionTarget?.name ?: state.crumbs.lastOrNull()?.name ?: "O meu Drive".tr(),
             // actionTarget definido = pedido para essa pasta (menu "…"); null = pasta actual (botão +).
             onCreate = { name, email, notes, days -> viewModel.createFileRequest(name, email, notes, actionTarget?.id, days) },
         )

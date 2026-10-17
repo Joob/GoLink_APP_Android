@@ -1,5 +1,7 @@
 package co.golink.tester.ui.components
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.ui.layout.layout
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -121,9 +123,19 @@ fun ItemDetailsSheet(
                 DetailsTabs(selected = tab, onSelect = { tab = it })
             }
 
-            if (fetchActivity != null && tab == DetailsTab.ACTIVITY) {
-                ItemActivityTimeline(itemKey = item.id, fetch = fetchActivity)
-            } else {
+            // Os dois separadores ficam montados (o escondido mede 0): trocar já
+            // não destrói a Atividade nem a volta a pedir ao servidor — era isso
+            // que fazia piscar. A Atividade carrega em fundo ao abrir a folha.
+            Box(Modifier.fillMaxWidth().animateContentSize(androidx.compose.animation.core.tween(180))) {
+            if (fetchActivity != null) {
+                Box(Modifier.shownWhen(tab == DetailsTab.ACTIVITY)) {
+                    ItemActivityTimeline(itemKey = item.id, fetch = fetchActivity)
+                }
+            }
+            Column(
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                modifier = Modifier.shownWhen(tab == DetailsTab.DETAILS || fetchActivity == null),
+            ) {
             Section("Detalhes".tr()) {
                 Card {
                     detailRows(item, location).forEachIndexed { i, (label, value) ->
@@ -159,7 +171,18 @@ fun ItemDetailsSheet(
                 }
             }
             }
+            }
         }
+    }
+}
+
+// Mantém o conteúdo composto mas sem ocupar espaço nem aparecer quando escondido.
+private fun Modifier.shownWhen(visible: Boolean): Modifier = this.layout { measurable, constraints ->
+    if (visible) {
+        val placeable = measurable.measure(constraints)
+        layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+    } else {
+        layout(0, 0) {}
     }
 }
 
