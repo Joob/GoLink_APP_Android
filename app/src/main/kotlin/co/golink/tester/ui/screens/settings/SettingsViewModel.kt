@@ -83,7 +83,11 @@ class SettingsViewModel @Inject constructor(
     private val backendUrlHolder: BackendUrlHolder,
     private val billingRepository: BillingRepository,
     private val e2eKeyManager: co.golink.tester.data.encryption.E2EKeyManager,
+    autoBackupPreferences: co.golink.tester.data.backup.AutoBackupPreferences,
 ) : ViewModel() {
+
+    /** Estado do backup automático (cartão no menu das Definições). */
+    val autoBackupState = autoBackupPreferences.state
 
     val user: StateFlow<User?> = sessionManager.state
         .map { (it as? AuthState.Authenticated)?.user }

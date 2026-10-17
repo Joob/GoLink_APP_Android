@@ -1,5 +1,6 @@
 package co.golink.tester.ui.components
 
+import androidx.compose.foundation.layout.fillMaxHeight
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -235,7 +236,13 @@ fun BrowseItemGridCard(
     selected: Boolean = false,
     selectionMode: Boolean = false,
     onCopyLinkClick: (() -> Unit)? = null,
+    // Secção "Pastas": cartão horizontal compacto (ícone · nome · "2 itens · 8 MB" · ⋮).
+    compactFolder: Boolean = false,
 ) {
+    if (compactFolder && item is BrowseItem.Folder) {
+        CompactFolderCard(item, onClick, onLongClick, onMoreClick, selected, selectionMode)
+        return
+    }
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -309,18 +316,23 @@ fun BrowseItemGridCard(
                         }
                     }
                     is BrowseItem.File -> {
-                        FilePreview(
-                            item = item,
-                            iconSize = 80.dp,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                        if (!item.filesize.isNullOrBlank() && (item.type == "image" || item.type == "video")) {
-                            SizeBadge(item.filesize, Modifier.align(Alignment.BottomStart))
+                        // Documentos: "página" com a etiqueta da extensão (como na web).
+                        if (item.type == "image" || item.type == "video" || item.type == "audio") {
+                            FilePreview(
+                                item = item,
+                                iconSize = 80.dp,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            DocPlaceholder(item, Modifier.fillMaxSize())
+                        }
+                        if (!item.filesize.isNullOrBlank()) {
+                            SizeBadge(item.filesize, Modifier.align(Alignment.BottomEnd))
                         }
                     }
                 }
                 if (item.share != null) {
-                    ShareBadge(modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp))
+                    ShareBadge(modifier = Modifier.align(Alignment.BottomStart).padding(6.dp))
                 }
             }
             Spacer(Modifier.height(6.dp))
@@ -332,13 +344,102 @@ fun BrowseItemGridCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                metaFor(item),
+                if (item is BrowseItem.File) gridMetaFor(item) else metaFor(item),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
+    }
+}
+
+// Grelha: o tamanho já vai no selo da miniatura → "Vídeo · 16 out 2026".
+private fun gridMetaFor(item: BrowseItem.File): String {
+    val date = (item.capturedAtIso ?: item.createdAtIso)?.let { co.golink.tester.ui.common.formatDay(it) }
+        ?.takeIf { it.isNotEmpty() } ?: item.createdAt
+    return listOfNotNull(fileTypeLabel(item), date).joinToString(" · ")
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CompactFolderCard(
+    item: BrowseItem.Folder,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onMoreClick: () -> Unit,
+    selected: Boolean,
+    selectionMode: Boolean,
+) {
+    val tint = parseHexColor(item.color) ?: MaterialTheme.colorScheme.primary
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = selectionContainer(selected && selectionMode)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = selectionBorder(selected && selectionMode),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(start = 10.dp, top = 10.dp, bottom = 10.dp, end = 0.dp),
+        ) {
+            if (selectionMode) {
+                Checkbox(checked = selected, onCheckedChange = { onClick() }, modifier = Modifier.size(24.dp))
+                Spacer(Modifier.width(6.dp))
+            }
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(tint.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (!item.emoji.isNullOrBlank()) {
+                    Text(item.emoji, fontSize = 18.sp)
+                } else {
+                    Icon(Icons.Filled.Folder, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+                }
+                if (item.share != null) ShareBadge(Modifier.align(Alignment.BottomEnd).size(14.dp))
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    item.name,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    metaFor(item),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onClick = onMoreClick, enabled = !selectionMode, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    Icons.Filled.MoreVert,
+                    contentDescription = "Mais opções".tr(),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+    }
+}
+
+// Miniatura de documento: ícone colorido da extensão (PDF, TXT, APK…), como na web.
+@Composable
+private fun DocPlaceholder(item: BrowseItem.File, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        FileTypeIcon(item, Modifier.fillMaxHeight(0.62f))
     }
 }
 

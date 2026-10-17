@@ -195,6 +195,32 @@ object I18nRedesign {
         r("podes adicionar um emoji depois", "you can add an emoji later", "vous pourrez ajouter un emoji plus tard", "puedes añadir un emoji después"),
         r("um item", "an item", "un élément", "un elemento"),
         r("Últimos 7 dias", "Last 7 days", "7 derniers jours", "Últimos 7 días"),
+        // Definições (redesign)
+        r("Nome, e-mail e fotografia", "Name, email and photo", "Nom, e-mail et photo", "Nombre, correo y foto"),
+        r("Password de acesso e tokens", "Sign-in password and tokens", "Mot de passe et jetons", "Contraseña de acceso y tokens"),
+        r("Frase-passe e impressão digital da chave", "Passphrase and key fingerprint", "Phrase secrète et empreinte de la clé", "Frase de contraseña y huella de la clave"),
+        r("Sessões ativas", "Active sessions", "Sessions actives", "Sesiones activas"),
+        r("Dispositivos com sessão iniciada", "Devices signed in", "Appareils connectés", "Dispositivos con sesión iniciada"),
+        r("Inícios de sessão e alterações", "Sign-ins and changes", "Connexions et modifications", "Inicios de sesión y cambios"),
+        r("Bloqueio da app", "App lock", "Verrouillage de l'app", "Bloqueo de la app"),
+        r("Impressão digital e PIN", "Fingerprint and PIN", "Empreinte digitale et PIN", "Huella digital y PIN"),
+        r("Plano e ajuda", "Plan and help", "Forfait et aide", "Plan y ayuda"),
+        r("Plano e pagamentos", "Plan and payments", "Forfait et paiements", "Plan y pagos"),
+        r("Donativos e histórico", "Donations and history", "Dons et historique", "Donaciones e historial"),
+        r("Ajuda e suporte", "Help and support", "Aide et assistance", "Ayuda y soporte"),
+        r("Perguntas frequentes e contacto", "FAQ and contact", "FAQ et contact", "Preguntas frecuentes y contacto"),
+        r("Backup automático", "Automatic backup", "Sauvegarde automatique", "Copia automática"),
+        r("Ativo · %s", "On · %s", "Activée · %s", "Activa · %s"),
+        r("Desativado · toca para configurar", "Off · tap to set up", "Désactivée · touchez pour configurer", "Desactivada · toca para configurar"),
+        r("fotos e vídeos deste telemóvel", "photos and videos from this phone", "photos et vidéos de ce téléphone", "fotos y vídeos de este teléfono"),
+        r("vídeos deste telemóvel", "videos from this phone", "vidéos de ce téléphone", "vídeos de este teléfono"),
+        r("fotos deste telemóvel", "photos from this phone", "photos de ce téléphone", "fotos de este teléfono"),
+        // Secções da lista/grelha
+        r("Ficheiros", "Files", "Fichiers", "Archivos"),
+        r("1 pasta", "1 folder", "1 dossier", "1 carpeta"),
+        r("%d pastas", "%d folders", "%d dossiers", "%d carpetas"),
+        r("Mostrar secção", "Show section", "Afficher la section", "Mostrar sección"),
+        r("Ocultar secção", "Hide section", "Masquer la section", "Ocultar sección"),
     )
 
     val en: Map<String, String> = rows.associate { it[0] to it[1] }

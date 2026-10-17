@@ -1,5 +1,9 @@
 package co.golink.tester.ui.screens.settings
 
+import androidx.compose.foundation.border
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.HelpOutline
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
@@ -181,6 +185,7 @@ fun SettingsScreen(
 ) {
     val user by viewModel.user.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val backupState by viewModel.autoBackupState.collectAsStateWithLifecycle()
     val backendUrl by viewModel.backendUrl.collectAsStateWithLifecycle()
     val e2eUnlocked by viewModel.e2eUnlocked.collectAsStateWithLifecycle()
     val snackbarHost = remember { SnackbarHostState() }
@@ -292,6 +297,7 @@ fun SettingsScreen(
                     user = user,
                     storage = state.storage,
                     activeSessions = state.sessions.size,
+                    backup = backupState,
                     onNavigate = { route = it },
                     onOpenAutoBackup = onOpenAutoBackup,
                     onOpenSupport = onOpenSupport,
@@ -416,6 +422,7 @@ private fun MenuPane(
     user: User?,
     storage: co.golink.tester.domain.settings.StorageUsage?,
     activeSessions: Int,
+    backup: co.golink.tester.data.backup.AutoBackupState,
     onNavigate: (SettingsRoute) -> Unit,
     onOpenAutoBackup: () -> Unit,
     onOpenSupport: (admin: Boolean) -> Unit,
@@ -475,21 +482,25 @@ private fun MenuPane(
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         user?.let { u ->
+            // Cartão de perfil (mockup): avatar, nome, e-mail, › para o Perfil e espaço usado.
             Surface(
-                shape = RoundedCornerShape(22.dp),
+                shape = RoundedCornerShape(18.dp),
                 color = settingsCardColor(),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onNavigate(SettingsRoute.Profile) }
+                    .padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 14.dp),
             ) {
                 // Clicar no avatar → escolher/recortar/enviar nova imagem.
                 Box(
                     modifier = Modifier
-                        .size(56.dp)
+                        .size(52.dp)
                         .clip(CircleShape)
                         .clickable {
                             avatarPicker.launch(
@@ -503,7 +514,7 @@ private fun MenuPane(
                     if (u.avatar != null) {
                         AsyncImage(
                             model = u.avatar,
-                            contentDescription = null,
+                            contentDescription = "Alterar imagem".tr(),
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize().clip(CircleShape),
                         )
@@ -512,32 +523,16 @@ private fun MenuPane(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                                .background(MaterialTheme.colorScheme.onSurface),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
-                                u.name.take(1).uppercase(),
-                                style = MaterialTheme.typography.titleLarge,
+                                u.name.split(' ').filter { it.isNotBlank() }.take(2).joinToString("") { it.take(1) }.uppercase().ifBlank { "?" },
+                                style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = MaterialTheme.colorScheme.surface,
                             )
                         }
-                    }
-                    // Selo de câmara no canto.
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .size(20.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Filled.PhotoCamera,
-                            contentDescription = "Alterar imagem".tr(),
-                            tint = Color.White,
-                            modifier = Modifier.size(12.dp),
-                        )
                     }
                 }
                 Spacer(Modifier.width(14.dp))
@@ -545,7 +540,7 @@ private fun MenuPane(
                     Text(
                         u.name,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -557,20 +552,11 @@ private fun MenuPane(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                u.planName?.let { plan ->
-                    Spacer(Modifier.width(8.dp))
-                    Badge(
-                        containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                        contentColor = MaterialTheme.colorScheme.primary,
-                    ) {
-                        Text(
-                            plan,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        )
-                    }
-                }
+                Icon(
+                    Icons.Filled.ChevronRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                )
             }
             // Espaço usado, com a cor do nível (verde / âmbar / vermelho).
             storage?.let { st ->
@@ -579,47 +565,55 @@ private fun MenuPane(
                     co.golink.tester.domain.settings.StorageLevel.WARNING -> SettingsColors.Amber
                     else -> SettingsColors.Green
                 }
-                Spacer(Modifier.height(14.dp))
-                Row(modifier = Modifier.fillMaxWidth().clickable { onNavigate(SettingsRoute.Storage) }) {
-                    Text(
-                        "%s de %s".tr().format(st.used, st.capacity),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(
-                        "${st.percentage.toInt()}%",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onNavigate(SettingsRoute.Storage) }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                ) {
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "%s de %s".tr().format(st.used, st.capacity),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            "${st.percentage.toInt()}%",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { (st.percentage / 100f).coerceIn(0f, 1f) },
                         color = barColor,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        strokeCap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        gapSize = 0.dp,
+                        drawStopIndicator = {},
+                        modifier = Modifier.fillMaxWidth().height(6.dp),
                     )
                 }
-                Spacer(Modifier.height(6.dp))
-                androidx.compose.material3.LinearProgressIndicator(
-                    progress = { (st.percentage / 100f).coerceIn(0f, 1f) },
-                    color = barColor,
-                    trackColor = barColor.copy(alpha = 0.15f),
-                    strokeCap = androidx.compose.ui.graphics.StrokeCap.Round,
-                    modifier = Modifier.fillMaxWidth().height(6.dp),
-                )
             }
             }
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
 
-        AutoBackupFeaturedRow(onClick = onOpenAutoBackup)
+        AutoBackupFeaturedRow(backup = backup, onClick = onOpenAutoBackup)
 
         Spacer(Modifier.height(20.dp))
 
         SettingsGroup(title = "Conta".tr()) {
-            SettingsNavRow(Icons.Outlined.AccountCircle, SettingsColors.Blue, "Perfil".tr(), "Nome e detalhes da conta".tr()) { onNavigate(SettingsRoute.Profile) }
-            SettingsNavRow(Icons.Outlined.Lock, SettingsColors.Indigo, "Password", "Password, email e tokens".tr()) { onNavigate(SettingsRoute.Password) }
-            SettingsNavRow(Icons.Outlined.VpnKey, SettingsColors.Green, "Encriptação".tr(), "Impressão da chave e passphrase".tr()) { onNavigate(SettingsRoute.Encryption) }
+            SettingsNavRow(Icons.Outlined.Person, SettingsColors.Blue, "Perfil".tr(), "Nome, e-mail e fotografia".tr()) { onNavigate(SettingsRoute.Profile) }
+            SettingsNavRow(Icons.Outlined.Lock, SettingsColors.Indigo, "Password", "Password de acesso e tokens".tr()) { onNavigate(SettingsRoute.Password) }
+            SettingsNavRow(Icons.Outlined.VpnKey, SettingsColors.Green, "Encriptação".tr(), "Frase-passe e impressão digital da chave".tr()) { onNavigate(SettingsRoute.Encryption) }
             SettingsNavRow(
                 Icons.Outlined.CloudQueue, SettingsColors.Teal, "Armazenamento".tr(), "Espaço utilizado e disponível".tr(),
-                trailing = storage?.let { "${it.percentage.toInt()}%" }, showDivider = false,
+                showDivider = false,
             ) { onNavigate(SettingsRoute.Storage) }
         }
 
@@ -627,33 +621,51 @@ private fun MenuPane(
 
         SettingsGroup(title = "Segurança".tr()) {
             SettingsNavRow(
-                Icons.Outlined.Devices, SettingsColors.Orange, "Sessões".tr(), "Dispositivos e sessões activas".tr(),
+                Icons.Outlined.Devices, SettingsColors.Orange, "Sessões ativas".tr(), "Dispositivos com sessão iniciada".tr(),
                 trailing = activeSessions.takeIf { it > 0 }?.toString(),
             ) { onNavigate(SettingsRoute.Sessions) }
-            SettingsNavRow(Icons.Outlined.Shield, SettingsColors.Red, "Atividade de segurança".tr(), "Inícios de sessão e alterações à conta".tr()) { onNavigate(SettingsRoute.SecurityActivity) }
-            SettingsNavRow(Icons.Outlined.ShieldMoon, SettingsColors.Purple, "Segurança da app".tr(), "Biométrico e PIN".tr(), showDivider = false) { onNavigate(SettingsRoute.AppSecurity) }
+            SettingsNavRow(Icons.Outlined.Shield, SettingsColors.Red, "Atividade de segurança".tr(), "Inícios de sessão e alterações".tr()) { onNavigate(SettingsRoute.SecurityActivity) }
+            SettingsNavRow(Icons.Outlined.Fingerprint, SettingsColors.Purple, "Bloqueio da app".tr(), "Impressão digital e PIN".tr(), showDivider = false) { onNavigate(SettingsRoute.AppSecurity) }
         }
 
         Spacer(Modifier.height(20.dp))
 
-        SettingsGroup(title = "Faturação e ajuda".tr()) {
+        SettingsGroup(title = "Plano e ajuda".tr()) {
             val hasSupport = user?.role != "admin"
-            SettingsNavRow(Icons.Outlined.Receipt, SettingsColors.Amber, "Faturação".tr(), "Plano e histórico de transações".tr(), showDivider = hasSupport) { onNavigate(SettingsRoute.Billing) }
+            SettingsNavRow(Icons.Outlined.CreditCard, SettingsColors.Amber, "Plano e pagamentos".tr(), "Donativos e histórico".tr(), showDivider = hasSupport) { onNavigate(SettingsRoute.Billing) }
             // Como na web: o admin não abre tickets. A Administração e o Support Desk
             // vivem agora na gaveta (toggle Drive | Admin / Support).
             if (hasSupport) {
-                SettingsNavRow(Icons.Outlined.SupportAgent, SettingsColors.Pink, "Suporte".tr(), "Os teus tickets de suporte".tr(), showDivider = false) { onOpenSupport(false) }
+                SettingsNavRow(Icons.Outlined.HelpOutline, SettingsColors.Pink, "Ajuda e suporte".tr(), "Perguntas frequentes e contacto".tr(), showDivider = false) { onOpenSupport(false) }
             }
         }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(20.dp))
 
-        SettingsOutlinedButton(
-            text = "Terminar sessão".tr(),
-            onClick = { showLogoutConfirm = true },
-            destructive = true,
-            icon = Icons.Filled.Logout,
-        )
+        // Terminar sessão: linha vermelha num cartão próprio (mockup).
+        Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = settingsCardColor(),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showLogoutConfirm = true }
+                    .padding(horizontal = 16.dp, vertical = 15.dp),
+            ) {
+                Icon(Icons.Filled.Logout, contentDescription = null, tint = SettingsColors.Red, modifier = Modifier.size(21.dp))
+                Spacer(Modifier.width(16.dp))
+                Text(
+                    "Terminar sessão".tr(),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = SettingsColors.Red,
+                )
+            }
+        }
 
         // Zona de perigo: escondida para admins e, para os restantes, atrás de um
         // link discreto que é preciso abrir antes de ver o botão de eliminação.
@@ -699,6 +711,14 @@ private fun MenuPane(
             }
         }
 
+        Spacer(Modifier.height(20.dp))
+        Text(
+            "GoLink · v${co.golink.tester.BuildConfig.VERSION_NAME}",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
         Spacer(Modifier.height(16.dp))
     }
 }
@@ -778,73 +798,66 @@ private fun MenuDivider() {
 }
 
 @Composable
-private fun AutoBackupFeaturedRow(onClick: () -> Unit) {
+private fun AutoBackupFeaturedRow(backup: co.golink.tester.data.backup.AutoBackupState, onClick: () -> Unit) {
+    val on = backup.enabled
+    val what = when {
+        backup.includeImages && backup.includeVideos -> "fotos e vídeos deste telemóvel".tr()
+        backup.includeVideos -> "vídeos deste telemóvel".tr()
+        else -> "fotos deste telemóvel".tr()
+    }
+    // Cartão claro (mockup): mosaico verde, estado e indicador ✓.
     Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = Color.Transparent,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(
-                androidx.compose.ui.graphics.Brush.linearGradient(
-                    listOf(co.golink.tester.ui.theme.BrandGreen, co.golink.tester.ui.theme.BrandGreenDark),
-                ),
-            )
-            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(18.dp),
+        color = settingsCardColor(),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+        modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
         ) {
             Box(
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color.White.copy(alpha = 0.22f)),
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(SettingsColors.Green.copy(alpha = 0.14f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    Icons.Outlined.CloudUpload,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(26.dp),
-                )
+                Icon(Icons.Outlined.CloudUpload, contentDescription = null, tint = SettingsColors.Green, modifier = Modifier.size(22.dp))
             }
             Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "Backups Automáticos".tr(),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = Color.White.copy(alpha = 0.22f),
-                    ) {
-                        Text(
-                            "NOVO",
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(2.dp))
                 Text(
-                    "Copia as tuas fotos e vídeos automaticamente.".tr(),
+                    "Backup automático".tr(),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    if (on) "Ativo · %s".tr().format(what) else "Desativado · toca para configurar".tr(),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.9f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
-            Icon(
-                Icons.Filled.ChevronRight,
-                contentDescription = null,
-                tint = Color.White,
-            )
+            Spacer(Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(if (on) SettingsColors.Green else Color.Transparent)
+                    .border(
+                        1.5.dp,
+                        if (on) SettingsColors.Green else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                        RoundedCornerShape(6.dp),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (on) Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+            }
         }
     }
 }

@@ -1,5 +1,7 @@
 package co.golink.tester.ui.screens.browse
 
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import co.golink.tester.ui.components.SpeedDialFab
 import co.golink.tester.ui.components.drawer.AdaptiveNavigationDrawer
 import co.golink.tester.ui.components.drawer.AppDrawerContent
@@ -768,6 +770,11 @@ fun BrowseScreen(
                             val displayed = remember(state.items, state.filesOnly) {
                                 if (state.filesOnly) state.items.filterIsInstance<BrowseItem.File>() else state.items
                             }
+                            // Secções recolhíveis (Pastas / meses / Ficheiros), como na web.
+                            var collapsed by remember(state.mode) { mutableStateOf(setOf<String>()) }
+                            val toggleSection: (String) -> Unit = { k -> collapsed = if (k in collapsed) collapsed - k else collapsed + k }
+                            val byDate = state.sortMode == SortMode.DATE_DESC || state.sortMode == SortMode.DATE_ASC
+                            val sections = remember(displayed, byDate) { browseSections(displayed, byDate) }
                             if (state.viewMode == ViewMode.GRID) {
                                 val gridState = rememberLazyGridState()
                                 val shouldLoadMore by remember {
@@ -788,24 +795,28 @@ fun BrowseScreen(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
-                                    // Ordenado por data: secções "Setembro 2026 · 3 vídeos" (como na web);
-                                    // pastas à cabeça, sem título. Por nome: grelha plana.
-                                    val byMonth = state.sortMode == SortMode.DATE_DESC || state.sortMode == SortMode.DATE_ASC
-                                    val sections = if (byMonth) monthSections(displayed) else listOf(MonthSection(null, null, displayed))
+                                    // "Pastas" (cartões compactos) + secções por mês (data) ou
+                                    // "Ficheiros" (nome), recolhíveis — como na web.
                                     sections.forEach { section ->
-                                    val sectionItems = section.items
+                                    val isCollapsed = section.key in collapsed
                                     if (section.title != null) {
                                         item(
-                                            key = "month-${section.title}",
+                                            key = "sec-${section.key}",
                                             span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) },
                                             contentType = "month",
                                         ) {
-                                            MonthHeader(section.title, section.count, Modifier.padding(top = 12.dp, bottom = 2.dp))
+                                            MonthHeader(
+                                                section.title, section.count,
+                                                Modifier.padding(top = 10.dp, bottom = 2.dp),
+                                                collapsed = isCollapsed,
+                                                onToggle = { toggleSection(section.key) },
+                                            )
                                         }
                                     }
-                                    items(sectionItems, key = { it.id }) { item ->
+                                    if (!isCollapsed) items(section.items, key = { it.id }, contentType = { if (section.folders) "folder" else "file" }) { item ->
                                         BrowseItemGridCard(
                                             item = item,
+                                            compactFolder = section.folders,
                                             selected = state.selectedIds.contains(item.id),
                                             selectionMode = state.selectMode,
                                             onClick = { onItemClick(item) },
@@ -839,16 +850,20 @@ fun BrowseScreen(
                                     contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp),
                                     verticalArrangement = Arrangement.spacedBy(6.dp),
                                 ) {
-                                    // Ordenado por data: as mesmas secções por mês da grelha.
-                                    val listByMonth = state.sortMode == SortMode.DATE_DESC || state.sortMode == SortMode.DATE_ASC
-                                    val listSections = if (listByMonth) monthSections(displayed) else listOf(MonthSection(null, null, displayed))
-                                    listSections.forEach { section ->
+                                    // As mesmas secções recolhíveis da grelha.
+                                    sections.forEach { section ->
+                                    val isCollapsed = section.key in collapsed
                                     if (section.title != null) {
-                                        item(key = "month-${section.title}", contentType = "month") {
-                                            MonthHeader(section.title, section.count, Modifier.padding(top = 10.dp, bottom = 2.dp))
+                                        item(key = "sec-${section.key}", contentType = "month") {
+                                            MonthHeader(
+                                                section.title, section.count,
+                                                Modifier.padding(top = 8.dp, bottom = 2.dp),
+                                                collapsed = isCollapsed,
+                                                onToggle = { toggleSection(section.key) },
+                                            )
                                         }
                                     }
-                                    items(section.items, key = { it.id }) { item ->
+                                    if (!isCollapsed) items(section.items, key = { it.id }) { item ->
                                         BrowseItemRow(
                                             item = item,
                                             selected = state.selectedIds.contains(item.id),
@@ -1297,44 +1312,90 @@ private fun selectionSummary(selected: List<BrowseItem>): String? {
     return if (bytes > 0) "$label · ${co.golink.tester.ui.common.formatBytes(bytes)}" else label
 }
 
-private data class MonthSection(val title: String?, val count: String?, val items: List<BrowseItem>)
+private data class MonthSection(
+    val key: String,
+    val title: String?,
+    val count: String?,
+    val items: List<BrowseItem>,
+    val folders: Boolean = false,
+)
 
-// Por mês (grelha e lista): pastas primeiro (sem título), depois "Setembro 2026" + "3 vídeos".
-private fun monthSections(items: List<BrowseItem>): List<MonthSection> {
+// Secções (grelha e lista, como na web): "Pastas" à cabeça; ficheiros por mês
+// quando ordenado por data, senão numa secção "Ficheiros" (só se houver pastas).
+private fun browseSections(items: List<BrowseItem>, byDate: Boolean): List<MonthSection> {
     val folders = items.filterIsInstance<BrowseItem.Folder>()
     val files = items.filterIsInstance<BrowseItem.File>()
-    val groups = files.groupBy { (it.createdAtIso ?: it.updatedAtIso)?.take(7) ?: "" }
     val out = mutableListOf<MonthSection>()
-    if (folders.isNotEmpty()) out += MonthSection(null, null, folders)
-    groups.forEach { (_, group) ->
+    if (folders.isNotEmpty()) {
+        val n = folders.size
+        out += MonthSection("folders", "Pastas".tr(), if (n == 1) "1 pasta".tr() else "%d pastas".tr().format(n), folders, folders = true)
+    }
+    if (files.isEmpty()) return out
+    if (!byDate) {
+        out += if (folders.isEmpty()) MonthSection("files", null, null, files)
+        else MonthSection("files", "Ficheiros".tr(), typeBreakdown(files), files)
+        return out
+    }
+    files.groupBy { (it.createdAtIso ?: it.updatedAtIso)?.take(7) ?: "" }.forEach { (ym, group) ->
         val first = group.first()
         val month = co.golink.tester.ui.common.formatMonth(first.createdAtIso ?: first.updatedAtIso).ifEmpty { "—" }
-        val types = group.map { it.type }.distinct()
-        val count = when {
-            types == listOf("video") -> if (group.size == 1) "1 vídeo".tr() else "%d vídeos".tr().format(group.size)
-            types == listOf("image") -> if (group.size == 1) "1 imagem".tr() else "%d imagens".tr().format(group.size)
-            else -> if (group.size == 1) "1 item".tr() else "%d itens".tr().format(group.size)
-        }
-        out += MonthSection(month, count, group)
+        out += MonthSection("m-$ym", month, typeBreakdown(group), group)
     }
     return out
 }
 
-// Título de secção bem visível: mês a negrito, contagem em pílula e uma linha.
+// "6 vídeos, 1 documento" (contagem por tipo, como na web).
+private fun typeBreakdown(files: List<BrowseItem.File>): String {
+    val order = listOf("video", "image", "audio", "doc")
+    val counts = files.groupingBy { if (it.type in order) it.type else "doc" }.eachCount()
+    return order.mapNotNull { t ->
+        val n = counts[t] ?: return@mapNotNull null
+        when (t) {
+            "video" -> if (n == 1) "1 vídeo".tr() else "%d vídeos".tr().format(n)
+            "image" -> if (n == 1) "1 imagem".tr() else "%d imagens".tr().format(n)
+            "audio" -> if (n == 1) "1 áudio".tr() else "%d áudios".tr().format(n)
+            else -> if (n == 1) "1 documento".tr() else "%d documentos".tr().format(n)
+        }
+    }.joinToString(", ")
+}
+
+// Título de secção: chevron (recolher), título a negrito, contagem e uma linha.
 @Composable
-private fun MonthHeader(title: String, count: String?, modifier: Modifier = Modifier) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+private fun MonthHeader(
+    title: String,
+    count: String?,
+    modifier: Modifier = Modifier,
+    collapsed: Boolean = false,
+    onToggle: (() -> Unit)? = null,
+) {
+    val rotation by androidx.compose.animation.core.animateFloatAsState(if (collapsed) -90f else 0f, label = "sec-chevron")
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+            .then(if (onToggle != null) Modifier.clickable(onClick = onToggle) else Modifier)
+            .padding(horizontal = 4.dp, vertical = 4.dp),
+    ) {
+        if (onToggle != null) {
+            Icon(
+                Icons.Filled.KeyboardArrowDown,
+                contentDescription = if (collapsed) "Mostrar secção".tr() else "Ocultar secção".tr(),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp).graphicsLayer { rotationZ = rotation },
+            )
+            Spacer(Modifier.width(4.dp))
+        }
         Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.2).sp)
         if (count != null) {
             Spacer(Modifier.width(8.dp))
             Text(
                 count,
-                fontSize = 11.5.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), androidx.compose.foundation.shape.RoundedCornerShape(50))
-                    .padding(horizontal = 9.dp, vertical = 2.dp),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
             )
         }
         Spacer(Modifier.width(10.dp))

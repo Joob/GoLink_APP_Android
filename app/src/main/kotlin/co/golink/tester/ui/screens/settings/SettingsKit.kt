@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.settings
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -86,10 +87,11 @@ fun SettingsIconTile(icon: ImageVector, color: Color, size: Int = 36, enabled: B
         modifier = Modifier
             .size(size.dp)
             .clip(RoundedCornerShape((size * 0.3f).dp))
-            .background(color.copy(alpha = 0.14f * alpha)),
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f * alpha)),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = color.copy(alpha = alpha), modifier = Modifier.size((size * 0.55f).dp))
+        // Redesign: ícones neutros (sem cor por categoria), como na web.
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f * alpha), modifier = Modifier.size((size * 0.55f).dp))
     }
 }
 
@@ -97,11 +99,10 @@ fun SettingsIconTile(icon: ImageVector, color: Color, size: Int = 36, enabled: B
 @Composable
 fun SettingsSectionTitle(text: String, modifier: Modifier = Modifier) {
     Text(
-        text.uppercase(),
-        modifier = modifier.padding(start = 6.dp, bottom = 8.dp, top = 4.dp),
-        style = MaterialTheme.typography.labelMedium,
+        text,
+        modifier = modifier.padding(start = 4.dp, bottom = 8.dp, top = 4.dp),
+        style = MaterialTheme.typography.labelLarge,
         fontWeight = FontWeight.SemiBold,
-        letterSpacing = MaterialTheme.typography.labelMedium.letterSpacing * 1.6f,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
@@ -141,15 +142,16 @@ fun SettingsNavRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(enabled = enabled, onClick = onClick)
-                .padding(horizontal = 14.dp, vertical = 13.dp),
+                .padding(horizontal = 16.dp, vertical = 13.dp),
         ) {
-            SettingsIconTile(icon, color, enabled = enabled)
-            Spacer(Modifier.width(14.dp))
+            // Ícone simples, cinzento (mockup).
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f * alpha), modifier = Modifier.size(21.dp))
+            Spacer(Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     title,
                     style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Medium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -169,8 +171,10 @@ fun SettingsNavRow(
                 Text(
                     trailing,
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
+                Spacer(Modifier.width(4.dp))
             }
             Icon(
                 Icons.Filled.ChevronRight,
@@ -182,7 +186,7 @@ fun SettingsNavRow(
             HorizontalDivider(
                 thickness = 0.5.dp,
                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f),
-                modifier = Modifier.padding(start = 64.dp),
+                modifier = Modifier.padding(start = 53.dp, end = 16.dp),
             )
         }
     }
@@ -220,18 +224,19 @@ fun SettingsPaneHeader(icon: ImageVector, color: Color, title: String, subtitle:
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(Brush.linearGradient(listOf(color.copy(alpha = 0.16f), color.copy(alpha = 0.04f))))
+            .clip(RoundedCornerShape(18.dp))
+            .background(settingsCardColor())
+            .border(settingsCardBorder(), RoundedCornerShape(18.dp))
             .padding(16.dp),
     ) {
         Box(
             modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(color),
+                .size(44.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp))
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp))
         }
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
