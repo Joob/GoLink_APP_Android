@@ -471,25 +471,30 @@ private fun FolderTile(
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         border = selectionBorder(selected && selectionMode),
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 10.dp),
-        ) {
-            Box(contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 10.dp),
+            ) {
                 if (!item.emoji.isNullOrBlank()) Text(item.emoji, fontSize = 28.sp)
                 else Icon(Icons.Filled.Folder, contentDescription = null, tint = tint, modifier = Modifier.size(36.dp))
-                if (selectionMode) {
-                    Checkbox(checked = selected, onCheckedChange = { onClick() }, modifier = Modifier.align(Alignment.TopStart).size(18.dp))
-                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    item.name,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                item.name,
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // Seleção: quadrado no canto do cartão, como nos ficheiros.
+            if (selectionMode) {
+                Checkbox(
+                    checked = selected,
+                    onCheckedChange = { onClick() },
+                    modifier = Modifier.align(Alignment.TopStart).padding(6.dp).size(20.dp),
+                )
+            }
         }
     }
 }

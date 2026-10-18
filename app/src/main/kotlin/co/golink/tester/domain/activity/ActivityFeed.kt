@@ -39,6 +39,8 @@ data class FeedEntryDto(
     val folder: BrowseEntryEnvelope? = null,
     val folder_owner_id: String? = null,
     val items: List<FeedBatchItemDto> = emptyList(),
+    // "JSON · PDF" (lotes de transferências).
+    val extensions: List<String> = emptyList(),
 )
 
 @Serializable
@@ -75,6 +77,7 @@ data class FeedEntry(
     val folder: BrowseItem.Folder? = null,
     val folderOwnerId: String? = null,
     val files: List<BrowseItem> = emptyList(),
+    val extensions: List<String> = emptyList(),
 )
 
 @Immutable

@@ -108,6 +108,7 @@ class ActivityRepository @Inject constructor(
             folder = folderItem,
             folderOwnerId = folder_owner_id,
             files = items.mapNotNull { it.item?.data?.decrypted()?.toItem() },
+            extensions = extensions,
         )
     }
 

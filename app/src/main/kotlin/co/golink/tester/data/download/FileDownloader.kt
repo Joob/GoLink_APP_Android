@@ -146,16 +146,18 @@ class FileDownloader @Inject constructor(
                 onProgress(loaded, response.body?.contentLength() ?: -1L)
             })
             body.use { input ->
-                // Server sends Content-Disposition with the correct name + extension.
-                // Fall back to appending extension from basename if name lacks a dot.
+                // O nome do próprio item (já decifrado na app) manda: com nomes E2E
+                // o servidor só conhece o nome cifrado ("•"), e nomes com acentos
+                // chegavam estragados no header. O Content-Disposition fica como
+                // último recurso (item sem nome).
                 val serverName = parseContentDispositionFilename(response.header("Content-Disposition"))
                 val resolvedName = when {
-                    serverName != null -> serverName
-                    basename != null && !name.contains('.') -> {
-                        val ext = basename.substringAfterLast('.', "")
-                        if (ext.isNotBlank() && ext.length <= 5) "$name.$ext" else name
+                    name.isNotBlank() && name != "•" -> {
+                        val ext = basename?.substringAfterLast('.', "").orEmpty()
+                        if (!name.contains('.') && ext.isNotBlank() && ext.length <= 5) "$name.$ext" else name
                     }
-                    else -> name
+                    serverName != null -> serverName
+                    else -> "download"
                 }
                 // Garantir SEMPRE a extensão correta a partir do mimetype (que
                 // guarda a extensão, ex.: "MP4") — o nome/Content-Disposition

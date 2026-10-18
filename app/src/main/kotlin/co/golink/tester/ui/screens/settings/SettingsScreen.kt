@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.settings
 
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.border
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.HelpOutline
@@ -181,6 +182,8 @@ fun SettingsScreen(
     onOpenAutoBackup: () -> Unit = {},
     onOpenSecurityActivity: () -> Unit = {},
     onOpenSupport: (admin: Boolean) -> Unit = {},
+    // "Libertar espaço" (Armazenamento): volta aos ficheiros e abre o Lixo.
+    onOpenTrash: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val user by viewModel.user.collectAsStateWithLifecycle()
@@ -246,13 +249,13 @@ fun SettingsScreen(
     val title = when (route) {
         SettingsRoute.Menu -> "Definições".tr()
         SettingsRoute.Profile -> "Perfil".tr()
-        SettingsRoute.Password -> "Password"
+        SettingsRoute.Password -> "Password e acesso".tr()
         SettingsRoute.Encryption -> "Encriptação".tr()
         SettingsRoute.Storage -> "Armazenamento".tr()
-        SettingsRoute.Sessions -> "Sessões".tr()
+        SettingsRoute.Sessions -> "Sessões ativas".tr()
         SettingsRoute.SecurityActivity -> "Atividade de segurança".tr()
-        SettingsRoute.Billing -> "Faturação".tr()
-        SettingsRoute.AppSecurity -> "Segurança da app".tr()
+        SettingsRoute.Billing -> "Plano e donativos".tr()
+        SettingsRoute.AppSecurity -> "Bloqueio da app".tr()
         SettingsRoute.Dashboard -> "Painel".tr()
         SettingsRoute.Analytics -> "Análises".tr()
         SettingsRoute.Users -> "Utilizadores".tr()
@@ -308,6 +311,7 @@ fun SettingsScreen(
                     user = user,
                     isUpdating = state.isUpdatingProfile,
                     onUpdateField = viewModel::updateProfileField,
+                    onUpdateAvatar = viewModel::updateAvatar,
                 )
                 SettingsRoute.Password -> PasswordPane(
                     currentEmail = user?.email.orEmpty(),
@@ -341,6 +345,7 @@ fun SettingsScreen(
                     storage = state.storage,
                     isLoading = state.isLoadingStorage,
                     onRefresh = viewModel::loadStorage,
+                    onFreeSpace = onOpenTrash,
                 )
                 SettingsRoute.Sessions -> SessionsPane(
                     sessions = state.sessions,
@@ -724,71 +729,6 @@ private fun MenuPane(
 }
 
 @Composable
-private fun MenuGroup(content: @Composable () -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column { content() }
-    }
-}
-
-@Composable
-private fun MenuRow(
-    icon: ImageVector,
-    title: String,
-    subtitle: String?,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-) {
-    val alpha = if (enabled) 1f else 0.5f
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 14.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f * alpha)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary.copy(alpha = alpha),
-                modifier = Modifier.size(20.dp),
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
-            )
-            if (!subtitle.isNullOrBlank()) {
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
-                )
-            }
-        }
-        Icon(
-            Icons.Filled.ChevronRight,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
-        )
-    }
-}
-
-@Composable
 private fun MenuDivider() {
     HorizontalDivider(
         thickness = 0.5.dp,
@@ -865,11 +805,66 @@ private fun AutoBackupFeaturedRow(backup: co.golink.tester.data.backup.AutoBacku
 @Composable
 private fun SectionLabel(text: String) = SettingsSectionTitle(text)
 
+/** Título de secção dos painéis (cinzento, fora do cartão) com ação opcional à direita. */
+@Composable
+private fun PaneSection(title: String, action: String? = null, onAction: (() -> Unit)? = null) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(start = 4.dp, top = 6.dp)) {
+        Text(
+            title,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        if (action != null && onAction != null) {
+            Text(
+                action,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = SettingsAccent,
+                modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onAction).padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+        }
+    }
+}
+
+/** Cartão branco dos painéis (padding interno opcional). */
+@Composable
+private fun PaneCard(padded: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = settingsCardColor(),
+        border = settingsCardBorderStroke(),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = if (padded) Modifier.padding(16.dp) else Modifier,
+            verticalArrangement = if (padded) Arrangement.spacedBy(12.dp) else Arrangement.Top,
+            content = content,
+        )
+    }
+}
+
+@Composable
+private fun PaneColumn(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        content()
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
 @Composable
 private fun ProfilePane(
     user: User?,
     isUpdating: Boolean,
     onUpdateField: (name: String, value: String) -> Unit,
+    onUpdateAvatar: (ByteArray) -> Unit,
 ) {
     if (user == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -887,151 +882,124 @@ private fun ProfilePane(
     var country by remember(user.id) { mutableStateOf(user.country.orEmpty()) }
     var state by remember(user.id) { mutableStateOf(user.state.orEmpty()) }
     var timezone by remember(user.id) { mutableStateOf(user.timezone.orEmpty()) }
+    var billingOpen by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-    ) {
-        SettingsPaneHeader(Icons.Outlined.AccountCircle, SettingsColors.Blue, "Perfil".tr(), "O teu nome, fuso horário e dados de faturação.".tr())
-        Spacer(Modifier.height(16.dp))
-        // O email muda-se no menu Password (código de verificação), não aqui.
-        SectionLabel("Definições da conta".tr())
-        Surface(
-            shape = RoundedCornerShape(18.dp),
-            color = settingsCardColor(),
-            border = settingsCardBorderStroke(),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = firstName,
-                        onValueChange = { firstName = it },
-                        label = { Text("Primeiro nome".tr()) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f),
-                    )
-                    OutlinedTextField(
-                        value = lastName,
-                        onValueChange = { lastName = it },
-                        label = { Text("Apelido") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                TimezoneDropdown(
-                    value = timezone,
-                    onValueChange = { timezone = it },
-                )
-                Button(
-                    onClick = {
-                        if (firstName.isNotBlank()) onUpdateField("first_name", firstName.trim())
-                        if (lastName.isNotBlank()) onUpdateField("last_name", lastName.trim())
-                        if (timezone.isNotBlank()) onUpdateField("timezone", timezone.trim())
-                    },
-                    enabled = !isUpdating,
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(vertical = 14.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (isUpdating) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            strokeWidth = 2.dp,
+    // Só os campos alterados vão ao servidor; sem alterações o botão fica inativo.
+    val changes = listOf(
+        "first_name" to (firstName to user.firstName.orEmpty()),
+        "last_name" to (lastName to user.lastName.orEmpty()),
+        "timezone" to (timezone to user.timezone.orEmpty()),
+        "address" to (address to user.address.orEmpty()),
+        "city" to (city to user.city.orEmpty()),
+        "postal_code" to (postalCode to user.postalCode.orEmpty()),
+        "state" to (state to user.state.orEmpty()),
+        "country" to (country to user.country.orEmpty()),
+        "phone_number" to (phoneNumber to user.phoneNumber.orEmpty()),
+    ).filter { (_, v) -> v.first.trim() != v.second.trim() && v.first.isNotBlank() }
+    val dirty = changes.isNotEmpty()
+
+    // Fotografia: escolher → recortar → enviar (igual ao menu).
+    var pickedImage by remember { mutableStateOf<android.net.Uri?>(null) }
+    val avatarPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia(),
+    ) { uri -> if (uri != null) pickedImage = uri }
+    pickedImage?.let { uri ->
+        co.golink.tester.ui.components.dialogs.AvatarCropDialog(
+            imageUri = uri,
+            onCancel = { pickedImage = null },
+            onConfirm = { jpeg -> pickedImage = null; onUpdateAvatar(jpeg) },
+        )
+    }
+    val pickAvatar = {
+        avatarPicker.launch(
+            androidx.activity.result.PickVisualMediaRequest(
+                androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly,
+            ),
+        )
+    }
+
+    PaneColumn {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            Box(
+                modifier = Modifier.size(76.dp).clip(CircleShape).clickable(onClick = pickAvatar),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (user.avatar != null) {
+                    AsyncImage(model = user.avatar, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                } else {
+                    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.onSurface), contentAlignment = Alignment.Center) {
+                        Text(
+                            user.name.split(' ').filter { it.isNotBlank() }.take(2).joinToString("") { it.take(1) }.uppercase().ifBlank { "?" },
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.surface,
                         )
-                        Spacer(Modifier.width(8.dp))
                     }
-                    Text("Guardar definições".tr(), fontWeight = FontWeight.SemiBold)
                 }
+            }
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = pickAvatar,
+                shape = RoundedCornerShape(50),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+            ) { Text("Mudar fotografia".tr(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface) }
+        }
+
+        // O e-mail muda-se em "Password e acesso" (código de verificação).
+        PaneSection("Os teus dados".tr())
+        PaneCard {
+            SettingsField("Nome".tr(), firstName, { firstName = it })
+            SettingsField("Apelido".tr(), lastName, { lastName = it }, placeholder = "Opcional".tr())
+            Column {
+                Text("Fuso horário".tr(), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(6.dp))
+                TimezoneDropdown(value = timezone, onValueChange = { timezone = it })
             }
         }
 
-        Spacer(Modifier.height(20.dp))
-        SectionLabel("Informações de faturação".tr())
-        Surface(
-            shape = RoundedCornerShape(18.dp),
-            color = settingsCardColor(),
-            border = settingsCardBorderStroke(),
-            modifier = Modifier.fillMaxWidth(),
+        // Faturação: opcional, recolhida por omissão.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { billingOpen = !billingOpen }
+                .padding(horizontal = 4.dp, vertical = 8.dp),
         ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = address,
-                    onValueChange = { address = it },
-                    label = { Text("Morada") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Dados de faturação".tr(), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Opcional · só para recibos de donativos".tr(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
+            }
+            Icon(
+                if (billingOpen) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        AnimatedVisibility(visible = billingOpen) {
+            PaneCard {
+                SettingsField("Morada".tr(), address, { address = it })
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = city,
-                        onValueChange = { city = it },
-                        label = { Text("Cidade") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f),
-                    )
-                    OutlinedTextField(
-                        value = postalCode,
-                        onValueChange = { postalCode = it },
-                        label = { Text("Código postal".tr()) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f),
-                    )
+                    SettingsField("Cidade".tr(), city, { city = it }, modifier = Modifier.weight(1f))
+                    SettingsField("Código postal".tr(), postalCode, { postalCode = it }, modifier = Modifier.weight(1f))
                 }
-                CountryDropdown(value = country, onValueChange = { country = it })
-                OutlinedTextField(
-                    value = state,
-                    onValueChange = { state = it },
-                    label = { Text("Estado/Região") },
-                    placeholder = { Text("Se aplicável, ex.: Lisboa".tr()) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = phoneNumber,
-                    onValueChange = { phoneNumber = it },
-                    label = { Text("Telefone") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Button(
-                    onClick = {
-                        if (address.isNotBlank()) onUpdateField("address", address.trim())
-                        if (city.isNotBlank()) onUpdateField("city", city.trim())
-                        if (postalCode.isNotBlank()) onUpdateField("postal_code", postalCode.trim())
-                        if (state.isNotBlank()) onUpdateField("state", state.trim())
-                        if (country.isNotBlank()) onUpdateField("country", country.trim())
-                        if (phoneNumber.isNotBlank()) onUpdateField("phone_number", phoneNumber.trim())
-                    },
-                    enabled = !isUpdating,
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(vertical = 14.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (isUpdating) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            strokeWidth = 2.dp,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    Text("Guardar informações".tr(), fontWeight = FontWeight.SemiBold)
+                Column {
+                    Text("País".tr(), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    CountryDropdown(value = country, onValueChange = { country = it })
                 }
+                SettingsField("Estado/Região".tr(), state, { state = it }, placeholder = "Se aplicável, ex.: Lisboa".tr())
+                SettingsField("Telefone".tr(), phoneNumber, { phoneNumber = it }, keyboardType = KeyboardType.Phone)
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        SettingsPrimaryButton(
+            text = if (dirty) "Guardar alterações".tr() else "Sem alterações".tr(),
+            onClick = { changes.forEach { (field, v) -> onUpdateField(field, v.first.trim()) } },
+            enabled = dirty,
+            loading = isUpdating,
+        )
     }
 }
 
@@ -1098,14 +1066,17 @@ private fun TimezoneDropdown(value: String, onValueChange: (String) -> Unit) {
             value = selectedLabel,
             onValueChange = {},
             readOnly = true,
-            label = { Text("Fuso horário (GMT)".tr()) },
             trailingIcon = {
                 Icon(
                     if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
                     contentDescription = null,
                 )
             },
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(10.dp),
+            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                focusedBorderColor = SettingsAccent,
+            ),
             modifier = Modifier.fillMaxWidth(),
         )
         Box(
@@ -1137,14 +1108,17 @@ private fun CountryDropdown(value: String, onValueChange: (String) -> Unit) {
             value = selectedLabel,
             onValueChange = {},
             readOnly = true,
-            label = { Text("País".tr()) },
             trailingIcon = {
                 Icon(
                     if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
                     contentDescription = null,
                 )
             },
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(10.dp),
+            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                focusedBorderColor = SettingsAccent,
+            ),
             modifier = Modifier.fillMaxWidth(),
         )
         Box(
@@ -1254,149 +1228,88 @@ private fun PasswordPane(
         )
     }
 
-    val pink = Color(0xFFEC4899)
+    // Força simples (4 traços): comprimento, maiúsculas+minúsculas, números, símbolos.
+    val strength = listOf(
+        newPassword.length >= MIN_PASSWORD_LENGTH,
+        newPassword.any { it.isUpperCase() } && newPassword.any { it.isLowerCase() },
+        newPassword.any { it.isDigit() },
+        newPassword.any { !it.isLetterOrDigit() },
+    ).count { it }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        SettingsPaneHeader(Icons.Outlined.Lock, SettingsColors.Indigo, "Password e acesso".tr(), "Muda a password, o email da conta e gere tokens de acesso.".tr())
-        // 2FA Card
-        InfoCard(
-            icon = Icons.Outlined.Security,
-            iconTint = if (twoFactorEnabled) Color(0xFF16A34A) else MaterialTheme.colorScheme.primary,
-            iconBg = (if (twoFactorEnabled) Color(0xFF16A34A) else MaterialTheme.colorScheme.primary).copy(alpha = 0.12f),
-            title = "Autenticação de Dois Fatores".tr(),
-            description = if (twoFactorEnabled)
-                "Activa nesta conta — toca em \"Gerir\" para abrir as definições no browser."
-            else
-                "Adicione uma camada extra de segurança. Configura no browser.".tr(),
-            trailing = {
-                Button(
-                    onClick = { show2faInfo = true },
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (twoFactorEnabled) Color(0xFF16A34A) else MaterialTheme.colorScheme.primary,
-                    ),
-                ) { Text(if (twoFactorEnabled) "Gerir" else "Activar".tr(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
-            },
-        )
-
-        // Personal Access Token Card
-        InfoCard(
-            icon = Icons.Outlined.VpnKey,
-            iconTint = MaterialTheme.colorScheme.primary,
-            iconBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-            title = "Token de Acesso Pessoal".tr(),
-            description = if (tokens.isEmpty()) "Você não tem tokens de acesso pessoal criados ainda.".tr()
-            else "Tem ${tokens.size} token${if (tokens.size > 1) "s" else ""} de acesso pessoal.",
-            trailing = {
-                Button(
-                    onClick = { showCreateTokenDialog = true },
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                ) { Text("Criar Token".tr(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
-            },
-        )
-
-        // Newly created token plaintext (shows once)
-        newTokenPlaintext?.let { token ->
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+    PaneColumn {
+        PaneSection("Proteção da conta".tr())
+        PaneCard {
+            Row(verticalAlignment = Alignment.Top) {
+                Icon(
+                    Icons.Outlined.Security,
+                    contentDescription = null,
+                    tint = if (twoFactorEnabled) SettingsAccent else Color(0xFFB45309),
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Verificação em dois passos".tr(), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "Token criado — guarda-o agora, não será mostrado novamente.".tr(),
+                        if (twoFactorEnabled) "Ligada".tr() else "Desligada".tr(),
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
                         fontWeight = FontWeight.SemiBold,
+                        color = if (twoFactorEnabled) SettingsAccent else Color(0xFFB45309),
                     )
-                    Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            token,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.weight(1f),
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        IconButton(onClick = { clipboard.setText(AnnotatedString(token)); onConsumeNewToken() }) {
-                            Icon(Icons.Filled.ContentCopy, contentDescription = "Copiar", tint = MaterialTheme.colorScheme.primary)
-                        }
-                    }
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "Pede um código além da password. Configura-se no browser.".tr(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
+            SettingsPrimaryButton(
+                text = if (twoFactorEnabled) "Gerir no browser".tr() else "Ativar no browser".tr(),
+                onClick = { show2faInfo = true },
+            )
         }
 
-        // Existing tokens list (if any)
-        if (tokens.isNotEmpty()) {
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = settingsCardColor(),
-                border = settingsCardBorderStroke(),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column {
-                    tokens.forEachIndexed { i, token ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(Icons.Outlined.VpnKey, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(token.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                token.last_used_at?.let {
-                                    Text("Último uso: $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                } ?: token.created_at?.let {
-                                    Text("Criado: $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                            IconButton(onClick = { onDeleteToken(token.id) }) {
-                                Icon(Icons.Filled.Delete, contentDescription = "Apagar", tint = MaterialTheme.colorScheme.error)
-                            }
+        PaneSection("Mudar password".tr())
+        PaneCard {
+            SettingsField("Password atual".tr(), current, { current = it }, isPassword = true)
+            Column {
+                SettingsField("Nova password".tr(), newPassword, { newPassword = it }, isPassword = true, isError = tooShort)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    repeat(4) { i ->
+                        val on = newPassword.isNotEmpty() && i < strength
+                        val c = when {
+                            !on -> MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                            strength <= 1 -> MaterialTheme.colorScheme.error
+                            strength == 2 -> Color(0xFFF59E0B)
+                            else -> SettingsAccent
                         }
-                        if (i < tokens.lastIndex) {
-                            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                        }
+                        Box(Modifier.weight(1f).height(4.dp).clip(RoundedCornerShape(2.dp)).background(c))
                     }
                 }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Mínimo 8 caracteres".tr(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (tooShort) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
+            SettingsField(
+                "Confirmar nova password".tr(), confirmation, { confirmation = it }, isPassword = true,
+                isError = mismatch, supportingText = if (mismatch) "Não coincide".tr() else null,
+            )
+            Text(
+                "Por segurança, terminamos a sessão nos outros dispositivos.".tr(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            SettingsPrimaryButton(
+                text = "Guardar nova password".tr(),
+                onClick = { onSubmit(current, newPassword); current = ""; newPassword = ""; confirmation = "" },
+                enabled = canSubmit,
+                loading = isLoading,
+            )
         }
-
-        // CSRF reset card
-        InfoCard(
-            icon = Icons.Outlined.Refresh,
-            iconTint = pink,
-            iconBg = pink.copy(alpha = 0.12f),
-            title = "Redefinir meu CSRF".tr(),
-            description = "Redefinir seu token CSRF pode ajudar a resolver problemas de sessão em algumas situações.".tr(),
-            trailing = {
-                Button(
-                    onClick = onResetCsrf,
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = pink),
-                ) { Text("Resetar meu CSRF", fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
-            },
-        )
 
         EmailChangeSection(
             currentEmail = currentEmail,
@@ -1406,44 +1319,76 @@ private fun PasswordPane(
             onCancel = onCancelEmailChange,
         )
 
-        // Alterar password section
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Alterar password".tr(),
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.SemiBold,
-        )
-
-        PasswordField(label = "Password actual".tr(), value = current, onChange = { current = it })
-        PasswordField(label = "Nova password".tr(), value = newPassword, onChange = { newPassword = it }, isError = tooShort, errorText = if (tooShort) "Mínimo 8 caracteres".tr() else null)
-        PasswordField(label = "Confirmar nova password".tr(), value = confirmation, onChange = { confirmation = it }, isError = mismatch, errorText = if (mismatch) "Não coincide".tr() else null)
-
-        Text(
-            "Por segurança, você será desconectado de outros dispositivos sempre que alterar a password.".tr(),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
-
-        Button(
-            onClick = { onSubmit(current, newPassword); current = ""; newPassword = ""; confirmation = "" },
-            enabled = canSubmit,
-            shape = RoundedCornerShape(28.dp),
-            contentPadding = PaddingValues(vertical = 14.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            if (isLoading) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
-                Spacer(Modifier.width(8.dp))
+        PaneSection("Tokens de acesso pessoal".tr(), action = "+ " + "Criar".tr(), onAction = { showCreateTokenDialog = true })
+        // Token novo: mostrado uma única vez.
+        newTokenPlaintext?.let { token ->
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = SettingsAccent.copy(alpha = 0.08f),
+                border = BorderStroke(1.dp, SettingsAccent.copy(alpha = 0.3f)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        "Token criado — guarda-o agora, não será mostrado novamente.".tr(),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(token, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        IconButton(onClick = { clipboard.setText(AnnotatedString(token)); onConsumeNewToken() }) {
+                            Icon(Icons.Filled.ContentCopy, contentDescription = "Copiar".tr(), tint = SettingsAccent)
+                        }
+                    }
+                }
             }
-            Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Guardar nova password".tr(), fontWeight = FontWeight.SemiBold)
+        }
+        PaneCard(padded = false) {
+            if (tokens.isEmpty()) {
+                Text(
+                    if (isLoadingTokens) "A carregar…".tr() else "Ainda não criaste tokens.".tr(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(16.dp),
+                )
+            }
+            tokens.forEachIndexed { i, token ->
+                SettingsListRow(
+                    icon = Icons.Outlined.VpnKey,
+                    title = token.name,
+                    subtitle = token.last_used_at?.let { "Último uso: %s".tr().format(it) }
+                        ?: token.created_at?.let { "Criado: %s".tr().format(it) },
+                    showDivider = i < tokens.lastIndex,
+                ) {
+                    Text(
+                        "Revogar".tr(),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { onDeleteToken(token.id) }.padding(6.dp),
+                    )
+                }
+            }
         }
 
-        Spacer(Modifier.height(16.dp))
+        PaneSection("Resolução de problemas".tr())
+        PaneCard {
+            Column {
+                Text("Repor token de sessão (CSRF)".tr(), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Usa só se tiveres erros ao iniciar sessão ou ao guardar.".tr(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlinedButton(
+                onClick = onResetCsrf,
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Repor token".tr(), color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold) }
+        }
     }
 }
 
@@ -1481,42 +1426,27 @@ private fun EmailChangeSection(
         }
     }
 
-    Spacer(Modifier.height(8.dp))
-    Text(
-        "Endereço de email".tr(),
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
-        fontWeight = FontWeight.SemiBold,
-    )
+    PaneSection("E-mail da conta".tr())
 
     if (!editing && !inCodeStep) {
-        InfoCard(
-            icon = Icons.Outlined.Email,
-            iconTint = MaterialTheme.colorScheme.primary,
-            iconBg = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-            title = currentEmail,
-            description = "Para alterar é preciso a password e um código enviado para o novo endereço.".tr(),
-            trailing = { TextButton(onClick = { editing = true }) { Text("Alterar".tr()) } },
-        )
+        PaneCard(padded = false) {
+            SettingsListRow(icon = Icons.Outlined.Email, title = currentEmail) {
+                Text(
+                    "Mudar".tr(),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = SettingsAccent,
+                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { editing = true }.padding(6.dp),
+                )
+            }
+        }
         return
     }
 
+    PaneCard {
     if (!inCodeStep) {
-        Column {
-            Text("Novo endereço de email".tr(), style = MaterialTheme.typography.labelMedium)
-            Spacer(Modifier.height(4.dp))
-            OutlinedTextField(
-                value = newEmail,
-                onValueChange = { newEmail = it },
-                singleLine = true,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Email,
-                ),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        PasswordField(label = "Password actual".tr(), value = password, onChange = { password = it })
+        SettingsField("Novo endereço de email".tr(), newEmail, { newEmail = it }, keyboardType = KeyboardType.Email)
+        SettingsField("Password atual".tr(), password, { password = it }, isPassword = true)
     } else {
         Text(
             "Enviámos um código de 6 dígitos para %s.".tr().format(state.emailChangeTarget),
@@ -1549,19 +1479,12 @@ private fun EmailChangeSection(
     val canSubmit = !state.isChangingEmail && if (inCodeStep) code.length == 6 && secondsLeft > 0
         else android.util.Patterns.EMAIL_ADDRESS.matcher(newEmail.trim()).matches() && password.isNotBlank()
 
-    Button(
+    SettingsPrimaryButton(
+        text = if (inCodeStep) "Confirmar alteração".tr() else "Enviar código".tr(),
         onClick = { if (inCodeStep) onConfirm(code) else onRequest(newEmail, password) },
         enabled = canSubmit,
-        shape = RoundedCornerShape(28.dp),
-        contentPadding = PaddingValues(vertical = 14.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        if (state.isChangingEmail) {
-            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
-            Spacer(Modifier.width(8.dp))
-        }
-        Text(if (inCodeStep) "Confirmar alteração".tr() else "Enviar código".tr(), fontWeight = FontWeight.SemiBold)
-    }
+        loading = state.isChangingEmail,
+    )
     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
         if (inCodeStep) {
             TextButton(
@@ -1573,47 +1496,6 @@ private fun EmailChangeSection(
             Text("Cancelar".tr())
         }
     }
-}
-
-@Composable
-private fun InfoCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    iconTint: Color,
-    iconBg: Color,
-    title: String,
-    description: String,
-    trailing: @Composable () -> Unit,
-) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        shadowElevation = 1.dp,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(14.dp),
-        ) {
-            Box(
-                modifier = Modifier.size(40.dp).clip(CircleShape).background(iconBg),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            trailing()
-        }
     }
 }
 
@@ -1624,303 +1506,155 @@ private fun PasswordField(
     onChange: (String) -> Unit,
     isError: Boolean = false,
     errorText: String? = null,
-) {
-    Column {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
-        Spacer(Modifier.height(4.dp))
-        OutlinedTextField(
-            value = value,
-            onValueChange = onChange,
-            placeholder = { Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)) },
-            visualTransformation = PasswordVisualTransformation(),
-            singleLine = true,
-            isError = isError,
-            supportingText = errorText?.let { { Text(it) } },
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth(),
-        )
-    }
-}
+) = SettingsField(label, value, onChange, isPassword = true, isError = isError, supportingText = errorText)
 
 @Composable
 private fun StoragePane(
     storage: StorageUsage?,
     isLoading: Boolean,
     onRefresh: () -> Unit,
+    onFreeSpace: () -> Unit,
 ) {
+    LaunchedEffect(Unit) { onRefresh() }
     val rangeOptions = remember {
-        listOf(
-            "1 semana" to 7,
-            "2 semanas" to 14,
-            "3 semanas" to 21,
-            "1 mês" to 30,
-            "45 dias" to 45,
-        )
+        listOf(7 to "Últimos 7 dias".tr(), 14 to "Últimos 14 dias".tr(), 30 to "Últimos 30 dias".tr(), 45 to "Últimos 45 dias".tr())
     }
     var rangeIndex by remember { mutableStateOf(rangeOptions.lastIndex) }
-    val (rangeLabel, rangeDays) = rangeOptions[rangeIndex]
+    var rangeMenu by remember { mutableStateOf(false) }
+    val rangeDays = rangeOptions[rangeIndex].first
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        SettingsPaneHeader(Icons.Outlined.CloudQueue, SettingsColors.Teal, "Armazenamento".tr(), "Quanto espaço usas e em que tipo de ficheiros.".tr())
-        if (isLoading && storage == null) {
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = settingsCardColor(),
-                border = settingsCardBorderStroke(),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+    PaneColumn {
+        if (storage == null) {
+            PaneCard {
+                Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                    if (isLoading) CircularProgressIndicator() else Text("Sem dados".tr(), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+            return@PaneColumn
         }
 
-        if (storage != null) {
+        data class TypeRow(val label: String, val usage: co.golink.tester.domain.settings.StorageTypeUsage?, val color: Color)
+        val types = listOf(
+            TypeRow("Vídeos".tr(), storage.videos, Color(0xFF6D28D9)),
+            TypeRow("Imagens".tr(), storage.images, Color(0xFF2563EB)),
+            TypeRow("Outros".tr(), storage.others, Color(0xFF94A3B8)),
+            TypeRow("Documentos".tr(), storage.documents, Color(0xFF15803D)),
+            TypeRow("Áudio".tr(), storage.audios, Color(0xFFD4A017)),
+        ).filter { it.usage?.used != null }
+        val free = if (storage.capacityBytes != null && storage.usedBytes != null)
+            co.golink.tester.ui.common.formatBytes((storage.capacityBytes - storage.usedBytes).coerceAtLeast(0L)) else null
+
+        // Total usado, barra segmentada por tipo e legenda.
+        PaneCard {
+            Column {
+                Text(storage.used, fontSize = 30.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
+                Text(
+                    "usados de %s · %d%%".tr().format(storage.capacity, storage.percentage.toInt()),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    .height(10.dp)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
             ) {
-                rangeOptions.forEachIndexed { i, (label, _) ->
-                    val selected = i == rangeIndex
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                        modifier = Modifier.clickable { rangeIndex = i },
-                    ) {
-                        Text(
-                            label,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                types.forEach { t ->
+                    val f = ((t.usage?.percentage ?: 0f) / 100f).coerceIn(0f, 1f)
+                    if (f > 0f) Box(Modifier.fillMaxHeight().weight(f).background(t.color))
                 }
+                val rest = (1f - types.sumOf { ((it.usage?.percentage ?: 0f) / 100f).toDouble() }.toFloat()).coerceAtLeast(0f)
+                if (rest > 0f) Spacer(Modifier.weight(rest))
             }
-            val isLow = storage.percentage >= 90f
-            val accentColor = if (isLow) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-            StorageFeatureCard(
-                icon = if (isLow) Icons.Outlined.Warning else Icons.Outlined.CloudQueue,
-                iconColor = accentColor,
-                title = "Armazenamento utilizado".tr(),
-                subtitle = if (isLow) "Espaço quase esgotado — ${storage.used} de ${storage.capacity}" else "${storage.used} de ${storage.capacity}",
-                progress = (storage.percentage / 100f).coerceIn(0f, 1f),
-                trailing = {
-                    Text(
-                        "${storage.percentage.toInt()}%",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = accentColor,
-                    )
-                },
+            Column {
+                types.forEach { t -> StorageLegendRow(t.color, t.label, t.usage?.used.orEmpty()) }
+                if (free != null) StorageLegendRow(MaterialTheme.colorScheme.outline.copy(alpha = 0.25f), "Livre".tr(), free, muted = true)
+            }
+        }
+
+        // Transferências: enviado / recebido com mini-gráficos.
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
+            Text(
+                "Transferências".tr(),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f).padding(start = 4.dp),
             )
-
-            storage.trafficUpload?.let { up ->
-                StorageFeatureCard(
-                    icon = Icons.Outlined.Upload,
-                    iconColor = Color(0xFF2196F3),
-                    title = "Upload",
-                    subtitle = "Últimos $rangeLabel",
-                    trailing = {
-                        Text(
-                            up,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                    },
-                    chartData = storage.trafficChartUpload?.mapNotNull { it.percentage }?.takeLast(rangeDays),
-                )
-            }
-
-            storage.trafficDownload?.let { down ->
-                StorageFeatureCard(
-                    icon = Icons.Outlined.Download,
-                    iconColor = Color(0xFF4CAF50),
-                    title = "Download",
-                    subtitle = "Últimos $rangeLabel",
-                    trailing = {
-                        Text(
-                            down,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                    },
-                    chartData = storage.trafficChartDownload?.mapNotNull { it.percentage }?.takeLast(rangeDays),
-                )
-            }
-
-            // File types section
-            data class FileTypeEntry(val label: String, val usage: co.golink.tester.domain.settings.StorageTypeUsage, val icon: androidx.compose.ui.graphics.vector.ImageVector, val color: Color)
-
-            val fileTypes = listOfNotNull(
-                storage.videos?.let { FileTypeEntry("Vídeos".tr(), it, Icons.Outlined.Videocam, Color(0xFF7C4DFF)) },
-                storage.images?.let { FileTypeEntry("Imagens".tr(), it, Icons.Outlined.Image, Color(0xFF43A047)) },
-                storage.documents?.let { FileTypeEntry("Documentos".tr(), it, Icons.Outlined.Description, Color(0xFF1E88E5)) },
-                storage.others?.let { FileTypeEntry("Outros", it, Icons.Outlined.FolderOpen, Color(0xFF9E9E9E)) },
-                storage.audios?.let { FileTypeEntry("Áudios".tr(), it, Icons.Outlined.MusicNote, Color(0xFFFF8F00)) },
-            ).filter { it.usage.used != null }
-
-            if (fileTypes.isNotEmpty()) {
-                var detailsExpanded by remember { mutableStateOf(true) }
+            Box {
                 Surface(
-                    shape = RoundedCornerShape(18.dp),
+                    shape = RoundedCornerShape(8.dp),
                     color = settingsCardColor(),
                     border = settingsCardBorderStroke(),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.clickable { rangeMenu = true },
                 ) {
-                    Column {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { detailsExpanded = !detailsExpanded }
-                                .padding(horizontal = 16.dp, vertical = 14.dp),
-                        ) {
-                            Text(
-                                "Detalhes por tipo".tr(),
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Icon(
-                                if (detailsExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        AnimatedVisibility(visible = detailsExpanded) {
-                            Column(modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp)) {
-                                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                                fileTypes.forEachIndexed { i, entry ->
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(36.dp)
-                                                .clip(CircleShape)
-                                                .background(entry.color.copy(alpha = 0.12f)),
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            Icon(entry.icon, contentDescription = null, tint = entry.color, modifier = Modifier.size(20.dp))
-                                        }
-                                        Spacer(Modifier.width(12.dp))
-                                        Text(
-                                            entry.label,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.Medium,
-                                            modifier = Modifier.weight(1f),
-                                        )
-                                        Text(
-                                            buildString {
-                                                append(entry.usage.used ?: "")
-                                                entry.usage.percentage?.let { pct ->
-                                                    append(" (${if (pct < 1f) "~0" else "${pct.toInt()}"}%)")
-                                                }
-                                            },
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                    if (i < fileTypes.lastIndex) {
-                                        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                                    }
-                                }
-                            }
-                        }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 10.dp, end = 6.dp, top = 5.dp, bottom = 5.dp)) {
+                        Text(rangeOptions[rangeIndex].second, style = MaterialTheme.typography.labelMedium)
+                        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                }
+                androidx.compose.material3.DropdownMenu(expanded = rangeMenu, onDismissRequest = { rangeMenu = false }) {
+                    rangeOptions.forEachIndexed { idx, (_, label) ->
+                        DropdownMenuItem(text = { Text(label) }, onClick = { rangeIndex = idx; rangeMenu = false })
                     }
                 }
             }
         }
-
-        OutlinedButton(
-            onClick = onRefresh,
-            enabled = !isLoading,
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            if (isLoading) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(Modifier.width(8.dp))
-                Text("A actualizar…".tr())
-            } else {
-                Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Atualizar")
+        PaneCard {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                TrafficColumn("Enviado".tr(), storage.trafficUpload ?: "—", Color(0xFF2563EB),
+                    storage.trafficChartUpload?.mapNotNull { it.percentage }?.takeLast(rangeDays), Modifier.weight(1f))
+                TrafficColumn("Recebido".tr(), storage.trafficDownload ?: "—", SettingsAccent,
+                    storage.trafficChartDownload?.mapNotNull { it.percentage }?.takeLast(rangeDays), Modifier.weight(1f))
             }
         }
 
-        Spacer(Modifier.height(6.dp))
+        PaneCard(padded = false) {
+            SettingsListRow(
+                icon = Icons.Outlined.Delete,
+                title = "Libertar espaço".tr(),
+                subtitle = "Ver ficheiros grandes e o Lixo".tr(),
+                onClick = onFreeSpace,
+            ) { SettingsChevron() }
+        }
     }
 }
 
 @Composable
-private fun StorageFeatureCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    iconColor: Color,
-    title: String,
-    subtitle: String,
-    trailing: @Composable () -> Unit,
-    progress: Float? = null,
-    chartData: List<Float>? = null,
-) {
-    Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = settingsCardColor(),
-        border = settingsCardBorderStroke(),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(iconColor.copy(alpha = 0.12f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(22.dp))
-                }
-                Spacer(Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                    Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Spacer(Modifier.width(8.dp))
-                trailing()
-            }
-            if (progress != null) {
-                Spacer(Modifier.height(12.dp))
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                    color = iconColor,
-                    trackColor = iconColor.copy(alpha = 0.15f),
-                )
-            }
-            if (!chartData.isNullOrEmpty()) {
-                Spacer(Modifier.height(12.dp))
-                Sparkline(
-                    data = chartData,
-                    color = iconColor,
-                    modifier = Modifier.fillMaxWidth().height(36.dp),
-                )
-            }
+private fun StorageLegendRow(color: Color, label: String, value: String, muted: Boolean = false) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp)) {
+        Box(Modifier.size(8.dp).clip(RoundedCornerShape(2.dp)).background(color))
+        Spacer(Modifier.width(12.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (muted) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (muted) FontWeight.Normal else FontWeight.SemiBold,
+            color = if (muted) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+@Composable
+private fun TrafficColumn(label: String, value: String, color: Color, data: List<Float>?, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(6.dp).clip(CircleShape).background(color))
+            Spacer(Modifier.width(6.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        if (!data.isNullOrEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Sparkline(data = data, color = color, modifier = Modifier.fillMaxWidth().height(32.dp))
         }
     }
 }
@@ -1985,74 +1719,40 @@ private fun SessionsPane(
     val mobileSessions = sessions.filter { it.isMobileSession() }
     val hasOthers = sessions.any { !it.is_current }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        SettingsPaneHeader(Icons.Outlined.Devices, SettingsColors.Orange, "Sessões".tr(), "Dispositivos com sessão iniciada na tua conta.".tr())
+    PaneColumn {
+        Text(
+            "Dispositivos com sessão iniciada na tua conta.".tr(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
         if (isLoading && sessions.isEmpty()) {
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = settingsCardColor(),
-                border = settingsCardBorderStroke(),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-            }
+            PaneCard { Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
         }
-
         SessionsGroup(
-            title = "Sessões Web".tr(),
-            icon = Icons.Outlined.Devices,
-            description = "Dispositivos com sessão iniciada via browser.".tr(),
-            sessions = webSessions,
-            emptyText = "Sem sessões web activas.".tr(),
-            onRevoke = { pendingRevoke = it },
-        )
-
-        SessionsGroup(
-            title = "Sessões Mobile".tr(),
-            icon = Icons.Filled.Smartphone,
-            description = "Dispositivos móveis com sessão iniciada.".tr(),
+            title = "Neste e noutros telemóveis".tr(),
             sessions = mobileSessions,
-            emptyText = "Sem sessões móveis activas.".tr(),
+            emptyText = "Sem sessões móveis ativas.".tr(),
+            onRevoke = { pendingRevoke = it },
+            action = if (isLoading) "A atualizar…".tr() else "Atualizar".tr(),
+            onAction = if (isLoading) null else onRefresh,
+        )
+        SessionsGroup(
+            title = "Browsers".tr(),
+            sessions = webSessions,
+            emptyText = "Sem sessões web ativas.".tr(),
             onRevoke = { pendingRevoke = it },
         )
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(
-                onClick = onRefresh,
-                enabled = !isLoading,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.weight(1f),
-            ) {
-                if (isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(8.dp))
-                    Text("A actualizar…".tr())
-                } else {
-                    Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Atualizar")
-                }
-            }
-        }
-
         if (hasOthers) {
-            Button(
+            OutlinedButton(
                 onClick = { showRevokeAll = true },
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                contentPadding = PaddingValues(vertical = 13.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
             ) {
-                Icon(Icons.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Terminar todas as outras sessões".tr())
+                Text("Terminar todas as outras sessões".tr(), fontWeight = FontWeight.SemiBold)
             }
         }
     }
@@ -2113,101 +1813,56 @@ private fun SecurityActivityPane(
     hasMore: Boolean,
     onLoadMore: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        SettingsPaneHeader(Icons.Outlined.Shield, SettingsColors.Red, "Atividade de segurança".tr(), "Inícios de sessão e alterações importantes na conta.".tr())
+    PaneColumn {
         Text(
             "Eventos de segurança recentes na tua conta. Se vires algo que não reconheces, altera a password e revê as sessões activas.".tr(),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp),
         )
-
-        if (isLoading && events.isEmpty()) {
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = settingsCardColor(),
-                border = settingsCardBorderStroke(),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
+        PaneCard(padded = false) {
+            when {
+                isLoading && events.isEmpty() -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                events.isEmpty() -> Text(
+                    "Ainda não há atividade de segurança registada.".tr(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(16.dp),
+                )
             }
-        }
-
-        if (!isLoading && events.isEmpty()) {
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = settingsCardColor(),
-                border = settingsCardBorderStroke(),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                    Text(
-                        "Ainda não há atividade de segurança registada.".tr(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-
-        events.forEach { entry ->
-            val attrs = entry.attributes
-            val isAlert = attrs.event in SECURITY_ALERT_EVENTS
-
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = settingsCardColor(),
-                border = settingsCardBorderStroke(),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(14.dp),
-                    verticalAlignment = Alignment.Top,
-                ) {
+            events.forEachIndexed { i, entry ->
+                val attrs = entry.attributes
+                val isAlert = attrs.event in SECURITY_ALERT_EVENTS
+                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp), verticalAlignment = Alignment.Top) {
                     Icon(
                         Icons.Outlined.Shield,
                         contentDescription = null,
-                        tint = if (isAlert) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp),
+                        tint = if (isAlert) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        modifier = Modifier.padding(top = 2.dp).size(20.dp),
                     )
-                    Spacer(Modifier.width(12.dp))
+                    Spacer(Modifier.width(16.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
                             securityEventLabel(attrs.event),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
+                            color = if (isAlert) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                         )
-                        Text(
-                            formatSecurityEventDate(attrs.created_at),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        attrs.ip?.let {
-                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+                        val meta = listOfNotNull(formatSecurityEventDate(attrs.created_at).ifBlank { null }, attrs.ip).joinToString(" · ")
+                        if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         attrs.user_agent?.let {
-                            Text(
-                                it,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                            )
+                            Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
+                if (i < events.lastIndex) {
+                    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f), modifier = Modifier.padding(start = 52.dp, end = 16.dp))
+                }
             }
         }
-
         if (hasMore) {
             TextButton(onClick = onLoadMore, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
-                Text("Carregar mais".tr())
+                Text("Carregar mais".tr(), color = SettingsAccent, fontWeight = FontWeight.SemiBold)
             }
         }
     }
@@ -2216,38 +1871,21 @@ private fun SecurityActivityPane(
 @Composable
 private fun SessionsGroup(
     title: String,
-    icon: ImageVector,
-    description: String,
     sessions: List<SessionItem>,
     emptyText: String,
     onRevoke: (SessionItem) -> Unit,
+    action: String? = null,
+    onAction: (() -> Unit)? = null,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
-        }
-        Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Surface(
-            shape = RoundedCornerShape(18.dp),
-            color = settingsCardColor(),
-            border = settingsCardBorderStroke(),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column {
-                if (sessions.isEmpty()) {
-                    Text(
-                        emptyText,
-                        modifier = Modifier.padding(16.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else {
-                    sessions.forEachIndexed { i, s ->
-                        SessionRow(s, onRevoke = { onRevoke(s) })
-                        if (i < sessions.lastIndex) HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                    }
+    PaneSection(title, action = action, onAction = onAction)
+    PaneCard(padded = false) {
+        if (sessions.isEmpty()) {
+            Text(emptyText, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            sessions.forEachIndexed { i, s ->
+                SessionRow(s, onRevoke = { onRevoke(s) })
+                if (i < sessions.lastIndex) {
+                    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f), modifier = Modifier.padding(start = 52.dp, end = 16.dp))
                 }
             }
         }
@@ -2256,7 +1894,6 @@ private fun SessionsGroup(
 
 @Composable
 private fun SessionRow(s: SessionItem, onRevoke: () -> Unit) {
-    val accent = if (s.is_current) Color(0xFF16A34A) else MaterialTheme.colorScheme.primary
     val isMobile = s.isMobileSession()
     Row(
         verticalAlignment = Alignment.Top,
@@ -2264,21 +1901,13 @@ private fun SessionRow(s: SessionItem, onRevoke: () -> Unit) {
             .fillMaxWidth()
             .padding(14.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(accent.copy(alpha = 0.12f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                if (isMobile) Icons.Filled.Smartphone else Icons.Outlined.Devices,
-                contentDescription = null,
-                tint = accent,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-        Spacer(Modifier.width(12.dp))
+        Icon(
+            if (isMobile) Icons.Filled.Smartphone else Icons.Outlined.Devices,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            modifier = Modifier.padding(top = 2.dp).size(20.dp),
+        )
+        Spacer(Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -2296,10 +1925,10 @@ private fun SessionRow(s: SessionItem, onRevoke: () -> Unit) {
                         color = Color(0xFF16A34A).copy(alpha = 0.15f),
                     ) {
                         Text(
-                            "ACTUAL",
+                            "Este telemóvel".tr(),
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFF15803D),
+                            color = SettingsAccent,
                             fontWeight = FontWeight.Bold,
                         )
                     }
@@ -2307,7 +1936,7 @@ private fun SessionRow(s: SessionItem, onRevoke: () -> Unit) {
             }
             Spacer(Modifier.height(4.dp))
             s.login_at?.let {
-                Text("Iniciada: $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Iniciada: %s".tr().format(it), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             val ipLine = listOfNotNull(s.ip_address, s.location).joinToString(" · ")
             if (ipLine.isNotBlank()) {
@@ -2317,19 +1946,17 @@ private fun SessionRow(s: SessionItem, onRevoke: () -> Unit) {
                 Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             s.last_activity_at?.takeIf { it != s.login_at }?.let {
-                Text("Última actividade: $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Última atividade: %s".tr().format(it), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         Spacer(Modifier.width(8.dp))
-        OutlinedButton(
-            onClick = onRevoke,
-            shape = RoundedCornerShape(8.dp),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)),
-        ) {
-            Text("Revogar", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-        }
+        Text(
+            "Revogar".tr(),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onRevoke).padding(6.dp),
+        )
     }
 }
 
@@ -2344,209 +1971,156 @@ private fun BillingPane(
     onUpgrade: (Plan) -> Unit,
     onRefresh: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-    ) {
-        SettingsPaneHeader(Icons.Outlined.Receipt, SettingsColors.Amber, "Faturação".tr(), "O teu plano, pagamentos e histórico.".tr())
-        Spacer(Modifier.height(16.dp))
+    var showHistory by remember { mutableStateOf(false) }
+    var showYearly by remember { mutableStateOf(false) }
+    val hasYearly = plans.any { it.interval == "year" }
+    val visiblePlans = if (hasYearly) plans.filter { it.interval == if (showYearly) "year" else "month" } else plans
+    var selectedId by remember(visiblePlans) {
+        mutableStateOf(visiblePlans.firstOrNull { !it.name.equals(user?.planName, ignoreCase = true) }?.id ?: visiblePlans.firstOrNull()?.id)
+    }
+    val selected = visiblePlans.firstOrNull { it.id == selectedId }
+
+    PaneColumn {
         if (user?.isPastDue == true || user?.isPaymentSuspended == true) {
-            PaymentOverdueBanner(
-                isSuspended = user.isPaymentSuspended,
-                daysLeft = user.daysLeftToPay,
-            )
-            Spacer(Modifier.height(12.dp))
+            PaymentOverdueBanner(isSuspended = user.isPaymentSuspended, daysLeft = user.daysLeftToPay)
         }
-        InfoCard(icon = Icons.Outlined.Edit, iconContentDescription = "Plano") {
-            Text("Plano", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                user?.planName ?: "Plano Gratuito".tr(),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "Atualize a sua conta para obter mais.".tr(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(16.dp))
-            // Mostrar os planos diretamente na área de Billing (mesma grelha da web)
-            if (isLoadingPlans) {
-                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+        // Plano atual + atalho para o histórico de pagamentos.
+        PaneCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Plano atual".tr(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(user?.planName ?: "Gratuito".tr(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
-            } else if (plans.isEmpty()) {
                 Text(
-                    "Sem planos disponíveis.".tr(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (showHistory) "Fechar".tr() else "Histórico".tr(),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = SettingsAccent,
+                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { showHistory = !showHistory; if (showHistory && transactions.isEmpty()) onRefresh() }.padding(6.dp),
                 )
-            } else {
-                var showYearly by remember { mutableStateOf(false) }
-                val hasYearly = plans.any { it.interval == "year" }
-                val visiblePlans = if (hasYearly) {
-                    plans.filter { it.interval == if (showYearly) "year" else "month" }
-                } else {
-                    plans
-                }
+            }
+            AnimatedVisibility(visible = showHistory) {
                 Column {
-                    Text("Escolha o seu plano".tr(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    if (hasYearly) {
-                        Spacer(Modifier.height(10.dp))
-                        PlanPeriodSwitcher(showYearly = showYearly, onChange = { showYearly = it })
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    visiblePlans.forEachIndexed { index, plan ->
-                        PlanCard(
-                            plan = plan,
-                            isCurrent = user?.planName?.equals(plan.name, ignoreCase = true) == true,
-                            isBusy = isStartingCheckout,
-                            onSelect = { onUpgrade(plan) },
-                        )
-                        if (index < visiblePlans.lastIndex) {
-                            Spacer(Modifier.height(12.dp))
+                    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                    when {
+                        isLoading && transactions.isEmpty() -> Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                        transactions.isEmpty() -> Text("Sem transações".tr(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp))
+                        else -> transactions.forEachIndexed { k, t ->
+                            TransactionRow(t)
+                            if (k < transactions.lastIndex) HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
                         }
                     }
                 }
             }
         }
 
-        Spacer(Modifier.height(16.dp))
-
-        InfoCard(
-            icon = Icons.Outlined.Receipt,
-            iconContentDescription = "Transações".tr(),
-            trailing = {
-                IconButton(onClick = onRefresh) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = "Atualizar", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            },
-        ) {
-            Text("Transações".tr(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(12.dp))
-            when {
-                isLoading && transactions.isEmpty() -> {
-                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
+        Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp)) {
+            Text("Apoiar o GoLink".tr(), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(
+                "O GoLink é gratuito e sem fins lucrativos. Os donativos mantêm o serviço para todos.".tr(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        when {
+            isLoadingPlans -> Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            plans.isEmpty() -> Text("Sem planos disponíveis.".tr(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else -> {
+                if (hasYearly) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                            .padding(3.dp),
+                    ) {
+                        listOf(false to "Mensal".tr(), true to "Anual".tr()).forEach { (yearly, label) ->
+                            val on = showYearly == yearly
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (on) settingsCardColor() else Color.Transparent)
+                                    .clickable { showYearly = yearly }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal)
+                            }
+                        }
                     }
                 }
-                transactions.isEmpty() -> {
+                visiblePlans.forEach { plan ->
+                    PlanOptionRow(
+                        plan = plan,
+                        selected = plan.id == selectedId,
+                        isCurrent = user?.planName?.equals(plan.name, ignoreCase = true) == true,
+                        onClick = { selectedId = plan.id },
+                    )
+                }
+                PaneCard {
                     Text(
-                        "Sem transações".tr(),
+                        "Todos incluem: encriptação ponta-a-ponta AES-256, SSL/TLS, dados privados e descentralizados, sem metadados e suporte.".tr(),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                else -> {
-                    transactions.forEachIndexed { i, t ->
-                        TransactionRow(t)
-                        if (i < transactions.lastIndex) {
-                            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
-                        }
-                    }
+                selected?.let { plan ->
+                    val isCurrent = user?.planName?.equals(plan.name, ignoreCase = true) == true
+                    SettingsPrimaryButton(
+                        text = if (isCurrent) "Plano atual".tr()
+                        else listOfNotNull("Apoiar com %s".tr().format(plan.name), plan.price).joinToString(" · "),
+                        onClick = { onUpgrade(plan) },
+                        enabled = !isCurrent,
+                        loading = isStartingCheckout,
+                    )
                 }
             }
         }
     }
 }
 
-// Espelha o cartão de plano da web (UserAvailablePlans.vue): ícone, preço em
-// destaque, features com check, bullets de privacidade e CTA a toda a largura.
+// Opção de plano (rádio): nome, "100 GB · 8 membros" e preço/intervalo.
 @Composable
-private fun PlanCard(
-    plan: Plan,
-    isCurrent: Boolean,
-    isBusy: Boolean,
-    onSelect: () -> Unit,
-) {
-    // O checkout crypto usa o id do plano local, por isso está sempre
-    // disponível mesmo que o plano não exista no Stripe.
-    val checkoutAvailable = true
+private fun PlanOptionRow(plan: Plan, selected: Boolean, isCurrent: Boolean, onClick: () -> Unit) {
+    val storage = plan.features["max_storage_amount"]?.let { if (it >= 1000) "${it / 1000} TB" else "$it GB" }
+    val members = plan.features["max_team_members"]?.let { if (it == -1L) "membros ilimitados".tr() else "%d membros".tr().format(it) }
     Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
-        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) SettingsAccent.copy(alpha = 0.06f) else settingsCardColor(),
+        border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) SettingsAccent else MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick),
     ) {
-        Column(modifier = Modifier.padding(18.dp)) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+            Box(
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .border(2.dp, if (selected) SettingsAccent else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), CircleShape),
+                contentAlignment = Alignment.Center,
             ) {
-                Box(modifier = Modifier.size(42.dp), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.CloudQueue, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                }
+                if (selected) Box(Modifier.size(10.dp).clip(CircleShape).background(SettingsAccent))
             }
-            Spacer(Modifier.height(10.dp))
-            Text(plan.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            if (plan.price != null) {
-                Spacer(Modifier.height(2.dp))
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(plan.price, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    plan.interval?.let {
-                        Text(
-                            " / " + planIntervalLabel(it),
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-            if (!plan.description.isNullOrBlank()) {
-                Spacer(Modifier.height(6.dp))
-                Text(plan.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Spacer(Modifier.height(12.dp))
-            Column {
-                plan.features.forEach { (key, value) -> PlanFeatureRow(planFeatureLabel(key, value)) }
-                PlanFeatureRow("Encriptação Ponta-a-Ponta".tr())
-                PlanFeatureRow("Todos os Dados são Privados".tr())
-                PlanFeatureRow("Dados Descentralizados".tr())
-                PlanFeatureRow("Sem MetaDados".tr())
-                PlanFeatureRow("Suporte".tr())
-            }
-            Spacer(Modifier.height(14.dp))
-            Button(
-                onClick = onSelect,
-                enabled = !isCurrent && checkoutAvailable && !isBusy,
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    if (isCurrent) "Plano atual".tr() else "Escolher plano".tr(),
+                    plan.name + if (isCurrent) " · " + "atual".tr() else "",
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
+                )
+                listOfNotNull(storage, members).takeIf { it.isNotEmpty() }?.let {
+                    Text(it.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            plan.price?.let { price ->
+                Text(
+                    price + (plan.interval?.let { "/" + planIntervalLabel(it) } ?: ""),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
                 )
             }
         }
     }
-}
-
-@Composable
-private fun PlanFeatureRow(label: String) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 3.dp)) {
-        Icon(
-            Icons.Outlined.Check,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(16.dp),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(label, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-    }
-}
-
-@Composable
-private fun planFeatureLabel(key: String, value: Long): String = when (key) {
-    "max_storage_amount" -> "{value} GB de armazenamento".tr().replace("{value}", value.toString())
-    "max_team_members" ->
-        if (value == -1L) "Membros de equipa ilimitados".tr()
-        else "Até {value} membros de equipa".tr().replace("{value}", value.toString())
-    else -> "$key: $value"
 }
 
 @Composable
@@ -2554,116 +2128,6 @@ private fun planIntervalLabel(interval: String): String = when (interval) {
     "month" -> "mês".tr()
     "year" -> "ano".tr()
     else -> interval
-}
-
-@Composable
-private fun PlanPeriodSwitcher(showYearly: Boolean, onChange: (Boolean) -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-    ) {
-        Row(modifier = Modifier.padding(3.dp)) {
-            listOf(false to "Mensal".tr(), true to "Anual".tr()).forEach { (yearly, label) ->
-                val selected = showYearly == yearly
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                    modifier = Modifier.clickable { onChange(yearly) },
-                ) {
-                    Text(
-                        label,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun PlansDialog(
-    plans: List<Plan>,
-    isLoading: Boolean,
-    currentPlanName: String?,
-    onDismiss: () -> Unit,
-    onSelect: (Plan) -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Escolher plano".tr(), fontWeight = FontWeight.SemiBold) },
-        text = {
-            when {
-                isLoading -> Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-                plans.isEmpty() -> Text(
-                    "Sem planos disponíveis no momento.".tr(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                else -> Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    plans.forEachIndexed { index, plan ->
-                        PlanCard(
-                            plan = plan,
-                            isCurrent = currentPlanName?.equals(plan.name, ignoreCase = true) == true,
-                            isBusy = false,
-                            onSelect = { onSelect(plan) },
-                        )
-                        if (index < plans.lastIndex) {
-                            Spacer(Modifier.height(12.dp))
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Fechar".tr()) }
-        },
-    )
-}
-
-@Composable
-private fun InfoCard(
-    icon: ImageVector,
-    iconContentDescription: String,
-    trailing: (@Composable () -> Unit)? = null,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        icon,
-                        contentDescription = iconContentDescription,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-                if (trailing != null) {
-                    Spacer(Modifier.weight(1f))
-                    trailing()
-                }
-            }
-            Spacer(Modifier.height(14.dp))
-            content()
-        }
-    }
 }
 
 @Composable
@@ -2745,7 +2209,7 @@ private fun EncryptionPane(
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         SettingsPaneHeader(Icons.Outlined.VpnKey, SettingsColors.Green, "Encriptação".tr(), "Os ficheiros são cifrados no dispositivo. Gere aqui a chave e a passphrase.".tr())
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
         // Impressão da chave pública (deteta key-substitution).
         SectionLabel("Impressão da chave de encriptação".tr())
         Surface(
@@ -2842,8 +2306,9 @@ private fun EncryptionPane(
                             }
                         },
                         enabled = currentPass.isNotEmpty() && !verifying,
-                        shape = RoundedCornerShape(28.dp),
+                        shape = RoundedCornerShape(10.dp),
                         contentPadding = PaddingValues(vertical = 14.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = SettingsAccent, contentColor = Color.White),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         if (verifying) {
@@ -2888,9 +2353,9 @@ private fun EncryptionPane(
                             }
                         },
                         enabled = canSubmit,
-                        shape = RoundedCornerShape(28.dp),
+                        shape = RoundedCornerShape(10.dp),
                         contentPadding = PaddingValues(vertical = 14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        colors = ButtonDefaults.buttonColors(containerColor = SettingsAccent, contentColor = Color.White),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         if (isChanging) {
@@ -3049,182 +2514,90 @@ private fun AppSecurityPane(
         LogDialog(user = user, entries = logEntries, onClear = onClearLog, onDismiss = { showLog = false })
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-    ) {
-        SettingsPaneHeader(Icons.Outlined.ShieldMoon, SettingsColors.Purple, "Segurança da app".tr(), "Bloqueio por biometria ou PIN neste dispositivo.".tr())
-        Spacer(Modifier.height(16.dp))
-        SectionLabel("Segurança".tr())
-        Surface(
-            shape = RoundedCornerShape(18.dp),
-            color = settingsCardColor(),
-            border = settingsCardBorderStroke(),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column {
-                SecurityToggleRow(
-                    icon = Icons.Outlined.Fingerprint,
-                    title = "Desbloqueio biométrico".tr(),
-                    description = if (biometricAvailable) "Usa a impressão digital ou rosto para entrar".tr() else "Não disponível neste dispositivo",
-                    checked = biometricEnabled && biometricAvailable,
-                    enabled = biometricAvailable,
-                    onCheckedChange = { enabled ->
-                        if (enabled) {
-                            val executor = ContextCompat.getMainExecutor(context)
-                            BiometricPrompt(
-                                context as FragmentActivity,
-                                executor,
-                                object : BiometricPrompt.AuthenticationCallback() {
-                                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                                        onBiometricToggle(true)
-                                    }
-                                },
-                            ).authenticate(
-                                BiometricPrompt.PromptInfo.Builder()
-                                    .setTitle("Activar biométrico".tr())
-                                    .setSubtitle("Confirma a tua identidade para activar".tr())
-                                    .setNegativeButtonText("Cancelar".tr())
-                                    .build(),
-                            )
-                        } else {
-                            onBiometricToggle(false)
-                        }
-                    },
-                )
-                MenuDivider()
-                SecurityToggleRow(
-                    icon = Icons.Outlined.Lock,
-                    title = "Bloqueio por PIN".tr(),
-                    description = "Requer PIN para abrir a aplicação".tr(),
-                    checked = pinEnabled,
-                    enabled = true,
-                    onCheckedChange = { checked ->
-                        if (checked) {
-                            pinStep = 1
-                        } else if (hasPinSet) {
-                            showPinDisable = true
-                        }
-                    },
-                )
-                MenuDivider()
-                SecurityActionRow(
-                    icon = Icons.Outlined.History,
-                    title = "Atividade de segurança".tr(),
-                    onClick = onOpenSecurityActivity,
-                )
-            }
-        }
+    val enableBiometric = {
+        val executor = ContextCompat.getMainExecutor(context)
+        BiometricPrompt(
+            context as FragmentActivity,
+            executor,
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    onBiometricToggle(true)
+                }
+            },
+        ).authenticate(
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle("Activar biométrico".tr())
+                .setSubtitle("Confirma a tua identidade para activar".tr())
+                .setNegativeButtonText("Cancelar".tr())
+                .build(),
+        )
+    }
+    val bioOn = biometricEnabled && biometricAvailable
 
-        Spacer(Modifier.height(16.dp))
+    PaneColumn {
         Text(
-            "Quando activo, o bloqueio é pedido sempre que a app fica em segundo plano por mais de 30 segundos.".tr(),
+            "Protege a app neste telemóvel, mesmo que alguém o tenha desbloqueado.".tr(),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 4.dp),
         )
-
-        Spacer(Modifier.height(24.dp))
-        SectionLabel("Dados")
-        Surface(
-            shape = RoundedCornerShape(18.dp),
-            color = settingsCardColor(),
-            border = settingsCardBorderStroke(),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column {
-                SecurityActionRow(
-                    icon = Icons.Outlined.DeleteSweep,
-                    title = "Limpar cache local".tr(),
-                    onClick = onClearCache,
-                )
-                MenuDivider()
-                SecurityActionRow(
-                    icon = Icons.AutoMirrored.Outlined.Article,
-                    title = "Mostrar log".tr(),
-                    onClick = {
-                        onRefreshLog()
-                        showLog = true
-                    },
-                )
+        PaneCard(padded = false) {
+            SettingsListRow(
+                icon = Icons.Outlined.Lock,
+                title = "Pedir PIN ao abrir".tr(),
+                subtitle = if (pinEnabled) "Ligado".tr() else "Desligado".tr(),
+                subtitleColor = if (pinEnabled) SettingsAccent else Color.Unspecified,
+                showDivider = true,
+                onClick = { if (!pinEnabled) pinStep = 1 else if (hasPinSet) showPinDisable = true },
+            ) {
+                SettingsCheckSquare(checked = pinEnabled) { if (!pinEnabled) pinStep = 1 else if (hasPinSet) showPinDisable = true }
+            }
+            SettingsListRow(
+                icon = Icons.Outlined.Fingerprint,
+                title = "Impressão digital".tr(),
+                subtitle = when {
+                    !biometricAvailable -> "Não disponível neste telemóvel".tr()
+                    bioOn -> "Ligada".tr()
+                    else -> "Desligada".tr()
+                },
+                subtitleColor = if (bioOn) SettingsAccent else Color.Unspecified,
+                enabled = biometricAvailable,
+                onClick = { if (bioOn) onBiometricToggle(false) else enableBiometric() },
+            ) {
+                if (biometricAvailable) SettingsCheckSquare(checked = bioOn) { if (bioOn) onBiometricToggle(false) else enableBiometric() }
             }
         }
-    }
-}
+        Text(
+            "O bloqueio é pedido sempre que a app fica em segundo plano mais de 30 segundos.".tr(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
+        PaneCard(padded = false) {
+            SettingsListRow(
+                icon = Icons.Outlined.Shield,
+                title = "Atividade de segurança".tr(),
+                subtitle = "Inícios de sessão e alterações".tr(),
+                onClick = onOpenSecurityActivity,
+            ) { SettingsChevron() }
+        }
 
-@Composable
-private fun SecurityActionRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(16.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-        }
-        Spacer(Modifier.width(12.dp))
-        Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
-    }
-}
-
-@Composable
-private fun SecurityToggleRow(
-    icon: ImageVector,
-    title: String,
-    description: String,
-    checked: Boolean,
-    enabled: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(16.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = if (enabled) 0.10f else 0.05f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary.copy(alpha = if (enabled) 1f else 0.4f),
-                modifier = Modifier.size(20.dp),
+        PaneSection("Dados neste telemóvel".tr())
+        PaneCard(padded = false) {
+            SettingsListRow(
+                icon = Icons.Outlined.Delete,
+                title = "Limpar cache".tr(),
+                subtitle = "Não apaga os teus ficheiros".tr(),
+                showDivider = true,
+                onClick = onClearCache,
             )
+            SettingsListRow(
+                icon = Icons.AutoMirrored.Outlined.Article,
+                title = "Registo de diagnóstico".tr(),
+                subtitle = "Para enviar ao suporte".tr(),
+                onClick = { onRefreshLog(); showLog = true },
+            ) { SettingsChevron() }
         }
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.5f),
-            )
-            Text(
-                description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (enabled) 1f else 0.5f),
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
 }
 

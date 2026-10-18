@@ -217,6 +217,13 @@ class AutoBackupViewModel @Inject constructor(
         manager.reschedule()
     }
 
+    /** Rádio "Quando fazer backup": só Wi-Fi, ou Wi-Fi e dados móveis. */
+    fun setUseCellular(value: Boolean) {
+        preferences.allowWifi = true
+        preferences.allowCellular = value
+        manager.reschedule()
+    }
+
     fun setChargingOnly(value: Boolean) {
         preferences.chargingOnly = value
         manager.reschedule()

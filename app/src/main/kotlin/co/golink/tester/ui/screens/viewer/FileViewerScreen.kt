@@ -433,18 +433,23 @@ fun FileViewerScreen(
     }
 
     if (fileSheetOpen) {
-        ViewerFileSheet(
-            file = current,
+        // Mesmo menu de ações dos Ficheiros/Partilhas/Lixo.
+        co.golink.tester.ui.components.ItemActionsSheet(
+            item = current,
+            isFavourite = false,
+            isShared = current.share != null,
             onDismiss = { fileSheetOpen = false },
+            onDownload = { viewModel.download() },
+            onShare = { viewModel.openShareDialog() },
+            onToggleFavourite = {},
             onRename = { dialog = ViewerDialog.Rename },
             onMove = {
                 viewModel.loadNavigationTree()
                 dialog = ViewerDialog.Move
             },
             onDelete = { dialog = ViewerDialog.Delete },
-            onDownload = { viewModel.download() },
-            onEditShare = { viewModel.openShareDialog() },
             onDetails = { dialog = ViewerDialog.Details },
+            showFolderCollaboration = false,
         )
     }
 
@@ -1173,157 +1178,10 @@ private fun PdfPage(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ViewerFileSheet(
-    file: BrowseItem.File,
-    onDismiss: () -> Unit,
-    onRename: () -> Unit,
-    onMove: () -> Unit,
-    onDelete: () -> Unit,
-    onDownload: () -> Unit,
-    onEditShare: () -> Unit,
-    onDetails: () -> Unit,
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .padding(top = 12.dp, bottom = 4.dp)
-                    .size(width = 36.dp, height = 4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(MaterialTheme.colorScheme.outlineVariant),
-            )
-        },
-    ) {
-        Column(modifier = Modifier.padding(bottom = 24.dp)) {
-            ViewerSheetHeader(file)
-            Spacer(Modifier.height(4.dp))
-            ViewerActionGroup {
-                ViewerActionItem(Icons.Outlined.DriveFileRenameOutline, "Renomear".tr(), MaterialTheme.colorScheme.primary.copy(alpha = 0.10f), MaterialTheme.colorScheme.primary) { onRename(); onDismiss() }
-                ViewerSheetDivider()
-                ViewerActionItem(Icons.AutoMirrored.Outlined.DriveFileMove, "Mover".tr(), MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f), MaterialTheme.colorScheme.secondary) { onMove(); onDismiss() }
-                ViewerSheetDivider()
-                ViewerActionItem(Icons.Outlined.Share, if (file.share != null) "Editar partilha".tr() else "Partilhar".tr(), MaterialTheme.colorScheme.primary.copy(alpha = 0.10f), MaterialTheme.colorScheme.primary) { onEditShare(); onDismiss() }
-                ViewerSheetDivider()
-                ViewerActionItem(Icons.Outlined.DeleteOutline, "Eliminar".tr(), MaterialTheme.colorScheme.error.copy(alpha = 0.10f), MaterialTheme.colorScheme.error, labelColor = MaterialTheme.colorScheme.error) { onDelete(); onDismiss() }
-            }
-            Spacer(Modifier.height(8.dp))
-            ViewerActionGroup {
-                ViewerActionItem(Icons.Outlined.Download, "Descarregar".tr(), MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f), MaterialTheme.colorScheme.tertiary) { onDownload(); onDismiss() }
-                ViewerSheetDivider()
-                ViewerActionItem(Icons.Outlined.Info, "Detalhes".tr(), MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant) { onDetails(); onDismiss() }
-            }
-        }
-    }
-}
 
-@Composable
-private fun ViewerActionGroup(content: @Composable () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-    ) {
-        content()
-    }
-}
 
-@Composable
-private fun ViewerSheetDivider() {
-    HorizontalDivider(
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-        modifier = Modifier.padding(start = 62.dp, end = 16.dp),
-    )
-}
 
-@Composable
-private fun ViewerActionItem(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    iconBg: androidx.compose.ui.graphics.Color,
-    iconTint: androidx.compose.ui.graphics.Color,
-    labelColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color.Unspecified,
-    onClick: () -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 13.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(iconBg),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
-        }
-        Spacer(Modifier.width(14.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = if (labelColor == androidx.compose.ui.graphics.Color.Unspecified) MaterialTheme.colorScheme.onSurface else labelColor,
-        )
-    }
-}
 
-@Composable
-private fun ViewerSheetHeader(file: BrowseItem.File) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(52.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            FileTypeIcon(file, Modifier.height(36.dp))
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                file.name,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            val subtitle = listOfNotNull(
-                file.type.takeIf { it.isNotBlank() },
-                file.filesize,
-                (file.createdAt ?: file.updatedAt)?.take(10),
-            ).joinToString(" · ")
-            if (subtitle.isNotBlank()) {
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-    }
-    HorizontalDivider(
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
-        modifier = Modifier.padding(horizontal = 20.dp),
-    )
-}
 
 /** Faixa do modo Lixo: o ficheiro só pode ser visto; restaurar ou eliminar de vez. */
 @Composable

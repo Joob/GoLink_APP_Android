@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.backup
 
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.ui.zIndex
 import co.golink.tester.ui.components.pinchToZoomLevels
 import co.golink.tester.ui.i18n.tr
@@ -329,55 +330,86 @@ fun MobileBackupsScreen(
                     modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
                 ) { EmptyDivisionState(state.tab) }
 
-                state.viewMode == ViewMode.GRID -> {
-                    // Grelha (galeria): lista plana ordenada, do mais recente
-                    // para o mais antigo por omissão (DATE_DESC).
-                    val gridData = remember(state.items, state.sortMode) {
-                        sortBackupItems(state.items, state.sortMode)
-                    }
-                    val gap = if (state.zoomLevel >= 3) 4.dp else 8.dp
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(co.golink.tester.ui.screens.browse.gridColumnsFor(state.zoomLevel)),
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(if (state.zoomLevel >= 3) 8.dp else 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(gap),
-                        verticalArrangement = Arrangement.spacedBy(gap),
-                    ) {
-                        gridItems(gridData, key = { it.id }) { item ->
-                            BrowseItemGridCard(
-                                item = item,
-                                density = co.golink.tester.ui.components.cardDensityFor(state.zoomLevel),
-                                onClick = { onItemClick(item) },
-                                onLongClick = { onItemLongClick(item) },
-                                onMoreClick = { sheetItem = item },
-                                selected = item.id in state.selectedIds,
-                                selectionMode = state.selectMode,
-                            )
-                        }
-                    }
-                }
-
                 else -> {
-                    // Lista: por data agrupa por dia (cabeçalho); por nome fica
-                    // plana. Ordem por omissão: mais recente → mais antigo.
-                    val rows = remember(state.items, state.sortMode) {
-                        buildDayGroupedRows(state.items, state.sortMode)
+                    // Mesmo formato dos Ficheiros: "Pastas" (cartões compactos /
+                    // mosaicos / chips com nome) + secções por dia/mês/ano, recolhíveis.
+                    val zoom = state.zoomLevel
+                    val byDate = state.sortMode == SortMode.DATE_DESC || state.sortMode == SortMode.DATE_ASC
+                    val granularity = when (zoom) {
+                        0 -> co.golink.tester.ui.screens.browse.DateGroup.DAY
+                        4 -> co.golink.tester.ui.screens.browse.DateGroup.YEAR
+                        else -> co.golink.tester.ui.screens.browse.DateGroup.MONTH
                     }
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        rows.forEach { row ->
-                            when (row) {
-                                is BackupRow.Header -> item(key = "hdr_${row.label}", contentType = "header") {
-                                    BackupDateHeader(row.label)
+                    val sections = remember(state.items, state.sortMode, granularity) {
+                        co.golink.tester.ui.screens.browse.browseSections(sortBackupItems(state.items, state.sortMode), byDate, granularity)
+                    }
+                    var collapsed by remember(state.tab, state.folderStack.size) { mutableStateOf(setOf<String>()) }
+                    val toggle: (String) -> Unit = { k -> collapsed = if (k in collapsed) collapsed - k else collapsed + k }
+                    if (state.viewMode == ViewMode.GRID) {
+                        val gap = if (zoom >= 3) 4.dp else 8.dp
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(co.golink.tester.ui.screens.browse.gridColumnsFor(zoom)),
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(start = if (zoom >= 3) 8.dp else 16.dp, end = if (zoom >= 3) 8.dp else 16.dp, top = 8.dp, bottom = 56.dp),
+                            horizontalArrangement = Arrangement.spacedBy(gap),
+                            verticalArrangement = Arrangement.spacedBy(gap),
+                        ) {
+                            sections.forEach { section ->
+                                val isCollapsed = section.key in collapsed
+                                if (section.title != null) {
+                                    item(key = "sec-${section.key}", span = { GridItemSpan(maxLineSpan) }, contentType = "month") {
+                                        co.golink.tester.ui.screens.browse.MonthHeader(
+                                            section.title, section.count, Modifier.padding(top = 10.dp, bottom = 2.dp),
+                                            collapsed = isCollapsed, onToggle = { toggle(section.key) },
+                                        )
+                                    }
                                 }
-                                is BackupRow.Entry -> item(key = row.item.id, contentType = "entry") {
-                                    val item = row.item
+                                if (!isCollapsed && section.folders && zoom >= 4) {
+                                    item(key = co.golink.tester.ui.screens.browse.FOLDERS_STRIP_KEY, span = { GridItemSpan(maxLineSpan) }, contentType = "folders-strip") {
+                                        co.golink.tester.ui.components.FolderChipsRow(
+                                            folders = section.items.filterIsInstance<BrowseItem.Folder>(),
+                                            selectedIds = state.selectedIds,
+                                            selectionMode = state.selectMode,
+                                            onClick = onItemClick,
+                                            onLongClick = onItemLongClick,
+                                        )
+                                    }
+                                } else if (!isCollapsed) {
+                                    gridItems(section.items, key = { it.id }, contentType = { if (section.folders) "folder" else "file" }) { item ->
+                                        BrowseItemGridCard(
+                                            item = item,
+                                            compactFolder = section.folders,
+                                            density = co.golink.tester.ui.components.cardDensityFor(zoom),
+                                            onClick = { onItemClick(item) },
+                                            onLongClick = { onItemLongClick(item) },
+                                            onMoreClick = { sheetItem = item },
+                                            selected = item.id in state.selectedIds,
+                                            selectionMode = state.selectMode,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 56.dp),
+                            verticalArrangement = Arrangement.spacedBy(if (zoom == 0) 8.dp else 6.dp),
+                        ) {
+                            sections.forEach { section ->
+                                val isCollapsed = section.key in collapsed
+                                if (section.title != null) {
+                                    item(key = "sec-${section.key}", contentType = "month") {
+                                        co.golink.tester.ui.screens.browse.MonthHeader(
+                                            section.title, section.count, Modifier.padding(top = 8.dp, bottom = 2.dp),
+                                            collapsed = isCollapsed, onToggle = { toggle(section.key) },
+                                        )
+                                    }
+                                }
+                                if (!isCollapsed) items(section.items, key = { it.id }) { item ->
                                     BrowseItemRow(
                                         item = item,
-                                        large = state.zoomLevel == 0,
+                                        large = zoom == 0,
                                         onClick = { onItemClick(item) },
                                         onLongClick = { onItemLongClick(item) },
                                         onMoreClick = { sheetItem = item },
@@ -695,35 +727,6 @@ private fun EmptyDivisionState(tab: MobileBackupTab) {
     }
 }
 
-// --- Agrupamento por dia da lista de backups --------------------------------
-
-private sealed interface BackupRow {
-    data class Header(val label: String) : BackupRow
-    data class Entry(val item: BrowseItem) : BackupRow
-}
-
-private val BACKUP_ISO_DATE = Regex("""(\d{4})-(\d{2})-(\d{2})""")
-private val BACKUP_PT_MONTHS = arrayOf(
-    "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez",
-)
-
-// Extrai a data (yyyy-MM-dd) do createdAt, seja ISO ("…T…") ou "yyyy-MM-dd …".
-// Devolve null se o servidor mandar um texto relativo — nesse caso o item fica
-// sem cabeçalho, para a lista degradar de forma limpa.
-private fun backupDayKey(raw: String?): String? {
-    if (raw.isNullOrBlank()) return null
-    return BACKUP_ISO_DATE.find(raw)?.value
-}
-
-private fun backupDayLabel(key: String): String {
-    val parts = key.split("-")
-    if (parts.size != 3) return key
-    val month = parts[1].toIntOrNull() ?: return key
-    val day = parts[2].toIntOrNull() ?: return key
-    val name = BACKUP_PT_MONTHS.getOrNull(month - 1) ?: return key
-    return "$day de $name de ${parts[0]}"
-}
-
 // Ordena a lista plana consoante o modo escolhido (usado na grelha e na lista
 // alfabética). DATE_DESC = mais recente primeiro.
 private fun sortBackupItems(items: List<BrowseItem>, sort: SortMode): List<BrowseItem> = when (sort) {
@@ -739,29 +742,6 @@ private fun sortBackupItems(items: List<BrowseItem>, sort: SortMode): List<Brows
 // para não rebentar — esses caem no fim de forma estável.
 private fun sortStamp(item: BrowseItem): String =
     item.createdAtIso ?: item.updatedAtIso ?: ""
-
-private fun buildDayGroupedRows(items: List<BrowseItem>, sort: SortMode): List<BackupRow> {
-    // Ordenação alfabética: lista plana, sem cabeçalhos de dia.
-    if (sort == SortMode.ALPHA_ASC || sort == SortMode.ALPHA_DESC) {
-        return sortBackupItems(items, sort).map { BackupRow.Entry(it) }
-    }
-    val asc = sort == SortMode.DATE_ASC
-    val rows = mutableListOf<BackupRow>()
-    val dated = items.filter { backupDayKey(sortStamp(it)) != null }
-        .groupBy { backupDayKey(sortStamp(it))!! }
-    val keys = if (asc) dated.keys.sorted() else dated.keys.sortedDescending()
-    keys.forEach { key ->
-        rows += BackupRow.Header(backupDayLabel(key))
-        val group = dated.getValue(key)
-        val ordered = if (asc) group.sortedBy { sortStamp(it) }
-                      else group.sortedByDescending { sortStamp(it) }
-        ordered.forEach { rows += BackupRow.Entry(it) }
-    }
-    // Itens sem data reconhecível ficam no fim, sem cabeçalho.
-    items.filter { backupDayKey(sortStamp(it)) == null }
-        .forEach { rows += BackupRow.Entry(it) }
-    return rows
-}
 
 // Menu de Vista/Ordenação (igual ao browser, mas com cabeçalhos traduzidos).
 @Composable
@@ -852,13 +832,3 @@ private fun MenuIconBox(active: Boolean, content: @Composable () -> Unit) {
     ) { content() }
 }
 
-@Composable
-private fun BackupDateHeader(label: String) {
-    Text(
-        label,
-        style = MaterialTheme.typography.labelLarge,
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
-    )
-}

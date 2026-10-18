@@ -264,9 +264,13 @@ fun AppNavHost(
                 onCancel = { navController.popBackStack() },
             )
         }
-        composable(Routes.HOME) {
+        composable(Routes.HOME) { entry ->
+            // Pedido vindo das Definições ("Libertar espaço"): abrir o Lixo.
+            val openTrash by entry.savedStateHandle.getStateFlow("open_trash", false).collectAsState()
             androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
                 BrowseScreen(
+                    openTrashRequest = openTrash,
+                    onTrashRequestHandled = { entry.savedStateHandle["open_trash"] = false },
                     onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
                     onOpenSettings = { navController.navigate(Routes.settings()) },
                     onOpenBilling = { navController.navigate(Routes.settings("billing")) },
@@ -311,6 +315,10 @@ fun AppNavHost(
                 initialRoute = initial,
                 onOpenAutoBackup = { navController.navigate(Routes.MOBILE_BACKUPS) },
                 onOpenSecurityActivity = { navController.navigate(Routes.SECURITY_ACTIVITY) },
+                onOpenTrash = {
+                    runCatching { navController.getBackStackEntry(Routes.HOME).savedStateHandle["open_trash"] = true }
+                    navController.popBackStack(Routes.HOME, inclusive = false)
+                },
                 // Staff abre o Support Desk no Dashboard (como na web); utilizador vai aos seus tickets.
                 onOpenSupport = { admin ->
                     navController.navigate(if (admin) Routes.SUPPORT_DASHBOARD else Routes.support(false))

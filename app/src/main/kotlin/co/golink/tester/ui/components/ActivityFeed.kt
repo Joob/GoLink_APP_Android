@@ -1,5 +1,8 @@
 package co.golink.tester.ui.components
 
+import androidx.compose.runtime.key
+import androidx.compose.material.icons.outlined.Upload
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -136,6 +139,7 @@ fun ActivityFeedContent(
                 Text(
                     when (tab) {
                         "my_uploads" -> "Não fizeste uploads recentemente".tr()
+                        "downloads" -> "Ainda não transferiste nada.".tr()
                         "shared_with_me" -> "Ainda ninguém partilhou nada contigo".tr()
                         "team" -> "Sem atividade recente nas tuas pastas de equipa".tr()
                         else -> "Ainda não há atividade".tr()
@@ -146,10 +150,26 @@ fun ActivityFeedContent(
                 )
             }
         }
+        // Um cartão por dia, com as entradas separadas por linhas (como na web).
         days.forEach { (day, dayEntries) ->
-            item(key = "day-$day") { DayLabel(day) }
-            items(dayEntries, key = { it.id }) { entry ->
-                FeedCard(entry, onOpen, onOpenFolder, onRestore, onMore)
+            item(key = "day-$day", contentType = "day") {
+                Column {
+                    DayLabel(day)
+                    Spacer(Modifier.height(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
+                        color = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column {
+                            dayEntries.forEachIndexed { i, entry ->
+                                if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                                key(entry.id) { FeedRow(entry, onOpen, onOpenFolder, onRestore, onMore) }
+                            }
+                        }
+                    }
+                }
             }
         }
         if (loadingMore) {
@@ -170,51 +190,54 @@ fun ActivityFeedContent(
 
 @Composable
 private fun SummaryCards(summary: ActivitySummary, onReview: () -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        color = MaterialTheme.colorScheme.surface,
-    ) {
-        Column(Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconTile(Icons.Outlined.BarChart, MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(8.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(Modifier.fillMaxWidth().padding(14.dp)) {
                 Text("Últimos 7 dias".tr(), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Row {
+                    StatBox(summary.uploaded7d, "ficheiros carregados".tr(), Modifier.weight(1f))
+                    StatBox(summary.foldersChanged7d, "pastas alteradas".tr(), Modifier.weight(1f))
+                }
             }
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatBox(summary.uploaded7d, "ficheiros carregados".tr(), Modifier.weight(1f))
-                StatBox(summary.foldersChanged7d, "pastas alteradas".tr(), Modifier.weight(1f))
-            }
-            summary.duplicates.firstOrNull()?.let { first ->
-                Spacer(Modifier.height(12.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
-                Spacer(Modifier.height(12.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconTile(Icons.Outlined.ContentCopy, Color(0xFFB45309))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Possíveis duplicados".tr(), fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        }
+        summary.duplicates.firstOrNull()?.let { first ->
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
+                color = MaterialTheme.colorScheme.surface,
+            ) {
+                Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                    Text("Possíveis duplicados".tr(), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    val where = first.folders.take(2)
+                    val more = summary.duplicates.size - 1
+                    Text(
+                        buildAnnotatedString {
+                            append("%d ficheiros com o mesmo nome".tr().format(first.files.size) + " " + "em".tr() + " ")
+                            where.forEachIndexed { k, f ->
+                                if (k > 0) append(" " + "e".tr() + " ")
+                                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)) { append(f) }
+                            }
+                            if (more > 0) append(", " + "e mais %d casos.".tr().format(more)) else append(".")
+                        },
+                        fontSize = 12.5.sp,
+                        lineHeight = 18.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(10.dp))
                     OutlinedButton(
                         onClick = onReview,
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                        modifier = Modifier.height(30.dp),
-                    ) { Text("Rever".tr(), fontSize = 12.sp, fontWeight = FontWeight.SemiBold) }
+                        modifier = Modifier.height(32.dp),
+                    ) { Text("Rever duplicados".tr(), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface) }
                 }
-                Spacer(Modifier.height(6.dp))
-                val where = first.folders.take(2).joinToString(" " + "e em".tr() + " ")
-                val more = summary.duplicates.size - 1
-                Text(
-                    buildAnnotatedString {
-                        append("%d ficheiros com o mesmo nome".tr().format(first.files.size) + " ")
-                        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(first.name) }
-                        append(" " + "em".tr() + " ")
-                        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(where) }
-                        if (more > 0) append("  (+%d)".format(more))
-                    },
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
     }
@@ -222,23 +245,10 @@ private fun SummaryCards(summary: ActivitySummary, onReview: () -> Unit) {
 
 @Composable
 private fun StatBox(value: Int, label: String, modifier: Modifier) {
-    Column(
-        modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            .padding(12.dp),
-    ) {
-        Text(value.toString(), fontSize = 22.sp, fontWeight = FontWeight.Bold)
+    Column(modifier) {
+        Text(value.toString(), fontSize = 24.sp, fontWeight = FontWeight.Bold)
         Text(label, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-}
-
-@Composable
-private fun IconTile(icon: ImageVector, tint: Color) {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier.size(26.dp).background(tint.copy(alpha = 0.12f), RoundedCornerShape(8.dp)),
-    ) { Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(15.dp)) }
 }
 
 // ---- Separadores e dias -------------------------------------------------------------
@@ -246,8 +256,9 @@ private fun IconTile(icon: ImageVector, tint: Color) {
 @Composable
 private fun FeedTabs(entries: List<FeedEntry>, tab: String, hasMore: Boolean, onTab: (String) -> Unit) {
     val tabs = listOf(
-        "all" to "Todos".tr(),
-        "my_uploads" to "Os meus uploads".tr(),
+        "all" to "Tudo".tr(),
+        "my_uploads" to "Carregamentos".tr(),
+        "downloads" to "Transferências".tr(),
         "shared_with_me" to "Partilhado comigo".tr(),
         "team" to "Pastas de equipa".tr(),
     )
@@ -286,7 +297,7 @@ private fun DayLabel(day: LocalDate?) {
         else -> day.format(DateTimeFormatter.ofPattern("d MMM yyyy", appLocale()))
     }
     val secondary = if (day == today || day == today.minusDays(1)) {
-        day.format(DateTimeFormatter.ofPattern("EEEE, d MMM", appLocale()))
+        day.format(DateTimeFormatter.ofPattern("EEEE, d MMM yyyy", appLocale()))
     } else day.format(DateTimeFormatter.ofPattern("EEEE", appLocale()))
     Text(
         buildAnnotatedString {
@@ -301,8 +312,9 @@ private fun DayLabel(day: LocalDate?) {
 
 // ---- Cartão ---------------------------------------------------------------------------
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun FeedCard(
+private fun FeedRow(
     entry: FeedEntry,
     onOpen: (ActivityEntry) -> Unit,
     onOpenFolder: (BrowseItem.Folder, String?) -> Unit,
@@ -311,59 +323,127 @@ private fun FeedCard(
 ) {
     val e = entry.base
     val (icon, tint) = actionIcon(entry)
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        color = MaterialTheme.colorScheme.surface,
-        modifier = Modifier
+    val isBatch = entry.kind == "batch"
+    val isDownloadBatch = isBatch && e.action == "downloaded"
+    var expanded by remember(entry.id) { mutableStateOf(false) }
+    // Pasta para "Abrir pasta"/"Ver ficheiros": a do lote, ou a do 1.º ficheiro.
+    val folderTarget: BrowseItem.Folder? = entry.folder
+
+    Column(
+        Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .clickable {
-                if (entry.kind == "batch") entry.folder?.let { onOpenFolder(it, entry.folderOwnerId) } else onOpen(e)
-            },
+            .combinedClickable(
+                onClick = {
+                    when {
+                        isBatch -> expanded = !expanded
+                        else -> onOpen(e)
+                    }
+                },
+                onLongClick = { if (!isBatch && e.item != null) onMore(e) },
+            )
+            .padding(horizontal = 12.dp, vertical = 11.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                formatTime(e.createdAtIso),
+                fontSize = 11.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.width(38.dp),
+            )
             Box(
                 contentAlignment = Alignment.Center,
-                modifier = Modifier.size(34.dp).background(tint.copy(alpha = 0.12f), CircleShape),
-            ) { Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(17.dp)) }
-            Spacer(Modifier.width(10.dp))
+                modifier = Modifier.size(30.dp).background(tint.copy(alpha = 0.12f), RoundedCornerShape(9.dp)),
+            ) { Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp)) }
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(sentence(entry), fontSize = 13.5.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(meta(entry), fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val m = meta(entry)
+                if (m.isNotEmpty()) Text(m, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Spacer(Modifier.width(8.dp))
-            val item = e.item
+            // Miniaturas dos lotes de carregamentos.
+            if (isBatch && !isDownloadBatch && entry.files.isNotEmpty()) {
+                Spacer(Modifier.width(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    entry.files.take(3).forEach { f ->
+                        Box(
+                            Modifier.size(28.dp).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (f is BrowseItem.File && (f.type == "image" || f.type == "video")) {
+                                FilePreview(f, iconSize = 16.dp, modifier = Modifier.fillMaxSize())
+                            } else if (f is BrowseItem.File) {
+                                FileTypeIcon(f, Modifier.height(18.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Ações (por baixo do texto, alinhadas com ele).
+        val item = e.item
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(start = 80.dp, top = 8.dp),
+        ) {
             when {
-                entry.kind == "batch" && entry.folder != null ->
-                    CardButton("Abrir pasta".tr()) { onOpenFolder(entry.folder, entry.folderOwnerId) }
-                e.itemTrashed && item != null && e.isMine ->
-                    CardButton("Restaurar".tr()) { onRestore(item) }
-                item is BrowseItem.Folder && !e.itemTrashed ->
-                    CardButton("Abrir pasta".tr()) { onOpen(e) }
-                item != null -> Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(30.dp).clip(RoundedCornerShape(8.dp)).clickable { onMore(e) },
-                ) { Text("⋮", fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                isDownloadBatch -> {
+                    RowButton(if (expanded) "Esconder".tr() else "Ver %d".tr().format(entry.count), RowButtonStyle.Outline) { expanded = !expanded }
+                    folderTarget?.let { f -> RowButton("Ver ficheiros".tr()) { onOpenFolder(f, entry.folderOwnerId) } }
+                }
+                isBatch -> {
+                    RowButton(if (expanded) "Esconder".tr() else "Ver ficheiros".tr(), RowButtonStyle.Outline) { expanded = !expanded }
+                    folderTarget?.let { f -> RowButton("Abrir pasta".tr(), RowButtonStyle.Theme) { onOpenFolder(f, entry.folderOwnerId) } }
+                }
+                e.itemTrashed && item != null && e.isMine -> RowButton("Restaurar".tr(), RowButtonStyle.Dark) { onRestore(item) }
+                item is BrowseItem.Folder && !e.itemTrashed -> RowButton("Abrir pasta".tr(), RowButtonStyle.Theme) { onOpen(e) }
+                item != null && !e.itemTrashed -> RowButton("Abrir".tr()) { onOpen(e) }
+            }
+        }
+        // Lista dos ficheiros do lote.
+        if (isBatch && expanded) {
+            Column(Modifier.padding(start = 80.dp, top = 8.dp)) {
+                entry.files.forEach { f ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onOpen(e.copy(item = f, itemTrashed = false)) }
+                            .padding(vertical = 6.dp, horizontal = 4.dp),
+                    ) {
+                        if (f is BrowseItem.File) FileTypeIcon(f, Modifier.height(20.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Text(f.name, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        (f as? BrowseItem.File)?.filesize?.let {
+                            Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                val hidden = entry.count - entry.files.size
+                if (hidden > 0) Text("e mais %d".tr().format(hidden), fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(4.dp))
             }
         }
     }
 }
 
+private enum class RowButtonStyle { Plain, Outline, Theme, Dark }
+
 @Composable
-private fun CardButton(label: String, onClick: () -> Unit) {
+private fun RowButton(label: String, style: RowButtonStyle = RowButtonStyle.Plain, onClick: () -> Unit) {
+    val green = Color(0xFF15803D)
+    val (bg, fg) = when (style) {
+        RowButtonStyle.Plain -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f) to MaterialTheme.colorScheme.onSurface
+        RowButtonStyle.Outline -> Color.Transparent to MaterialTheme.colorScheme.onSurface
+        RowButtonStyle.Theme -> green.copy(alpha = 0.12f) to green
+        RowButtonStyle.Dark -> MaterialTheme.colorScheme.onSurface to MaterialTheme.colorScheme.surface
+    }
     Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-        modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick),
+        shape = RoundedCornerShape(8.dp),
+        color = bg,
+        border = if (style == RowButtonStyle.Outline) BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null,
+        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick),
     ) {
-        Text(
-            label,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-        )
+        Text(label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = fg, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
     }
 }
 
@@ -372,7 +452,7 @@ private fun actionIcon(entry: FeedEntry): Pair<ImageVector, Color> {
     val primary = MaterialTheme.colorScheme.primary
     val gray = MaterialTheme.colorScheme.onSurfaceVariant
     return when (entry.base.action) {
-        "uploaded" -> Icons.Outlined.CloudUpload to primary
+        "uploaded" -> Icons.Outlined.Upload to Color(0xFF15803D)
         "folder_created" -> Icons.Outlined.CreateNewFolder to primary
         "renamed", "content_updated" -> Icons.Outlined.Edit to gray
         "moved" -> Icons.Outlined.DriveFileMove to gray
@@ -429,10 +509,15 @@ private fun sentence(entry: FeedEntry) = buildAnnotatedString {
     val bold = SpanStyle(fontWeight = FontWeight.SemiBold)
     val who = if (e.isMine) null else activityActorName(e)
     when (entry.kind) {
-        "batch" -> {
-            if (who != null) { withStyle(bold) { append(who) }; append(" " + "carregou".tr() + " ") } else append("Carregaste".tr() + " ")
+        "batch" -> if (e.action == "downloaded") {
+            append("Transferiste".tr() + " ")
             withStyle(bold) { append(batchWhat(entry)) }
-            entry.base.parentName?.let { append(" " + "para".tr() + " "); withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)) { append(it) } }
+        } else {
+            if (who != null) { withStyle(bold) { append(who) }; append(" " + "carregou".tr() + " ") } else append("Carregaste".tr() + " ")
+            withStyle(bold) {
+                append(batchWhat(entry))
+                entry.base.parentName?.let { append(" " + "para".tr() + " " + it) }
+            }
         }
         "shared_with_me" -> {
             withStyle(bold) { append(who ?: "") }
@@ -447,13 +532,18 @@ private fun sentence(entry: FeedEntry) = buildAnnotatedString {
 }
 
 private fun meta(entry: FeedEntry): String {
-    val time = formatTime(entry.base.createdAtIso)
-    return when (entry.kind) {
-        "batch" -> listOf(time, formatBytes(entry.totalBytes)).filter { it.isNotEmpty() }.joinToString(" · ")
+    val e = entry.base
+    return when {
+        // Transferências: "JSON · PDF · em New Folder".
+        entry.kind == "batch" && e.action == "downloaded" -> buildList {
+            addAll(entry.extensions.take(3))
+            entry.folder?.name?.let { add("em".tr() + " " + it) }
+        }.joinToString(" · ")
+        entry.kind == "batch" -> formatBytes(entry.totalBytes)
         else -> buildList {
-            if (time.isNotEmpty()) add(time)
-            entry.base.parentName?.let { add("em".tr() + " " + it) }
-            if (entry.base.itemTrashed) add("No lixo".tr())
+            (e.item as? BrowseItem.File)?.name?.substringAfterLast('.', "")?.takeIf { it.isNotBlank() && it.length <= 5 }?.let { add(it.uppercase()) }
+            e.parentName?.let { add("em".tr() + " " + it) }
+            if (e.itemTrashed) add("No lixo".tr())
         }.joinToString(" · ")
     }
 }

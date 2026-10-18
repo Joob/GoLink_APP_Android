@@ -252,9 +252,17 @@ fun BrowseScreen(
     onOpenSupport: (admin: Boolean) -> Unit = {},
     onOpenSupportDashboard: () -> Unit = {},
     onOpenAdmin: (pane: String) -> Unit = {},
+    openTrashRequest: Boolean = false,
+    onTrashRequestHandled: () -> Unit = {},
     viewModel: BrowseViewModel = hiltViewModel(),
     shell: BrowseShellViewModel = hiltViewModel(),
 ) {
+    LaunchedEffect(openTrashRequest) {
+        if (openTrashRequest) {
+            viewModel.openTrash()
+            onTrashRequestHandled()
+        }
+    }
     val openActivityFile: (BrowseItem.File) -> Unit = { file ->
         val viewable = viewModel.activity.value.sections.values
             .flatMap { it.entries }
@@ -1353,9 +1361,9 @@ private fun selectionSummary(selected: List<BrowseItem>): String? {
     return if (bytes > 0) "$label · ${co.golink.tester.ui.common.formatBytes(bytes)}" else label
 }
 
-private enum class DateGroup { DAY, MONTH, YEAR }
+internal enum class DateGroup { DAY, MONTH, YEAR }
 
-private const val FOLDERS_STRIP_KEY = "folders-strip"
+internal const val FOLDERS_STRIP_KEY = "folders-strip"
 
 // Keys pela ordem em que a grelha/lista os emite (para manter o item do topo ao mudar de zoom).
 private fun sectionKeys(sections: List<MonthSection>, collapsed: Set<String>, strip: Boolean): List<Any> {
@@ -1368,7 +1376,7 @@ private fun sectionKeys(sections: List<MonthSection>, collapsed: Set<String>, st
     return out
 }
 
-private data class MonthSection(
+internal data class MonthSection(
     val key: String,
     val title: String?,
     val count: String?,
@@ -1378,7 +1386,7 @@ private data class MonthSection(
 
 // Secções (grelha e lista, como na web): "Pastas" à cabeça; ficheiros por mês
 // quando ordenado por data, senão numa secção "Ficheiros" (só se houver pastas).
-private fun browseSections(items: List<BrowseItem>, byDate: Boolean, granularity: DateGroup = DateGroup.MONTH): List<MonthSection> {
+internal fun browseSections(items: List<BrowseItem>, byDate: Boolean, granularity: DateGroup = DateGroup.MONTH): List<MonthSection> {
     val folders = items.filterIsInstance<BrowseItem.Folder>()
     val files = items.filterIsInstance<BrowseItem.File>()
     val out = mutableListOf<MonthSection>()
@@ -1422,7 +1430,7 @@ private fun typeBreakdown(files: List<BrowseItem.File>): String {
 
 // Título de secção: chevron (recolher), título a negrito, contagem e uma linha.
 @Composable
-private fun MonthHeader(
+internal fun MonthHeader(
     title: String,
     count: String?,
     modifier: Modifier = Modifier,

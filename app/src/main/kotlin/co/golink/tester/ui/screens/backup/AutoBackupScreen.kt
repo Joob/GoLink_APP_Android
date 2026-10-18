@@ -1,5 +1,9 @@
 package co.golink.tester.ui.screens.backup
 
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
+import androidx.compose.material.icons.filled.Check
 import co.golink.tester.ui.i18n.tr
 import android.Manifest
 import android.content.Intent
@@ -265,7 +269,7 @@ fun AutoBackupScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Backups Automáticos".tr()) },
+                title = { Text("Backup automático".tr(), fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar".tr())
@@ -294,7 +298,8 @@ fun AutoBackupScreen(
                     },
                 )
             } else {
-                ActiveStatusCard(
+                BackupHeroCard(
+                    allowCellular = state.allowCellular,
                     backedUpCount = state.backedUpCount,
                     lastBackupAt = state.lastBackupAt,
                     runState = runState,
@@ -306,26 +311,20 @@ fun AutoBackupScreen(
                 state.lastError?.let { err ->
                     ErrorCard(message = err, onDismiss = viewModel::dismissError, onRetry = viewModel::runNow)
                 }
-                // runProgress.total > 0 mantém o cartão montado entre lotes —
-                // desmontar/remontar a cada pausa era parte do flicker.
-                if (tasks.isNotEmpty() || runProgress.total > 0) {
-                    UploadProgressCard(
+                if (tasks.isNotEmpty()) {
+                    RecentUploadsSection(
                         tasks = tasks,
-                        runProgress = runProgress,
                         onCancel = viewModel::cancelTask,
                         onRetry = viewModel::retryTask,
                         onRetryFailed = viewModel::retryFailed,
                         onOverwrite = viewModel::overwriteTask,
                         onSkip = viewModel::skipTask,
-                        onDismiss = viewModel::dismissTasks,
                     )
                 }
-                SettingsCard(
-                    allowWifi = state.allowWifi,
-                    allowCellular = state.allowCellular,
+                WhenSection(
+                    useCellular = state.allowCellular,
                     chargingOnly = state.chargingOnly,
-                    onToggleWifi = viewModel::setAllowWifi,
-                    onToggleCellular = viewModel::setAllowCellular,
+                    onUseCellular = viewModel::setUseCellular,
                     onToggleCharging = viewModel::setChargingOnly,
                 )
                 ContentSourcesCard(
@@ -474,8 +473,89 @@ private fun FeatureRow(icon: ImageVector, title: String, description: String) {
     }
 }
 
+// ─── Redesign (mockup): cartão verde de estado, últimos enviados, quando e o
+// que guardar, avançado. Secções com título fora do cartão, cartões claros. ───
+
+private val HeroTop = Color(0xFF1F7A4D)
+private val HeroBottom = Color(0xFF14532D)
+
 @Composable
-private fun ActiveStatusCard(
+private fun SectionTitle(title: String, modifier: Modifier = Modifier, trailing: String? = null, subtitle: String? = null) {
+    Column(modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                title,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            if (trailing != null) {
+                Text(trailing, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (subtitle != null) {
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
+        }
+    }
+}
+
+@Composable
+private fun SectionCard(content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(content = content)
+    }
+}
+
+// Quadrado de seleção ao estilo do mockup (verde com ✓, ou contorno).
+@Composable
+private fun SquareCheck(checked: Boolean, onClick: () -> Unit, onDark: Boolean = false) {
+    val shape = RoundedCornerShape(6.dp)
+    val fill = when {
+        onDark && checked -> Color.White
+        checked -> BackupAccent
+        else -> Color.Transparent
+    }
+    val stroke = when {
+        onDark -> Color.White
+        checked -> BackupAccent
+        else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
+    }
+    Box(
+        modifier = Modifier
+            .size(24.dp)
+            .clip(shape)
+            .background(fill)
+            .border(1.5.dp, stroke, shape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (checked) Icon(Icons.Filled.Check, contentDescription = null, tint = if (onDark) HeroBottom else Color.White, modifier = Modifier.size(17.dp))
+    }
+}
+
+private fun lastCheckLabel(at: Long): String {
+    if (at <= 0) return "—"
+    val time = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(Date(at))
+    val day = java.util.Calendar.getInstance().apply { timeInMillis = at }
+    val now = java.util.Calendar.getInstance()
+    val sameYear = day.get(java.util.Calendar.YEAR) == now.get(java.util.Calendar.YEAR)
+    val diff = now.get(java.util.Calendar.DAY_OF_YEAR) - day.get(java.util.Calendar.DAY_OF_YEAR)
+    return when {
+        sameYear && diff == 0 -> "Hoje, %s".tr().format(time)
+        sameYear && diff == 1 -> "Ontem, %s".tr().format(time)
+        else -> DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(at))
+    }
+}
+
+@Composable
+private fun BackupHeroCard(
+    allowCellular: Boolean,
     backedUpCount: Int,
     lastBackupAt: Long,
     runState: AutoBackupManager.RunState,
@@ -485,129 +565,93 @@ private fun ActiveStatusCard(
     onDisable: () -> Unit,
 ) {
     val activeCount = tasks.count { it.state == UploadTask.State.Uploading || it.state == UploadTask.State.Queued }
-    val doneCount = tasks.count { it.state == UploadTask.State.Completed }
-    val totalBytes = tasks.sumOf { it.sizeBytes }.coerceAtLeast(1L)
-    val uploadedBytes = tasks.sumOf { (it.progress * it.sizeBytes).toLong() }
-    // Preferir o progresso reportado pelo worker: a lista de tarefas é podada
-    // a cada lote, por isso contagens/bytes calculados sobre ela andam aos
-    // saltos e até recuam.
-    val overall = if (runProgress.total > 0)
-        (runProgress.done.toFloat() / runProgress.total).coerceIn(0f, 1f)
-    else
-        (uploadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
-    val showProgress = runState == AutoBackupManager.RunState.Running || activeCount > 0
-
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        shadowElevation = 2.dp,
-        modifier = Modifier.fillMaxWidth(),
+    val running = runState == AutoBackupManager.RunState.Running || activeCount > 0
+    val overall = if (runProgress.total > 0) (runProgress.done.toFloat() / runProgress.total).coerceIn(0f, 1f) else 0f
+    val title = when {
+        running -> "A fazer backup…".tr()
+        runState == AutoBackupManager.RunState.Waiting -> if (allowCellular) "À espera de rede".tr() else "À espera de Wi-Fi".tr()
+        else -> "Tudo em dia".tr()
+    }
+    val subtitle = when {
+        running && runProgress.total > 0 -> "A enviar %d de %d ficheiros".tr().format(runProgress.done, runProgress.total)
+        running -> "A preparar a galeria…".tr()
+        allowCellular -> "Fotos guardadas automaticamente sempre que tens rede".tr()
+        else -> "Fotos guardadas automaticamente quando tens Wi-Fi".tr()
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .background(Brush.verticalGradient(listOf(HeroTop, HeroBottom)))
+            .padding(16.dp),
     ) {
-        Column(modifier = Modifier.padding(18.dp)) {
+        Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF22C55E).copy(alpha = 0.15f)),
+                    modifier = Modifier.size(44.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.18f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color(0xFF16A34A), modifier = Modifier.size(26.dp))
-                }
-                Spacer(Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Backup activo".tr(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    val sub = when (runState) {
-                        AutoBackupManager.RunState.Running -> when {
-                            runProgress.total > 0 -> "${"A enviar".tr()} ${runProgress.done} ${"de".tr()} ${runProgress.total}…"
-                            activeCount > 0 -> "${"A enviar".tr()} $doneCount ${"de".tr()} ${tasks.size}…"
-                            else -> "A preparar a galeria…".tr()
-                        }
-                        AutoBackupManager.RunState.Waiting -> "A aguardar rede / condições…".tr()
-                        AutoBackupManager.RunState.Idle -> if (lastBackupAt > 0)
-                            "Última verificação: ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(lastBackupAt))}"
-                        else "À espera da primeira verificação…".tr()
-                    }
-                    Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(checked = true, onCheckedChange = { onDisable() })
-            }
-
-            // Live aggregate progress bar — visible whenever the worker is
-            // actually running or there are queued/uploading tasks. The
-            // percentage is byte-weighted so a few large files don't make the
-            // bar jump backwards as smaller items complete.
-            if (showProgress) {
-                Spacer(Modifier.height(14.dp))
-                LinearProgressIndicator(
-                    progress = { overall },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp)),
-                    color = BackupAccent,
-                    trackColor = BackupAccent.copy(alpha = 0.15f),
-                )
-                Spacer(Modifier.height(6.dp))
-                val pct = (overall * 100).toInt().coerceIn(0, 100)
-                Text(
-                    when {
-                        runProgress.total > 0 -> "$pct% · ${runProgress.done} ${"de".tr()} ${runProgress.total} ${"ficheiros".tr()}"
-                        tasks.isNotEmpty() -> "$pct% · $doneCount ${"de".tr()} ${tasks.size} ${"ficheiros".tr()}"
-                        else -> "A preparar…".tr()
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            Spacer(Modifier.height(16.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
-            Spacer(Modifier.height(16.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(BackupAccent.copy(alpha = 0.14f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Outlined.CloudDone, contentDescription = null, tint = BackupAccent, modifier = Modifier.size(20.dp))
+                    if (running) CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
+                    else Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Itens copiados".tr(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                    Text("$backedUpCount ${"ficheiros enviados".tr()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    Text(subtitle, color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.bodySmall)
                 }
+                Spacer(Modifier.width(8.dp))
+                // Desmarcar = desligar o backup automático.
+                SquareCheck(checked = true, onClick = onDisable, onDark = true)
             }
-            Spacer(Modifier.height(16.dp))
+            if (running && runProgress.total > 0) {
+                Spacer(Modifier.height(12.dp))
+                LinearProgressIndicator(
+                    progress = { overall },
+                    modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)),
+                    color = Color.White,
+                    trackColor = Color.White.copy(alpha = 0.22f),
+                    gapSize = 0.dp,
+                    drawStopIndicator = {},
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                HeroStat("$backedUpCount", "ficheiros guardados".tr(), Modifier.weight(1f))
+                HeroStat(lastCheckLabel(lastBackupAt), "última verificação".tr(), Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(14.dp))
             Button(
                 onClick = onRunNow,
-                // Activo sempre que não há um backup a decorrer. Com o tick de
-                // 1 min agendado o estado fica "Waiting" (ENQUEUED) — antes isso
-                // desactivava o botão quase sempre. Carregar assume prioridade
-                // (REPLACE) sobre o tick pendente e corre já.
                 enabled = runState != AutoBackupManager.RunState.Running,
                 shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = BackupAccent),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White,
+                    contentColor = HeroBottom,
+                    disabledContainerColor = Color.White.copy(alpha = 0.6f),
+                    disabledContentColor = HeroBottom.copy(alpha = 0.7f),
+                ),
+                contentPadding = PaddingValues(vertical = 13.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                if (runState == AutoBackupManager.RunState.Running) {
-                    androidx.compose.material3.CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                        color = Color.White,
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Text("A enviar…".tr(), color = Color.White, fontWeight = FontWeight.SemiBold)
-                } else {
-                    Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Backup Now".tr(), color = Color.White, fontWeight = FontWeight.SemiBold)
-                }
+                Text(
+                    if (runState == AutoBackupManager.RunState.Running) "A enviar…".tr() else "Fazer backup agora".tr(),
+                    fontWeight = FontWeight.Bold,
+                )
             }
         }
+    }
+}
+
+@Composable
+private fun HeroStat(value: String, label: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(alpha = 0.14f))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Text(value, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(label, color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
 }
 
@@ -620,70 +664,192 @@ private fun formatBytes(bytes: Long): String {
     return if (i == 0) "$bytes B" else String.format("%.1f %s", value, units[i])
 }
 
+// "Últimos enviados": 3 linhas; "Ver histórico" abre a lista completa (com scroll).
 @Composable
-private fun SettingsCard(
-    allowWifi: Boolean,
-    allowCellular: Boolean,
-    chargingOnly: Boolean,
-    onToggleWifi: (Boolean) -> Unit,
-    onToggleCellular: (Boolean) -> Unit,
-    onToggleCharging: (Boolean) -> Unit,
+private fun RecentUploadsSection(
+    tasks: List<UploadTask>,
+    onCancel: (String) -> Unit,
+    onRetry: (String) -> Unit,
+    onRetryFailed: () -> Unit,
+    onOverwrite: (String) -> Unit,
+    onSkip: (String) -> Unit,
 ) {
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(modifier = Modifier.padding(vertical = 6.dp)) {
-            // Toggles independentes: podem estar ambos activos (backup em
-            // qualquer rede). O ViewModel impede desligar o último.
-            ToggleRow(
-                icon = Icons.Outlined.Wifi,
-                title = "Wi-Fi",
-                description = "Fazer backup quando ligado a Wi-Fi.".tr(),
-                checked = allowWifi,
-                onCheckedChange = onToggleWifi,
-            )
-            Divider()
-            ToggleRow(
-                icon = Icons.Outlined.SignalCellularAlt,
-                title = "Dados móveis".tr(),
-                description = "Fazer backup também por dados móveis.".tr(),
-                checked = allowCellular,
-                onCheckedChange = onToggleCellular,
-            )
-            Divider()
-            ToggleRow(
-                icon = Icons.Outlined.BatteryChargingFull,
-                title = "Apenas a carregar".tr(),
-                description = "Faz backup quando o dispositivo está ligado à corrente.".tr(),
-                checked = chargingOnly,
-                onCheckedChange = onToggleCharging,
-            )
+    var showAll by remember { mutableStateOf(false) }
+    val ordered = remember(tasks) {
+        tasks.sortedBy { t ->
+            when (t.state) {
+                UploadTask.State.Uploading -> 0
+                UploadTask.State.Conflict, UploadTask.State.Failed -> 1
+                UploadTask.State.Queued -> 2
+                else -> 3
+            }
+        }
+    }
+    val done = tasks.filter { it.state == UploadTask.State.Completed }
+    val failed = tasks.count { it.state == UploadTask.State.Failed }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle(
+            "Últimos enviados".tr(),
+            trailing = "%d ficheiros · %s".tr().format(done.size, formatBytes(done.sumOf { it.sizeBytes })),
+        )
+        SectionCard {
+            val listState = rememberLazyListState()
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = if (showAll) 360.dp else 230.dp)
+                    .lazyListScrollbar(listState, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)),
+            ) {
+                val shown = if (showAll) ordered else ordered.take(3)
+                items(shown, key = { it.id }) { task ->
+                    Column(modifier = Modifier.animateItem()) {
+                        RecentRow(
+                            task = task,
+                            onCancel = { onCancel(task.id) },
+                            onRetry = { onRetry(task.id) },
+                            onOverwrite = { onOverwrite(task.id) },
+                            onSkip = { onSkip(task.id) },
+                        )
+                        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.14f), modifier = Modifier.padding(start = 64.dp))
+                    }
+                }
+            }
+            if (failed > 0) {
+                TextButton(onClick = onRetryFailed, modifier = Modifier.fillMaxWidth()) {
+                    Text("Tentar novamente os falhados".tr(), fontWeight = FontWeight.SemiBold)
+                }
+            }
+            if (ordered.size > 3) {
+                TextButton(onClick = { showAll = !showAll }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (showAll) "Mostrar menos".tr() else "Ver histórico".tr(), color = BackupAccent, fontWeight = FontWeight.SemiBold)
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun ToggleRow(
-    icon: ImageVector,
-    title: String,
-    description: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
+private fun RecentRow(
+    task: UploadTask,
+    onCancel: () -> Unit,
+    onRetry: () -> Unit,
+    onOverwrite: () -> Unit,
+    onSkip: () -> Unit,
 ) {
+    val err = MaterialTheme.colorScheme.error
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
     ) {
-        Icon(icon, contentDescription = null, tint = BackupAccent, modifier = Modifier.size(22.dp))
+        Box(
+            modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            co.golink.tester.ui.components.FileTypeIcon(task.name, null, Modifier.height(24.dp))
+        }
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(task.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val (sub, color) = when (task.state) {
+                UploadTask.State.Uploading -> "A enviar · %d%%".tr().format((task.progress * 100).toInt()) to BackupAccent
+                UploadTask.State.Queued -> "Em espera".tr() to MaterialTheme.colorScheme.onSurfaceVariant
+                UploadTask.State.Completed -> "Enviado · %s".tr().format(formatBytes(task.sizeBytes)) to MaterialTheme.colorScheme.onSurfaceVariant
+                UploadTask.State.Failed -> (task.errorMessage?.takeIf { it.isNotBlank() } ?: "Falhou".tr()) to err
+                UploadTask.State.Conflict -> "Nome repetido no servidor".tr() to err
+                UploadTask.State.Cancelled -> "Cancelado".tr() to MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            Text(sub, style = MaterialTheme.typography.labelSmall, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (task.state == UploadTask.State.Uploading) {
+                Spacer(Modifier.height(4.dp))
+                LinearProgressIndicator(
+                    progress = { task.progress },
+                    modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+                    color = BackupAccent,
+                    trackColor = BackupAccent.copy(alpha = 0.15f),
+                    gapSize = 0.dp,
+                    drawStopIndicator = {},
+                )
+            }
+            when (task.state) {
+                UploadTask.State.Failed -> Row {
+                    TextButton(onClick = onRetry, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Tentar novamente".tr()) }
+                    TextButton(onClick = onCancel, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Cancelar".tr()) }
+                }
+                UploadTask.State.Conflict -> Row {
+                    TextButton(onClick = onOverwrite, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Substituir".tr()) }
+                    TextButton(onClick = onSkip, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("Ignorar".tr()) }
+                }
+                else -> Unit
+            }
         }
-        Spacer(Modifier.width(12.dp))
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        if (task.state == UploadTask.State.Completed) {
+            Spacer(Modifier.width(8.dp))
+            Icon(Icons.Filled.Check, contentDescription = null, tint = BackupAccent, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+// "Quando fazer backup": rádio Wi-Fi / Wi-Fi e dados móveis + só a carregar.
+@Composable
+private fun WhenSection(
+    useCellular: Boolean,
+    chargingOnly: Boolean,
+    onUseCellular: (Boolean) -> Unit,
+    onToggleCharging: (Boolean) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("Quando fazer backup".tr())
+        SectionCard {
+            RadioRow("Só com Wi-Fi".tr(), "Não gasta dados móveis".tr(), selected = !useCellular) { onUseCellular(false) }
+            Divider()
+            RadioRow("Wi-Fi e dados móveis".tr(), "Pode gastar o teu tarifário".tr(), selected = useCellular) { onUseCellular(true) }
+            Divider()
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onToggleCharging(!chargingOnly) }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+            ) {
+                Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Outlined.BatteryChargingFull, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(22.dp))
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Só quando estiver a carregar".tr(), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                    Text("Poupa bateria".tr(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                SquareCheck(checked = chargingOnly, onClick = { onToggleCharging(!chargingOnly) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun RadioRow(title: String, subtitle: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (selected) BackupAccent.copy(alpha = 0.06f) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(22.dp)
+                .clip(CircleShape)
+                .border(2.dp, if (selected) BackupAccent else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (selected) Box(Modifier.size(11.dp).clip(CircleShape).background(BackupAccent))
+        }
+        Spacer(Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
@@ -708,30 +874,15 @@ private fun ContentSourcesCard(
     onRequestAllFilesAccess: () -> Unit,
 ) {
     val specs = listOf(
-        CollectionSpec(BackupCollection.IMAGES, Icons.Outlined.Image, "Imagens".tr(), "Fotos da câmara, screenshots e outras imagens.".tr(), state.includeImages),
-        CollectionSpec(BackupCollection.VIDEOS, Icons.Outlined.Videocam, "Vídeos".tr(), "Os vídeos podem ocupar mais espaço e tempo.".tr(), state.includeVideos),
-        CollectionSpec(BackupCollection.AUDIOS, Icons.Outlined.MusicNote, "Áudios".tr(), "Música e gravações guardadas no dispositivo.".tr(), state.includeAudios),
-        CollectionSpec(BackupCollection.DOCUMENTS, Icons.Outlined.Description, "Documentos".tr(), "Ficheiros na pasta Documentos.".tr(), state.includeDocuments),
-        CollectionSpec(BackupCollection.DOWNLOADS, Icons.Outlined.Download, "Downloads".tr(), "Ficheiros na pasta Downloads.".tr(), state.includeDownloads),
+        CollectionSpec(BackupCollection.IMAGES, Icons.Outlined.Image, "Fotos".tr(), "Câmara, screenshots e outras imagens".tr(), state.includeImages),
+        CollectionSpec(BackupCollection.VIDEOS, Icons.Outlined.Videocam, "Vídeos".tr(), "Ocupam mais espaço e demoram mais".tr(), state.includeVideos),
+        CollectionSpec(BackupCollection.AUDIOS, Icons.Outlined.MusicNote, "Áudio".tr(), "Música e gravações".tr(), state.includeAudios),
+        CollectionSpec(BackupCollection.DOCUMENTS, Icons.Outlined.Description, "Documentos".tr(), "Pasta Documentos".tr(), state.includeDocuments),
+        CollectionSpec(BackupCollection.DOWNLOADS, Icons.Outlined.Download, "Transferências".tr(), "Pasta Download".tr(), state.includeDownloads),
     )
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(modifier = Modifier.padding(vertical = 6.dp)) {
-            Text(
-                "Conteúdos a incluir".tr(),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-            )
-            Text(
-                "Ativa uma categoria e escolhe as pastas do telemóvel que entram no backup.".tr(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
-            )
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("O que guardar".tr(), subtitle = "Liga uma categoria e escolhe as pastas do telemóvel".tr())
+        SectionCard {
             specs.forEachIndexed { i, s ->
                 if (i > 0) Divider()
                 CollectionSection(
@@ -767,8 +918,7 @@ private fun ContentSourcesCard(
     }
 }
 
-// Uma categoria (Imagens, Vídeos, …): interruptor de activação + lista
-// expansível das pastas do dispositivo, com checkbox em cada.
+// Categoria: ícone, título, "5 de 5 pastas · 1315 ficheiros", ⌃/⌄ e quadrado.
 @Composable
 private fun CollectionSection(
     icon: ImageVector,
@@ -784,13 +934,8 @@ private fun CollectionSection(
     onToggleAll: (Boolean) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    // Ao ligar a categoria, abre logo e lê as pastas para o utilizador escolher.
-    LaunchedEffect(included) {
-        if (included && !expanded) {
-            expanded = true
-            onExpand()
-        }
-    }
+    // Categoria ligada: lê as pastas logo, para mostrar as contagens.
+    LaunchedEffect(included) { if (included) onExpand() else expanded = false }
 
     Column {
         Row(
@@ -798,37 +943,47 @@ private fun CollectionSection(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable {
-                    expanded = !expanded
-                    if (expanded) onExpand()
+                    if (!included) {
+                        onToggleInclude(true)
+                        expanded = true
+                    } else {
+                        expanded = !expanded
+                        if (expanded) onExpand()
+                    }
                 }
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         ) {
-            Icon(icon, contentDescription = null, tint = BackupAccent, modifier = Modifier.size(22.dp))
+            Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, tint = if (included) BackupAccent else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(22.dp))
+            }
             Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                val subtitle: String
-                val warn: Boolean
-                when {
-                    !included -> { subtitle = description; warn = false }
-                    selectedNames.isEmpty() -> { subtitle = "Nenhuma pasta escolhida — toca para selecionar".tr(); warn = true }
-                    else -> { subtitle = "${selectedNames.size} pasta(s) no backup"; warn = false }
+                val selected = folders?.filter { it.name in selectedNames }
+                val (subtitle, warn) = when {
+                    !included -> description to false
+                    selectedNames.isEmpty() -> "Nenhuma pasta escolhida — toca para selecionar".tr() to true
+                    folders != null && selected != null ->
+                        "%d de %d pastas · %d ficheiros".tr().format(selected.size, folders.size, selected.sumOf { it.count }) to false
+                    else -> "%d pasta(s) no backup".tr().format(selectedNames.size) to false
                 }
                 Text(
                     subtitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (warn) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (warn) MaterialTheme.colorScheme.error else if (included) BackupAccent else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Icon(
-                if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                contentDescription = if (expanded) "Recolher" else "Expandir",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(4.dp))
-            Switch(checked = included, onCheckedChange = onToggleInclude)
+            if (included) {
+                Icon(
+                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "Recolher".tr() else "Expandir".tr(),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(8.dp))
+            }
+            SquareCheck(checked = included, onClick = { onToggleInclude(!included); if (!included) expanded = true })
         }
-        AnimatedVisibility(visible = expanded) {
+        AnimatedVisibility(visible = expanded && included) {
             FolderChecklist(
                 folders = folders,
                 loading = loading,
@@ -848,9 +1003,14 @@ private fun FolderChecklist(
     onToggleFolder: (String, Boolean) -> Unit,
     onToggleAll: (Boolean) -> Unit,
 ) {
-    Column(modifier = Modifier.padding(start = 52.dp, end = 16.dp, bottom = 10.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f))
+            .padding(start = 54.dp, end = 16.dp, top = 6.dp, bottom = 10.dp),
+    ) {
         when {
-            loading && folders == null -> Row(verticalAlignment = Alignment.CenterVertically) {
+            loading && folders == null -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
                 CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(10.dp))
                 Text("A ler pastas…".tr(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -859,59 +1019,38 @@ private fun FolderChecklist(
                 "Sem pastas para esta categoria.".tr(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 8.dp),
             )
             else -> {
                 val allSelected = folders.all { it.name in selectedNames }
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        "Pastas disponíveis".tr(),
+                        "Pastas no telemóvel".tr(),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
                     )
                     TextButton(onClick = { onToggleAll(!allSelected) }) {
-                        Text(if (allSelected) "Limpar".tr() else "Todas".tr())
+                        Text(if (allSelected) "Desmarcar todas".tr() else "Marcar todas".tr(), color = BackupAccent, fontWeight = FontWeight.SemiBold)
                     }
                 }
                 folders.forEach { folder ->
-                    FolderRow(
-                        folder = folder,
-                        checked = folder.name in selectedNames,
-                        onCheckedChange = { onToggleFolder(folder.name, it) },
-                    )
+                    val checked = folder.name in selectedNames
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onToggleFolder(folder.name, !checked) }
+                            .padding(vertical = 8.dp),
+                    ) {
+                        SquareCheck(checked = checked, onClick = { onToggleFolder(folder.name, !checked) })
+                        Spacer(Modifier.width(14.dp))
+                        Text(folder.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        Text("${folder.count}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun FolderRow(
-    folder: BackupFolder,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onCheckedChange(!checked) }
-            .padding(vertical = 2.dp),
-    ) {
-        Checkbox(checked = checked, onCheckedChange = onCheckedChange)
-        Spacer(Modifier.width(4.dp))
-        Text(
-            folder.name,
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        Text(
-            "${folder.count}",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
@@ -920,262 +1059,31 @@ private fun Divider() {
     HorizontalDivider(
         thickness = 0.5.dp,
         color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f),
-        modifier = Modifier.padding(start = 52.dp),
+        modifier = Modifier.padding(start = 54.dp),
     )
 }
 
+// "Avançado": procurar de novo na galeria.
 @Composable
-private fun UploadProgressCard(
-    tasks: List<UploadTask>,
-    runProgress: BackupRunProgress,
-    onCancel: (String) -> Unit,
-    onRetry: (String) -> Unit,
-    onRetryFailed: () -> Unit,
-    onOverwrite: (String) -> Unit,
-    onSkip: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val active = tasks.count { it.state == UploadTask.State.Uploading || it.state == UploadTask.State.Queued }
-    val done = tasks.count { it.state == UploadTask.State.Completed }
-    val failed = tasks.count { it.state == UploadTask.State.Failed }
-    val conflict = tasks.count { it.state == UploadTask.State.Conflict }
-    val total = tasks.size
-    // A lista de tarefas é podada por lote (keepLast), por isso somar só ela dá
-    // um total demasiado pequeno ("de 27 MB" com 335 ficheiros). Enquanto a
-    // execução decorre usamos os bytes da execução inteira (runProgress) e
-    // juntamos o parcial do(s) ficheiro(s) a enviar agora para não saltar aos
-    // degraus. Fora de uma execução (ex.: recarregar o ecrã) usamos a lista.
-    val activePartialBytes = tasks
-        .filter { it.state == UploadTask.State.Uploading }
-        .sumOf { (it.progress * it.sizeBytes).toLong() }
-    val runActive = runProgress.total > 0 && runProgress.totalBytes > 0
-    val totalBytes = if (runActive) runProgress.totalBytes
-        else tasks.sumOf { it.sizeBytes }.coerceAtLeast(1L)
-    val uploadedBytes = if (runActive)
-        (runProgress.doneBytes + activePartialBytes).coerceIn(0L, runProgress.totalBytes)
-    else tasks.sumOf { (it.progress * it.sizeBytes).toLong() }
-    val overall = if (runProgress.total > 0)
-        (runProgress.done.toFloat() / runProgress.total).coerceIn(0f, 1f)
-    else
-        (uploadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
-
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        shadowElevation = 2.dp,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(modifier = Modifier.padding(18.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(BackupAccent.copy(alpha = 0.14f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Filled.Backup, contentDescription = null, tint = BackupAccent, modifier = Modifier.size(20.dp))
-                }
-                Spacer(Modifier.width(12.dp))
+private fun RescanCard(onReset: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SectionTitle("Avançado".tr())
+        SectionCard {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onReset).padding(16.dp),
+            ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    // Enquanto a execução decorre (runProgress.total > 0) o
-                    // título fica fixo em "A enviar…": entre lotes o nº de
-                    // tarefas activas cai momentaneamente a zero e o texto
-                    // saltava para "Concluído" e de volta — flicker.
-                    val title = when {
-                        runProgress.total > 0 ->
-                            "${"A enviar…".tr()} (${runProgress.done} ${"de".tr()} ${runProgress.total})"
-                        active > 0 -> "${"A enviar…".tr()} ($done ${"de".tr()} $total)"
-                        failed > 0 -> "$failed falha(s)"
-                        conflict > 0 -> "$conflict conflito(s)"
-                        done == total && total > 0 -> "Concluído ($done)"
-                        else -> "Em curso".tr()
-                    }
-                    Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                    Text("Procurar de novo na galeria".tr(), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(2.dp))
                     Text(
-                        "${formatBytes(uploadedBytes)} ${"de".tr()} ${formatBytes(totalBytes)}",
+                        "Verifica outra vez as fotos e vídeos. Os que já estão guardados não são enviados de novo.".tr(),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (active == 0 && runProgress.total == 0) {
-                    TextButton(onClick = onDismiss) { Text("Limpar".tr()) }
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            LinearProgressIndicator(
-                progress = { overall },
-                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
-                color = BackupAccent,
-                trackColor = BackupAccent.copy(alpha = 0.15f),
-            )
-            Spacer(Modifier.height(14.dp))
-            // Lista própria com scroll, altura limitada e keys estáveis (id).
-            // Ordenação estável: em curso primeiro, depois conflitos/falhas e
-            // por fim os concluídos — com animateItem() as linhas deslizam
-            // para a nova posição em vez de saltar (era o "flickering").
-            // (LazyColumn dentro de verticalScroll é válido porque a altura
-            // está limitada pelo heightIn.)
-            val ordered = remember(tasks) {
-                tasks.sortedBy { task ->
-                    when (task.state) {
-                        UploadTask.State.Uploading -> 0
-                        UploadTask.State.Queued -> 1
-                        UploadTask.State.Conflict, UploadTask.State.Failed -> 2
-                        else -> 3
-                    }
-                }
-            }
-            val listState = rememberLazyListState()
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 260.dp)
-                    .lazyListScrollbar(listState, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(ordered, key = { it.id }) { task ->
-                    Box(modifier = Modifier.animateItem()) {
-                        UploadTaskRow(
-                            task = task,
-                            onCancel = { onCancel(task.id) },
-                            onRetry = { onRetry(task.id) },
-                            onOverwrite = { onOverwrite(task.id) },
-                            onSkip = { onSkip(task.id) },
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            if (failed > 0) {
-                Spacer(Modifier.height(4.dp))
-                OutlinedButton(
-                    onClick = onRetryFailed,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Tentar novamente os falhados".tr())
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun UploadTaskRow(
-    task: UploadTask,
-    onCancel: () -> Unit,
-    onRetry: () -> Unit,
-    onOverwrite: () -> Unit,
-    onSkip: () -> Unit,
-) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                task.name,
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.width(8.dp))
-            when (task.state) {
-                UploadTask.State.Uploading -> Text(
-                    "${(task.progress * 100).toInt()}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = BackupAccent,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                UploadTask.State.Completed -> Icon(
-                    Icons.Filled.CheckCircle,
-                    contentDescription = null,
-                    tint = BackupAccent,
-                    modifier = Modifier.size(16.dp),
-                )
-                UploadTask.State.Failed -> Icon(
-                    Icons.Outlined.ErrorOutline,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(16.dp),
-                )
-                UploadTask.State.Conflict -> Text(
-                    "Conflito",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                UploadTask.State.Queued -> Text(
-                    "Em espera".tr(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                UploadTask.State.Cancelled -> Icon(
-                    Icons.Outlined.Cancel,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-        }
-        when (task.state) {
-            UploadTask.State.Uploading -> {
-                Spacer(Modifier.height(4.dp))
-                LinearProgressIndicator(
-                    progress = { task.progress },
-                    modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
-                    color = BackupAccent,
-                    trackColor = BackupAccent.copy(alpha = 0.15f),
-                )
-            }
-            UploadTask.State.Failed -> {
-                task.errorMessage?.takeIf { it.isNotBlank() }?.let {
-                    Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-                }
-                Row {
-                    TextButton(onClick = onRetry) { Text("Tentar novamente".tr()) }
-                    TextButton(onClick = onCancel) { Text("Cancelar".tr()) }
-                }
-            }
-            UploadTask.State.Conflict -> {
-                Row {
-                    TextButton(onClick = onOverwrite) { Text("Substituir") }
-                    TextButton(onClick = onSkip) { Text("Ignorar") }
-                }
-            }
-            else -> Unit
-        }
-    }
-}
-
-@Composable
-private fun RescanCard(onReset: () -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Re-verificar a galeria".tr(), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Faz com que o backup volte a analisar todas as fotos e vídeos do telemóvel (não duplica — o servidor recusa ficheiros já enviados).".tr(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            OutlinedButton(
-                onClick = onReset,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Voltar a verificar a galeria".tr())
+                Spacer(Modifier.width(10.dp))
+                Icon(Icons.Outlined.Refresh, contentDescription = null, tint = BackupAccent)
             }
         }
     }

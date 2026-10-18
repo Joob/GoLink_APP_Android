@@ -1,5 +1,12 @@
 package co.golink.tester.ui.screens.settings
 
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -47,6 +54,125 @@ import androidx.compose.ui.unit.dp
  * Kit visual das Definições: o mesmo cabeçalho, cartões, linhas e botões em
  * todos os submenus, e uma cor por categoria nos ícones (antes era tudo verde).
  */
+/** Verde dos botões principais e estados "ligado" (mockup). */
+val SettingsAccent = Color(0xFF17784A)
+
+/** Campo com etiqueta por cima (estilo do mockup), opcionalmente password. */
+@Composable
+fun SettingsField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    placeholder: String? = null,
+    isPassword: Boolean = false,
+    keyboardType: KeyboardType = KeyboardType.Text,
+    isError: Boolean = false,
+    supportingText: String? = null,
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = placeholder?.let { { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) } },
+            singleLine = true,
+            isError = isError,
+            visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
+            keyboardOptions = KeyboardOptions(keyboardType = if (isPassword) KeyboardType.Password else keyboardType),
+            shape = RoundedCornerShape(10.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                focusedBorderColor = SettingsAccent,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (supportingText != null) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                supportingText,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** Quadrado de seleção (ligado = verde com ✓). */
+@Composable
+fun SettingsCheckSquare(checked: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(6.dp)
+    val alpha = if (enabled) 1f else 0.4f
+    Box(
+        modifier = Modifier
+            .size(24.dp)
+            .clip(shape)
+            .background(if (checked) SettingsAccent.copy(alpha = alpha) else Color.Transparent)
+            .border(1.5.dp, if (checked) SettingsAccent.copy(alpha = alpha) else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f * alpha), shape)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (checked) Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
+    }
+}
+
+/** Linha de lista com ícone simples, título, sub-linha e um elemento à direita. */
+@Composable
+fun SettingsListRow(
+    icon: ImageVector?,
+    title: String,
+    subtitle: String? = null,
+    subtitleColor: Color = Color.Unspecified,
+    enabled: Boolean = true,
+    showDivider: Boolean = false,
+    onClick: (() -> Unit)? = null,
+    trailing: (@Composable RowScope.() -> Unit)? = null,
+) {
+    val alpha = if (enabled) 1f else 0.5f
+    Column {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (onClick != null) Modifier.clickable(enabled = enabled, onClick = onClick) else Modifier)
+                .padding(horizontal = 16.dp, vertical = 13.dp),
+        ) {
+            if (icon != null) {
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f * alpha), modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(16.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha))
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (subtitleColor == Color.Unspecified) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha) else subtitleColor,
+                    )
+                }
+            }
+            if (trailing != null) {
+                Spacer(Modifier.width(10.dp))
+                trailing()
+            }
+        }
+        if (showDivider) {
+            HorizontalDivider(
+                thickness = 0.5.dp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f),
+                modifier = Modifier.padding(start = if (icon != null) 52.dp else 16.dp, end = 16.dp),
+            )
+        }
+    }
+}
+
+/** Seta "›" das linhas de navegação. */
+@Composable
+fun SettingsChevron() {
+    Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), modifier = Modifier.size(20.dp))
+}
+
 object SettingsColors {
     val Blue = Color(0xFF3B82F6)
     val Indigo = Color(0xFF6366F1)
@@ -220,37 +346,14 @@ fun SettingsPane(
 
 @Composable
 fun SettingsPaneHeader(icon: ImageVector, color: Color, title: String, subtitle: String?) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(settingsCardColor())
-            .border(settingsCardBorder(), RoundedCornerShape(18.dp))
-            .padding(16.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp))
-        }
-        Spacer(Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            if (!subtitle.isNullOrBlank()) {
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
+    // Redesign: o título já está na barra de topo; fica só a frase de contexto.
+    if (subtitle.isNullOrBlank()) return
+    Text(
+        subtitle,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+    )
 }
 
 /** Cartão de conteúdo com título opcional e descrição. */
@@ -310,12 +413,18 @@ fun SettingsPrimaryButton(
     Button(
         onClick = onClick,
         enabled = enabled && !loading,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(10.dp),
         contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = SettingsAccent,
+            contentColor = Color.White,
+            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        ),
         modifier = modifier.fillMaxWidth(),
     ) {
         if (loading) {
-            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
             Spacer(Modifier.width(8.dp))
         } else if (icon != null) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
