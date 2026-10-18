@@ -1,5 +1,6 @@
 package co.golink.tester.data.settings
 
+import co.golink.tester.domain.browse.toItem
 import co.golink.tester.domain.settings.AccessToken
 import co.golink.tester.domain.settings.CreateTokenRequest
 import co.golink.tester.domain.settings.SecurityEventData
@@ -24,7 +25,34 @@ data class SecurityEventsPage(
 class SettingsRepository @Inject constructor(
     private val api: SettingsApi,
     private val json: kotlinx.serialization.json.Json,
+    private val keys: co.golink.tester.data.encryption.E2EKeyManager,
 ) {
+    /** Totais, Lixo, backups e maiores ficheiros (nomes decifrados quando E2E). */
+    suspend fun storageInsights(): Result<co.golink.tester.domain.settings.StorageInsights> = runCatching {
+        val response = api.storageInsights()
+        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        val d = response.body()?.data ?: error("Resposta vazia")
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            val largest = d.largest.mapNotNull { env ->
+                val e = env.data
+                val plain = keys.openNameOrNull(e.attributes.name_encrypted)
+                val dec = if (plain != null) e.copy(attributes = e.attributes.copy(name = plain)) else e
+                dec.toItem() as? co.golink.tester.domain.browse.BrowseItem.File
+            }
+            co.golink.tester.domain.settings.StorageInsights(
+                filesCount = d.files_count,
+                foldersCount = d.folders_count,
+                encryptedFilesCount = d.encrypted_files_count,
+                sharesCount = d.shares_count,
+                trashCount = d.trash_count,
+                trashBytes = d.trash_bytes,
+                backupCount = d.backup_count,
+                backupBytes = d.backup_bytes,
+                largest = largest,
+            )
+        }
+    }
+
     suspend fun storage(): Result<StorageUsage> = runCatching {
         val response = api.storage()
         check(response.isSuccessful) { "HTTP ${response.code()}" }

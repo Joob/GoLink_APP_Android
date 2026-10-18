@@ -202,11 +202,18 @@ fun ColumnScope.AppDrawerContent(
         if (lockedContent != null && area == DrawerArea.Drive) {
             lockedContent()
         } else {
-            sections.forEach { section ->
-                if (section.title != null) SectionLabel(section.title)
+            sections.forEachIndexed { si, section ->
+                // Admin/Suporte: secções separadas por uma linha (como na web).
+                if (area != DrawerArea.Drive && si > 0) {
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 10.dp),
+                    )
+                }
+                if (section.title != null) SectionLabel(section.title, compactTop = area != DrawerArea.Drive && si > 0)
                 else Spacer(Modifier.height(10.dp))
                 section.items.forEach { item ->
-                    DrawerRow(item = item, dot = area != DrawerArea.Drive)
+                    DrawerRow(item = item, dot = false)
                 item.children.forEach { child ->
                     Box(Modifier.padding(start = 22.dp)) { DrawerRow(item = child, dot = false) }
                 }
@@ -354,7 +361,7 @@ private fun SearchButton(onClick: () -> Unit) {
 }
 
 @Composable
-private fun SectionLabel(text: String) {
+private fun SectionLabel(text: String, compactTop: Boolean = false) {
     Text(
         text.uppercase(),
         style = MaterialTheme.typography.labelSmall,
@@ -362,7 +369,7 @@ private fun SectionLabel(text: String) {
         fontWeight = FontWeight.SemiBold,
         letterSpacing = 0.8.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 6.dp),
+        modifier = Modifier.padding(start = 8.dp, top = if (compactTop) 12.dp else 16.dp, bottom = 6.dp),
     )
 }
 
@@ -391,7 +398,12 @@ private fun DrawerRow(item: DrawerItem, dot: Boolean) {
                 )
             }
         } else {
-            Icon(item.icon, contentDescription = null, tint = fg, modifier = Modifier.size(19.dp))
+            Icon(
+                item.icon,
+                contentDescription = null,
+                tint = if (item.selected) primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(19.dp),
+            )
         }
         Spacer(Modifier.width(12.dp))
         Text(

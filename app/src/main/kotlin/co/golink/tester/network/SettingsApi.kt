@@ -25,6 +25,9 @@ interface SettingsApi {
     @GET("api/user/storage")
     suspend fun storage(): Response<StorageResponse>
 
+    @GET("api/user/storage/insights")
+    suspend fun storageInsights(): Response<co.golink.tester.domain.settings.StorageInsightsResponse>
+
     @GET("api/user/sessions")
     suspend fun sessions(): Response<SessionsResponse>
 

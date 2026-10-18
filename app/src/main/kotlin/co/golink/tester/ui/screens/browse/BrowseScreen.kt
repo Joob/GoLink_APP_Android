@@ -1,5 +1,10 @@
 package co.golink.tester.ui.screens.browse
 
+import androidx.compose.material.icons.outlined.Article
+import androidx.compose.material.icons.outlined.PeopleOutline
+import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.ConfirmationNumber
+import androidx.compose.material.icons.outlined.Support
 import co.golink.tester.ui.components.pinchToZoomLevels
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -402,8 +407,8 @@ fun BrowseScreen(
     val supportSection = DrawerSection(
         "Suporte".tr(),
         listOf(
-            DrawerItem("Painel do suporte".tr(), Icons.Outlined.SupportAgent, onClick = go(onOpenSupportDashboard)),
-            DrawerItem("Tickets".tr(), Icons.Outlined.Inbox, onClick = go { onOpenSupport(true) }),
+            DrawerItem("Painel do suporte".tr(), Icons.Outlined.Support, onClick = go(onOpenSupportDashboard)),
+            DrawerItem("Tickets".tr(), Icons.Outlined.ConfirmationNumber, onClick = go { onOpenSupport(true) }),
         ),
     )
     val drawerSections = when (drawerArea) {
@@ -444,15 +449,15 @@ fun BrowseScreen(
         )
         DrawerArea.Admin -> listOf(
             DrawerSection("Visão geral".tr(), listOf(
-                DrawerItem("Painel".tr(), Icons.Outlined.Dashboard, onClick = go { onOpenAdmin("dashboard") }),
-                DrawerItem("Análises".tr(), Icons.Outlined.Insights, onClick = go { onOpenAdmin("analytics") }),
+                DrawerItem("Painel".tr(), Icons.Outlined.GridView, onClick = go { onOpenAdmin("dashboard") }),
+                DrawerItem("Análises".tr(), Icons.Outlined.BarChart, onClick = go { onOpenAdmin("analytics") }),
             )),
             DrawerSection("Utilizadores".tr(), listOf(
-                DrawerItem("Todos os utilizadores".tr(), Icons.Outlined.People, onClick = go { onOpenAdmin("users") }),
+                DrawerItem("Todos os utilizadores".tr(), Icons.Outlined.PeopleOutline, onClick = go { onOpenAdmin("users") }),
                 DrawerItem("Convites".tr(), Icons.Outlined.MailOutline, onClick = go { onOpenAdmin("invites") }),
             )),
             DrawerSection("Conteúdo".tr(), listOf(
-                DrawerItem("Notícias".tr(), Icons.Outlined.Campaign, onClick = go { onOpenAdmin("news") }),
+                DrawerItem("Notícias".tr(), Icons.Outlined.Article, onClick = go { onOpenAdmin("news") }),
             )),
             supportSection,
         )

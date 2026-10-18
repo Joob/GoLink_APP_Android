@@ -266,3 +266,35 @@ data class TransactionItem(
     val driver: String?,
     val createdAt: String?,
 )
+
+// ---- GET api/user/storage/insights ------------------------------------------
+
+@Serializable
+data class StorageInsightsDto(
+    val files_count: Int = 0,
+    val folders_count: Int = 0,
+    val encrypted_files_count: Int = 0,
+    val shares_count: Int = 0,
+    val trash_count: Int = 0,
+    val trash_bytes: Long = 0,
+    val backup_count: Int = 0,
+    val backup_bytes: Long = 0,
+    val largest: List<co.golink.tester.domain.browse.BrowseEntryEnvelope> = emptyList(),
+)
+
+@Serializable
+data class StorageInsightsResponse(val data: StorageInsightsDto = StorageInsightsDto())
+
+/** Detalhe do painel Armazenamento (nomes já decifrados). */
+data class StorageInsights(
+    val filesCount: Int,
+    val foldersCount: Int,
+    val encryptedFilesCount: Int,
+    val sharesCount: Int,
+    val trashCount: Int,
+    val trashBytes: Long,
+    val backupCount: Int,
+    val backupBytes: Long,
+    val largest: List<co.golink.tester.domain.browse.BrowseItem.File>,
+)
+

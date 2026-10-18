@@ -315,6 +315,7 @@ fun AppNavHost(
                 initialRoute = initial,
                 onOpenAutoBackup = { navController.navigate(Routes.MOBILE_BACKUPS) },
                 onOpenSecurityActivity = { navController.navigate(Routes.SECURITY_ACTIVITY) },
+                onOpenFile = { id -> navController.navigate(Routes.viewer(id)) },
                 onOpenTrash = {
                     runCatching { navController.getBackStackEntry(Routes.HOME).savedStateHandle["open_trash"] = true }
                     navController.popBackStack(Routes.HOME, inclusive = false)

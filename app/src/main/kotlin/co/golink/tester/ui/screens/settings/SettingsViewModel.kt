@@ -35,6 +35,9 @@ import kotlinx.coroutines.launch
 
 data class SettingsUiState(
     val storage: StorageUsage? = null,
+    val storageInsights: co.golink.tester.domain.settings.StorageInsights? = null,
+    /** Tamanho da cache local (miniaturas, temporários) — painel Bloqueio da app. */
+    val cacheBytes: Long? = null,
     val sessions: List<SessionItem> = emptyList(),
     val securityEvents: List<SecurityEventData> = emptyList(),
     val isLoadingSecurityEvents: Boolean = false,
@@ -84,6 +87,7 @@ class SettingsViewModel @Inject constructor(
     private val billingRepository: BillingRepository,
     private val e2eKeyManager: co.golink.tester.data.encryption.E2EKeyManager,
     autoBackupPreferences: co.golink.tester.data.backup.AutoBackupPreferences,
+    private val fileViewerSession: co.golink.tester.ui.screens.viewer.FileViewerSession,
 ) : ViewModel() {
 
     /** Estado do backup automático (cartão no menu das Definições). */
@@ -154,6 +158,20 @@ class SettingsViewModel @Inject constructor(
                 .onSuccess { s -> _state.update { it.copy(storage = s, isLoadingStorage = false) } }
                 .onFailure { t -> _state.update { it.copy(isLoadingStorage = false, toast = t.message) } }
         }
+    }
+
+    /** Detalhe do painel Armazenamento (falha em silêncio: o painel funciona sem ele). */
+    fun loadStorageInsights() {
+        viewModelScope.launch {
+            repository.storageInsights().onSuccess { i -> _state.update { it.copy(storageInsights = i) } }
+        }
+    }
+
+    /** Abre um ficheiro (ex.: maiores ficheiros) no visualizador. */
+    fun prepareViewer(file: co.golink.tester.domain.browse.BrowseItem.File) {
+        fileViewerSession.files = listOf(file)
+        fileViewerSession.startId = file.id
+        fileViewerSession.fromTrash = false
     }
 
     fun loadSessions() {
@@ -374,9 +392,18 @@ class SettingsViewModel @Inject constructor(
                 context.cacheDir.deleteRecursively()
                 logger.log("Cache", "Cache local limpa".tr())
                 _state.update { it.copy(toast = "Cache limpa com sucesso".tr()) }
+                loadCacheSize()
             } catch (e: Exception) {
                 _state.update { it.copy(toast = "Erro ao limpar cache".tr()) }
             }
+        }
+    }
+
+    fun loadCacheSize() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val bytes = listOfNotNull(context.cacheDir, context.externalCacheDir)
+                .sumOf { dir -> dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
+            _state.update { it.copy(cacheBytes = bytes) }
         }
     }
 

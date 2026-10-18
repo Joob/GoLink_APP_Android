@@ -1,5 +1,7 @@
 package co.golink.tester.ui.screens.settings
 
+import co.golink.tester.domain.browse.BrowseItem
+import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.border
 import androidx.compose.material.icons.filled.Check
@@ -184,6 +186,8 @@ fun SettingsScreen(
     onOpenSupport: (admin: Boolean) -> Unit = {},
     // "Libertar espaço" (Armazenamento): volta aos ficheiros e abre o Lixo.
     onOpenTrash: () -> Unit = {},
+    // Abrir um ficheiro no visualizador (maiores ficheiros do Armazenamento).
+    onOpenFile: (String) -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val user by viewModel.user.collectAsStateWithLifecycle()
@@ -343,9 +347,12 @@ fun SettingsScreen(
                 )
                 SettingsRoute.Storage -> StoragePane(
                     storage = state.storage,
+                    insights = state.storageInsights,
                     isLoading = state.isLoadingStorage,
-                    onRefresh = viewModel::loadStorage,
+                    onRefresh = { viewModel.loadStorage(); viewModel.loadStorageInsights() },
                     onFreeSpace = onOpenTrash,
+                    onOpenBackups = onOpenAutoBackup,
+                    onOpenFile = { f -> viewModel.prepareViewer(f); onOpenFile(f.id) },
                 )
                 SettingsRoute.Sessions -> SessionsPane(
                     sessions = state.sessions,
@@ -385,6 +392,8 @@ fun SettingsScreen(
                     onEnablePin = viewModel::enablePin,
                     onDisablePin = viewModel::disablePin,
                     onClearCache = viewModel::clearCache,
+                    cacheBytes = state.cacheBytes,
+                    onLoadCacheSize = viewModel::loadCacheSize,
                     onOpenSecurityActivity = onOpenSecurityActivity,
                     logEntries = state.logEntries,
                     onRefreshLog = viewModel::refreshLog,
@@ -805,6 +814,18 @@ private fun AutoBackupFeaturedRow(backup: co.golink.tester.data.backup.AutoBacku
 @Composable
 private fun SectionLabel(text: String) = SettingsSectionTitle(text)
 
+/** "hoje, 14:36" / "ontem, 09:10" / "12 out, 18:02" (data ISO do servidor). */
+private fun friendlyWhen(iso: String): String {
+    val t = co.golink.tester.ui.common.parseIsoLocal(iso) ?: return iso
+    val time = t.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+    val today = java.time.LocalDate.now()
+    return when (t.toLocalDate()) {
+        today -> "hoje, %s".tr().format(time)
+        today.minusDays(1) -> "ontem, %s".tr().format(time)
+        else -> co.golink.tester.ui.common.formatDayTime(iso)
+    }
+}
+
 /** Título de secção dos painéis (cinzento, fora do cartão) com ação opcional à direita. */
 @Composable
 private fun PaneSection(title: String, action: String? = null, onAction: (() -> Unit)? = null) {
@@ -1003,38 +1024,40 @@ private fun ProfilePane(
     }
 }
 
+// Fuso horário: rótulos curtos ("Lisboa, Londres (GMT+0)"); o valor guardado
+// continua a ser o deslocamento ("0.0"), como na web.
 private val TIMEZONES = listOf(
-    "-12.0" to "(GMT -12:00) Eniwetok, Kwajalein",
-    "-11.0" to "(GMT -11:00) Midway Island, Samoa",
-    "-10.0" to "(GMT -10:00) Hawaii",
-    "-9.0" to "(GMT -9:00) Alaska",
-    "-8.0" to "(GMT -8:00) Pacific Time (US & Canada)",
-    "-7.0" to "(GMT -7:00) Mountain Time (US & Canada)",
-    "-6.0" to "(GMT -6:00) Central Time (US & Canada), Mexico City",
-    "-5.0" to "(GMT -5:00) Eastern Time (US & Canada), Bogota, Lima",
-    "-4.0" to "(GMT -4:00) Atlantic Time (Canada), Caracas, La Paz",
-    "-3.5" to "(GMT -3:30) Newfoundland",
-    "-3.0" to "(GMT -3:00) Brazil, Buenos Aires, Georgetown",
-    "-2.0" to "(GMT -2:00) Mid-Atlantic",
-    "-1.0" to "(GMT -1:00) Azores, Cape Verde Islands",
-    "0.0" to "(GMT) Western Europe Time, London, Lisbon, Casablanca",
-    "1.0" to "(GMT +1:00) Brussels, Copenhagen, Madrid, Paris",
-    "2.0" to "(GMT +2:00) Kaliningrad, South Africa",
-    "3.0" to "(GMT +3:00) Baghdad, Riyadh, Moscow, St. Petersburg",
-    "3.5" to "(GMT +3:30) Tehran",
-    "4.0" to "(GMT +4:00) Abu Dhabi, Muscat, Baku, Tbilisi",
-    "4.5" to "(GMT +4:30) Kabul",
-    "5.0" to "(GMT +5:00) Ekaterinburg, Islamabad, Karachi, Tashkent",
-    "5.5" to "(GMT +5:30) Bombay, Calcutta, Madras, New Delhi",
-    "5.75" to "(GMT +5:45) Kathmandu",
-    "6.0" to "(GMT +6:00) Almaty, Dhaka, Colombo",
-    "7.0" to "(GMT +7:00) Bangkok, Hanoi, Jakarta",
-    "8.0" to "(GMT +8:00) Beijing, Perth, Singapore, Hong Kong",
-    "9.0" to "(GMT +9:00) Tokyo, Seoul, Osaka, Sapporo, Yakutsk",
-    "9.5" to "(GMT +9:30) Adelaide, Darwin",
-    "10.0" to "(GMT +10:00) Eastern Australia, Guam, Vladivostok",
-    "11.0" to "(GMT +11:00) Magadan, Solomon Islands, New Caledonia",
-    "12.0" to "(GMT +12:00) Auckland, Wellington, Fiji, Kamchatka",
+    "-12.0" to "Ilha Baker (GMT-12)",
+    "-11.0" to "Samoa, Midway (GMT-11)",
+    "-10.0" to "Havai (GMT-10)",
+    "-9.0" to "Alasca (GMT-9)",
+    "-8.0" to "Los Angeles, Vancouver (GMT-8)",
+    "-7.0" to "Denver, Phoenix (GMT-7)",
+    "-6.0" to "Cidade do México, Chicago (GMT-6)",
+    "-5.0" to "Nova Iorque, Bogotá, Lima (GMT-5)",
+    "-4.0" to "Caracas, La Paz (GMT-4)",
+    "-3.5" to "Terra Nova (GMT-3:30)",
+    "-3.0" to "São Paulo, Buenos Aires (GMT-3)",
+    "-2.0" to "Atlântico Médio (GMT-2)",
+    "-1.0" to "Açores, Cabo Verde (GMT-1)",
+    "0.0" to "Lisboa, Londres (GMT+0)",
+    "1.0" to "Madrid, Paris, Luanda (GMT+1)",
+    "2.0" to "Maputo, Joanesburgo (GMT+2)",
+    "3.0" to "Moscovo, Riade (GMT+3)",
+    "3.5" to "Teerão (GMT+3:30)",
+    "4.0" to "Dubai, Baku (GMT+4)",
+    "4.5" to "Cabul (GMT+4:30)",
+    "5.0" to "Karachi, Tashkent (GMT+5)",
+    "5.5" to "Nova Deli, Mumbai (GMT+5:30)",
+    "5.75" to "Catmandu (GMT+5:45)",
+    "6.0" to "Daca, Almaty (GMT+6)",
+    "7.0" to "Banguecoque, Jacarta (GMT+7)",
+    "8.0" to "Pequim, Singapura, Macau (GMT+8)",
+    "9.0" to "Tóquio, Seul (GMT+9)",
+    "9.5" to "Adelaide, Darwin (GMT+9:30)",
+    "10.0" to "Sydney, Guam (GMT+10)",
+    "11.0" to "Ilhas Salomão (GMT+11)",
+    "12.0" to "Auckland, Fiji (GMT+12)",
 )
 
 private val COUNTRIES = listOf(
@@ -1060,30 +1083,11 @@ private val COUNTRIES = listOf(
 @Composable
 private fun TimezoneDropdown(value: String, onValueChange: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    val selectedLabel = TIMEZONES.firstOrNull { it.first == value }?.second ?: value.ifBlank { "" }
+    // "0", "0.0" e "+0" valem o mesmo deslocamento.
+    val selectedLabel = TIMEZONES.firstOrNull { it.first == value || (value.toDoubleOrNull() != null && it.first.toDouble() == value.toDoubleOrNull()) }?.second
+        ?: value
     Box(modifier = Modifier.fillMaxWidth()) {
-        OutlinedTextField(
-            value = selectedLabel,
-            onValueChange = {},
-            readOnly = true,
-            trailingIcon = {
-                Icon(
-                    if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                    contentDescription = null,
-                )
-            },
-            shape = RoundedCornerShape(10.dp),
-            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-                focusedBorderColor = SettingsAccent,
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .clickable { expanded = true },
-        )
+        SettingsSelectBox(text = selectedLabel, onClick = { expanded = true })
         androidx.compose.material3.DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
@@ -1104,28 +1108,7 @@ private fun CountryDropdown(value: String, onValueChange: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     val selectedLabel = COUNTRIES.firstOrNull { it.first.equals(value, ignoreCase = true) }?.second ?: value
     Box(modifier = Modifier.fillMaxWidth()) {
-        OutlinedTextField(
-            value = selectedLabel,
-            onValueChange = {},
-            readOnly = true,
-            trailingIcon = {
-                Icon(
-                    if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                    contentDescription = null,
-                )
-            },
-            shape = RoundedCornerShape(10.dp),
-            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-                focusedBorderColor = SettingsAccent,
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .clickable { expanded = true },
-        )
+        SettingsSelectBox(text = selectedLabel, onClick = { expanded = true })
         androidx.compose.material3.DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
@@ -1164,29 +1147,25 @@ private fun PasswordPane(
     val uriHandler = LocalUriHandler.current
     var show2faInfo by remember { mutableStateOf(false) }
     if (show2faInfo) {
-        AlertDialog(
-            onDismissRequest = { show2faInfo = false },
-            title = { Text("Gerir 2FA".tr()) },
-            text = {
-                Text(
-                    if (twoFactorEnabled)
-                        "A autenticação de dois fatores está activa nesta conta.\n\nPara desactivar ou ver os códigos de recuperação, abre as definições da conta no browser."
-                    else
-                        "Por questões de segurança, a configuração inicial do 2FA (leitura do código QR e códigos de recuperação) é feita no browser. Após activar, esta sessão móvel reflectirá o estado actualizado.",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+        SettingsDialog(
+            title = "Verificação em dois passos".tr(),
+            message = if (twoFactorEnabled)
+                "A verificação em dois passos está ativa nesta conta. Para a desativar ou ver os códigos de recuperação, abre as definições da conta no browser.".tr()
+            else
+                "Por segurança, a configuração (código QR e códigos de recuperação) é feita no browser. Depois de ativar, toca em \"Atualizar estado\".".tr(),
+            icon = Icons.Outlined.Security,
+            confirmText = "Abrir no browser".tr(),
+            onConfirm = {
+                uriHandler.openUri(backendUrl.trimEnd('/') + "/user/settings/password")
+                show2faInfo = false
             },
-            confirmButton = {
-                Button(onClick = {
-                    val url = backendUrl.trimEnd('/') + "/user/settings/password"
-                    uriHandler.openUri(url)
-                    show2faInfo = false
-                }) { Text("Abrir no browser".tr()) }
-            },
-            dismissButton = {
-                TextButton(onClick = { onRefreshUser(); show2faInfo = false }) { Text("Actualizar estado".tr()) }
-            },
-        )
+            dismissText = "Fechar".tr(),
+            onDismiss = { show2faInfo = false },
+        ) {
+            TextButton(onClick = { onRefreshUser(); show2faInfo = false }, modifier = Modifier.fillMaxWidth()) {
+                Text("Atualizar estado".tr(), color = SettingsAccent, fontWeight = FontWeight.SemiBold)
+            }
+        }
     }
     var current by remember { mutableStateOf("") }
     var newPassword by remember { mutableStateOf("") }
@@ -1203,29 +1182,18 @@ private fun PasswordPane(
     val clipboard = LocalClipboardManager.current
 
     if (showCreateTokenDialog) {
-        AlertDialog(
-            onDismissRequest = { showCreateTokenDialog = false; newTokenName = "" },
-            title = { Text("Novo token de acesso".tr()) },
-            text = {
-                OutlinedTextField(
-                    value = newTokenName,
-                    onValueChange = { newTokenName = it },
-                    label = { Text("Nome do token".tr()) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = { onCreateToken(newTokenName.trim()); showCreateTokenDialog = false; newTokenName = "" },
-                    enabled = newTokenName.isNotBlank(),
-                ) { Text("Criar".tr()) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCreateTokenDialog = false; newTokenName = "" }) { Text("Cancelar".tr()) }
-            },
-        )
+        val close = { showCreateTokenDialog = false; newTokenName = "" }
+        SettingsDialog(
+            title = "Novo token de acesso".tr(),
+            message = "Dá-lhe um nome para o reconheceres mais tarde (ex.: script de backup).".tr(),
+            icon = Icons.Outlined.VpnKey,
+            confirmText = "Criar".tr(),
+            confirmEnabled = newTokenName.isNotBlank(),
+            onConfirm = { onCreateToken(newTokenName.trim()); close() },
+            onDismiss = close,
+        ) {
+            SettingsField("Nome do token".tr(), newTokenName, { newTokenName = it })
+        }
     }
 
     // Força simples (4 traços): comprimento, maiúsculas+minúsculas, números, símbolos.
@@ -1357,8 +1325,9 @@ private fun PasswordPane(
                 SettingsListRow(
                     icon = Icons.Outlined.VpnKey,
                     title = token.name,
-                    subtitle = token.last_used_at?.let { "Último uso: %s".tr().format(it) }
-                        ?: token.created_at?.let { "Criado: %s".tr().format(it) },
+                    subtitle = token.last_used_at?.let { "Último uso: %s".tr().format(friendlyWhen(it)) }
+                        ?: token.created_at?.let { "Criado: %s".tr().format(friendlyWhen(it)) }
+                        ?: "Nunca usado".tr(),
                     showDivider = i < tokens.lastIndex,
                 ) {
                     Text(
@@ -1453,16 +1422,9 @@ private fun EmailChangeSection(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        OutlinedTextField(
-            value = code,
-            onValueChange = { v -> code = v.filter { it.isDigit() }.take(6) },
-            singleLine = true,
-            label = { Text("Código de confirmação".tr()) },
-            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword,
-            ),
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth(),
+        SettingsField(
+            "Código de confirmação".tr(), code, { v -> code = v.filter { it.isDigit() }.take(6) },
+            keyboardType = KeyboardType.NumberPassword,
         )
         Text(
             if (secondsLeft > 0) "O código expira em %ds".tr().format(secondsLeft)
@@ -1511,9 +1473,12 @@ private fun PasswordField(
 @Composable
 private fun StoragePane(
     storage: StorageUsage?,
+    insights: co.golink.tester.domain.settings.StorageInsights?,
     isLoading: Boolean,
     onRefresh: () -> Unit,
     onFreeSpace: () -> Unit,
+    onOpenBackups: () -> Unit,
+    onOpenFile: (BrowseItem.File) -> Unit,
 ) {
     LaunchedEffect(Unit) { onRefresh() }
     val rangeOptions = remember {
@@ -1569,7 +1534,11 @@ private fun StoragePane(
                 if (rest > 0f) Spacer(Modifier.weight(rest))
             }
             Column {
-                types.forEach { t -> StorageLegendRow(t.color, t.label, t.usage?.used.orEmpty()) }
+                // Parte de cada tipo no espaço usado (barra fina + %).
+                types.forEach { t ->
+                    val share = if (storage.percentage > 0f) ((t.usage?.percentage ?: 0f) / storage.percentage).coerceIn(0f, 1f) else 0f
+                    StorageLegendRow(t.color, t.label, t.usage?.used.orEmpty(), share = share)
+                }
                 if (free != null) StorageLegendRow(MaterialTheme.colorScheme.outline.copy(alpha = 0.25f), "Livre".tr(), free, muted = true)
             }
         }
@@ -1611,6 +1580,73 @@ private fun StoragePane(
             }
         }
 
+        if (insights != null) {
+            // Resumo da conta: totais e quanto está cifrado.
+            PaneSection("Resumo".tr())
+            PaneCard {
+                val encPct = if (insights.filesCount > 0) insights.encryptedFilesCount * 100 / insights.filesCount else 0
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    StorageStat("%,d".format(insights.filesCount), "ficheiros".tr(), Modifier.weight(1f))
+                    StorageStat("%,d".format(insights.foldersCount), "pastas".tr(), Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    StorageStat("%,d".format(insights.sharesCount), "partilhas ativas".tr(), Modifier.weight(1f))
+                    StorageStat("$encPct%", "cifrado ponta-a-ponta".tr(), Modifier.weight(1f))
+                }
+            }
+
+            PaneSection("Lixo e backups".tr())
+            PaneCard(padded = false) {
+                SettingsListRow(
+                    icon = Icons.Outlined.Delete,
+                    title = "Lixo".tr(),
+                    subtitle = "%d ficheiros · %s".tr().format(insights.trashCount, co.golink.tester.ui.common.formatBytes(insights.trashBytes)),
+                    showDivider = true,
+                    onClick = onFreeSpace,
+                ) { SettingsChevron() }
+                SettingsListRow(
+                    icon = Icons.Outlined.Smartphone,
+                    title = "Backups do telemóvel".tr(),
+                    subtitle = "%d ficheiros · %s".tr().format(insights.backupCount, co.golink.tester.ui.common.formatBytes(insights.backupBytes)),
+                    onClick = onOpenBackups,
+                ) { SettingsChevron() }
+            }
+
+            if (insights.largest.isNotEmpty()) {
+                PaneSection("Maiores ficheiros".tr())
+                PaneCard(padded = false) {
+                    insights.largest.forEachIndexed { i, f ->
+                        Column {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onOpenFile(f) }
+                                    .padding(horizontal = 16.dp, vertical = 11.dp),
+                            ) {
+                                Box(Modifier.width(20.dp), contentAlignment = Alignment.Center) {
+                                    co.golink.tester.ui.components.FileTypeIcon(f, Modifier.height(24.dp))
+                                }
+                                Spacer(Modifier.width(16.dp))
+                                Text(
+                                    f.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(f.filesize.orEmpty(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            }
+                            if (i < insights.largest.lastIndex) {
+                                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f), modifier = Modifier.padding(start = 52.dp, end = 16.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         PaneCard(padded = false) {
             SettingsListRow(
                 icon = Icons.Outlined.Delete,
@@ -1623,8 +1659,9 @@ private fun StoragePane(
 }
 
 @Composable
-private fun StorageLegendRow(color: Color, label: String, value: String, muted: Boolean = false) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp)) {
+private fun StorageLegendRow(color: Color, label: String, value: String, muted: Boolean = false, share: Float? = null) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         Box(Modifier.size(8.dp).clip(RoundedCornerShape(2.dp)).background(color))
         Spacer(Modifier.width(12.dp))
         Text(
@@ -1633,12 +1670,47 @@ private fun StorageLegendRow(color: Color, label: String, value: String, muted: 
             color = if (muted) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
         )
+        if (share != null) {
+            Text(
+                if (share > 0f && share < 0.01f) "<1%" else "${(share * 100).toInt()}%",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 10.dp),
+            )
+        }
         Text(
             value,
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = if (muted) FontWeight.Normal else FontWeight.SemiBold,
             color = if (muted) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
         )
+    }
+    if (share != null) {
+        Spacer(Modifier.height(5.dp))
+        Box(
+            Modifier
+                .padding(start = 20.dp)
+                .fillMaxWidth()
+                .height(3.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+        ) {
+            Box(Modifier.fillMaxHeight().fillMaxWidth(share.coerceAtLeast(0.005f)).clip(RoundedCornerShape(2.dp)).background(color))
+        }
+    }
+    }
+}
+
+@Composable
+private fun StorageStat(value: String, label: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -1690,38 +1762,38 @@ private fun SessionsPane(
     var showRevokeAll by remember { mutableStateOf(false) }
 
     pendingRevoke?.let { s ->
-        co.golink.tester.ui.components.dialogs.ConfirmDialog(
-            title = if (s.is_current) "Revogar sessão actual?".tr() else "Revogar esta sessão?".tr(),
+        SettingsDialog(
+            title = if (s.is_current) "Terminar sessão neste telemóvel?".tr() else "Revogar esta sessão?".tr(),
             message = if (s.is_current)
                 "Vais ser desconectado deste dispositivo imediatamente.".tr()
             else "A sessão será terminada e o dispositivo terá de iniciar sessão novamente.".tr(),
-            confirmText = "Revogar",
+            icon = if (s.isMobileSession()) Icons.Filled.Smartphone else Icons.Outlined.Devices,
             destructive = true,
-            onDismiss = { pendingRevoke = null },
+            confirmText = "Revogar".tr(),
             onConfirm = { onRevoke(s.id); pendingRevoke = null },
+            onDismiss = { pendingRevoke = null },
         )
     }
     if (showRevokeAll) {
-        co.golink.tester.ui.components.dialogs.ConfirmDialog(
+        SettingsDialog(
             title = "Terminar outras sessões?".tr(),
             message = "Todas as outras sessões serão revogadas. Continuarás autenticado neste dispositivo.".tr(),
-            confirmText = "Terminar todas".tr(),
+            icon = Icons.Filled.Logout,
             destructive = true,
-            onDismiss = { showRevokeAll = false },
+            confirmText = "Terminar todas".tr(),
             onConfirm = { onRevokeAll(); showRevokeAll = false },
+            onDismiss = { showRevokeAll = false },
         )
     }
 
-    // The session currently viewing this list IS this Android app on a phone,
-    // so always treat it as mobile even if the backend still has it labelled
-    // "web" (e.g. it was created before the app sent a mobile User-Agent).
-    val webSessions = sessions.filter { !it.isMobileSession() }
-    val mobileSessions = sessions.filter { it.isMobileSession() }
-    val hasOthers = sessions.any { !it.is_current }
+    val current = sessions.firstOrNull { it.is_current }
+    val others = sessions.filter { !it.is_current }
+    val otherPhones = others.filter { it.isMobileSession() }
+    val browsers = others.filter { !it.isMobileSession() }
 
     PaneColumn {
         Text(
-            "Dispositivos com sessão iniciada na tua conta.".tr(),
+            "Dispositivos com sessão iniciada na tua conta. Se não reconheces algum, revoga-o e muda a password.".tr(),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 4.dp),
@@ -1729,21 +1801,49 @@ private fun SessionsPane(
         if (isLoading && sessions.isEmpty()) {
             PaneCard { Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
         }
+
+        // Este telemóvel: cartão em destaque.
+        current?.let { s ->
+            PaneSection("Este telemóvel".tr(), action = if (isLoading) "A atualizar…".tr() else "Atualizar".tr(), onAction = if (isLoading) null else onRefresh)
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = SettingsAccent.copy(alpha = 0.06f),
+                border = BorderStroke(1.dp, SettingsAccent.copy(alpha = 0.35f)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(16.dp)) {
+                    Box(
+                        Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(SettingsAccent.copy(alpha = 0.14f)),
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Icons.Filled.Smartphone, contentDescription = null, tint = SettingsAccent, modifier = Modifier.size(20.dp)) }
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(sessionTitle(s), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(sessionMeta(s), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                            Box(Modifier.size(6.dp).clip(CircleShape).background(SettingsAccent))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Ativa agora".tr(), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = SettingsAccent)
+                        }
+                    }
+                }
+            }
+        }
+
         SessionsGroup(
-            title = "Neste e noutros telemóveis".tr(),
-            sessions = mobileSessions,
-            emptyText = "Sem sessões móveis ativas.".tr(),
+            title = "Outros telemóveis".tr(),
+            sessions = otherPhones,
+            emptyText = "Sem sessões noutros telemóveis.".tr(),
             onRevoke = { pendingRevoke = it },
-            action = if (isLoading) "A atualizar…".tr() else "Atualizar".tr(),
-            onAction = if (isLoading) null else onRefresh,
         )
         SessionsGroup(
             title = "Browsers".tr(),
-            sessions = webSessions,
+            sessions = browsers,
             emptyText = "Sem sessões web ativas.".tr(),
             onRevoke = { pendingRevoke = it },
         )
-        if (hasOthers) {
+
+        if (others.isNotEmpty()) {
             OutlinedButton(
                 onClick = { showRevokeAll = true },
                 shape = RoundedCornerShape(10.dp),
@@ -1752,11 +1852,30 @@ private fun SessionsPane(
                 contentPadding = PaddingValues(vertical = 13.dp),
                 modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
             ) {
-                Text("Terminar todas as outras sessões".tr(), fontWeight = FontWeight.SemiBold)
+                Text("Terminar todas as outras sessões".tr() + " (${others.size})", fontWeight = FontWeight.SemiBold)
             }
         }
     }
 }
+
+/** "Chrome em Windows" / "Pixel 8" — nome curto do dispositivo. */
+private fun sessionTitle(s: SessionItem): String {
+    val device = s.device?.takeIf { it.isNotBlank() }
+    val browser = s.browser?.takeIf { it.isNotBlank() && it != device }
+    return when {
+        device != null && browser != null && !s.isMobileSession() -> "%s · %s".format(browser, device)
+        device != null -> device
+        browser != null -> browser
+        else -> "Dispositivo desconhecido".tr()
+    }
+}
+
+/** "Lisboa · 192.168.1.10 · ativa hoje, 14:36". */
+private fun sessionMeta(s: SessionItem): String = listOfNotNull(
+    s.location?.takeIf { it.isNotBlank() },
+    s.ip_address?.takeIf { it.isNotBlank() },
+    (s.last_activity_at ?: s.login_at)?.let { "ativa %s".tr().format(friendlyWhen(it)) },
+).joinToString(" · ")
 
 /**
  * A session is shown as mobile when the backend labels it non-"web", OR when
@@ -1766,46 +1885,6 @@ private fun SessionsPane(
 private fun SessionItem.isMobileSession(): Boolean =
     is_current || (platform ?: "").lowercase() != "web"
 
-/** Eventos que indicam possível compromisso — destacados a vermelho. */
-private val SECURITY_ALERT_EVENTS = setOf(
-    "account.new_device",
-    "auth.login_failed",
-    "auth.otp_locked",
-    "account.password_changed",
-    "account.e2e_secret_rotated",
-    "account.email_changed",
-    "account.email_reverted",
-    "account.deletion_scheduled",
-)
-
-private fun securityEventLabel(event: String): String = when (event) {
-    "auth.login" -> "Início de sessão".tr()
-    "auth.login_failed" -> "Tentativa de início de sessão falhada".tr()
-    "auth.otp_failed" -> "Código de segurança incorrecto".tr()
-    "auth.otp_locked" -> "Bloqueio temporário após demasiadas tentativas".tr()
-    "account.new_device" -> "Início de sessão de um dispositivo novo".tr()
-    "account.password_changed" -> "Password alterada".tr()
-    "account.e2e_secret_rotated" -> "Segredo de encriptação alterado".tr()
-    "account.email_changed" -> "Email alterado".tr()
-    "account.email_reverted" -> "Email reposto".tr()
-    "account.deletion_scheduled" -> "Eliminação da conta agendada".tr()
-    "account.deletion_cancelled" -> "Eliminação da conta cancelada".tr()
-    else -> "Evento de segurança".tr()
-}
-
-/** ISO-8601 do servidor → data local legível; se falhar mostra o original. */
-private fun formatSecurityEventDate(value: String?): String {
-    if (value.isNullOrBlank()) return ""
-
-    return runCatching {
-        val instant = java.time.Instant.parse(value)
-        java.time.format.DateTimeFormatter
-            .ofLocalizedDateTime(java.time.format.FormatStyle.MEDIUM)
-            .withZone(java.time.ZoneId.systemDefault())
-            .format(instant)
-    }.getOrDefault(value)
-}
-
 @Composable
 private fun SecurityActivityPane(
     events: List<SecurityEventData>,
@@ -1813,59 +1892,14 @@ private fun SecurityActivityPane(
     hasMore: Boolean,
     onLoadMore: () -> Unit,
 ) {
-    PaneColumn {
-        Text(
-            "Eventos de segurança recentes na tua conta. Se vires algo que não reconheces, altera a password e revê as sessões activas.".tr(),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
-        PaneCard(padded = false) {
-            when {
-                isLoading && events.isEmpty() -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                events.isEmpty() -> Text(
-                    "Ainda não há atividade de segurança registada.".tr(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(16.dp),
-                )
-            }
-            events.forEachIndexed { i, entry ->
-                val attrs = entry.attributes
-                val isAlert = attrs.event in SECURITY_ALERT_EVENTS
-                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp), verticalAlignment = Alignment.Top) {
-                    Icon(
-                        Icons.Outlined.Shield,
-                        contentDescription = null,
-                        tint = if (isAlert) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        modifier = Modifier.padding(top = 2.dp).size(20.dp),
-                    )
-                    Spacer(Modifier.width(16.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            securityEventLabel(attrs.event),
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (isAlert) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                        )
-                        val meta = listOfNotNull(formatSecurityEventDate(attrs.created_at).ifBlank { null }, attrs.ip).joinToString(" · ")
-                        if (meta.isNotBlank()) Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        attrs.user_agent?.let {
-                            Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                }
-                if (i < events.lastIndex) {
-                    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f), modifier = Modifier.padding(start = 52.dp, end = 16.dp))
-                }
-            }
-        }
-        if (hasMore) {
-            TextButton(onClick = onLoadMore, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
-                Text("Carregar mais".tr(), color = SettingsAccent, fontWeight = FontWeight.SemiBold)
-            }
-        }
-    }
+    co.golink.tester.ui.screens.security.SecurityActivityContent(
+        items = events.map { e ->
+            co.golink.tester.ui.screens.security.SecurityItemUi(e.id, e.attributes.event, e.attributes.created_at, e.attributes.ip, e.attributes.user_agent)
+        },
+        isLoading = isLoading,
+        hasMore = hasMore,
+        onLoadMore = onLoadMore,
+    )
 }
 
 @Composable
@@ -1874,91 +1908,31 @@ private fun SessionsGroup(
     sessions: List<SessionItem>,
     emptyText: String,
     onRevoke: (SessionItem) -> Unit,
-    action: String? = null,
-    onAction: (() -> Unit)? = null,
 ) {
-    PaneSection(title, action = action, onAction = onAction)
+    PaneSection(if (sessions.isEmpty()) title else "$title · ${sessions.size}")
     PaneCard(padded = false) {
         if (sessions.isEmpty()) {
             Text(emptyText, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else {
-            sessions.forEachIndexed { i, s ->
-                SessionRow(s, onRevoke = { onRevoke(s) })
-                if (i < sessions.lastIndex) {
-                    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f), modifier = Modifier.padding(start = 52.dp, end = 16.dp))
-                }
+        }
+        sessions.forEachIndexed { i, s ->
+            SettingsListRow(
+                icon = if (s.isMobileSession()) Icons.Filled.Smartphone else Icons.Outlined.Devices,
+                title = sessionTitle(s),
+                subtitle = sessionMeta(s),
+                showDivider = i < sessions.lastIndex,
+            ) {
+                Text(
+                    "Revogar".tr(),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { onRevoke(s) }.padding(6.dp),
+                )
             }
         }
     }
 }
 
-@Composable
-private fun SessionRow(s: SessionItem, onRevoke: () -> Unit) {
-    val isMobile = s.isMobileSession()
-    Row(
-        verticalAlignment = Alignment.Top,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(14.dp),
-    ) {
-        Icon(
-            if (isMobile) Icons.Filled.Smartphone else Icons.Outlined.Devices,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-            modifier = Modifier.padding(top = 2.dp).size(20.dp),
-        )
-        Spacer(Modifier.width(16.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    s.device ?: s.browser ?: "Dispositivo desconhecido".tr(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                if (s.is_current) {
-                    Spacer(Modifier.width(8.dp))
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = Color(0xFF16A34A).copy(alpha = 0.15f),
-                    ) {
-                        Text(
-                            "Este telemóvel".tr(),
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = SettingsAccent,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(4.dp))
-            s.login_at?.let {
-                Text("Iniciada: %s".tr().format(it), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            val ipLine = listOfNotNull(s.ip_address, s.location).joinToString(" · ")
-            if (ipLine.isNotBlank()) {
-                Text(ipLine, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            s.browser?.takeIf { it.isNotBlank() && it != s.device }?.let {
-                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            s.last_activity_at?.takeIf { it != s.login_at }?.let {
-                Text("Última atividade: %s".tr().format(it), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        Spacer(Modifier.width(8.dp))
-        Text(
-            "Revogar".tr(),
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.error,
-            modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onRevoke).padding(6.dp),
-        )
-    }
-}
 
 @Composable
 private fun BillingPane(
@@ -2202,180 +2176,198 @@ private fun EncryptionPane(
         step = "current"; currentPass = ""; currentError = null; changeToken = null; newPass = ""; confirmPass = ""
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-    ) {
-        SettingsPaneHeader(Icons.Outlined.VpnKey, SettingsColors.Green, "Encriptação".tr(), "Os ficheiros são cifrados no dispositivo. Gere aqui a chave e a passphrase.".tr())
-        Spacer(Modifier.height(12.dp))
-        // Impressão da chave pública (deteta key-substitution).
-        SectionLabel("Impressão da chave de encriptação".tr())
-        Surface(
-            shape = RoundedCornerShape(18.dp),
-            color = settingsCardColor(),
-            border = settingsCardBorderStroke(),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    "Confirma que é igual nos teus outros dispositivos — um código diferente pode indicar troca de chave.".tr(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(10.dp))
-                if (e2eFingerprint != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            e2eFingerprint,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 2.sp,
-                            modifier = Modifier.weight(1f),
-                        )
-                        IconButton(onClick = { clipboard.setText(AnnotatedString(e2eFingerprint)) }) {
-                            Icon(Icons.Filled.ContentCopy, contentDescription = "Copiar".tr(), tint = MaterialTheme.colorScheme.primary)
-                        }
-                    }
-                } else {
-                    Text(
-                        "Desbloqueia a encriptação para veres a impressão da chave.".tr(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(24.dp))
-
-        // Mudar passphrase: re-embrulha a chave privada (em memória) com o novo
-        // segredo. NÃO re-cifra ficheiros — continuam acessíveis com a nova passphrase.
-        SectionLabel("Alterar passphrase de encriptação".tr())
+    PaneColumn {
         Text(
-            "Muda a passphrase que desbloqueia a tua encriptação. Os teus ficheiros NÃO são re-cifrados — continuam acessíveis com a nova passphrase.".tr(),
+            "Os ficheiros são cifrados neste telemóvel antes de saírem. Só tu tens a chave.".tr(),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 4.dp),
         )
-        Spacer(Modifier.height(12.dp))
 
-        if (!e2eUnlocked) {
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    "Desbloqueia a encriptação primeiro para poderes alterar a passphrase.".tr(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(16.dp),
-                )
-            }
-        } else {
-            Text(
-                when (step) {
-                    "current" -> "Passo 1 de 3 · Passphrase atual".tr()
-                    "code" -> "Passo 2 de 3 · Código enviado para o teu email".tr()
-                    else -> "Passo 3 de 3 · Nova passphrase".tr()
-                },
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
-            )
-            when (step) {
-                "current" -> {
-                    PasswordField(
-                        label = "Passphrase atual".tr(),
-                        value = currentPass,
-                        onChange = { currentPass = it; currentError = null },
-                        isError = currentError != null,
-                        errorText = currentError,
+        // Estado: desbloqueada neste telemóvel (verde) ou bloqueada (âmbar).
+        val stateTint = if (e2eUnlocked) SettingsAccent else Color(0xFFB45309)
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = stateTint.copy(alpha = 0.06f),
+            border = BorderStroke(1.dp, stateTint.copy(alpha = 0.3f)),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(16.dp)) {
+                Box(
+                    Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(stateTint.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Outlined.Lock, contentDescription = null, tint = stateTint, modifier = Modifier.size(20.dp)) }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Encriptação ponta-a-ponta ativa".tr(), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (e2eUnlocked) "Desbloqueada neste telemóvel".tr() else "Bloqueada — desbloqueia para gerir a chave".tr(),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        color = stateTint,
                     )
-                    Spacer(Modifier.height(8.dp))
-                    Button(
-                        onClick = {
-                            verifying = true
-                            scope.launch {
-                                val ok = runCatching { onVerifyCurrent(currentPass) }.getOrDefault(false)
-                                verifying = false
-                                if (ok) step = "code" else currentError = "A passphrase atual está incorreta.".tr()
-                            }
-                        },
-                        enabled = currentPass.isNotEmpty() && !verifying,
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(vertical = 14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = SettingsAccent, contentColor = Color.White),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        if (verifying) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Text("Continuar".tr(), fontWeight = FontWeight.SemiBold)
-                    }
-                }
-                "code" -> co.golink.tester.ui.components.SecretCodeStep(
-                    requestCode = requestCode,
-                    confirmCode = confirmCode,
-                    onConfirmed = { token -> changeToken = token; step = "new" },
-                )
-                else -> {
-                    PasswordField(
-                        label = "Nova passphrase".tr(),
-                        value = newPass,
-                        onChange = { newPass = it },
-                        isError = tooShort || sameAsCurrent,
-                        errorText = when {
-                            tooShort -> "Mínimo %d caracteres".tr().format(minLen)
-                            sameAsCurrent -> "A nova passphrase tem de ser diferente da atual.".tr()
-                            else -> null
-                        },
-                    )
-                    PasswordField(
-                        label = "Confirmar nova passphrase".tr(),
-                        value = confirmPass,
-                        onChange = { confirmPass = it },
-                        isError = mismatch,
-                        errorText = if (mismatch) "Não coincide".tr() else null,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Button(
-                        onClick = {
-                            onChangePassphrase(newPass, changeToken.orEmpty()) { ok, expired ->
-                                when {
-                                    ok -> resetFlow()
-                                    expired -> { changeToken = null; step = "code" }
-                                }
-                            }
-                        },
-                        enabled = canSubmit,
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(vertical = 14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = SettingsAccent, contentColor = Color.White),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        if (isChanging) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Icon(Icons.Outlined.VpnKey, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Alterar passphrase".tr(), fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            }
-            if (step != "current") {
-                TextButton(onClick = ::resetFlow, modifier = Modifier.align(Alignment.End)) {
-                    Text("Cancelar".tr())
                 }
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        // Impressão digital da chave pública (deteta troca de chave).
+        PaneSection("Impressão digital da chave".tr())
+        PaneCard {
+            Text(
+                "Confirma que é igual nos teus outros dispositivos — um código diferente pode indicar troca de chave.".tr(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (e2eFingerprint != null) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                ) {
+                    Text(
+                        e2eFingerprint,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 1.5.sp,
+                    )
+                }
+                OutlinedButton(
+                    onClick = { clipboard.setText(AnnotatedString(e2eFingerprint)) },
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Copiar impressão digital".tr(), color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
+                }
+            } else {
+                Text(
+                    "Desbloqueia a encriptação para veres a impressão digital.".tr(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFFB45309),
+                )
+            }
+        }
+
+        // Mudar frase-passe: re-embrulha a chave privada com o novo segredo.
+        // NÃO re-cifra ficheiros — continuam acessíveis com a nova frase-passe.
+        PaneSection("Frase-passe".tr())
+        PaneCard {
+            Text(
+                "Muda a frase-passe que desbloqueia a tua encriptação. Os ficheiros não são re-cifrados e continuam acessíveis.".tr(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (!e2eUnlocked) {
+                Text(
+                    "Desbloqueia a encriptação primeiro para poderes mudar a frase-passe.".tr(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFFB45309),
+                )
+            } else {
+                // Passos: Atual → Código → Nova.
+                val stepIndex = when (step) { "current" -> 0; "code" -> 1; else -> 2 }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    listOf("Atual".tr(), "Código".tr(), "Nova".tr()).forEachIndexed { k, label ->
+                        Column(Modifier.weight(1f)) {
+                            Box(
+                                Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp))
+                                    .background(if (k <= stepIndex) SettingsAccent else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "${k + 1}. $label",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = if (k == stepIndex) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (k == stepIndex) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                when (step) {
+                    "current" -> {
+                        PasswordField(
+                            label = "Frase-passe atual".tr(),
+                            value = currentPass,
+                            onChange = { currentPass = it; currentError = null },
+                            isError = currentError != null,
+                            errorText = currentError,
+                        )
+                        SettingsPrimaryButton(
+                            text = "Continuar".tr(),
+                            onClick = {
+                                verifying = true
+                                scope.launch {
+                                    val ok = runCatching { onVerifyCurrent(currentPass) }.getOrDefault(false)
+                                    verifying = false
+                                    if (ok) step = "code" else currentError = "A frase-passe atual está incorreta.".tr()
+                                }
+                            },
+                            enabled = currentPass.isNotEmpty(),
+                            loading = verifying,
+                        )
+                    }
+                    "code" -> co.golink.tester.ui.components.SecretCodeStep(
+                        requestCode = requestCode,
+                        confirmCode = confirmCode,
+                        onConfirmed = { token -> changeToken = token; step = "new" },
+                    )
+                    else -> {
+                        PasswordField(
+                            label = "Nova frase-passe".tr(),
+                            value = newPass,
+                            onChange = { newPass = it },
+                            isError = tooShort || sameAsCurrent,
+                            errorText = when {
+                                tooShort -> "Mínimo %d caracteres".tr().format(minLen)
+                                sameAsCurrent -> "A nova frase-passe tem de ser diferente da atual.".tr()
+                                else -> "Mínimo %d caracteres".tr().format(minLen)
+                            },
+                        )
+                        PasswordField(
+                            label = "Confirmar nova frase-passe".tr(),
+                            value = confirmPass,
+                            onChange = { confirmPass = it },
+                            isError = mismatch,
+                            errorText = if (mismatch) "Não coincide".tr() else null,
+                        )
+                        SettingsPrimaryButton(
+                            text = "Mudar frase-passe".tr(),
+                            onClick = {
+                                onChangePassphrase(newPass, changeToken.orEmpty()) { ok, expired ->
+                                    when {
+                                        ok -> resetFlow()
+                                        expired -> { changeToken = null; step = "code" }
+                                    }
+                                }
+                            },
+                            enabled = canSubmit,
+                            loading = isChanging,
+                        )
+                    }
+                }
+                if (step != "current") {
+                    OutlinedButton(
+                        onClick = ::resetFlow,
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Cancelar".tr(), color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold) }
+                }
+            }
+        }
+
+        // Como funciona (resumo curto, sem jargão).
+        PaneSection("Como funciona".tr())
+        PaneCard(padded = false) {
+            SettingsListRow(icon = Icons.Outlined.Lock, title = "Cifrado no teu telemóvel".tr(), subtitle = "O servidor só guarda dados ilegíveis.".tr(), showDivider = true)
+            SettingsListRow(icon = Icons.Outlined.VpnKey, title = "Só tu tens a chave".tr(), subtitle = "Desbloqueada com a tua frase-passe.".tr(), showDivider = true)
+            SettingsListRow(icon = Icons.Outlined.Shield, title = "Partilhas continuam privadas".tr(), subtitle = "A chave do link vai no próprio link, nunca para o servidor.".tr())
+        }
     }
 }
 
@@ -2389,6 +2381,8 @@ private fun AppSecurityPane(
     onEnablePin: (String) -> Unit,
     onDisablePin: (String) -> Boolean,
     onClearCache: () -> Unit,
+    cacheBytes: Long?,
+    onLoadCacheSize: () -> Unit,
     onOpenSecurityActivity: () -> Unit,
     logEntries: List<LogEntry>,
     onRefreshLog: () -> Unit,
@@ -2414,98 +2408,68 @@ private fun AppSecurityPane(
     // Log dialog
     var showLog by remember { mutableStateOf(false) }
 
-    // PIN setup dialogs
+    // PIN: definir (1) → confirmar (2), e desativar — popups das Definições.
+    val resetPin = { pinStep = 0; pinInput = ""; pinFirst = ""; pinError = null }
     if (pinStep == 1) {
-        AlertDialog(
-            onDismissRequest = { pinStep = 0; pinInput = ""; pinError = null },
-            title = { Text("Definir PIN".tr()) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Introduz um PIN de 4 dígitos para bloquear a aplicação.".tr(), style = MaterialTheme.typography.bodyMedium)
-                    OutlinedTextField(
-                        value = pinInput,
-                        onValueChange = { if (it.length <= 4 && it.all(Char::isDigit)) { pinInput = it; pinError = null } },
-                        label = { Text("PIN") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        singleLine = true,
-                        isError = pinError != null,
-                        supportingText = pinError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (pinInput.length < 4) { pinError = "O PIN deve ter 4 dígitos".tr(); return@TextButton }
-                    pinFirst = pinInput; pinInput = ""; pinStep = 2
-                }) { Text("Seguinte".tr()) }
-            },
-            dismissButton = {
-                TextButton(onClick = { pinStep = 0; pinInput = ""; pinError = null }) { Text("Cancelar".tr()) }
-            },
-        )
+        SettingsDialog(
+            title = "Definir PIN".tr(),
+            message = "Introduz um PIN de 4 dígitos para bloquear a aplicação.".tr(),
+            icon = Icons.Outlined.Lock,
+            confirmText = "Seguinte".tr(),
+            confirmEnabled = pinInput.length == 4,
+            onConfirm = { pinFirst = pinInput; pinInput = ""; pinStep = 2 },
+            onDismiss = resetPin,
+        ) {
+            SettingsPinInput(pinInput, { pinInput = it; pinError = null }, isError = pinError != null)
+        }
     }
     if (pinStep == 2) {
-        AlertDialog(
-            onDismissRequest = { pinStep = 0; pinInput = ""; pinFirst = ""; pinError = null },
-            title = { Text("Confirmar PIN".tr()) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Repete o PIN para confirmar.".tr(), style = MaterialTheme.typography.bodyMedium)
-                    OutlinedTextField(
-                        value = pinInput,
-                        onValueChange = { if (it.length <= 4 && it.all(Char::isDigit)) { pinInput = it; pinError = null } },
-                        label = { Text("Confirmar PIN".tr()) },
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        singleLine = true,
-                        isError = pinError != null,
-                        supportingText = pinError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
-                    )
+        SettingsDialog(
+            title = "Confirmar PIN".tr(),
+            message = "Repete o PIN para confirmar.".tr(),
+            icon = Icons.Outlined.Lock,
+            confirmText = "Ativar PIN".tr(),
+            confirmEnabled = pinInput.length == 4,
+            onConfirm = {
+                if (pinInput != pinFirst) {
+                    pinError = "Os PINs não coincidem".tr(); pinInput = ""
+                } else {
+                    onEnablePin(pinInput); resetPin()
                 }
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (pinInput != pinFirst) { pinError = "Os PINs não coincidem".tr(); return@TextButton }
-                    onEnablePin(pinInput)
-                    pinStep = 0; pinInput = ""; pinFirst = ""; pinError = null
-                }) { Text("Activar".tr()) }
-            },
-            dismissButton = {
-                TextButton(onClick = { pinStep = 0; pinInput = ""; pinFirst = ""; pinError = null }) { Text("Cancelar".tr()) }
-            },
-        )
+            onDismiss = resetPin,
+        ) {
+            SettingsPinInput(pinInput, { pinInput = it; pinError = null }, isError = pinError != null)
+            pinError?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center) }
+        }
     }
-
-    // PIN disable dialog
     if (showPinDisable) {
-        AlertDialog(
-            onDismissRequest = { showPinDisable = false; pinDisableInput = ""; pinDisableError = null },
-            title = { Text("Desactivar PIN".tr()) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Introduz o PIN actual para desactivar o bloqueio.".tr(), style = MaterialTheme.typography.bodyMedium)
-                    OutlinedTextField(
-                        value = pinDisableInput,
-                        onValueChange = { if (it.length <= 4 && it.all(Char::isDigit)) { pinDisableInput = it; pinDisableError = null } },
-                        label = { Text("PIN actual".tr()) },
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        singleLine = true,
-                        isError = pinDisableError != null,
-                        supportingText = pinDisableError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
-                    )
-                }
+        val close = { showPinDisable = false; pinDisableInput = ""; pinDisableError = null }
+        SettingsDialog(
+            title = "Desativar PIN".tr(),
+            message = "Introduz o PIN atual para desativar o bloqueio.".tr(),
+            icon = Icons.Outlined.Lock,
+            destructive = true,
+            confirmText = "Desativar".tr(),
+            confirmEnabled = pinDisableInput.length == 4,
+            onConfirm = {
+                if (!onDisablePin(pinDisableInput)) { pinDisableError = "PIN incorreto".tr(); pinDisableInput = "" } else close()
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (!onDisablePin(pinDisableInput)) { pinDisableError = "PIN incorrecto".tr(); return@TextButton }
-                    showPinDisable = false; pinDisableInput = ""; pinDisableError = null
-                }) { Text("Desactivar") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showPinDisable = false; pinDisableInput = ""; pinDisableError = null }) { Text("Cancelar".tr()) }
-            },
+            onDismiss = close,
+        ) {
+            SettingsPinInput(pinDisableInput, { pinDisableInput = it; pinDisableError = null }, isError = pinDisableError != null)
+            pinDisableError?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center) }
+        }
+    }
+    var confirmClearCache by remember { mutableStateOf(false) }
+    if (confirmClearCache) {
+        SettingsDialog(
+            title = "Limpar cache?".tr(),
+            message = "Apaga as miniaturas e os ficheiros temporários guardados neste telemóvel. Os teus ficheiros não são apagados.".tr(),
+            icon = Icons.Outlined.Delete,
+            confirmText = "Limpar cache".tr(),
+            onConfirm = { confirmClearCache = false; onClearCache() },
+            onDismiss = { confirmClearCache = false },
         )
     }
 
@@ -2533,6 +2497,7 @@ private fun AppSecurityPane(
         )
     }
     val bioOn = biometricEnabled && biometricAvailable
+    LaunchedEffect(Unit) { onLoadCacheSize() }
 
     PaneColumn {
         Text(
@@ -2587,9 +2552,10 @@ private fun AppSecurityPane(
             SettingsListRow(
                 icon = Icons.Outlined.Delete,
                 title = "Limpar cache".tr(),
-                subtitle = "Não apaga os teus ficheiros".tr(),
+                subtitle = listOfNotNull(cacheBytes?.let { co.golink.tester.ui.common.formatBytes(it) }, "não apaga os teus ficheiros".tr()).joinToString(" · ")
+                    .replaceFirstChar { it.uppercase() },
                 showDivider = true,
-                onClick = onClearCache,
+                onClick = { confirmClearCache = true },
             )
             SettingsListRow(
                 icon = Icons.AutoMirrored.Outlined.Article,
@@ -2622,15 +2588,12 @@ private fun LogDialog(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Registo de atividade".tr(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        Text("Registo de diagnóstico".tr(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Text(
                             if (entries.isEmpty()) "Sem entradas".tr() else "${entries.size} entrada${if (entries.size != 1) "s" else ""}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    }
-                    IconButton(onClick = onClear, enabled = entries.isNotEmpty()) {
-                        Icon(Icons.Outlined.DeleteSweep, contentDescription = "Limpar log".tr(), modifier = Modifier.size(20.dp))
                     }
                 }
 
@@ -2671,11 +2634,22 @@ private fun LogDialog(
                 }
 
                 MenuDivider()
-                Spacer(Modifier.height(4.dp))
-                TextButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.align(Alignment.End).padding(end = 10.dp),
-                ) { Text("Fechar".tr()) }
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(horizontal = 18.dp)) {
+                    OutlinedButton(
+                        onClick = onClear,
+                        enabled = entries.isNotEmpty(),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Limpar".tr(), color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold) }
+                    Button(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = SettingsAccent, contentColor = Color.White),
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Fechar".tr(), fontWeight = FontWeight.SemiBold) }
+                }
             }
         }
     }
@@ -2699,14 +2673,14 @@ private fun LogUserCard(user: User, modifier: Modifier = Modifier) {
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                    .background(MaterialTheme.colorScheme.onSurface),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    user.name.trim().firstOrNull()?.uppercase() ?: "?",
-                    style = MaterialTheme.typography.titleMedium,
+                    user.name.split(' ').filter { it.isNotBlank() }.take(2).joinToString("") { it.take(1) }.uppercase().ifBlank { "?" },
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.surface,
                 )
             }
             Spacer(Modifier.width(12.dp))
@@ -2729,13 +2703,13 @@ private fun LogUserCard(user: User, modifier: Modifier = Modifier) {
             val roleLabel = user.planName?.takeIf { it.isNotBlank() } ?: user.role.replaceFirstChar { it.uppercase() }
             Surface(
                 shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                color = SettingsAccent.copy(alpha = 0.12f),
             ) {
                 Text(
                     roleLabel,
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = SettingsAccent,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                 )
             }

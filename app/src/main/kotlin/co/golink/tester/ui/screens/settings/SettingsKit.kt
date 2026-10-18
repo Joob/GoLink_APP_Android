@@ -1,5 +1,15 @@
 package co.golink.tester.ui.screens.settings
 
+import co.golink.tester.ui.i18n.tr
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
@@ -73,20 +83,41 @@ fun SettingsField(
     Column(modifier = modifier.fillMaxWidth()) {
         Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(6.dp))
-        OutlinedTextField(
+        // Campo compacto (46dp) com contorno fino, como no mockup.
+        var focused by remember { mutableStateOf(false) }
+        val borderColor = when {
+            isError -> MaterialTheme.colorScheme.error
+            focused -> SettingsAccent
+            else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+        }
+        BasicTextField(
             value = value,
             onValueChange = onValueChange,
-            placeholder = placeholder?.let { { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) } },
             singleLine = true,
-            isError = isError,
+            textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+            cursorBrush = SolidColor(SettingsAccent),
             visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
             keyboardOptions = KeyboardOptions(keyboardType = if (isPassword) KeyboardType.Password else keyboardType),
-            shape = RoundedCornerShape(10.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-                focusedBorderColor = SettingsAccent,
-            ),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(46.dp)
+                .onFocusChanged { focused = it.isFocused },
+            decorationBox = { inner ->
+                Box(
+                    contentAlignment = Alignment.CenterStart,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(settingsCardColor())
+                        .border(if (focused) 1.5.dp else 1.dp, borderColor, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 14.dp),
+                ) {
+                    if (value.isEmpty() && placeholder != null) {
+                        Text(placeholder, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                    }
+                    inner()
+                }
+            },
         )
         if (supportingText != null) {
             Spacer(Modifier.height(4.dp))
@@ -96,6 +127,137 @@ fun SettingsField(
                 color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+/**
+ * Popup das Definições: cartão arredondado, ícone opcional, título, texto,
+ * conteúdo livre e botões a toda a largura (principal verde/vermelho + Cancelar).
+ */
+@Composable
+fun SettingsDialog(
+    title: String,
+    onDismiss: () -> Unit,
+    message: String? = null,
+    icon: ImageVector? = null,
+    confirmText: String? = null,
+    onConfirm: () -> Unit = {},
+    confirmEnabled: Boolean = true,
+    destructive: Boolean = false,
+    dismissText: String = "Cancelar".tr(),
+    content: (@Composable ColumnScope.() -> Unit)? = null,
+) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (icon != null) {
+                    val tint = if (destructive) MaterialTheme.colorScheme.error else SettingsAccent
+                    Box(
+                        Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(tint.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp)) }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    if (!message.isNullOrBlank()) {
+                        Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                content?.invoke(this)
+                Spacer(Modifier.height(2.dp))
+                if (confirmText != null) {
+                    Button(
+                        onClick = onConfirm,
+                        enabled = confirmEnabled,
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(vertical = 13.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (destructive) MaterialTheme.colorScheme.error else SettingsAccent,
+                            contentColor = Color.White,
+                            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(confirmText, fontWeight = FontWeight.SemiBold) }
+                }
+                OutlinedButton(
+                    onClick = onDismiss,
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(vertical = 13.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(dismissText, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface) }
+            }
+        }
+    }
+}
+
+/** PIN de 4 dígitos em quadrados (o campo real fica por baixo, invisível). */
+@Composable
+fun SettingsPinInput(value: String, onValueChange: (String) -> Unit, isError: Boolean = false, length: Int = 4) {
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    androidx.compose.runtime.LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    BasicTextField(
+        value = value,
+        onValueChange = { v -> onValueChange(v.filter { it.isDigit() }.take(length)) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+        modifier = Modifier.fillMaxWidth().focusRequester(focus),
+        decorationBox = {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), modifier = Modifier.fillMaxWidth()) {
+                repeat(length) { i ->
+                    val filled = i < value.length
+                    val active = i == value.length
+                    Box(
+                        Modifier
+                            .size(52.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(settingsCardColor())
+                            .border(
+                                if (active) 1.5.dp else 1.dp,
+                                when {
+                                    isError -> MaterialTheme.colorScheme.error
+                                    active -> SettingsAccent
+                                    else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+                                },
+                                RoundedCornerShape(12.dp),
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (filled) Box(Modifier.size(12.dp).clip(androidx.compose.foundation.shape.CircleShape).background(MaterialTheme.colorScheme.onSurface))
+                    }
+                }
+            }
+        },
+    )
+}
+
+/** Caixa de escolha compacta (abre um menu), com o mesmo aspeto do [SettingsField]. */
+@Composable
+fun SettingsSelectBox(text: String, placeholder: String? = null, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(46.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(settingsCardColor())
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(start = 14.dp, end = 10.dp),
+    ) {
+        Text(
+            text.ifBlank { placeholder.orEmpty() },
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (text.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
     }
 }
 
