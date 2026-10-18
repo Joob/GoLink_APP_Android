@@ -177,6 +177,7 @@ fun AppNavHost(
         }
     }
 
+    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
     NavHost(navController = navController, startDestination = Routes.SPLASH) {
         composable(Routes.SPLASH) { SplashScreen() }
         composable(Routes.LANDING) {
@@ -392,6 +393,11 @@ fun AppNavHost(
         composable(Routes.BOOTSTRAP_ERROR) {
             BootstrapErrorScreen()
         }
+    }
+    // Painel de transferências (em qualquer ecrã, com a sessão aberta e a app desbloqueada).
+    if (top == TopState.Authenticated && !locked) {
+        co.golink.tester.ui.components.DownloadPanel(Modifier.align(androidx.compose.ui.Alignment.BottomCenter))
+    }
     }
 
     AnimatedVisibility(

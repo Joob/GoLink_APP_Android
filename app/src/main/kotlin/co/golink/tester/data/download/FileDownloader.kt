@@ -263,6 +263,7 @@ class FileDownloader @Inject constructor(
         suggestedName: String,
         token: String,
         onProgress: (loaded: Long, total: Long) -> Unit,
+        onEncrypted: () -> Unit = {},
     ): Outcome {
         val backend = backendUrlHolder.current.trimEnd('/')
         return try {
@@ -276,6 +277,7 @@ class FileDownloader @Inject constructor(
 
             val hasEncrypted = manifest?.files?.any { it.encrypted } == true
             if (hasEncrypted) {
+                onEncrypted()
                 if (!e2eKeyManager.isUnlocked) {
                     _events.tryEmit(Event.Failed(suggestedName, "Desbloqueia a encriptação para descarregar"))
                     return Outcome.Failed("Desbloqueia a encriptação para descarregar")

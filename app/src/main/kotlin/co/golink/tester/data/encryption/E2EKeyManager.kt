@@ -375,6 +375,8 @@ class E2EKeyManager @Inject constructor(
                 api.encryptNames(co.golink.tester.domain.encryption.EncryptNamesBody(outFiles, outFolders))
             }.getOrNull() ?: return
             if (!post.isSuccessful) return
+            // Lote incompleto = já não há mais (lotes de 500 → menos idas ao servidor).
+            if (body.files.size + body.folders.size < 500) return
         }
     }
 

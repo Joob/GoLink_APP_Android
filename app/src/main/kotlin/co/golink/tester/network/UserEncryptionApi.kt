@@ -47,7 +47,7 @@ interface UserEncryptionApi {
 
     // E2E Fase 2 — migração de nomes: lote em claro + gravar cifrados.
     @GET("api/user/encryption/plain-names")
-    suspend fun plainNames(): Response<co.golink.tester.domain.encryption.PlainNamesResponse>
+    suspend fun plainNames(@retrofit2.http.Query("limit") limit: Int = 500): Response<co.golink.tester.domain.encryption.PlainNamesResponse>
 
     @POST("api/user/encryption/encrypt-names")
     suspend fun encryptNames(

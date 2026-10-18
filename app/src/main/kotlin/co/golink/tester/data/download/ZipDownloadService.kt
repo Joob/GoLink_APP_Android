@@ -33,6 +33,7 @@ import kotlinx.coroutines.launch
 class ZipDownloadService : Service() {
 
     @Inject lateinit var downloader: FileDownloader
+    @Inject lateinit var tracker: DownloadTracker
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var notifManager: NotificationManager
@@ -78,12 +79,17 @@ class ZipDownloadService : Service() {
             finishJob(jobId)
             return START_NOT_STICKY
         }
+        tracker.start(
+            jobId, name, isZip = kind != KIND_FILE,
+            encrypted = intent.getBooleanExtra(EXTRA_ENCRYPTED, false),
+        )
 
         var lastUpdate = 0L
         val progress: (Long, Long) -> Unit = { loaded, total ->
             // A leitura é bloqueante (não vê o cancel da coroutine): o "Cancelar"
             // interrompe-a aqui, a cada bloco lido.
             if (jobs[jobId]?.isCancelled == true) throw kotlinx.coroutines.CancellationException("cancelado")
+            tracker.progress(jobId, loaded, total)
             // O sistema descarta notificações acima de ~5/s — 2/s chega.
             val now = System.currentTimeMillis()
             if (now - lastUpdate >= 500) {
@@ -110,10 +116,12 @@ class ZipDownloadService : Service() {
                         name,
                         intent.getStringExtra(EXTRA_TOKEN).orEmpty(),
                         progress,
+                        onEncrypted = { tracker.markEncrypted(jobId) },
                     )
                 }
                 when (outcome) {
                     is FileDownloader.Outcome.Completed -> if (outcome.failed.isEmpty()) {
+                        tracker.finish(jobId, DownloadPhase.Done, outcome.name)
                         postFinal(outcome.name, success = true, title = "Transferência concluída")
                     } else {
                         postFinal(
@@ -123,12 +131,15 @@ class ZipDownloadService : Service() {
                             title = "Transferência incompleta",
                         )
                     }
-                    is FileDownloader.Outcome.Failed ->
+                    is FileDownloader.Outcome.Failed -> {
+                        tracker.finish(jobId, DownloadPhase.Failed, outcome.message)
                         postFinal("$name — ${outcome.message}", success = false, title = "Falha na transferência")
+                    }
                     // O DownloadManager mostra a sua própria notificação.
-                    FileDownloader.Outcome.ServerZipEnqueued -> Unit
+                    FileDownloader.Outcome.ServerZipEnqueued -> tracker.dismiss(jobId)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
+                tracker.finish(jobId, DownloadPhase.Cancelled)
                 postFinal(name, success = false, title = "Transferência cancelada")
             } finally {
                 finishJob(jobId)
@@ -240,6 +251,13 @@ class ZipDownloadService : Service() {
         private const val EXTRA_BASENAME = "basename"
         private const val EXTRA_ENCRYPTED = "encrypted"
         private const val EXTRA_MIME = "mime"
+
+        /** Cancela uma transferência (botão do painel dentro da app). */
+        fun cancel(context: Context, jobId: Int) {
+            context.startService(
+                Intent(context, ZipDownloadService::class.java).setAction(ACTION_CANCEL).putExtra(EXTRA_JOB_ID, jobId),
+            )
+        }
 
         fun startZip(context: Context, payload: String, suggestedName: String, token: String) {
             val intent = Intent(context, ZipDownloadService::class.java).apply {
