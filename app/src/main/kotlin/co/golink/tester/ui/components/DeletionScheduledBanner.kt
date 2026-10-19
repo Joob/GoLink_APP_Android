@@ -89,7 +89,9 @@ fun DeletionScheduledBanner(viewModel: DeletionScheduledViewModel = hiltViewMode
         }
     }
     val secondsLeft = ((target.toEpochMilli() - now) / 1000).coerceAtLeast(0)
-    val time = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault()).format(target)
+    val whenText = DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", co.golink.tester.ui.common.appLocale())
+        .withZone(ZoneId.systemDefault()).format(target)
+    val left = leftText(secondsLeft)
 
     Column(
         modifier = Modifier
@@ -103,15 +105,14 @@ fun DeletionScheduledBanner(viewModel: DeletionScheduledViewModel = hiltViewMode
             Icon(Icons.Outlined.Warning, contentDescription = null, tint = Rose, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(10.dp))
             Text(
-                "A tua conta será eliminada às %s (faltam %s)".tr()
-                    .format(time, "%d:%02d".format(secondsLeft / 60, secondsLeft % 60)),
+                "A tua conta será eliminada a %s (faltam %s)".tr().format(whenText, left),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
             )
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            "Descarrega o que quiseres guardar. Ainda podes cancelar.".tr(),
+            "Depois dessa data tudo é apagado de forma definitiva. Cancela agora se mudaste de ideias.".tr(),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -119,4 +120,57 @@ fun DeletionScheduledBanner(viewModel: DeletionScheduledViewModel = hiltViewMode
             Text("Cancelar eliminação".tr(), color = Rose, fontWeight = FontWeight.SemiBold)
         }
     }
+}
+
+/** "6 dias 23 h" / "3 h 12 min" / "14:05" conforme o que falta. */
+private fun leftText(seconds: Long): String {
+    val days = seconds / 86400
+    val hours = (seconds % 86400) / 3600
+    val minutes = (seconds % 3600) / 60
+    return when {
+        days > 0 -> "%d dias %d h".tr().format(days, hours)
+        hours > 0 -> "%d h %d min".format(hours, minutes)
+        else -> "%d:%02d".format(minutes, seconds % 60)
+    }
+}
+
+/**
+ * Aviso ao entrar numa conta com eliminação agendada (período de graça):
+ * "Cancelar eliminação" ou continuar (o banner fica visível). Uma vez por
+ * arranque da app e por agendamento.
+ */
+@Composable
+fun DeletionScheduledLoginDialog(viewModel: DeletionScheduledViewModel = hiltViewModel()) {
+    val user by viewModel.user.collectAsStateWithLifecycle()
+    val isCancelling by viewModel.isCancelling.collectAsStateWithLifecycle()
+    val scheduledFor = user?.deletionScheduledFor ?: return
+    val target = runCatching { Instant.parse(scheduledFor) }.getOrNull() ?: return
+    if (!DeletionPromptSeen.shouldShow(scheduledFor)) return
+
+    var open by remember(scheduledFor) { androidx.compose.runtime.mutableStateOf(true) }
+    if (!open) return
+
+    val whenText = DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", co.golink.tester.ui.common.appLocale())
+        .withZone(ZoneId.systemDefault()).format(target)
+    val left = leftText(((target.toEpochMilli() - System.currentTimeMillis()) / 1000).coerceAtLeast(0))
+    val dismiss = { DeletionPromptSeen.markSeen(scheduledFor); open = false }
+
+    co.golink.tester.ui.screens.settings.SettingsDialog(
+        title = "A tua conta vai ser eliminada".tr(),
+        message = "Pediste a eliminação da conta. Será apagada definitivamente a %s (faltam %s), com todos os ficheiros, pastas e partilhas. Queres cancelar a eliminação?".tr().format(whenText, left),
+        icon = Icons.Outlined.Warning,
+        destructive = true,
+        confirmText = if (isCancelling) "A cancelar…".tr() else "Cancelar eliminação".tr(),
+        confirmEnabled = !isCancelling,
+        onConfirm = { viewModel.cancel(); dismiss() },
+        dismissText = "Continuar sem cancelar".tr(),
+        onDismiss = dismiss,
+    )
+}
+
+/** Uma vez por processo (arranque da app) e por agendamento. */
+private object DeletionPromptSeen {
+    private val seen = mutableSetOf<String>()
+    fun shouldShow(key: String) = key !in seen
+    fun markSeen(key: String) { seen += key }
 }

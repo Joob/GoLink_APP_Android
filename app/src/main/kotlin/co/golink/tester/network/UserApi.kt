@@ -22,7 +22,11 @@ interface UserApi {
 
     // 2. Confirmar: suspende a conta e agenda o DeleteUserAccountJob no backend.
     @HTTP(method = "DELETE", path = "api/user/account", hasBody = true)
-    suspend fun deleteAccount(@Body body: DeleteAccountRequest): Response<SimpleMessageResponse>
+    suspend fun deleteAccount(@Body body: DeleteAccountRequest): Response<co.golink.tester.domain.user.DeleteAccountResponse>
+
+    // Cancelar a eliminação agendada (período de graça de 7 dias).
+    @POST("api/user/account/deletion/cancel")
+    suspend fun cancelDeletion(): Response<SimpleMessageResponse>
 
     // 3. Polling do progresso — único endpoint autorizado durante a suspensão
     // de eliminação; 401/403 aqui significa que o job terminou e revogou o token.

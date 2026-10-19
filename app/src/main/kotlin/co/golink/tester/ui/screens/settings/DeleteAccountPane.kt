@@ -68,7 +68,7 @@ import kotlinx.coroutines.launch
  * confirmar email → código de 6 dígitos → progresso do job de eliminação.
  */
 
-enum class DeleteAccountStep { Email, Code, Deleting }
+enum class DeleteAccountStep { Email, Code, Deleting, Scheduled }
 
 data class DeleteAccountUiState(
     val step: DeleteAccountStep = DeleteAccountStep.Email,
@@ -79,6 +79,8 @@ data class DeleteAccountUiState(
     val progressStep: String? = null,
     val progressDetails: String? = null,
     val completed: Boolean = false,
+    /** Eliminação agendada (ISO, UTC): período de graça em que ainda se pode cancelar. */
+    val scheduledFor: String? = null,
 )
 
 @HiltViewModel
@@ -121,7 +123,14 @@ class DeleteAccountViewModel @Inject constructor(
 
         viewModelScope.launch {
             repository.confirm(code)
-                .onSuccess {
+                .onSuccess { scheduledFor ->
+                    // Período de graça: a conta fica agendada (7 dias), sem job nem
+                    // progresso — mostra a data e o botão para cancelar.
+                    if (scheduledFor != null) {
+                        _state.update { it.copy(isLoading = false, step = DeleteAccountStep.Scheduled, scheduledFor = scheduledFor) }
+                        viewModelScope.launch { sessionManager.refreshUser() }
+                        return@onSuccess
+                    }
                     // O backend suspendeu a conta e agendou o job: a partir daqui
                     // só o polling do progresso é autorizado — ligar a guarda para
                     // os pollers de background (notificações/backup) não limparem
@@ -199,6 +208,30 @@ class DeleteAccountViewModel @Inject constructor(
         }
     }
 
+    /** A conta já vem com eliminação agendada (ex.: pedida noutro dispositivo). */
+    fun syncScheduled(scheduledFor: String?) {
+        _state.update {
+            when {
+                scheduledFor != null -> it.copy(step = DeleteAccountStep.Scheduled, scheduledFor = scheduledFor)
+                it.step == DeleteAccountStep.Scheduled -> it.copy(step = DeleteAccountStep.Email, scheduledFor = null)
+                else -> it
+            }
+        }
+    }
+
+    fun cancelDeletion() {
+        if (_state.value.isLoading) return
+        _state.update { it.copy(isLoading = true, error = null) }
+        viewModelScope.launch {
+            repository.cancelDeletion()
+                .onSuccess {
+                    _state.update { it.copy(isLoading = false, step = DeleteAccountStep.Email, scheduledFor = null) }
+                    sessionManager.refreshUser()
+                }
+                .onFailure { t -> _state.update { it.copy(isLoading = false, error = t.message ?: "Erro ao cancelar".tr()) } }
+        }
+    }
+
     fun consumeError() = _state.update { it.copy(error = null) }
 
     override fun onCleared() {
@@ -213,11 +246,13 @@ class DeleteAccountViewModel @Inject constructor(
 @Composable
 internal fun DeleteAccountPane(
     userEmail: String?,
+    scheduledFor: String? = null,
     viewModel: DeleteAccountViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var emailInput by remember { mutableStateOf("") }
     var codeInput by remember { mutableStateOf("") }
+    androidx.compose.runtime.LaunchedEffect(scheduledFor) { viewModel.syncScheduled(scheduledFor) }
 
     // Sem auto-submissão aos 6 dígitos (ao contrário do OTP de login): a
     // eliminação é irreversível, por isso exige sempre um toque explícito,
@@ -371,6 +406,36 @@ internal fun DeleteAccountPane(
                 }
             }
 
+            DeleteAccountStep.Scheduled -> {
+                Spacer(Modifier.height(16.dp))
+                Icon(
+                    Icons.Outlined.WarningAmber,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(44.dp),
+                )
+                Spacer(Modifier.height(14.dp))
+                Text("Eliminação agendada".tr(), style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "A tua conta será eliminada definitivamente a %s, com todos os ficheiros, pastas e partilhas. Até lá podes cancelar quando quiseres.".tr()
+                        .format(formatScheduledDate(state.scheduledFor)),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                state.error?.let {
+                    Spacer(Modifier.height(8.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+                }
+                Spacer(Modifier.height(20.dp))
+                SettingsPrimaryButton(
+                    text = "Cancelar eliminação".tr(),
+                    onClick = viewModel::cancelDeletion,
+                    loading = state.isLoading,
+                )
+            }
+
             DeleteAccountStep.Deleting -> {
                 Spacer(Modifier.height(24.dp))
                 Text(
@@ -471,3 +536,6 @@ private fun DeletionCodeInput(
 
     LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
 }
+
+/** ISO (UTC) → "26 out 2026, 14:05" na hora local. */
+internal fun formatScheduledDate(iso: String?): String = co.golink.tester.ui.common.formatDayTime(iso).ifBlank { iso.orEmpty() }

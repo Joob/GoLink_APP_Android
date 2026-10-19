@@ -378,7 +378,7 @@ fun SettingsScreen(
                     onRefresh = viewModel::loadTransactions,
                 )
                 SettingsRoute.News -> NewsAdminPane()
-                SettingsRoute.DeleteAccount -> DeleteAccountPane(userEmail = user?.email)
+                SettingsRoute.DeleteAccount -> DeleteAccountPane(userEmail = user?.email, scheduledFor = user?.deletionScheduledFor)
                 SettingsRoute.Dashboard -> DashboardPane()
                 SettingsRoute.Analytics -> AnalyticsPane()
                 SettingsRoute.Users -> AdminUsersPane()

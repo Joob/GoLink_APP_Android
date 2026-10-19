@@ -25,3 +25,11 @@ data class DeletionProgressResponse(
 data class SimpleMessageResponse(
     val message: String? = null,
 )
+
+/** Resposta do DELETE /user/account: a eliminação fica agendada (período de graça). */
+@Serializable
+data class DeleteAccountResponse(
+    val message: String? = null,
+    val scheduled: Boolean = false,
+    val scheduled_for: String? = null,
+)

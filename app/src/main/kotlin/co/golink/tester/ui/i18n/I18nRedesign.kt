@@ -382,6 +382,17 @@ object I18nRedesign {
         r("em curso", "in progress", "en cours", "en curso"),
         r("no teu dispositivo enquanto transfere", "on your device while downloading", "sur votre appareil pendant le téléchargement", "en tu dispositivo mientras descarga"),
         r("restante", "left", "restant", "restante"),
+        // Eliminação com período de graça
+        r("%d dias %d h", "%d days %d h", "%d jours %d h", "%d días %d h"),
+        r("A cancelar…", "Cancelling…", "Annulation…", "Cancelando…"),
+        r("A tua conta será eliminada a %s (faltam %s)", "Your account will be deleted on %s (%s left)", "Votre compte sera supprimé le %s (%s restants)", "Tu cuenta se eliminará el %s (faltan %s)"),
+        r("A tua conta será eliminada definitivamente a %s, com todos os ficheiros, pastas e partilhas. Até lá podes cancelar quando quiseres.", "Your account will be permanently deleted on %s, with all files, folders and shares. Until then you can cancel any time.", "Votre compte sera supprimé définitivement le %s, avec tous les fichiers, dossiers et partages. D'ici là, vous pouvez annuler à tout moment.", "Tu cuenta se eliminará definitivamente el %s, con todos los archivos, carpetas y enlaces. Hasta entonces puedes cancelar cuando quieras."),
+        r("A tua conta vai ser eliminada", "Your account will be deleted", "Votre compte va être supprimé", "Tu cuenta va a ser eliminada"),
+        r("Continuar sem cancelar", "Continue without cancelling", "Continuer sans annuler", "Continuar sin cancelar"),
+        r("Depois dessa data tudo é apagado de forma definitiva. Cancela agora se mudaste de ideias.", "After that date everything is permanently erased. Cancel now if you changed your mind.", "Après cette date, tout est effacé définitivement. Annulez maintenant si vous avez changé d'avis.", "Después de esa fecha todo se borra de forma definitiva. Cancela ahora si cambiaste de idea."),
+        r("Eliminação agendada", "Deletion scheduled", "Suppression programmée", "Eliminación programada"),
+        r("Erro ao cancelar", "Could not cancel", "Impossible d'annuler", "No se pudo cancelar"),
+        r("Pediste a eliminação da conta. Será apagada definitivamente a %s (faltam %s), com todos os ficheiros, pastas e partilhas. Queres cancelar a eliminação?", "You requested the deletion of your account. It will be permanently erased on %s (%s left), with all files, folders and shares. Do you want to cancel the deletion?", "Vous avez demandé la suppression de votre compte. Il sera effacé définitivement le %s (%s restants), avec tous les fichiers, dossiers et partages. Voulez-vous annuler la suppression ?", "Pediste la eliminación de tu cuenta. Se borrará definitivamente el %s (faltan %s), con todos los archivos, carpetas y enlaces. ¿Quieres cancelar la eliminación?"),
         // Atividade recente (redesign)
         r("Ainda não transferiste nada.", "You haven't downloaded anything yet.", "Vous n'avez encore rien téléchargé.", "Aún no has descargado nada."),
         r("Carregamentos", "Uploads", "Envois", "Subidas"),

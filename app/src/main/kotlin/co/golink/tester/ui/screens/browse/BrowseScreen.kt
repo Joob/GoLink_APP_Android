@@ -638,8 +638,8 @@ fun BrowseScreen(
                 }
                 NewsBanner()
                 co.golink.tester.ui.components.DeletionScheduledBanner()
+                co.golink.tester.ui.components.DeletionScheduledLoginDialog()
                 co.golink.tester.ui.screens.encryption.E2EMigrationBanner()
-                co.golink.tester.ui.screens.encryption.E2ENameMigrationBanner()
                 // Cabeçalho da pasta (igual à web): caminho, ícone, ★, menu, estado e chips.
                 if (hasFolderHeader(state)) {
                     val inside = isInsideFolder(state.mode)

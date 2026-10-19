@@ -27,10 +27,16 @@ class AccountDeletionRepository @Inject constructor(
         response.body()?.message
     }
 
+    /** Devolve a data (ISO) em que a conta será eliminada; null = eliminação imediata (servidor antigo). */
     suspend fun confirm(code: String): Result<String?> = runCatching {
         val response = api.deleteAccount(DeleteAccountRequest(code))
         if (!response.isSuccessful) throw httpError(response)
-        response.body()?.message
+        response.body()?.takeIf { it.scheduled }?.scheduled_for
+    }
+
+    suspend fun cancelDeletion(): Result<Unit> = runCatching {
+        val response = api.cancelDeletion()
+        if (!response.isSuccessful) throw httpError(response)
     }
 
     suspend fun progress(): Result<DeletionProgressResponse> = runCatching {

@@ -166,8 +166,8 @@ data class User(
     val isPastDue: Boolean,
     val isPaymentSuspended: Boolean,
     val daysLeftToPay: Int,
-    val deletionScheduledFor: String? = null,
     val supportStaff: SupportStaffPermissions? = null,
+    val deletionScheduledFor: String? = null,
 ) {
     companion object {
         fun fromResponse(response: UserResponse): User {
@@ -207,8 +207,8 @@ data class User(
                 isPastDue = subscription?.attributes?.is_past_due == true,
                 isPaymentSuspended = subscription?.attributes?.is_suspended == true,
                 daysLeftToPay = subscription?.attributes?.days_left_to_pay ?: 0,
-                deletionScheduledFor = attrs.deletion_scheduled_for,
                 supportStaff = attrs.support_staff,
+                deletionScheduledFor = attrs.deletion_scheduled_for,
             )
         }
     }
