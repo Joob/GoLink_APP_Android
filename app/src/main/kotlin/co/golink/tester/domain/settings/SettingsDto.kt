@@ -255,6 +255,8 @@ data class TransactionAttributes(
     val currency: String? = null,
     val driver: String? = null,
     val created_at: String? = null,
+    val is_refunded: Boolean = false,
+    val refunded_at: String? = null,
 )
 
 data class TransactionItem(
@@ -265,6 +267,7 @@ data class TransactionItem(
     val price: String?,
     val driver: String?,
     val createdAt: String?,
+    val isRefunded: Boolean = false,
 )
 
 // ---- GET api/user/storage/insights ------------------------------------------

@@ -171,6 +171,7 @@ class SettingsRepository @Inject constructor(
                 price = a.price,
                 driver = a.driver,
                 createdAt = a.created_at,
+                isRefunded = a.is_refunded,
             )
         }
     }

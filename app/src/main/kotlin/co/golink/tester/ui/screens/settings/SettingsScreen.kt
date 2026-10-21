@@ -2131,8 +2131,10 @@ private fun TransactionRow(t: TransactionItem) {
             Spacer(Modifier.width(12.dp))
             Column(horizontalAlignment = Alignment.End) {
                 Text(price, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                t.status?.let { status ->
+                // Reembolsado (Stripe): o status mantém-se; vem em is_refunded.
+                (if (t.isRefunded) "refunded" else t.status)?.let { status ->
                     val (statusLabel, statusColor) = when (status) {
+                        "refunded" -> "reembolsado".tr() to MaterialTheme.colorScheme.tertiary
                         "completed" -> "concluído".tr() to MaterialTheme.colorScheme.primary
                         "cancelled" -> "cancelado" to MaterialTheme.colorScheme.error
                         "error" -> "erro" to MaterialTheme.colorScheme.error

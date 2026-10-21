@@ -113,6 +113,7 @@ object I18nDict {
         r("Em fila", "Queued", "En file", "En cola"),
         r("Em uso", "In use", "Utilisé", "En uso"),
         r("concluído", "done", "terminé", "hecho"),
+        r("reembolsado", "refunded", "remboursé", "reembolsado"),
         r("Concluído", "Done", "Terminé", "Hecho"),
         r("Carregar mais", "Load more", "Charger plus", "Cargar más"),
 
