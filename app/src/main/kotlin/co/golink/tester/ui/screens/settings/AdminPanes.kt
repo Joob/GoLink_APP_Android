@@ -1,6 +1,7 @@
 package co.golink.tester.ui.screens.settings
 
 import androidx.compose.material.icons.outlined.People
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.MailOutline
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.background
@@ -105,21 +106,52 @@ class DashboardViewModel @Inject constructor(
 ) : ViewModel() {
     data class UiState(
         val data: DashboardResponse? = null,
+        val days: Int = 45,
         val isLoading: Boolean = true,
         val error: String? = null,
+        val newbies: List<AdminUserItem> = emptyList(),
+        val transactions: List<co.golink.tester.domain.admin.TransactionData> = emptyList(),
+        val migration: List<co.golink.tester.domain.admin.EncryptionMigrationRow> = emptyList(),
+        val migrationPage: Int = 1,
+        val migrationHasMore: Boolean = false,
+        val migrationLoading: Boolean = false,
     )
 
     private val _state = MutableStateFlow(UiState())
     val state = _state.asStateFlow()
 
-    init { load() }
+    init {
+        load()
+        // Blocos secundários: falhas aqui não estragam o painel.
+        viewModelScope.launch { repository.newbies().onSuccess { l -> _state.update { it.copy(newbies = l) } } }
+        viewModelScope.launch { repository.latestTransactions().onSuccess { l -> _state.update { it.copy(transactions = l) } } }
+        loadMigration(1)
+    }
+
+    fun setDays(days: Int) {
+        if (days == _state.value.days) return
+        _state.update { it.copy(days = days) }
+        load()
+    }
 
     fun load() {
-        _state.update { it.copy(isLoading = true, error = null) }
+        _state.update { it.copy(isLoading = it.data == null, error = null) }
         viewModelScope.launch {
-            repository.dashboard()
+            repository.dashboard(_state.value.days)
                 .onSuccess { d -> _state.update { it.copy(data = d, isLoading = false) } }
                 .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (${t.message})") } }
+        }
+    }
+
+    fun loadMigration(page: Int = _state.value.migrationPage + 1) {
+        if (_state.value.migrationLoading) return
+        _state.update { it.copy(migrationLoading = true) }
+        viewModelScope.launch {
+            repository.encryptionMigration(page)
+                .onSuccess { (rows, more) ->
+                    _state.update { it.copy(migration = if (page == 1) rows else it.migration + rows, migrationPage = page, migrationHasMore = more, migrationLoading = false) }
+                }
+                .onFailure { _state.update { it.copy(migrationLoading = false) } }
         }
     }
 }
@@ -137,8 +169,12 @@ class AnalyticsViewModel @Inject constructor(
     data class UiState(
         val data: AnalyticsResponse? = null,
         val range: String = "7d",
+        val tab: String = "overview",
         val isLoading: Boolean = true,
         val error: String? = null,
+        val events: co.golink.tester.domain.admin.EventsResponse? = null,
+        val eventsLoading: Boolean = false,
+        val realtime: co.golink.tester.domain.admin.RealtimeResponse? = null,
     )
 
     private val _state = MutableStateFlow(UiState())
@@ -149,356 +185,41 @@ class AnalyticsViewModel @Inject constructor(
     /** Troca de janela temporal (24h/7d/30d/90d) sem perder o que já está no ecrã. */
     fun setRange(range: String) {
         if (_state.value.range == range) return
-        _state.update { it.copy(range = range) }
+        _state.update { it.copy(range = range, events = null) }
         load()
+        if (_state.value.tab == "events") loadEvents()
+    }
+
+    fun setTab(tab: String) {
+        _state.update { it.copy(tab = tab) }
+        if (tab == "events" && _state.value.events == null) loadEvents()
     }
 
     fun load() {
-        _state.update { it.copy(isLoading = true, error = null) }
+        _state.update { it.copy(isLoading = it.data == null, error = null) }
         viewModelScope.launch {
             repository.analytics(_state.value.range)
                 .onSuccess { d -> _state.update { it.copy(data = d, isLoading = false) } }
                 .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (${t.message})") } }
         }
     }
+
+    fun loadEvents() {
+        _state.update { it.copy(eventsLoading = true) }
+        viewModelScope.launch {
+            repository.events(_state.value.range)
+                .onSuccess { e -> _state.update { it.copy(events = e, eventsLoading = false) } }
+                .onFailure { _state.update { it.copy(eventsLoading = false) } }
+        }
+    }
+
+    /** Chamado a cada 15 s enquanto o separador Tempo real está visível. */
+    suspend fun refreshRealtime() {
+        repository.realtime().onSuccess { r -> _state.update { it.copy(realtime = r) } }
+    }
 }
 
 // AnalyticsPane vive em AnalyticsPane.kt (gráficos), a usar este ViewModel.
-
-// ===========================================================================
-// Users (read-only paginated list)
-// ===========================================================================
-
-@HiltViewModel
-class AdminUsersViewModel @Inject constructor(
-    private val repository: AdminRepository,
-) : ViewModel() {
-    data class UiState(
-        val users: List<AdminUserItem> = emptyList(),
-        val isLoading: Boolean = true,
-        val isLoadingMore: Boolean = false,
-        val hasMore: Boolean = false,
-        val error: String? = null,
-        val page: Int = 1,
-        val actionUser: AdminUserItem? = null,
-        val isSubmitting: Boolean = false,
-        val actionError: String? = null,
-    )
-
-    private val _state = MutableStateFlow(UiState())
-    val state = _state.asStateFlow()
-
-    init { load() }
-
-    fun openActions(user: AdminUserItem) = _state.update { it.copy(actionUser = user, actionError = null) }
-
-    fun closeActions() = _state.update { it.copy(actionUser = null, actionError = null) }
-
-    /** [unit] a null = suspensão indefinida. */
-    fun suspend(unit: String?, value: Int?, reason: String?) {
-        val user = _state.value.actionUser ?: return
-        submit { repository.suspendUser(user.id, unit, value, reason) }
-    }
-
-    fun unsuspend() {
-        val user = _state.value.actionUser ?: return
-        submit { repository.unsuspendUser(user.id) }
-    }
-
-    private fun submit(block: suspend () -> Result<Unit>) {
-        _state.update { it.copy(isSubmitting = true, actionError = null) }
-        viewModelScope.launch {
-            block()
-                .onSuccess {
-                    _state.update { it.copy(isSubmitting = false, actionUser = null) }
-                    load()
-                }
-                .onFailure { t ->
-                    _state.update { it.copy(isSubmitting = false, actionError = t.message ?: "Erro".tr()) }
-                }
-        }
-    }
-
-    fun load() {
-        _state.update { it.copy(isLoading = true, error = null, page = 1) }
-        viewModelScope.launch {
-            repository.users(1)
-                .onSuccess { (list, more) -> _state.update { it.copy(users = list, hasMore = more, isLoading = false, page = 1) } }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (${t.message})") } }
-        }
-    }
-
-    fun loadMore() {
-        val s = _state.value
-        if (s.isLoadingMore || !s.hasMore) return
-        val next = s.page + 1
-        _state.update { it.copy(isLoadingMore = true) }
-        viewModelScope.launch {
-            repository.users(next)
-                .onSuccess { (list, more) -> _state.update { it.copy(users = it.users + list, hasMore = more, isLoadingMore = false, page = next) } }
-                .onFailure { _state.update { it.copy(isLoadingMore = false) } }
-        }
-    }
-}
-
-@Composable
-fun AdminUsersPane(viewModel: AdminUsersViewModel = hiltViewModel()) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
-
-    state.actionUser?.let { user ->
-        SuspendUserSheet(
-            user = user,
-            isSubmitting = state.isSubmitting,
-            error = state.actionError,
-            onDismiss = viewModel::closeActions,
-            onSuspend = viewModel::suspend,
-            onUnsuspend = viewModel::unsuspend,
-        )
-    }
-
-    when {
-        state.isLoading -> AdminLoading()
-        state.error != null -> AdminError(state.error!!, viewModel::load)
-        else -> {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-            item {
-                SettingsPaneHeader(androidx.compose.material.icons.Icons.Outlined.People, SettingsColors.Teal, "Utilizadores".tr(), "Contas registadas na plataforma.".tr())
-                Spacer(Modifier.height(12.dp))
-            }
-                items(state.users, key = { it.id }) { u ->
-                    UserRow(u, onClick = { viewModel.openActions(u) })
-                }
-                if (state.hasMore) {
-                    item {
-                        OutlinedButton(
-                            onClick = viewModel::loadMore,
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            if (state.isLoadingMore) {
-                                CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-                            } else {
-                                Text("Carregar mais".tr())
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** Unidades aceites pelo backend (SuspendUserRequest). */
-private val SUSPEND_UNITS = listOf(
-    null to "Indefinida",
-    "minutes" to "Minutos",
-    "hours" to "Horas",
-    "days" to "Dias",
-    "weeks" to "Semanas",
-)
-
-/**
- * Ações de suspensão de um utilizador. Administradores não podem ser suspensos
- * (o servidor recusa com 403) — aqui mostra-se o aviso em vez do formulário.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SuspendUserSheet(
-    user: AdminUserItem,
-    isSubmitting: Boolean,
-    error: String?,
-    onDismiss: () -> Unit,
-    onSuspend: (String?, Int?, String?) -> Unit,
-    onUnsuspend: () -> Unit,
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var unit by remember { mutableStateOf<String?>(null) }
-    var value by remember { mutableStateOf("") }
-    var reason by remember { mutableStateOf("") }
-    val isAdmin = user.role == "admin"
-
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(user.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(
-                user.email,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            when {
-                isAdmin -> Text(
-                    "Os administradores não podem ser suspensos".tr(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
-
-                user.isSuspended -> {
-                    Text(
-                        user.suspendedUntil
-                            ?.let { "${"Suspenso até".tr()} ${formatSuspendedUntil(it)}" }
-                            ?: "Suspenso indefinidamente".tr(),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    user.suspendedReason?.takeIf { it.isNotBlank() }?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Button(
-                        onClick = onUnsuspend,
-                        enabled = !isSubmitting,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        if (isSubmitting) {
-                            CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-                        } else {
-                            Text("Levantar suspensão".tr())
-                        }
-                    }
-                }
-
-                else -> {
-                    Text("Duração".tr(), style = MaterialTheme.typography.bodyMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SUSPEND_UNITS.forEach { (key, label) ->
-                            FilterChip(
-                                selected = unit == key,
-                                onClick = { unit = key },
-                                label = { Text(label.tr(), style = MaterialTheme.typography.bodySmall) },
-                            )
-                        }
-                    }
-                    if (unit != null) {
-                        OutlinedTextField(
-                            value = value,
-                            onValueChange = { new -> value = new.filter { it.isDigit() }.take(4) },
-                            label = { Text("Quantidade".tr()) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                    OutlinedTextField(
-                        value = reason,
-                        onValueChange = { reason = it.take(255) },
-                        label = { Text("Motivo (opcional)".tr()) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Button(
-                        onClick = { onSuspend(unit, value.toIntOrNull(), reason) },
-                        // O backend exige value sempre que unit vier preenchido.
-                        enabled = !isSubmitting && (unit == null || (value.toIntOrNull() ?: 0) > 0),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        if (isSubmitting) {
-                            CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-                        } else {
-                            Text("Suspender".tr())
-                        }
-                    }
-                }
-            }
-
-            error?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-            }
-        }
-    }
-}
-
-/**
- * O backend envia ISO-8601 UTC (toISOString). Mostra-se em hora local no
- * formato dd/MM/yyyy HH:mm; se o parse falhar devolve o original.
- */
-private fun formatSuspendedUntil(iso: String): String = runCatching {
-    java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")
-        .withZone(java.time.ZoneId.systemDefault())
-        .format(java.time.Instant.parse(iso))
-}.getOrDefault(iso)
-
-@Composable
-private fun UserRow(u: AdminUserItem, onClick: () -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = settingsCardColor(),
-        border = settingsCardBorderStroke(),
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-        ) {
-            if (u.avatar != null) {
-                AsyncImage(
-                    model = u.avatar,
-                    contentDescription = null,
-                    modifier = Modifier.size(40.dp).clip(CircleShape),
-                )
-            } else {
-                Box(
-                    modifier = Modifier.size(40.dp).clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Outlined.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                }
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(u.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(u.email, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (u.isSuspended) {
-                    val detail = listOfNotNull(
-                        u.suspendedUntil?.let { "${"Até".tr()} ${formatSuspendedUntil(it)}" },
-                        u.suspendedReason?.takeIf { it.isNotBlank() },
-                    ).joinToString(" — ")
-                    if (detail.isNotEmpty()) {
-                        Text(
-                            detail,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.width(8.dp))
-            if (u.isSuspended) {
-                Badge(
-                    containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
-                    contentColor = MaterialTheme.colorScheme.error,
-                ) {
-                    Text(
-                        if (u.suspendedUntil != null) "Suspenso".tr() else "Suspenso ∞".tr(),
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                    )
-                }
-                Spacer(Modifier.width(6.dp))
-            }
-            Badge(
-                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                contentColor = MaterialTheme.colorScheme.primary,
-            ) {
-                Text(u.role, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-            }
-        }
-    }
-}
 
 // ===========================================================================
 // Invite registers (list + create + delete)
@@ -545,6 +266,12 @@ class InviteRegistersViewModel @Inject constructor(
                 }
                 .onFailure { t -> _state.update { it.copy(isSubmitting = false, feedback = "Erro: ${t.message}") } }
         }
+    }
+
+    fun resendInvite(id: String) = viewModelScope.launch {
+        repository.resendInvite(id)
+            .onSuccess { _state.update { it.copy(feedback = "Convite reenviado".tr()) }; reload() }
+            .onFailure { t -> _state.update { it.copy(feedback = t.message) } }
     }
 
     fun deleteInvite(id: String) = viewModelScope.launch {
@@ -611,7 +338,7 @@ fun InviteRegistersPane(viewModel: InviteRegistersViewModel = hiltViewModel()) {
             )
             else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.invites, key = { it.id }) { invite ->
-                    InviteRow(invite, onDelete = { pendingDelete = invite })
+                    InviteRow(invite, onResend = { viewModel.resendInvite(invite.id) }, onDelete = { pendingDelete = invite })
                 }
             }
         }
@@ -633,7 +360,7 @@ fun InviteRegistersPane(viewModel: InviteRegistersViewModel = hiltViewModel()) {
 }
 
 @Composable
-private fun InviteRow(invite: InviteItem, onDelete: () -> Unit) {
+private fun InviteRow(invite: InviteItem, onResend: () -> Unit, onDelete: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(18.dp),
         color = settingsCardColor(),
@@ -651,6 +378,12 @@ private fun InviteRow(invite: InviteItem, onDelete: () -> Unit) {
                     invite.inviterName?.let { append(" · "); append(it) }
                 }
                 Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            // Convites já usados não se reenviam (o servidor recusa com 422).
+            if (invite.status != "completed") {
+                IconButton(onClick = onResend) {
+                    Icon(androidx.compose.material.icons.Icons.Outlined.Refresh, contentDescription = "Reenviar".tr())
+                }
             }
             IconButton(onClick = onDelete) {
                 Icon(Icons.Filled.Delete, contentDescription = "Remover", tint = MaterialTheme.colorScheme.error)

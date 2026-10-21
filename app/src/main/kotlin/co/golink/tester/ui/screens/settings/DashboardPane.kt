@@ -30,6 +30,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -46,7 +50,7 @@ private val OnlineColor = Color(0xFF12B76A)
 private val GuestColor = Color(0xFFF2994A)
 
 @Composable
-fun DashboardPane(viewModel: DashboardViewModel = hiltViewModel()) {
+fun DashboardPane(onOpenUser: (String) -> Unit = {}, viewModel: DashboardViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     when {
         state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -67,23 +71,35 @@ fun DashboardPane(viewModel: DashboardViewModel = hiltViewModel()) {
                 Text("Tentar de novo".tr())
             }
         }
-        else -> state.data?.let { DashboardContent(it) }
+        else -> state.data?.let { DashboardContent(it, state, viewModel, onOpenUser) }
     }
 }
 
 @Composable
-private fun DashboardContent(d: DashboardResponse) {
+private fun DashboardContent(
+    d: DashboardResponse,
+    state: DashboardViewModel.UiState,
+    viewModel: DashboardViewModel,
+    onOpenUser: (String) -> Unit,
+) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         SettingsPaneHeader(androidx.compose.material.icons.Icons.Outlined.Dashboard, SettingsColors.Blue, "Painel".tr(), "Visão geral da plataforma.".tr())
+        Spacer(Modifier.height(12.dp))
+        co.golink.tester.ui.screens.admin.AdminSegmented(
+            options = listOf(7, 30, 45, 90).map { it to "%d dias".tr().format(it) },
+            selected = state.days,
+            onSelect = viewModel::setDays,
+        )
         Spacer(Modifier.height(16.dp))
         UsersCard(d)
         Spacer(Modifier.height(16.dp))
         TrafficCard(d)
         Spacer(Modifier.height(16.dp))
         AppCard(d)
+        DashboardExtras(state, viewModel, onOpenUser)
         Spacer(Modifier.height(32.dp))
     }
 }
@@ -192,8 +208,62 @@ private fun TrafficCard(d: DashboardResponse) {
         TrafficBar("Upload total".tr(), upload, (sizeToBytes(upload) / top).toFloat(), VisitorsColor)
         Spacer(Modifier.height(10.dp))
         TrafficBar("Download total".tr(), download, (sizeToBytes(download) / top).toFloat(), VisitsColor)
+        if (d.disk.upload.records.isNotEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            DailyTrafficChart(d)
+        }
     }
 }
+
+/** Barras diárias (upload/download lado a lado), como o BarChart da web. Toque mostra o dia. */
+@Composable
+private fun DailyTrafficChart(d: DashboardResponse) {
+    val up = d.disk.upload.records
+    val down = d.disk.download.records
+    var selected by androidx.compose.runtime.remember(up) { androidx.compose.runtime.mutableIntStateOf(-1) }
+    val track = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
+    Text(
+        selected.takeIf { it >= 0 }?.let { i ->
+            "${up.getOrNull(i)?.created_at ?: ""} · ↑ ${up.getOrNull(i)?.amount ?: "—"} · ↓ ${down.getOrNull(i)?.amount ?: "—"}"
+        } ?: "Últimos %d dias".tr().format(d.disk.days),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(8.dp))
+    Canvas(
+        modifier = Modifier.fillMaxWidth().height(110.dp)
+            .barSelect(up.size) { selected = it },
+    ) {
+        val n = up.size.coerceAtLeast(1)
+        val slot = size.width / n
+        val bar = (slot * 0.38f).coerceAtLeast(1f)
+        for (i in 0 until n) {
+            val x = i * slot
+            if (i == selected) drawRect(track, topLeft = Offset(x, 0f), size = Size(slot, size.height))
+            val hu = ((up.getOrNull(i)?.percentage ?: 0.0) / 100.0).toFloat() * size.height
+            val hd = ((down.getOrNull(i)?.percentage ?: 0.0) / 100.0).toFloat() * size.height
+            drawRect(VisitorsColor, topLeft = Offset(x + slot * 0.1f, size.height - hu), size = Size(bar, hu))
+            drawRect(VisitsColor, topLeft = Offset(x + slot * 0.1f + bar, size.height - hd), size = Size(bar, hd))
+        }
+    }
+}
+
+/** Toque/arrasto → índice da barra; ao largar volta aos totais. */
+private fun Modifier.barSelect(count: Int, onSelect: (Int) -> Unit): Modifier =
+    this.then(
+        Modifier.pointerInput(count) {
+            detectHorizontalDragGestures(
+                onDragEnd = { onSelect(-1) },
+                onDragCancel = { onSelect(-1) },
+            ) { change, _ ->
+                onSelect(((change.position.x / size.width) * count).toInt().coerceIn(0, count - 1))
+            }
+        }.pointerInput(count) {
+            detectTapGestures { o ->
+                onSelect(((o.x / size.width) * count).toInt().coerceIn(0, count - 1))
+            }
+        },
+    )
 
 @Composable
 private fun BigValue(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
@@ -258,6 +328,7 @@ private fun AppCard(d: DashboardResponse) {
         Spacer(Modifier.height(12.dp))
         AppRow("Versão".tr(), d.app.version ?: "—")
         AppRow("Licença".tr(), d.app.license ?: "—")
+        AppRow("Ganhos".tr(), d.app.earnings ?: "—")
         Row(
             modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceBetween,

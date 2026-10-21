@@ -282,6 +282,16 @@ fun SupportListScreen(
                         optionLabel = ::categoryLabel,
                         onSelect = viewModel::setCategory,
                     )
+                    if (state.agents.isNotEmpty()) {
+                        val names = state.agents.associate { it.id to it.name }
+                        OptionFilterChip(
+                            label = "Responsável".tr(),
+                            selected = state.assigned?.takeIf { it in names },
+                            options = state.agents.map { it.id },
+                            optionLabel = { names[it] ?: it },
+                            onSelect = viewModel::setAgent,
+                        )
+                    }
                 }
                 OutlinedTextField(
                     value = state.query,

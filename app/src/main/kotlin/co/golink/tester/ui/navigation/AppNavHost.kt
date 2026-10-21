@@ -90,6 +90,10 @@ object Routes {
     const val SUPPORT_TICKET = "support_ticket/{id}?admin={admin}"
     fun supportTicket(id: String, admin: Boolean = false) = "support_ticket/$id?admin=$admin"
     const val SUPPORT_NEW = "support_new"
+    const val ADMIN = "admin/{pane}"
+    fun admin(pane: String) = "admin/$pane"
+    const val ADMIN_USER = "admin_user/{id}"
+    fun adminUser(id: String) = "admin_user/$id"
 }
 
 enum class TopState { Loading, NeedsAuth, NeedsOtp, Authenticated, BootstrapFailed }
@@ -159,6 +163,7 @@ fun AppNavHost(
         val inAuthenticated = current != null && (
             current == Routes.HOME ||
                 current.startsWith("settings") ||
+                current.startsWith("admin") ||
                 current == Routes.NOTIFICATIONS ||
                 current.startsWith("viewer/")
         )
@@ -280,7 +285,7 @@ fun AppNavHost(
                     onOpenProfile = { navController.navigate(Routes.settings("profile")) },
                     onOpenSupport = { admin -> navController.navigate(Routes.support(admin)) },
                     onOpenSupportDashboard = { navController.navigate(Routes.SUPPORT_DASHBOARD) },
-                    onOpenAdmin = { pane -> navController.navigate(Routes.settings(pane)) },
+                    onOpenAdmin = { pane -> navController.navigate(Routes.admin(pane)) },
                 )
                 // Gate E2E: pede unlock/setup quando autenticado mas sem privada em memória.
                 co.golink.tester.ui.screens.encryption.E2EGate()
@@ -291,6 +296,22 @@ fun AppNavHost(
             arguments = listOf(navArgument("fileId") { type = NavType.StringType }),
         ) {
             FileViewerScreen(onClose = { navController.popBackStack() })
+        }
+        composable(
+            route = Routes.ADMIN,
+            arguments = listOf(navArgument("pane") { type = NavType.StringType }),
+        ) { entry ->
+            co.golink.tester.ui.screens.admin.AdminScreen(
+                pane = entry.arguments?.getString("pane").orEmpty(),
+                onBack = { navController.popBackStack() },
+                onOpenUser = { id -> navController.navigate(Routes.adminUser(id)) },
+            )
+        }
+        composable(
+            route = Routes.ADMIN_USER,
+            arguments = listOf(navArgument("id") { type = NavType.StringType }),
+        ) {
+            co.golink.tester.ui.screens.admin.AdminUserScreen(onBack = { navController.popBackStack() })
         }
         composable(Routes.NOTIFICATIONS) {
             NotificationsScreen(

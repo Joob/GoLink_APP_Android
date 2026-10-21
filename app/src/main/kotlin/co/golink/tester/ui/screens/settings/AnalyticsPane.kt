@@ -67,12 +67,36 @@ internal val VisitsColor = Color(0xFFF5365C)
 
 private val RANGES = listOf("24h", "7d", "30d", "90d")
 
+private val ANALYTICS_TABS = listOf(
+    "overview" to "Visão geral",
+    "acquisitions" to "Aquisição",
+    "behavior" to "Comportamento",
+    "geographic" to "Geografia",
+    "technology" to "Tecnologia",
+    "events" to "Eventos",
+    "realtime" to "Tempo real",
+)
+
 @Composable
 fun AnalyticsPane(viewModel: AnalyticsViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     Column(modifier = Modifier.fillMaxSize()) {
+        co.golink.tester.ui.screens.admin.AdminSegmented(
+            options = ANALYTICS_TABS.map { (k, l) -> k to l.tr() },
+            selected = state.tab,
+            onSelect = viewModel::setTab,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp),
+        )
+        if (state.tab == "realtime") {
+            RealtimeTab(state.realtime, viewModel::refreshRealtime)
+            return@Column
+        }
         RangeSelector(selected = state.range, onSelect = viewModel::setRange)
+        if (state.tab == "events") {
+            EventsTab(state.events, state.eventsLoading, viewModel::loadEvents)
+            return@Column
+        }
 
         when {
             state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -93,30 +117,43 @@ fun AnalyticsPane(viewModel: AnalyticsViewModel = hiltViewModel()) {
                     Text("Tentar de novo".tr())
                 }
             }
-            else -> state.data?.let { AnalyticsContent(it) }
+            else -> state.data?.let { AnalyticsContent(it, state.tab) }
         }
     }
 }
 
 @Composable
-private fun AnalyticsContent(d: AnalyticsResponse) {
+private fun AnalyticsContent(d: AnalyticsResponse, tab: String) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp),
     ) {
-        SettingsPaneHeader(androidx.compose.material.icons.Icons.Outlined.Insights, SettingsColors.Purple, "Análises".tr(), "Visitas e visitantes no período escolhido.".tr())
-        Spacer(Modifier.height(16.dp))
-        OverviewCard(d)
-
-        Spacer(Modifier.height(16.dp))
-        BehaviorCard(newVisitors = d.behavior.new, returning = d.behavior.returning)
-
-        RankedCard("Top países".tr(), d.countries, "País".tr(), flags = true)
-        RankedCard("Dispositivos".tr(), d.devices, "Dispositivo".tr())
-        RankedCard("Browsers", d.browsers, "Browser")
-        RankedCard("Sistemas".tr(), d.os, "Sistema".tr())
-        RankedCard("Referências".tr(), d.referrers, "Website")
-        RankedCard("Eventos".tr(), d.events, "Evento".tr(), barColor = VisitsColor)
+        // Mesma divisão da web (Analytics/{Overview,Acquisitions,…}.vue).
+        when (tab) {
+            "overview" -> {
+                OverviewCard(d)
+                RankedCard("Top países".tr(), d.countries, "País".tr(), flags = true, max = 5)
+                RankedCard("Referências".tr(), d.referrers, "Website", max = 5)
+                RankedCard("Eventos".tr(), d.events, "Evento".tr(), barColor = VisitsColor, max = 5)
+            }
+            "acquisitions" -> {
+                if (d.referrers.isEmpty()) EmptyHint("Sem referências neste período".tr())
+                RankedCard("Referências".tr(), d.referrers, "Website", max = 20)
+            }
+            "behavior" -> {
+                Spacer(Modifier.height(4.dp))
+                BehaviorCard(newVisitors = d.behavior.new, returning = d.behavior.returning)
+            }
+            "geographic" -> {
+                RankedCard("Países".tr(), d.countries, "País".tr(), flags = true, max = 15)
+                RankedCard("Cidades".tr(), d.cities, "Cidade".tr(), max = 15)
+            }
+            "technology" -> {
+                RankedCard("Dispositivos".tr(), d.devices, "Dispositivo".tr())
+                RankedCard("Browsers", d.browsers, "Browser")
+                RankedCard("Sistemas".tr(), d.os, "Sistema".tr())
+            }
+        }
 
         Spacer(Modifier.height(32.dp))
     }
@@ -194,7 +231,7 @@ private fun OverviewCard(d: AnalyticsResponse) {
 }
 
 @Composable
-private fun MetricCounter(
+internal fun MetricCounter(
     label: String,
     value: Int,
     change: Double?,
@@ -260,7 +297,7 @@ private fun ChangePill(change: Double) {
  * dependências extra. Tocar ou arrastar destaca um ponto da série.
  */
 @Composable
-private fun TrendChart(
+internal fun TrendChart(
     labels: List<String>,
     visitors: List<Int>,
     visits: List<Int>,
@@ -505,7 +542,7 @@ internal fun LegendValue(label: String, value: Int, color: Color) {
 }
 
 @Composable
-private fun LegendDot(label: String, color: Color) {
+internal fun LegendDot(label: String, color: Color) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(8.dp).clip(CircleShape).background(color))
         Spacer(Modifier.width(6.dp))
@@ -522,7 +559,7 @@ private fun LegendDot(label: String, color: Color) {
 // ===========================================================================
 
 @Composable
-private fun RankedCard(
+internal fun RankedCard(
     title: String,
     items: List<RankedItem>,
     columnLabel: String,
@@ -662,7 +699,7 @@ internal fun AnalyticsCard(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun EmptyHint(text: String) {
+internal fun EmptyHint(text: String) {
     Text(
         text,
         modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
@@ -673,7 +710,7 @@ private fun EmptyHint(text: String) {
 }
 
 /** "2026-09-24" -> "24/09"; "2026-09-24 14:00:00" -> "14h". */
-private fun formatLabel(raw: String?, granularity: String?, long: Boolean = false): String {
+internal fun formatLabel(raw: String?, granularity: String?, long: Boolean = false): String {
     if (raw.isNullOrBlank()) return "—"
     return if (granularity == "hour") {
         val hour = raw.substringAfter(' ', "").take(2)
@@ -686,7 +723,7 @@ private fun formatLabel(raw: String?, granularity: String?, long: Boolean = fals
 }
 
 /** ISO-3166 alpha-2 -> emoji de bandeira (indicadores regionais). */
-private fun flagEmoji(code: String?): String {
+internal fun flagEmoji(code: String?): String {
     val c = code?.trim()?.uppercase()
     if (c == null || c.length != 2 || !c.all { it in 'A'..'Z' }) return "🌐"
     val base = 0x1F1E6 - 'A'.code

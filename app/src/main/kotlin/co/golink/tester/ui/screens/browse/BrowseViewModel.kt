@@ -348,6 +348,10 @@ class BrowseViewModel @Inject constructor(
     val trashRetentionDays: StateFlow<Int> = configRepository.config
         .map { it?.trash?.retentionDays ?: 30 }
         .stateIn(viewModelScope, SharingStarted.Eagerly, 30)
+    /** Faturação: none | fixed | metered (decide o grupo Faturação do admin). */
+    val subscriptionType: StateFlow<String> = configRepository.config
+        .map { it?.payments?.type ?: "none" }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "none")
     fun openTeamFolders() = switchTo(BrowseMode.TeamFolder(id = null, name = "Pastas de equipa".tr()), "Pastas de equipa".tr())
     fun openSharedWithMe() = switchTo(BrowseMode.SharedWithMe(id = null, name = "Partilhado comigo".tr()), "Partilhado comigo".tr())
 

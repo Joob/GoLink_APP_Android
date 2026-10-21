@@ -10,6 +10,29 @@ data class AppConfigResponse(
     val ai: AiConfig? = null,
     val upload: UploadConfig? = null,
     val trash: TrashConfig? = null,
+    val payments: PaymentsConfig? = null,
+    val gateways: GatewaysConfig? = null,
+)
+
+/** Faturação: [type] none | fixed | metered (settings.subscription_type). */
+@Serializable
+data class PaymentsConfig(
+    val allowed: Int = 0,
+    val type: String = "none",
+)
+
+@Serializable
+data class GatewaysConfig(
+    val stripe: GatewayConfig? = null,
+    val nowpayments: GatewayConfig? = null,
+)
+
+@Serializable
+data class GatewayConfig(
+    val allowed: Int = 0,
+    val public_key: String? = null,
+    val is_configured: Int = 0,
+    val payment_description: String? = null,
 )
 
 /** Dias no lixo antes de a limpeza diária do servidor apagar de vez (0 = nunca). */

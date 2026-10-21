@@ -168,11 +168,6 @@ private sealed interface SettingsRoute {
     data object Sessions : SettingsRoute
     data object Billing : SettingsRoute
     data object AppSecurity : SettingsRoute
-    data object Dashboard : SettingsRoute
-    data object Analytics : SettingsRoute
-    data object Users : SettingsRoute
-    data object InviteRegisters : SettingsRoute
-    data object News : SettingsRoute
     data object DeleteAccount : SettingsRoute
 }
 
@@ -203,11 +198,6 @@ fun SettingsScreen(
             "billing" -> SettingsRoute.Billing
             "profile" -> SettingsRoute.Profile
             "storage" -> SettingsRoute.Storage
-            "dashboard" -> SettingsRoute.Dashboard
-            "analytics" -> SettingsRoute.Analytics
-            "users" -> SettingsRoute.Users
-            "invites" -> SettingsRoute.InviteRegisters
-            "news" -> SettingsRoute.News
             else -> SettingsRoute.Menu
         }
     }
@@ -260,11 +250,6 @@ fun SettingsScreen(
         SettingsRoute.SecurityActivity -> "Atividade de segurança".tr()
         SettingsRoute.Billing -> "Plano e donativos".tr()
         SettingsRoute.AppSecurity -> "Bloqueio da app".tr()
-        SettingsRoute.Dashboard -> "Painel".tr()
-        SettingsRoute.Analytics -> "Análises".tr()
-        SettingsRoute.Users -> "Utilizadores".tr()
-        SettingsRoute.InviteRegisters -> "Registos de Convite".tr()
-        SettingsRoute.News -> "Notícias".tr()
         SettingsRoute.DeleteAccount -> "Apagar conta".tr()
     }
 
@@ -377,12 +362,7 @@ fun SettingsScreen(
                     onUpgrade = viewModel::selectPlan,
                     onRefresh = viewModel::loadTransactions,
                 )
-                SettingsRoute.News -> NewsAdminPane()
                 SettingsRoute.DeleteAccount -> DeleteAccountPane(userEmail = user?.email, scheduledFor = user?.deletionScheduledFor)
-                SettingsRoute.Dashboard -> DashboardPane()
-                SettingsRoute.Analytics -> AnalyticsPane()
-                SettingsRoute.Users -> AdminUsersPane()
-                SettingsRoute.InviteRegisters -> InviteRegistersPane()
                 SettingsRoute.AppSecurity -> AppSecurityPane(
                     user = user,
                     biometricEnabled = state.biometricEnabled,

@@ -88,6 +88,8 @@ data class SupportListUiState(
     val category: String? = null,
     /** Só staff: contagens dos separadores e filtros. */
     val counts: co.golink.tester.domain.support.SupportCounts? = null,
+    /** Só staff: agentes para o filtro "Responsável". */
+    val agents: List<co.golink.tester.domain.support.SupportAgentOption> = emptyList(),
     val error: String? = null,
 )
 
@@ -107,6 +109,19 @@ class SupportListViewModel @Inject constructor(
         ),
     )
     val state: StateFlow<SupportListUiState> = _state.asStateFlow()
+
+    init {
+        if (isAdmin) viewModelScope.launch {
+            runCatching { api.adminAgents().body()?.data }.getOrNull()
+                ?.let { list -> _state.update { it.copy(agents = list) } }
+        }
+    }
+
+    /** Filtro por agente (id) — partilha o campo assigned com me/unassigned. */
+    fun setAgent(id: String?) {
+        _state.update { it.copy(assigned = id) }
+        refresh()
+    }
 
     fun setFilter(filter: String?) {
         _state.update { it.copy(filter = filter) }

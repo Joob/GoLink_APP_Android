@@ -94,6 +94,12 @@ import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.GroupAdd
 import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.CreditCard
+import androidx.compose.material.icons.outlined.Autorenew
+import androidx.compose.material.icons.outlined.LocalOffer
+import androidx.compose.material.icons.outlined.Payments
+import androidx.compose.material.icons.outlined.Receipt
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Download
@@ -303,6 +309,7 @@ fun BrowseScreen(
     val storage by shell.storage.collectAsStateWithLifecycle()
     val autoBackupEnabled by shell.autoBackupEnabled.collectAsStateWithLifecycle()
     val favourites by viewModel.favouriteFolders.collectAsStateWithLifecycle()
+    val subscriptionType by viewModel.subscriptionType.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
@@ -409,7 +416,11 @@ fun BrowseScreen(
         listOf(
             DrawerItem("Painel do suporte".tr(), Icons.Outlined.Support, onClick = go(onOpenSupportDashboard)),
             DrawerItem("Tickets".tr(), Icons.Outlined.ConfirmationNumber, onClick = go { onOpenSupport(true) }),
-        ),
+        ) + if (user?.supportStaff?.can_manage_team == true) listOf(
+            // Como na web: só com can_manage_team (= admin no servidor).
+            DrawerItem("Equipa".tr(), Icons.Outlined.Groups, onClick = go { onOpenAdmin("support-team") }),
+            DrawerItem("FAQ", Icons.Outlined.Article, onClick = go { onOpenAdmin("faq") }),
+        ) else emptyList(),
     )
     val drawerSections = when (drawerArea) {
         DrawerArea.Drive -> listOfNotNull(
@@ -447,7 +458,7 @@ fun BrowseScreen(
                 DrawerItem("Lixo".tr(), Icons.Outlined.Delete, selected = state.mode == BrowseMode.Trash, onClick = go(viewModel::openTrash)),
             )),
         )
-        DrawerArea.Admin -> listOf(
+        DrawerArea.Admin -> listOfNotNull(
             DrawerSection("Visão geral".tr(), listOf(
                 DrawerItem("Painel".tr(), Icons.Outlined.GridView, onClick = go { onOpenAdmin("dashboard") }),
                 DrawerItem("Análises".tr(), Icons.Outlined.BarChart, onClick = go { onOpenAdmin("analytics") }),
@@ -455,9 +466,22 @@ fun BrowseScreen(
             DrawerSection("Utilizadores".tr(), listOf(
                 DrawerItem("Todos os utilizadores".tr(), Icons.Outlined.PeopleOutline, onClick = go { onOpenAdmin("users") }),
                 DrawerItem("Convites".tr(), Icons.Outlined.MailOutline, onClick = go { onOpenAdmin("invites") }),
+                DrawerItem("Registo de auditoria".tr(), Icons.Outlined.History, onClick = go { onOpenAdmin("audit") }),
             )),
             DrawerSection("Conteúdo".tr(), listOf(
+                DrawerItem("Páginas".tr(), Icons.Outlined.Description, onClick = go { onOpenAdmin("pages") }),
+                DrawerItem("Línguas".tr(), Icons.Outlined.Language, onClick = go { onOpenAdmin("languages") }),
                 DrawerItem("Notícias".tr(), Icons.Outlined.Article, onClick = go { onOpenAdmin("news") }),
+            )),
+            if (subscriptionType != "none") DrawerSection("Faturação".tr(), listOfNotNull(
+                DrawerItem("Planos".tr(), Icons.Outlined.CreditCard, onClick = go { onOpenAdmin("plans") }),
+                if (subscriptionType == "fixed") DrawerItem("Subscrições".tr(), Icons.Outlined.Autorenew, onClick = go { onOpenAdmin("subscriptions") }) else null,
+                if (subscriptionType == "fixed") DrawerItem("Descontos".tr(), Icons.Outlined.LocalOffer, onClick = go { onOpenAdmin("discounts") }) else null,
+                DrawerItem("Pagamentos".tr(), Icons.Outlined.Payments, onClick = go { onOpenAdmin("payments") }),
+                DrawerItem("Faturas".tr(), Icons.Outlined.Receipt, onClick = go { onOpenAdmin("invoices") }),
+            )) else null,
+            DrawerSection("Sistema".tr(), listOf(
+                DrawerItem("Definições".tr(), Icons.Outlined.Settings, onClick = go { onOpenAdmin("settings") }),
             )),
             supportSection,
         )
