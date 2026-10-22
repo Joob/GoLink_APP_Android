@@ -56,7 +56,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import co.golink.tester.domain.notifications.Notification
 
 private val SYSTEM_CATEGORIES =
-    setOf("storage-full", "billing-alert", "payment-alert", "insufficient-balance", "security-alert")
+    setOf("storage-full", "billing-alert", "payment-alert", "insufficient-balance", "security-alert", "share-blocked", "file-quarantined")
 
 @Composable
 private fun NotificationTab(label: String, unread: Int, selected: Boolean, onClick: () -> Unit) {

@@ -2037,7 +2037,7 @@ private fun BillingPane(
 // Opção de plano (rádio): nome, "100 GB · 8 membros" e preço/intervalo.
 @Composable
 private fun PlanOptionRow(plan: Plan, selected: Boolean, isCurrent: Boolean, onClick: () -> Unit) {
-    val storage = plan.features["max_storage_amount"]?.let { if (it >= 1000) "${it / 1000} TB" else "$it GB" }
+    val storage = plan.features["max_storage_amount"]?.let { if (it >= 1024 && it % 1024 == 0L) "${it / 1024} TB" else "$it GB" }
     val members = plan.features["max_team_members"]?.let { if (it == -1L) "membros ilimitados".tr() else "%d membros".tr().format(it) }
     Surface(
         shape = RoundedCornerShape(12.dp),

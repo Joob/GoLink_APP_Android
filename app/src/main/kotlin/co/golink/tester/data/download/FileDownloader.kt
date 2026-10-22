@@ -140,7 +140,7 @@ class FileDownloader @Inject constructor(
             if (!response.isSuccessful) {
                 val errBody = response.body?.string()?.take(300)?.trim()
                 response.close()
-                error(if (errBody.isNullOrBlank()) "HTTP ${response.code}" else "HTTP ${response.code}: $errBody")
+                error(scanMessage(errBody) ?: if (errBody.isNullOrBlank()) "HTTP ${response.code}" else "HTTP ${response.code}: $errBody")
             }
             val body = ResumableHttpInputStream(httpClient, url, response, onBytes = { loaded ->
                 onProgress(loaded, response.body?.contentLength() ?: -1L)
@@ -192,7 +192,7 @@ class FileDownloader @Inject constructor(
                     val body = response.body
                     if (!response.isSuccessful || body == null) {
                         notifManager.cancel(nid)
-                        _events.tryEmit(Event.Failed(label, "HTTP ${response.code}"))
+                        _events.tryEmit(Event.Failed(label, scanMessage(body?.string()) ?: "HTTP ${response.code}"))
                         return@launch
                     }
                     val finalName = uniqueDestination(sanitize(name))
@@ -354,8 +354,9 @@ class FileDownloader @Inject constructor(
                         val url = "$backend/api/file/${Uri.encode(f.id)}/download"
                         val resp = httpClient.newCall(Request.Builder().url(url).build()).execute()
                         if (!resp.isSuccessful) {
+                            val msg = scanMessage(resp.body?.string())
                             resp.close()
-                            error("HTTP ${resp.code}")
+                            error(msg ?: "HTTP ${resp.code}")
                         }
                         ResumableHttpInputStream(httpClient, url, resp, onBytes = { n ->
                             fileBytes = n
@@ -548,4 +549,10 @@ fun ensureChannel(context: Context) {
         )
     }
     nm.deleteNotificationChannel("golink_downloads")
+}
+
+/** 403/423 do antivírus → mensagem traduzida (ServerMessages); senão null. */
+internal fun scanMessage(body: String?): String? {
+    val msg = body?.let { Regex(""""message"\s*:\s*"([^"]+)"""").find(it)?.groupValues?.get(1) } ?: return null
+    return if (msg.contains("virus", ignoreCase = true)) co.golink.tester.ui.i18n.ServerMessages.localize(msg) else null
 }

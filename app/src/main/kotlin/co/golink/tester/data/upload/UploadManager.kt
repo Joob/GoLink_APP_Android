@@ -1200,6 +1200,10 @@ class UploadManager @Inject constructor(
     }.getOrNull()
 
     private fun httpErrorMessage(code: Int, body: String?): String {
+        // Antivírus recusou o ficheiro (nada ficou guardado).
+        if (code == 422 && body?.contains("virus_detected") == true) {
+            return co.golink.tester.ui.i18n.ServerMessages.localize("virus_detected").orEmpty()
+        }
         val snippet = body?.take(180)?.replace(Regex("\\s+"), " ")?.trim()
         return if (snippet.isNullOrBlank()) "HTTP $code" else "HTTP $code: $snippet"
     }

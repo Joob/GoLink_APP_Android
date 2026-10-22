@@ -74,6 +74,16 @@ class AdminRepository @Inject constructor(
         check(response.isSuccessful) { serverMessage(response) }
     }
 
+    // --- Denúncias ---
+    suspend fun abuseReports(status: String, page: Int) = body { api.abuseReports(status, page) }
+    /** [action]: block | dismiss | lift */
+    suspend fun abuseReportAction(id: String, action: String): Result<Unit> = unit { api.abuseReportAction(id, action) }
+
+    // --- Antivírus ---
+    suspend fun antivirus(page: Int) = body { api.antivirus(page) }
+    suspend fun antivirusRescan(id: String): Result<Unit> = unit { api.antivirusRescan(id) }
+    suspend fun antivirusDelete(id: String): Result<Unit> = unit { api.antivirusDelete(id) }
+
     // --- Pages ---
     suspend fun pages() = body { api.pages() }.map { r -> r.data.map { it.data.attributes } }
     suspend fun page(slug: String) = body { api.page(slug) }.map { it.data.attributes }

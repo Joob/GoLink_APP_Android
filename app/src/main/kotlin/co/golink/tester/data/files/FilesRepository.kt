@@ -120,14 +120,20 @@ class FilesRepository @Inject constructor(
         } catch (e: java.io.IOException) {
             throw IllegalStateException("Falha de ligação. As alterações não foram gravadas, tenta novamente.", e)
         }
+        val errBody = if (response.isSuccessful) null else response.errorBody()?.string().orEmpty()
         check(response.isSuccessful) {
-            when (response.code()) {
+            val code = response.code()
+            when {
+                // Antivírus recusou o conteúdo: nada foi gravado.
+                code == 422 && errBody!!.contains("virus_detected") -> "Vírus detetado: o ficheiro foi recusado e não foi guardado."
+                else -> when (code) {
                 507 -> "Sem espaço de armazenamento disponível"
                 403 -> "Sem permissão para editar este ficheiro"
                 413 -> "Ficheiro acima do limite de upload"
                 422 -> "Este tipo de ficheiro não pode ser editado"
                 404 -> "O ficheiro já não existe"
-                else -> "HTTP ${response.code()}"
+                else -> "HTTP $code"
+                }
             }
         }
     }

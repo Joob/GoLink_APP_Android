@@ -1,6 +1,8 @@
 package co.golink.tester.ui.screens.browse
 
 import androidx.compose.material.icons.outlined.Article
+import androidx.compose.material.icons.outlined.Flag
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.PeopleOutline
 import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.ConfirmationNumber
@@ -420,6 +422,7 @@ fun BrowseScreen(
             // Como na web: só com can_manage_team (= admin no servidor).
             DrawerItem("Equipa".tr(), Icons.Outlined.Groups, onClick = go { onOpenAdmin("support-team") }),
             DrawerItem("FAQ", Icons.Outlined.Article, onClick = go { onOpenAdmin("faq") }),
+            DrawerItem("Denúncias".tr(), Icons.Outlined.Flag, onClick = go { onOpenAdmin("abuse") }),
         ) else emptyList(),
     )
     val drawerSections = when (drawerArea) {
@@ -482,6 +485,7 @@ fun BrowseScreen(
             )) else null,
             DrawerSection("Sistema".tr(), listOf(
                 DrawerItem("Definições".tr(), Icons.Outlined.Settings, onClick = go { onOpenAdmin("settings") }),
+                DrawerItem("Antivírus".tr(), Icons.Outlined.Shield, onClick = go { onOpenAdmin("antivirus") }),
             )),
             supportSection,
         )

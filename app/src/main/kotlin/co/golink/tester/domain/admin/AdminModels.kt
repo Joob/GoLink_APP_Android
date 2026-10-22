@@ -979,3 +979,68 @@ data class AiUsageRow(
     val output_tokens: Long = 0,
     val cost_usd: Double = 0.0,
 )
+
+// --- Denúncias de links (só admins) ---
+@Serializable
+data class AbuseReportListResponse(
+    val data: List<AbuseReport> = emptyList(),
+    val meta: AbuseReportMeta = AbuseReportMeta(),
+    val ai: Boolean = false,
+)
+
+@Serializable
+data class AbuseReportMeta(
+    val current_page: Int = 1,
+    val last_page: Int = 1,
+    val total: Int = 0,
+    val open: Int = 0,
+)
+
+@Serializable
+data class AbuseReport(
+    val id: String,
+    val share_token: String = "",
+    val link: String = "",
+    val link_active: Boolean = false,
+    val item_type: String? = null,
+    val reason: String = "other",
+    val message: String? = null,
+    val reporter_email: String? = null,
+    val reports_count: Int = 1,
+    val status: String = "open",
+    val owner: AbuseReportOwner? = null,
+    val ai_category: String? = null,
+    val ai_priority: String? = null,
+    val ai_summary: String? = null,
+    val created_at: String? = null,
+)
+
+@Serializable
+data class AbuseReportOwner(val id: String, val email: String? = null, val name: String? = null)
+
+// --- Antivírus (só admins) ---
+@Serializable
+data class AntivirusOverview(
+    val enabled: Boolean = false,
+    /** CLAMAV_ENABLED no .env; o interruptor só desliga por cima. */
+    val configured: Boolean = false,
+    val socket: String? = null,
+    val version: String? = null,
+    /** status → total; o PHP envia [] quando não há nenhum. */
+    val counts: JsonElement? = null,
+    val data: List<QuarantinedFile> = emptyList(),
+    val meta: AbuseReportMeta = AbuseReportMeta(),
+) {
+    fun count(status: String): Int =
+        ((counts as? kotlinx.serialization.json.JsonObject)?.get(status) as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 0
+}
+
+@Serializable
+data class QuarantinedFile(
+    val id: String,
+    val name: String? = null,
+    val filesize: Long = 0,
+    val signature: String? = null,
+    val scanned_at: String? = null,
+    val owner: AbuseReportOwner? = null,
+)

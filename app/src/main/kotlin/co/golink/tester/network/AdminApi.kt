@@ -161,6 +161,23 @@ interface AdminApi {
     @POST("api/admin/faq/generate")
     suspend fun generateFaqs(@Body body: co.golink.tester.domain.admin.FaqGenerateRequest): Response<ResponseBody>
 
+    // --- Denúncias de links (só admins) ---
+    @GET("api/admin/abuse-reports")
+    suspend fun abuseReports(@Query("status") status: String, @Query("page") page: Int): Response<co.golink.tester.domain.admin.AbuseReportListResponse>
+
+    @POST("api/admin/abuse-reports/{id}/{action}")
+    suspend fun abuseReportAction(@Path("id") id: String, @Path("action") action: String): Response<ResponseBody>
+
+    // --- Antivírus ---
+    @GET("api/admin/antivirus")
+    suspend fun antivirus(@Query("page") page: Int): Response<co.golink.tester.domain.admin.AntivirusOverview>
+
+    @POST("api/admin/antivirus/files/{id}/rescan")
+    suspend fun antivirusRescan(@Path("id") id: String): Response<ResponseBody>
+
+    @DELETE("api/admin/antivirus/files/{id}")
+    suspend fun antivirusDelete(@Path("id") id: String): Response<ResponseBody>
+
     // --- Pages ---
     @GET("api/admin/pages")
     suspend fun pages(): Response<co.golink.tester.domain.admin.PagesResponse>

@@ -132,6 +132,8 @@ data class BrowseAttributes(
     val updated_at_iso: String? = null,
     val deleted_at: String? = null,
     val encrypted: Boolean = false,
+    /** Antivírus: null | pending | clean | infected | error | skipped. */
+    val scan_status: String? = null,
     // Tamanho em bytes (o `filesize` vem formatado): barra relativa e somas.
     val filesize_bytes: Long? = null,
     // Data da foto/vídeo (EXIF) — coluna "Gravado"; null → created_at.

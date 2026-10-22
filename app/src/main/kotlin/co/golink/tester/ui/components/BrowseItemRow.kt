@@ -370,7 +370,7 @@ fun BrowseItemGridCard(
 private fun gridMetaFor(item: BrowseItem.File): String {
     val date = (item.capturedAtIso ?: item.createdAtIso)?.let { co.golink.tester.ui.common.formatDay(it) }
         ?.takeIf { it.isNotEmpty() } ?: item.createdAt
-    return listOfNotNull(fileTypeLabel(item), date).joinToString(" · ")
+    return listOfNotNull(scanLabel(item), fileTypeLabel(item), date).joinToString(" · ")
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -814,8 +814,15 @@ internal fun metaFor(item: BrowseItem): String = when (item) {
     is BrowseItem.File -> {
         val date = (item.capturedAtIso ?: item.createdAtIso)?.let { co.golink.tester.ui.common.formatDay(it) }
             ?.takeIf { it.isNotEmpty() } ?: item.createdAt
-        listOfNotNull(fileTypeLabel(item), item.filesize, date).joinToString(" · ")
+        listOfNotNull(scanLabel(item), fileTypeLabel(item), item.filesize, date).joinToString(" · ")
     }
+}
+
+/** Antivírus: aviso na linha de meta (em análise / quarentena). */
+internal fun scanLabel(item: BrowseItem.File): String? = when (item.scanStatus) {
+    "pending" -> "⏳ " + "Em análise".tr()
+    "infected" -> "⚠ " + "Quarentena".tr()
+    else -> null
 }
 
 internal fun fileTypeLabel(item: BrowseItem.File): String = when (item.type) {

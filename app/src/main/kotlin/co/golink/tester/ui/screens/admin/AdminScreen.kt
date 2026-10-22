@@ -76,6 +76,8 @@ private fun adminTitle(pane: String): String = when (pane) {
     "languages" -> "Línguas".tr()
     "support-team" -> "Equipa de suporte".tr()
     "faq" -> "FAQ"
+    "abuse" -> "Denúncias".tr()
+    "antivirus" -> "Antivírus".tr()
     "plans" -> "Planos".tr()
     "subscriptions" -> "Subscrições".tr()
     "discounts" -> "Descontos".tr()
@@ -135,6 +137,8 @@ fun AdminScreen(
                     "languages" -> LanguagesPane()
                     "support-team" -> SupportTeamPane()
                     "faq" -> FaqPane()
+                    "abuse" -> AbuseReportsPane(onOpenUser = onOpenUser)
+                    "antivirus" -> AntivirusPane(onOpenUser = onOpenUser)
                     "plans" -> PlansPane(isFixed = subscriptionType != "metered")
                     "subscriptions" -> SubscriptionsPane()
                     "discounts" -> DiscountsPane()

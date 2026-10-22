@@ -106,6 +106,8 @@ sealed interface BrowseItem {
         val filesizeBytes: Long = 0,
         /** Data da captura (EXIF), ISO; null → createdAtIso. */
         val capturedAtIso: String? = null,
+        /** Antivírus (só ficheiros em claro): pending | infected | … */
+        val scanStatus: String? = null,
     ) : BrowseItem
 }
 
@@ -198,5 +200,6 @@ fun BrowseEntry.toItem(): BrowseItem = if (type == "folder") {
         nameEncrypted = attributes.name_encrypted,
         filesizeBytes = attributes.filesize_bytes ?: 0,
         capturedAtIso = attributes.captured_at_iso,
+        scanStatus = attributes.scan_status,
     )
 }
