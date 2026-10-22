@@ -122,7 +122,7 @@ internal fun abuseReasonLabel(reason: String) = when (reason) {
     "phishing" -> "Phishing ou fraude".tr()
     "illegal" -> "Conteúdo ilegal".tr()
     "child_abuse" -> "Abuso sexual de menores".tr()
-    "copyright" -> "Violação de direitos de autor".tr()
+    "copyright" -> "Direitos de autor".tr()
     "spam" -> "Spam"
     else -> "Outro motivo".tr()
 }

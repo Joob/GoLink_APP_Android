@@ -423,7 +423,7 @@ object I18nAdmin {
         r("Phishing ou fraude", "Phishing or fraud", "Hameçonnage ou fraude", "Phishing o fraude"),
         r("Conteúdo ilegal", "Illegal content", "Contenu illégal", "Contenido ilegal"),
         r("Abuso sexual de menores", "Child sexual abuse material", "Abus sexuel sur mineurs", "Abuso sexual infantil"),
-        r("Violação de direitos de autor", "Copyright infringement", "Atteinte au droit d'auteur", "Infracción de derechos de autor"),
+        r("Direitos de autor", "Copyright", "Droits d'auteur", "Derechos de autor"),
         r("Outro motivo", "Something else", "Autre motif", "Otro motivo"),
         r("Abertas", "Open", "Ouverts", "Abiertas"),
         r("Bloqueadas", "Blocked", "Bloqués", "Bloqueadas"),
