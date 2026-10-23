@@ -19,6 +19,9 @@ import co.golink.tester.data.teams.TeamsRepository
 import co.golink.tester.data.trash.TrashRepository
 import co.golink.tester.data.upload.UploadManager
 import co.golink.tester.domain.files.withTextExtension
+import co.golink.tester.domain.files.OfficeKind
+import co.golink.tester.domain.files.isOfficeFile
+import co.golink.tester.domain.files.withOfficeExtension
 import co.golink.tester.data.upload.UploadTask
 import co.golink.tester.data.uploadrequest.UploadRequestRepository
 import co.golink.tester.domain.browse.BrowseItem
@@ -471,8 +474,20 @@ class BrowseViewModel @Inject constructor(
         pendingTextFileName = if (openEditor) filename else null
     }
 
-    // Nome do ficheiro de texto acabado de criar, à espera de aparecer na lista
-    // recarregada para o abrirmos no editor.
+    /** Documento (docx) ou folha de cálculo (xlsx) vazios, a partir dos modelos em assets/office. */
+    fun createDocument(kind: OfficeKind, name: String, openEditor: Boolean = true) {
+        val parentId = (state.value.mode as? BrowseMode.Folder)?.id
+        val filename = withOfficeExtension(name, kind)
+        val bytes = runCatching { appContext.assets.open(kind.asset).use { it.readBytes() } }.getOrElse { t ->
+            _state.update { it.copy(toast = failText(t)) }
+            return
+        }
+        uploadManager.createDocument(filename, bytes, kind.mimeType, parentId)
+        pendingTextFileName = if (openEditor) filename else null
+    }
+
+    // Nome do ficheiro de texto (ou documento) acabado de criar, à espera de
+    // aparecer na lista recarregada para o abrirmos no editor.
     private var pendingTextFileName: String? = null
 
     /**
@@ -490,11 +505,16 @@ class BrowseViewModel @Inject constructor(
             pendingTextFileName = null
             if (file == null) return@launch
 
-            prepareViewer(
-                state.value.items.filterIsInstance<BrowseItem.File>().filter { it.isViewable() },
-                file.id,
-            )
-            fileViewerSession.startInEditMode = true
+            if (file.isOfficeFile()) {
+                // O viewer abre-o no editor de documentos.
+                prepareViewer(listOf(file), file.id)
+            } else {
+                prepareViewer(
+                    state.value.items.filterIsInstance<BrowseItem.File>().filter { it.isViewable() },
+                    file.id,
+                )
+                fileViewerSession.startInEditMode = true
+            }
             _state.update { it.copy(openFileRequest = file.id) }
         }
     }

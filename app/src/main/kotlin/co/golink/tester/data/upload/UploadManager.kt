@@ -271,13 +271,28 @@ class UploadManager @Inject constructor(
     fun createTextFile(name: String, content: String, parentId: String?): Pair<String, Job> {
         val temp = File.createTempFile("newtext_", ".txt", context.cacheDir)
         temp.writeText(content.ifEmpty { "\n" })
+        return createFromTemp(temp, name, "txt", "text/plain", parentId)
+    }
 
+    /**
+     * Cria um documento (docx/xlsx) a partir de bytes já prontos — um modelo
+     * vazio ou uma cópia gravada pelo editor. Mesmo caminho do texto: E2E,
+     * quota e nomes ficam com o upload normal.
+     */
+    fun createDocument(name: String, bytes: ByteArray, mimeType: String, parentId: String?): Pair<String, Job> {
+        val ext = name.substringAfterLast('.', "bin")
+        val temp = File.createTempFile("newdoc_", ".$ext", context.cacheDir)
+        temp.writeBytes(bytes)
+        return createFromTemp(temp, name, ext, mimeType, parentId)
+    }
+
+    private fun createFromTemp(temp: File, name: String, defaultExtension: String, mimeType: String, parentId: String?): Pair<String, Job> {
         val dot = name.lastIndexOf('.')
         val metadata = FileMetadata(
             displayName = name,
             baseName = if (dot > 0) name.substring(0, dot) else name,
-            extension = if (dot in 0 until name.lastIndex) name.substring(dot + 1) else "txt",
-            mimeType = "text/plain",
+            extension = if (dot in 0 until name.lastIndex) name.substring(dot + 1) else defaultExtension,
+            mimeType = mimeType,
             size = temp.length(),
         )
         val uri = Uri.fromFile(temp)

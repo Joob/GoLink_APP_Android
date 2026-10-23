@@ -108,6 +108,8 @@ sealed interface BrowseItem {
         val capturedAtIso: String? = null,
         /** Antivírus (só ficheiros em claro): pending | infected | … */
         val scanStatus: String? = null,
+        /** Revisão do conteúdo (editor de documentos envia-a como base_revision). */
+        val contentRevision: Int? = null,
     ) : BrowseItem
 }
 
@@ -201,5 +203,6 @@ fun BrowseEntry.toItem(): BrowseItem = if (type == "folder") {
         filesizeBytes = attributes.filesize_bytes ?: 0,
         capturedAtIso = attributes.captured_at_iso,
         scanStatus = attributes.scan_status,
+        contentRevision = attributes.content_revision,
     )
 }

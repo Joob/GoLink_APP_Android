@@ -134,6 +134,8 @@ data class BrowseAttributes(
     val encrypted: Boolean = false,
     /** Antivírus: null | pending | clean | infected | error | skipped. */
     val scan_status: String? = null,
+    /** Editor de documentos: revisão do conteúdo (deteção de conflitos). */
+    val content_revision: Int? = null,
     // Tamanho em bytes (o `filesize` vem formatado): barra relativa e somas.
     val filesize_bytes: Long? = null,
     // Data da foto/vídeo (EXIF) — coluna "Gravado"; null → created_at.

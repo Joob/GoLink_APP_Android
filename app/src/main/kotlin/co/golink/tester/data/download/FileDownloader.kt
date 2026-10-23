@@ -386,6 +386,12 @@ class FileDownloader @Inject constructor(
         return failed
     }
 
+    /** Grava bytes já em memória em Downloads (ex.: documento exportado pelo editor). */
+    suspend fun saveBytesToDownloads(name: String, mime: String, bytes: ByteArray) =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            withDownloadsOutput(name, mime) { it.write(bytes) }
+        }
+
     /**
      * Abre o destino em Downloads e corre [block]. Em erro (ou cancelamento)
      * apaga a entrada — antes ficava presa em IS_PENDING, invisível mas a ocupar

@@ -18,4 +18,11 @@ class FileViewerSession @Inject constructor() {
 
     /** Aberto a partir do Lixo: só ver (sem editar, mover, partilhar ou renomear). */
     var fromTrash: Boolean = false
+
+    /**
+     * Editor de documentos: última content_revision gravada por ficheiro. A
+     * lista de onde se abre pode ainda ter a antiga — sem isto a gravação
+     * seguinte dava um falso conflito (409).
+     */
+    val contentRevisions: MutableMap<String, Int> = java.util.concurrent.ConcurrentHashMap()
 }

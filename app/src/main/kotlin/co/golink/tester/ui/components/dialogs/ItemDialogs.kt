@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.files.FolderAppearance
+import co.golink.tester.domain.files.OfficeKind
 import co.golink.tester.ui.i18n.tr
 
 /** Cores de pasta (iguais a helpers/folderColors.js da web). null = tema. */
@@ -179,6 +180,47 @@ fun CreateTextFileDialog(location: String, onDismiss: () -> Unit, onCreate: (Str
                 }
             }
         }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { openEditor = !openEditor },
+        ) {
+            Checkbox(checked = openEditor, onCheckedChange = { openEditor = it })
+            Text("Abrir o editor depois de criar".tr(), style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+/** Novo documento (docx) ou folha de cálculo (xlsx), abertos depois no editor. */
+@Composable
+fun CreateDocumentDialog(kind: OfficeKind, location: String, onDismiss: () -> Unit, onCreate: (String, Boolean) -> Unit) {
+    val doc = kind == OfficeKind.DOC
+    var name by remember { mutableStateOf("") }
+    var openEditor by remember { mutableStateOf(true) }
+    val base = name.trim().let { if (it.lowercase().endsWith(".${kind.extension}")) it.dropLast(kind.extension.length + 1) else it }
+        .trim().ifEmpty { (if (doc) "Documento sem título" else "Folha sem título").tr() }
+    val filename = "$base.${kind.extension}"
+
+    DialogScaffold(
+        title = (if (doc) "Novo documento" else "Nova folha de cálculo").tr(),
+        subtitle = "Em %s".tr().format(location),
+        onDismiss = onDismiss,
+        confirmText = "Criar".tr(),
+        onConfirm = { onCreate(filename, openEditor); onDismiss() },
+    ) {
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            label = { Text((if (doc) "Nome do documento" else "Nome da folha de cálculo").tr()) },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            suffix = { Text(".${kind.extension}", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            "Vai ser criado como %s".tr().format(filename),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { openEditor = !openEditor },

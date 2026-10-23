@@ -455,6 +455,7 @@ private fun actionIcon(entry: FeedEntry): Pair<ImageVector, Color> {
         "uploaded" -> Icons.Outlined.Upload to Color(0xFF15803D)
         "folder_created" -> Icons.Outlined.CreateNewFolder to primary
         "renamed", "content_updated" -> Icons.Outlined.Edit to gray
+        "version_restored" -> Icons.Outlined.History to gray
         "moved" -> Icons.Outlined.DriveFileMove to gray
         "trashed", "deleted" -> Icons.Outlined.DeleteOutline to co.golink.tester.ui.theme.Danger
         "restored" -> Icons.Outlined.RestoreFromTrash to primary
@@ -478,6 +479,7 @@ private fun myVerb(action: String): String = when (action) {
     "restored" -> "Restauraste".tr()
     "deleted" -> "Eliminaste".tr()
     "content_updated" -> "Editaste".tr()
+    "version_restored" -> "Restauraste uma versão de".tr()
     "shared" -> "Criaste um link de partilha para".tr()
     "share_updated" -> "Atualizaste o link de partilha de".tr()
     "share_revoked" -> "Revogaste o link de partilha de".tr()

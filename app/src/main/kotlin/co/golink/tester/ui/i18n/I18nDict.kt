@@ -759,6 +759,7 @@ object I18nDict {
         r("restaurou", "restored", "a restauré", "restauró"),
         r("eliminou", "deleted", "a supprimé", "eliminó"),
         r("editou", "edited", "a modifié", "editó"),
+        r("restaurou uma versão de", "restored a version of", "a restauré une version de", "restauró una versión de"),
         r("criou um link de partilha para", "created a share link for", "a créé un lien de partage pour", "creó un enlace para"),
         r("atualizou o link de partilha de", "updated the share link of", "a modifié le lien de partage de", "actualizó el enlace de"),
         r("revogou o link de partilha de", "revoked the share link of", "a révoqué le lien de partage de", "revocó el enlace de"),
@@ -945,6 +946,21 @@ object I18nDict {
         r("Mês passado", "Last month", "Le mois dernier", "El mes pasado"),
         r("Este ano", "This year", "Cette année", "Este año"),
         r("Ano passado", "Last year", "L'année dernière", "El año pasado"),
+
+        // Editor de documentos (docx/xlsx)
+        r("Novo documento", "New document", "Nouveau document", "Nuevo documento"),
+        r("Nova folha de cálculo", "New spreadsheet", "Nouvelle feuille de calcul", "Nueva hoja de cálculo"),
+        r("Word (.docx)", "Word (.docx)", "Word (.docx)", "Word (.docx)"),
+        r("Excel (.xlsx)", "Excel (.xlsx)", "Excel (.xlsx)", "Excel (.xlsx)"),
+        r("Documento sem título", "Untitled document", "Document sans titre", "Documento sin título"),
+        r("Folha sem título", "Untitled spreadsheet", "Feuille sans titre", "Hoja sin título"),
+        r("Nome do documento", "Document name", "Nom du document", "Nombre del documento"),
+        r("Nome da folha de cálculo", "Spreadsheet name", "Nom de la feuille de calcul", "Nombre de la hoja de cálculo"),
+        r("Cópia guardada", "Copy saved", "Copie enregistrée", "Copia guardada"),
+        r("Guardado em Transferências", "Saved to Downloads", "Enregistré dans Téléchargements", "Guardado en Descargas"),
+        r("Desbloqueia a encriptação para abrir este ficheiro", "Unlock encryption to open this file", "Déverrouillez le chiffrement pour ouvrir ce fichier", "Desbloquea el cifrado para abrir este archivo"),
+        r("O ficheiro já não está disponível", "The file is no longer available", "Le fichier n'est plus disponible", "El archivo ya no está disponible"),
+        r("Não foi possível abrir o editor. Verifica a ligação.", "Could not open the editor. Check your connection.", "Impossible d'ouvrir l'éditeur. Vérifiez la connexion.", "No se pudo abrir el editor. Comprueba la conexión."),
     )
 
     private fun r(pt: String, en: String, fr: String, es: String) = arrayOf(pt, en, fr, es)

@@ -116,6 +116,7 @@ object I18nRedesign {
         r("Dissolver equipa", "Dissolve team", "Dissoudre l'équipe", "Disolver equipo"),
         r("Durante 14 dias ou até terminares sessão.", "For 14 days or until you sign out.", "Pendant 14 jours ou jusqu'à la déconnexion.", "Durante 14 días o hasta que cierres sesión."),
         r("Editaste", "You edited", "Vous avez modifié", "Editaste"),
+        r("Restauraste uma versão de", "You restored a version of", "Vous avez restauré une version de", "Restauraste una versión de"),
         r("Eliminados ao fim de %d dias", "Deleted after %d days", "Supprimés après %d jours", "Eliminados a los %d días"),
         r("Eliminaste", "You deleted", "Vous avez supprimé", "Eliminaste"),
         r("Em %s", "In %s", "Dans %s", "En %s"),

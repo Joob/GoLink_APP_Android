@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.viewer
 
+import co.golink.tester.domain.files.isOfficeFile
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Remove
@@ -135,6 +136,12 @@ fun FileViewerScreen(
     onClose: () -> Unit,
     viewModel: FileViewerViewModel = hiltViewModel(),
 ) {
+    // Documentos (docx/xlsx) abrem no editor — abre-se sempre só com esse ficheiro.
+    if (viewModel.current?.isOfficeFile() == true) {
+        co.golink.tester.ui.screens.editor.OfficeEditorScreen(onClose = onClose)
+        return
+    }
+
     val state by viewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val current = state.files.getOrNull(state.currentIndex)

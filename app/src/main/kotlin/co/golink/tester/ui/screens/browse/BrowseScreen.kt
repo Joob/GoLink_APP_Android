@@ -1,6 +1,7 @@
 package co.golink.tester.ui.screens.browse
 
 import androidx.compose.material.icons.outlined.Article
+import androidx.compose.material.icons.outlined.TableChart
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.PeopleOutline
@@ -192,6 +193,8 @@ import co.golink.tester.data.user.UserRepository
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.TeamMember
 import co.golink.tester.domain.files.unsupportedExtension
+import co.golink.tester.domain.files.OfficeKind
+import co.golink.tester.domain.files.isOfficeFile
 import co.golink.tester.domain.files.visibleTextExtensionsLabel
 import co.golink.tester.domain.settings.StorageLevel
 import co.golink.tester.domain.settings.StorageUsage
@@ -251,7 +254,7 @@ class BrowseShellViewModel @Inject constructor(
     init { refreshStorage() }
 }
 
-private enum class ActionDialog { None, CreateFolder, CreateTextFile, Rename, Move, Delete, Share, PermanentDelete, EmptyTrash, RemoteUpload, Details, CreateTeamFolder, ConvertToTeamFolder, FileRequest, Logout, DissolveTeam, LeaveTeam }
+private enum class ActionDialog { None, CreateFolder, CreateTextFile, CreateDocument, CreateSheet, Rename, Move, Delete, Share, PermanentDelete, EmptyTrash, RemoteUpload, Details, CreateTeamFolder, ConvertToTeamFolder, FileRequest, Logout, DissolveTeam, LeaveTeam }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -289,6 +292,11 @@ fun BrowseScreen(
     val openFile: (BrowseItem.File) -> Unit = { file ->
         val viewable = viewModel.state.value.items.filterIsInstance<BrowseItem.File>().filter { it.isViewable() }
         viewModel.prepareViewer(viewable, file.id)
+        onOpenFile(file.id)
+    }
+    // Documentos (docx/xlsx): o viewer abre-os no editor, sozinhos (sem deslizar para outros).
+    val openOffice: (BrowseItem.File) -> Unit = { file ->
+        viewModel.prepareViewer(listOf(file), file.id)
         onOpenFile(file.id)
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -571,7 +579,7 @@ fun BrowseScreen(
                     is BrowseItem.Folder -> { viewModel.openFolder(item); viewModel.clearSelection() }
                     is BrowseItem.File -> {
                         viewModel.clearSelection()
-                        if (item.isViewable()) openFile(item) else sheetItem = item
+                        if (item.isOfficeFile()) openOffice(item) else if (item.isViewable()) openFile(item) else sheetItem = item
                     }
                 }
             }
@@ -759,7 +767,7 @@ fun BrowseScreen(
                                         null -> Unit
                                         // No lixo: ficheiro visualizável abre "só ver" (como na web); o resto → Lixo.
                                         else -> if (entry.itemTrashed) {
-                                            if (item is BrowseItem.File && item.isViewable()) {
+                                            if (item is BrowseItem.File && (item.isViewable() || item.isOfficeFile())) {
                                                 viewModel.prepareViewer(listOf(item), item.id, fromTrash = true)
                                                 onOpenFile(item.id)
                                             } else viewModel.openTrash()
@@ -768,7 +776,7 @@ fun BrowseScreen(
                                                 item,
                                                 ownedByMe = entry.itemOwnerId != null && entry.itemOwnerId == viewModel.currentUserId(),
                                             )
-                                            is BrowseItem.File -> if (item.isViewable()) openActivityFile(item) else sheetItem = item
+                                            is BrowseItem.File -> if (item.isOfficeFile()) openOffice(item) else if (item.isViewable()) openActivityFile(item) else sheetItem = item
                                         }
                                     }
                                 },
@@ -799,10 +807,11 @@ fun BrowseScreen(
                                     viewModel.toggleSelection(item.id)
                                 } else if (state.mode == BrowseMode.Trash) {
                                     // Ficheiro visualizável: abre "só ver"; pastas e o resto → ações.
-                                    if (item is BrowseItem.File && item.isViewable()) openFile(item) else sheetItem = item
+                                    if (item is BrowseItem.File && item.isOfficeFile()) openOffice(item)
+                                    else if (item is BrowseItem.File && item.isViewable()) openFile(item) else sheetItem = item
                                 } else when (item) {
                                     is BrowseItem.Folder -> viewModel.openFolder(item)
-                                    is BrowseItem.File -> if (item.isViewable()) openFile(item) else sheetItem = item
+                                    is BrowseItem.File -> if (item.isOfficeFile()) openOffice(item) else if (item.isViewable()) openFile(item) else sheetItem = item
                                 }
                             }
                             val onItemLongClick: (BrowseItem) -> Unit = {
@@ -821,6 +830,10 @@ fun BrowseScreen(
                             val zoom = state.zoomLevel
                             val granularity = when (zoom) { 0 -> DateGroup.DAY; 4 -> DateGroup.YEAR; else -> DateGroup.MONTH }
                             val sections = remember(displayed, byDate, granularity) { browseSections(displayed, byDate, granularity) }
+                            // Barra de tamanho: escala pelo maior item da lista (pastas incluídas, como na web).
+                            val listMaxBytes = remember(displayed) {
+                                displayed.maxOfOrNull { if (it is BrowseItem.Folder) it.filesizeBytes else (it as BrowseItem.File).filesizeBytes } ?: 0L
+                            }
                             val gridState = rememberLazyGridState()
                             val listState = rememberLazyListState()
                             // Mantém à vista o item que estava no topo quando o nível muda.
@@ -945,6 +958,7 @@ fun BrowseScreen(
                                     if (!isCollapsed) items(section.items, key = { it.id }) { item ->
                                         BrowseItemRow(
                                             item = item,
+                                            maxBytes = listMaxBytes,
                                             large = zoom == 0,
                                             selected = state.selectedIds.contains(item.id),
                                             selectionMode = state.selectMode,
@@ -1043,6 +1057,12 @@ fun BrowseScreen(
                         },
                         co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.CreateNewFolder, "Nova pasta".tr(), primary, "Organize os ficheiros".tr(), mk, accent = false) {
                             activeDialog = ActionDialog.CreateFolder
+                        },
+                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.Article, "Novo documento".tr(), primary, "Word (.docx)".tr(), mk, accent = false) {
+                            activeDialog = ActionDialog.CreateDocument
+                        },
+                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.TableChart, "Nova folha de cálculo".tr(), primary, "Excel (.xlsx)".tr(), mk, accent = false) {
+                            activeDialog = ActionDialog.CreateSheet
                         },
                         co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.Description, "Novo ficheiro de texto".tr(), primary, "Escreva e edite aqui".tr(), mk, accent = false) {
                             activeDialog = ActionDialog.CreateTextFile
@@ -1177,6 +1197,15 @@ fun BrowseScreen(
             onDismiss = { activeDialog = ActionDialog.None },
             onCreate = { filename, openEditor -> viewModel.createTextFile(filename, openEditor) },
         )
+        ActionDialog.CreateDocument, ActionDialog.CreateSheet -> {
+            val kind = if (activeDialog == ActionDialog.CreateSheet) OfficeKind.SHEET else OfficeKind.DOC
+            co.golink.tester.ui.components.dialogs.CreateDocumentDialog(
+                kind = kind,
+                location = state.crumbs.lastOrNull()?.name ?: "O meu Drive".tr(),
+                onDismiss = { activeDialog = ActionDialog.None },
+                onCreate = { filename, openEditor -> viewModel.createDocument(kind, filename, openEditor) },
+            )
+        }
         ActionDialog.Rename -> actionTarget?.let { target ->
             co.golink.tester.ui.components.dialogs.EditItemDialog(
                 item = target,

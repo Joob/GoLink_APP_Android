@@ -88,6 +88,7 @@ internal fun activityVerb(action: String): String = when (action) {
     "restored" -> "restaurou".tr()
     "deleted" -> "eliminou".tr()
     "content_updated" -> "editou".tr()
+    "version_restored" -> "restaurou uma versão de".tr()
     "shared" -> "criou um link de partilha para".tr()
     "share_updated" -> "atualizou o link de partilha de".tr()
     "share_revoked" -> "revogou o link de partilha de".tr()

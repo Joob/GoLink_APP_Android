@@ -8,6 +8,7 @@ import co.golink.tester.domain.files.MoveItemsRequest
 import co.golink.tester.domain.files.RenameItemRequest
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
+import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.HTTP
@@ -17,6 +18,8 @@ import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.Part
 import retrofit2.http.Path
+import retrofit2.http.Query
+import retrofit2.http.Streaming
 
 interface FilesApi {
     @POST("api/create-folder")
@@ -37,6 +40,48 @@ interface FilesApi {
         @Part content: MultipartBody.Part,
         @Part("encrypted") encrypted: RequestBody,
     ): Response<BrowseEntryEnvelope>
+
+    // Editor de documentos (docx/xlsx): igual, mais base_revision (409
+    // content_conflict quando outro gravou entretanto). A resposta segue em
+    // bruto para a WebView do editor.
+    @Multipart
+    @POST("api/file/{id}/content")
+    suspend fun updateDocumentContent(
+        @Path("id") id: String,
+        @Part content: MultipartBody.Part,
+        @Part("encrypted") encrypted: RequestBody,
+        @Part("base_revision") baseRevision: RequestBody?,
+        // Edição em tempo real: sessão em nome da qual grava e até que update.
+        @Part("collab_session") collabSession: RequestBody? = null,
+        @Part("collab_upto") collabUpto: RequestBody? = null,
+    ): Response<ResponseBody>
+
+    // Edição em tempo real (relay por polling). Corpos e respostas em bruto:
+    // quem os percebe é o editor na WebView.
+    @GET("api/file/{id}/collab")
+    suspend fun collabState(
+        @Path("id") id: String,
+        @Query("client") client: String,
+        @Query("after") after: Long,
+    ): Response<ResponseBody>
+
+    @POST("api/file/{id}/collab/{action}")
+    suspend fun collabPost(
+        @Path("id") id: String,
+        @Path("action") action: String,
+        @Body body: RequestBody,
+    ): Response<ResponseBody>
+
+    // Histórico de versões do editor de documentos (respostas em bruto para a WebView).
+    @GET("api/file/{id}/versions")
+    suspend fun fileVersions(@Path("id") id: String): Response<ResponseBody>
+
+    @Streaming
+    @GET("api/file/{id}/versions/{version}/download")
+    suspend fun downloadFileVersion(@Path("id") id: String, @Path("version") version: String): Response<ResponseBody>
+
+    @POST("api/file/{id}/versions/{version}/restore")
+    suspend fun restoreFileVersion(@Path("id") id: String, @Path("version") version: String): Response<ResponseBody>
 
     @HTTP(method = "POST", path = "api/remove", hasBody = true)
     suspend fun remove(@Body body: DeleteItemsRequest): Response<ApiEnvelope<Unit>>
