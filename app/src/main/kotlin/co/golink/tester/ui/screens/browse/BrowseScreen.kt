@@ -1028,29 +1028,33 @@ fun BrowseScreen(
                 onOpenChange = { fabMenuOpen = it },
                 // Sem barra de baixo desde o redesign 2026-10.
                 bottomOffset = 0.dp,
-                actions = listOf(
-                    co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.NoteAdd, "Criar pedido de ficheiros".tr(), tertiary) {
-                        actionTarget = null; activeDialog = ActionDialog.FileRequest
-                    },
-                    co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.GroupAdd, "Criar pasta de equipa".tr(), tertiary) {
-                        activeDialog = ActionDialog.CreateTeamFolder
-                    },
-                    co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.Description, "Criar ficheiro de texto".tr(), tertiary) {
-                        activeDialog = ActionDialog.CreateTextFile
-                    },
-                    co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.CreateNewFolder, "Criar pasta".tr(), tertiary) {
-                        activeDialog = ActionDialog.CreateFolder
-                    },
-                    co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.Link, "Carregamento remoto".tr(), secondary) {
-                        activeDialog = ActionDialog.RemoteUpload
-                    },
-                    co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.DriveFolderUpload, "Carregar pasta".tr(), primary) {
-                        folderPicker.launch(null)
-                    },
-                    co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.FileUpload, "Carregar ficheiros".tr(), primary) {
-                        filePicker.launch(arrayOf("*/*"))
-                    },
-                ),
+                actions = run {
+                    val up = "Carregar".tr()
+                    val mk = "Criar".tr()
+                    listOf(
+                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.FileUpload, "Carregar ficheiros".tr(), primary, "Do telemóvel".tr(), up) {
+                            filePicker.launch(arrayOf("*/*"))
+                        },
+                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.DriveFolderUpload, "Carregar pasta".tr(), primary, "Mantém a estrutura".tr(), up) {
+                            folderPicker.launch(null)
+                        },
+                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.Link, "Carregar por ligação".tr(), primary, "Importar a partir de links".tr(), up) {
+                            activeDialog = ActionDialog.RemoteUpload
+                        },
+                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.CreateNewFolder, "Nova pasta".tr(), primary, "Organize os ficheiros".tr(), mk, accent = false) {
+                            activeDialog = ActionDialog.CreateFolder
+                        },
+                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.Description, "Novo ficheiro de texto".tr(), primary, "Escreva e edite aqui".tr(), mk, accent = false) {
+                            activeDialog = ActionDialog.CreateTextFile
+                        },
+                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.GroupAdd, "Pasta de equipa".tr(), primary, "Partilhada com membros".tr(), mk, accent = false) {
+                            activeDialog = ActionDialog.CreateTeamFolder
+                        },
+                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.NoteAdd, "Pedir ficheiros".tr(), primary, "Receba de outras pessoas".tr(), mk, accent = false) {
+                            actionTarget = null; activeDialog = ActionDialog.FileRequest
+                        },
+                    )
+                },
             )
         } else if (fabMenuOpen) {
             LaunchedEffect(Unit) { fabMenuOpen = false }
