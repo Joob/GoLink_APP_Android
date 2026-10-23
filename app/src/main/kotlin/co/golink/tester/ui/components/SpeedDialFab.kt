@@ -46,6 +46,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.material3.ripple
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.layout.widthIn
@@ -109,11 +113,11 @@ fun BoxScope.SpeedDialFab(
         AnimatedVisibility(
             visible = open,
             enter = scaleIn(
-                animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMedium),
-                initialScale = 0.85f,
+                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
+                initialScale = 0.2f,
                 transformOrigin = TransformOrigin(1f, 1f),
             ) + fadeIn(tween(140)),
-            exit = scaleOut(tween(120), targetScale = 0.85f, transformOrigin = TransformOrigin(1f, 1f)) +
+            exit = scaleOut(tween(140), targetScale = 0.2f, transformOrigin = TransformOrigin(1f, 1f)) +
                 fadeOut(tween(120)),
         ) {
             MenuCard(actions) { action ->
@@ -179,12 +183,24 @@ private fun MenuCard(actions: List<SpeedDialAction>, onClick: (SpeedDialAction) 
 
 @Composable
 private fun MenuRow(action: SpeedDialAction, onClick: () -> Unit) {
+    // Toque em "bolha": realce em pílula + encolher ligeiro com ressalto.
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.95f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "row-scale",
+    )
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = 6.dp)
+            .scale(scale)
+            .clip(RoundedCornerShape(50))
+            .background(if (pressed) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
+            .clickable(interactionSource = interaction, indication = ripple(color = MaterialTheme.colorScheme.primary), onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 8.dp),
     ) {
         val bg = if (action.accent) action.tint.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant
         val fg = if (action.accent) action.tint else MaterialTheme.colorScheme.onSurfaceVariant
