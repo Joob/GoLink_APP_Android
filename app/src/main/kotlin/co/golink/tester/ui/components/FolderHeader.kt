@@ -87,6 +87,8 @@ fun FolderHeader(
     onFolderMenu: () -> Unit,
     onTypeFilter: (String?) -> Unit,
     modifier: Modifier = Modifier,
+    // Arrastar para o caminho: destino de largada de cada elemento (índice do crumb).
+    crumbDropTarget: (index: Int, back: Boolean) -> Modifier = { _, _ -> Modifier },
 ) {
     Column(modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 10.dp)) {
         // ‹ + caminho (O meu Drive › Pasta 1 › release)
@@ -97,7 +99,7 @@ fun FolderHeader(
                         shape = RoundedCornerShape(8.dp),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         color = MaterialTheme.colorScheme.surface,
-                        modifier = Modifier.size(26.dp).clickable(onClick = onBack),
+                        modifier = Modifier.then(crumbDropTarget(crumbs.size - 2, true)).size(26.dp).clickable(onClick = onBack),
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Voltar".tr(), modifier = Modifier.size(18.dp))
@@ -126,6 +128,7 @@ fun FolderHeader(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
                                 .widthIn(max = 160.dp)
+                                .then(if (!last) crumbDropTarget(i, false) else Modifier)
                                 .clip(RoundedCornerShape(6.dp))
                                 .then(if (!last) Modifier.clickable { onCrumb(i) } else Modifier)
                                 .padding(horizontal = 3.dp, vertical = 2.dp),

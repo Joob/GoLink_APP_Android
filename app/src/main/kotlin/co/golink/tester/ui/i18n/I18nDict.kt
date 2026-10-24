@@ -220,6 +220,8 @@ object I18nDict {
         r("A pasta atual será o destino dos uploads", "The current folder will be the upload destination", "Le dossier actuel sera la destination des envois", "La carpeta actual será el destino de las subidas"),
         r("Os meus ficheiros (raiz)", "My files (root)", "Mes fichiers (racine)", "Mis archivos (raíz)"),
         r("Movido para o lixo", "Moved to trash", "Mis à la corbeille", "Movido a la papelera"),
+        r("Movido para %s", "Moved to %s", "Déplacé vers %s", "Movido a %s"),
+        r("Larga numa pasta para mover", "Drop on a folder to move", "Déposez sur un dossier pour déplacer", "Suelta en una carpeta para mover"),
         r("Lixo esvaziado", "Trash emptied", "Corbeille vidée", "Papelera vaciada"),
         r("Todos os itens no lixo serão eliminados para sempre.", "All items in the trash will be deleted forever.", "Tous les éléments de la corbeille seront supprimés définitivement.", "Todos los elementos de la papelera se eliminarán para siempre."),
         r("Eliminar ficheiro", "Delete file", "Supprimer le fichier", "Eliminar archivo"),

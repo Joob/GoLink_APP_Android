@@ -568,6 +568,18 @@ class BrowseViewModel @Inject constructor(
         }
     }
 
+    /** Arrastar para uma pasta: avisa com o nome do destino. */
+    fun moveToFolder(items: List<BrowseItem>, toFolderId: String?, folderName: String) {
+        val targets = items.filter { it.id != toFolderId }
+        if (targets.isEmpty()) return
+        if (state.value.selectMode) exitSelectMode()
+        viewModelScope.launch {
+            filesRepository.move(targets, toFolderId)
+                .onSuccess { _state.update { it.copy(toast = "Movido para %s".tr().format(folderName)) }; loadCurrent() }
+                .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
+        }
+    }
+
     // Nomes (em claro) dos ficheiros já visíveis na pasta: com nomes cifrados é
     // o cliente que deteta o conflito, o servidor só vê o placeholder.
     private fun visibleFileNames(): Map<String, String> =

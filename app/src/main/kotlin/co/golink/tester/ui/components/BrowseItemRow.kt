@@ -155,6 +155,10 @@ private fun PlayBadge(modifier: Modifier = Modifier) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
+private fun Modifier.itemClicks(onClick: () -> Unit, onLongClick: () -> Unit, clicks: Modifier?): Modifier =
+    if (clicks != null) then(clicks) else combinedClickable(onClick = onClick, onLongClick = onLongClick)
+
 fun BrowseItemRow(
     item: BrowseItem,
     onClick: () -> Unit,
@@ -163,6 +167,8 @@ fun BrowseItemRow(
     onMembersClick: ((List<TeamMember>) -> Unit)? = null,
     selected: Boolean = false,
     selectionMode: Boolean = false,
+    // Substitui os cliques (ex.: arrastar para pasta, ver dragToFolderClicks).
+    clicks: Modifier? = null,
     // Itens partilhados: botão de copiar link ao lado do ⋮ (null = sem botão).
     onCopyLinkClick: (() -> Unit)? = null,
     // Zoom por pinça, nível 0: miniatura grande e nome em 2 linhas.
@@ -171,7 +177,7 @@ fun BrowseItemRow(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .itemClicks(onClick, onLongClick, clicks),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = selectionContainer(selected && selectionMode)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
@@ -246,19 +252,20 @@ fun BrowseItemGridCard(
     density: CardDensity = CardDensity.NORMAL,
 ) {
     if (compactFolder && item is BrowseItem.Folder) {
-        if (density == CardDensity.NORMAL) CompactFolderCard(item, onClick, onLongClick, onMoreClick, selected, selectionMode)
-        else FolderTile(item, onClick, onLongClick, selected, selectionMode)
+        if (density == CardDensity.NORMAL) CompactFolderCard(item, onClick, onLongClick, onMoreClick, selected, selectionMode, clicks)
+        else FolderTile(item, onClick, onLongClick, selected, selectionMode, clicks)
         return
     }
     if (density == CardDensity.TINY) {
-        TinyTile(item, onClick, onLongClick, selected, selectionMode)
+        TinyTile(item, onClick, onLongClick, selected, selectionMode, clicks)
         return
     }
     val small = density == CardDensity.SMALL
+    clicks: Modifier? = null,
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .itemClicks(onClick, onLongClick, clicks),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = selectionContainer(selected && selectionMode)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
@@ -387,12 +394,13 @@ private fun CompactFolderCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .itemClicks(onClick, onLongClick, clicks),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = selectionContainer(selected && selectionMode)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         border = selectionBorder(selected && selectionMode),
     ) {
+    clicks: Modifier?,
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth().padding(start = 10.dp, top = 10.dp, bottom = 10.dp, end = 0.dp),
@@ -465,7 +473,7 @@ private fun FolderTile(
 ) {
     val tint = parseHexColor(item.color) ?: MaterialTheme.colorScheme.primary
     Card(
-        modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        modifier = Modifier.fillMaxWidth().itemClicks(onClick, onLongClick, clicks),
         shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = selectionContainer(selected && selectionMode)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
@@ -473,6 +481,7 @@ private fun FolderTile(
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
             Column(
+    clicks: Modifier?,
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 10.dp),
             ) {
@@ -517,8 +526,9 @@ private fun TinyTile(
             .clip(RoundedCornerShape(6.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
             .then(if (active) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp)) else Modifier)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .itemClicks(onClick, onLongClick, clicks),
         contentAlignment = Alignment.Center,
+    clicks: Modifier?,
     ) {
         when (item) {
             is BrowseItem.Folder -> Icon(
@@ -701,7 +711,7 @@ internal fun MemberAvatar(
 }
 
 @Composable
-private fun Leading(item: BrowseItem, large: Boolean = false) {
+internal fun Leading(item: BrowseItem, large: Boolean = false) {
     val boxSize = if (large) 68.dp else 44.dp
     val iconSize = if (large) 56.dp else 38.dp
     Box(modifier = Modifier.size(boxSize)) {

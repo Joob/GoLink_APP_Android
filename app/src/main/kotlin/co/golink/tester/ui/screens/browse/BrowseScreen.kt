@@ -224,6 +224,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import co.golink.tester.ui.components.DragToFolderGhost
+import co.golink.tester.ui.components.dragToFolderClicks
+import co.golink.tester.ui.components.folderDropTarget
+import co.golink.tester.ui.components.dropTarget
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 
 @HiltViewModel
 class BrowseShellViewModel @Inject constructor(
@@ -343,6 +350,14 @@ fun BrowseScreen(
         )
     }
     val snackbarHostState = remember { SnackbarHostState() }
+    // Toque longo + arrastar para uma pasta ou para o caminho (Drive, equipa, partilhas).
+    val dragState = remember { co.golink.tester.ui.components.DragToFolderState() }
+    val dragEnabled = !state.readOnly && when (val m = state.mode) {
+        is BrowseMode.Folder, BrowseMode.Shared -> true
+        is BrowseMode.TeamFolder -> m.id != null
+        is BrowseMode.SharedWithMe -> m.id != null
+        else -> false
+    }
 
     LaunchedEffect(state.toast) {
         val msg = state.toast ?: return@LaunchedEffect
@@ -698,6 +713,19 @@ fun BrowseScreen(
                         onToggleFavourite = { root?.let(viewModel::toggleFavourite) },
                         onFolderMenu = { sheetItem = root },
                         onTypeFilter = viewModel::setTypeFilter,
+                        crumbDropTarget = { i, back ->
+                            val crumb = state.crumbs.getOrNull(i)
+                            // Separadores (Pastas de equipa, Partilhado comigo) não são pastas.
+                            val droppable = dragEnabled && crumb != null && crumb.origin == null &&
+                                (crumb.id != null || state.mode is BrowseMode.Folder)
+                            Modifier.dropTarget(
+                                if (droppable) co.golink.tester.ui.components.DropTarget(
+                                    key = if (back) "back" else "crumb:$i", toId = crumb!!.id, name = crumb.name,
+                                ) else null,
+                                dragState,
+                                radius = 6.dp,
+                            )
+                        },
                     )
                 }
                 SearchRow(
@@ -852,7 +880,45 @@ fun BrowseScreen(
                                     ?: return@LaunchedEffect
                                 if (viewModeFor(zoom) == ViewMode.GRID) gridState.scrollToItem(idx) else listState.scrollToItem(idx)
                             }
-                            Box(modifier = Modifier.fillMaxSize().pinchToZoomLevels(zoom, onChange = onZoom)) {
+                            // Toque longo + arrastar para uma pasta (só no Drive, fora da seleção).
+                            val dragDensity = androidx.compose.ui.platform.LocalDensity.current
+                            var dragHost by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+                            val clicksFor: (BrowseItem) -> Modifier? = { item ->
+                                if (!dragEnabled) null else Modifier.dragToFolderClicks(
+                                    item, dragState,
+                                    onClick = { onItemClick(item) },
+                                    onLongClick = { onItemLongClick(item) },
+                                    // Item selecionado → arrasta a seleção toda; senão só ele.
+                                    dragItems = {
+                                        if (state.selectMode && item.id in state.selectedIds) viewModel.selectedItems() else listOf(item)
+                                    },
+                                    onDrop = { items, t -> viewModel.moveToFolder(items, t.toId, t.name) },
+                                )
+                            }
+                            // Scroll automático perto das margens enquanto arrasta (não por cima do caminho).
+                            LaunchedEffect(dragState.isDragging) {
+                                if (!dragState.isDragging) return@LaunchedEffect
+                                val edge = with(dragDensity) { 72.dp.toPx() }
+                                while (dragState.isDragging) {
+                                    val host = dragHost?.takeIf { it.isAttached }
+                                    if (host != null) {
+                                        val top = host.positionInRoot().y
+                                        val y = dragState.pointer.y - top
+                                        val h = host.size.height
+                                        val dy = when {
+                                            y in 0f..edge -> -(edge - y) / 4f
+                                            y > h - edge -> (y - (h - edge)) / 4f
+                                            else -> 0f
+                                        }
+                                        if (dy != 0f) {
+                                            if (state.viewMode == ViewMode.GRID) gridState.scrollBy(dy) else listState.scrollBy(dy)
+                                            dragState.refreshTarget()
+                                        }
+                                    }
+                                    androidx.compose.runtime.withFrameNanos { }
+                                }
+                            }
+                            Box(modifier = Modifier.fillMaxSize().onGloballyPositioned { dragHost = it }.pinchToZoomLevels(zoom, onChange = onZoom)) {
                             if (state.viewMode == ViewMode.GRID) {
                                 val shouldLoadMore by remember {
                                     androidx.compose.runtime.derivedStateOf {
@@ -906,7 +972,9 @@ fun BrowseScreen(
                                             )
                                         }
                                     } else if (!isCollapsed) items(section.items, key = { it.id }, contentType = { if (section.folders) "folder" else "file" }) { item ->
+                                        Box(Modifier.folderDropTarget(item, dragState)) {
                                         BrowseItemGridCard(
+                                            clicks = clicksFor(item),
                                             item = item,
                                             compactFolder = section.folders,
                                             density = co.golink.tester.ui.components.cardDensityFor(zoom),
@@ -922,6 +990,7 @@ fun BrowseScreen(
                                                 { viewModel.copyShareLink(item) }
                                             } else null,
                                         )
+                                        }
                                     }
                                     }
                                 }
@@ -956,7 +1025,9 @@ fun BrowseScreen(
                                         }
                                     }
                                     if (!isCollapsed) items(section.items, key = { it.id }) { item ->
+                                        Box(Modifier.folderDropTarget(item, dragState)) {
                                         BrowseItemRow(
+                                            clicks = clicksFor(item),
                                             item = item,
                                             maxBytes = listMaxBytes,
                                             large = zoom == 0,
@@ -972,6 +1043,7 @@ fun BrowseScreen(
                                                 { viewModel.copyShareLink(item) }
                                             } else null,
                                         )
+                                        }
                                     }
                                     }
                                     // Rodapé "N itens" (como a tabela da web), só com a lista completa.
@@ -1002,6 +1074,7 @@ fun BrowseScreen(
                                 }
                             }
                             co.golink.tester.ui.components.ZoomLevelHint(zoom, Modifier.align(Alignment.TopCenter).padding(top = 12.dp))
+                            DragToFolderGhost(dragState, dragHost)
                             }
                         }
                     }
