@@ -19,7 +19,7 @@ import co.golink.tester.data.teams.TeamsRepository
 import co.golink.tester.data.trash.TrashRepository
 import co.golink.tester.data.upload.UploadManager
 import co.golink.tester.domain.files.withTextExtension
-import co.golink.tester.domain.files.OfficeKind
+import co.golink.tester.domain.files.OfficeFormat
 import co.golink.tester.domain.files.isOfficeFile
 import co.golink.tester.domain.files.withOfficeExtension
 import co.golink.tester.data.upload.UploadTask
@@ -98,6 +98,10 @@ data class BrowseUiState(
     // desaparecendo por trás à medida que cada lote é apagado; progresso 0–100.
     val isEmptyingTrash: Boolean = false,
     val emptyingProgress: Int = 0,
+    val emptyingDeleted: Int = 0,
+    val emptyingTotal: Int = 0,
+    // Toaster do flush em "concluído" (fecha sozinho).
+    val emptyingDone: Boolean = false,
     // Id de um ficheiro que o ecrã deve abrir no viewer (ficheiro de texto
     // acabado de criar). O ecrã navega e limpa-o.
     val openFileRequest: String? = null,
@@ -243,6 +247,8 @@ class BrowseViewModel @Inject constructor(
         viewModelScope.launch {
             uploadManager.completedTick.collect { t ->
                 if (t > 0) {
+                    // Itens novos podem ter ficado selados ao dono (Team Folder).
+                    teamsRepository.invalidateClearedNames()
                     loadCurrent()
                     pendingTextFileName?.let { openNewTextFileWhenListed(it) }
                 }
@@ -472,23 +478,32 @@ class BrowseViewModel @Inject constructor(
         uploadManager.createTextFile(filename, "", parentId)
         // "Abrir o editor depois de criar" desmarcado: só cria.
         pendingTextFileName = if (openEditor) filename else null
+        pendingIsText = true
     }
 
-    /** Documento (docx) ou folha de cálculo (xlsx) vazios, a partir dos modelos em assets/office. */
-    fun createDocument(kind: OfficeKind, name: String, openEditor: Boolean = true) {
+    /** Formatos convertidos no servidor (odt) só se o ficheiro não for cifrado. */
+    val canCreateServerConverted: Boolean get() = !uploadManager.encryptsUploads
+
+    /** Documento ou folha de cálculo vazios no formato escolhido, a partir dos modelos em assets/office. */
+    fun createDocument(format: OfficeFormat, name: String, openEditor: Boolean = true) {
         val parentId = (state.value.mode as? BrowseMode.Folder)?.id
-        val filename = withOfficeExtension(name, kind)
-        val bytes = runCatching { appContext.assets.open(kind.asset).use { it.readBytes() } }.getOrElse { t ->
+        val filename = withOfficeExtension(name, format)
+        val asset = format.asset ?: return
+        if (format.serverConverted && !canCreateServerConverted) return
+        val bytes = runCatching { appContext.assets.open(asset).use { it.readBytes() } }.getOrElse { t ->
             _state.update { it.copy(toast = failText(t)) }
             return
         }
-        uploadManager.createDocument(filename, bytes, kind.mimeType, parentId)
+        uploadManager.createDocument(filename, bytes, format.mimeType, parentId)
         pendingTextFileName = if (openEditor) filename else null
+        pendingIsText = false
     }
 
     // Nome do ficheiro de texto (ou documento) acabado de criar, à espera de
     // aparecer na lista recarregada para o abrirmos no editor.
     private var pendingTextFileName: String? = null
+    // Criado pelo "Novo ficheiro de texto" (um .csv abre no editor de texto).
+    private var pendingIsText = false
 
     /**
      * A recarga da lista corre em background, por isso esperamos que o ficheiro
@@ -505,7 +520,7 @@ class BrowseViewModel @Inject constructor(
             pendingTextFileName = null
             if (file == null) return@launch
 
-            if (file.isOfficeFile()) {
+            if (file.isOfficeFile() && !pendingIsText) {
                 // O viewer abre-o no editor de documentos.
                 prepareViewer(listOf(file), file.id)
             } else {
@@ -523,14 +538,43 @@ class BrowseViewModel @Inject constructor(
 
     fun createFolderIn(name: String, parentId: String?) {
         viewModelScope.launch {
-            filesRepository.createFolder(name.trim(), parentId)
+            filesRepository.createFolder(name.trim(), parentId, encryptName = isPrivateTarget(parentId))
                 .onSuccess {
                     _state.update { it.copy(toast = "Pasta criada".tr()) }
+                    teamsRepository.invalidateClearedNames()
                     loadNavigationTree()
                     if ((state.value.mode as? BrowseMode.Folder)?.id == parentId) loadCurrent()
                 }
                 .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
         }
+    }
+
+    // Decide pela pasta de DESTINO (o seletor da árvore pode apontar para uma
+    // Team Folder estando em modo privado, ou vice-versa). Raiz = espaço privado.
+    // Desconhecida na árvore → recorre ao modo do ecrã.
+    private fun isPrivateTarget(parentId: String?): Boolean {
+        if (parentId == null) return true
+        for (section in state.value.navigationTree) {
+            val path = findNavPath(section.folders, parentId) ?: continue
+            return path.none { it.team_folder == true }
+        }
+        return isPrivateNameContext()
+    }
+
+    private fun teamRootOf(folderId: String): String? {
+        for (section in state.value.navigationTree) {
+            val path = findNavPath(section.folders, folderId) ?: continue
+            return path.firstOrNull { it.team_folder == true }?.id
+        }
+        return null
+    }
+
+    private fun findNavPath(nodes: List<co.golink.tester.domain.browse.NavFolder>, id: String): List<co.golink.tester.domain.browse.NavFolder>? {
+        for (n in nodes) {
+            if (n.id == id) return listOf(n)
+            findNavPath(n.folders, id)?.let { return listOf(n) + it }
+        }
+        return null
     }
 
     // E2E Fase 2: só ciframos nomes no espaço privado do utilizador — não em
@@ -542,7 +586,9 @@ class BrowseViewModel @Inject constructor(
 
     fun rename(item: BrowseItem, newName: String, appearance: co.golink.tester.domain.files.FolderAppearance? = null) {
         viewModelScope.launch {
-            filesRepository.rename(item, newName.trim(), encryptName = isPrivateNameContext(), appearance = appearance)
+            // Pela localização do item (em Recentes/Favoritos pode estar numa equipa).
+            val private = !(item is BrowseItem.Folder && item.isTeamFolder) && isPrivateTarget(item.parentId)
+            filesRepository.rename(item, newName.trim(), encryptName = private, appearance = appearance)
                 .onSuccess { _state.update { it.copy(toast = "Renomeado") }; loadCurrent() }
                 .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
         }
@@ -563,7 +609,7 @@ class BrowseViewModel @Inject constructor(
     fun move(item: BrowseItem, toFolderId: String?) {
         viewModelScope.launch {
             filesRepository.move(listOf(item), toFolderId)
-                .onSuccess { _state.update { it.copy(toast = "Movido") }; loadCurrent() }
+                .onSuccess { _state.update { it.copy(toast = "Movido") }; teamsRepository.invalidateClearedNames(); loadCurrent() }
                 .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
         }
     }
@@ -575,7 +621,7 @@ class BrowseViewModel @Inject constructor(
         if (state.value.selectMode) exitSelectMode()
         viewModelScope.launch {
             filesRepository.move(targets, toFolderId)
-                .onSuccess { _state.update { it.copy(toast = "Movido para %s".tr().format(folderName)) }; loadCurrent() }
+                .onSuccess { _state.update { it.copy(toast = "Movido para %s".tr().format(folderName)) }; teamsRepository.invalidateClearedNames(); loadCurrent() }
                 .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
         }
     }
@@ -671,7 +717,7 @@ class BrowseViewModel @Inject constructor(
     fun createTeamFolder(name: String, invitations: List<TeamInvitation>) {
         viewModelScope.launch {
             teamsRepository.createTeamFolder(name.trim(), invitations)
-                .onSuccess { _state.update { it.copy(toast = "Pasta de equipa criada".tr()) }; loadCurrent() }
+                .onSuccess { _state.update { it.copy(toast = "Pasta de equipa criada".tr()) }; uploadManager.invalidateMemberKeys(); loadCurrent() }
                 .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
         }
     }
@@ -679,7 +725,7 @@ class BrowseViewModel @Inject constructor(
     fun convertToTeamFolder(folderId: String, invitations: List<TeamInvitation>) {
         viewModelScope.launch {
             teamsRepository.convertToTeamFolder(folderId, invitations)
-                .onSuccess { _state.update { it.copy(toast = "Pasta convertida".tr()) }; loadCurrent() }
+                .onSuccess { _state.update { it.copy(toast = "Pasta convertida".tr()) }; uploadManager.invalidateMemberKeys(); loadCurrent() }
                 .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
         }
     }
@@ -1173,45 +1219,72 @@ class BrowseViewModel @Inject constructor(
 
     // Esvazia o lixo em lotes: a cada lote actualiza o progresso e recarrega a
     // lista em silêncio (sem spinner) para os itens sumirem por trás do blur.
+    private var emptyTrashRun = 0
+
+    // Esvazia o lixo em lotes. O progresso conta pelo `remaining` do servidor
+    // (o `deleted` conta 1 por árvore de pasta, não é comparável com o total).
+    // A lista recarrega no máximo a cada RELOAD_MS e no fim, com o filtro/ordem
+    // e as estatísticas do cabeçalho (loadPaged), em vez de a cada lote.
     fun emptyTrash() {
         if (_state.value.isEmptyingTrash) return
-        _state.update { it.copy(isEmptyingTrash = true, emptyingProgress = 0) }
+        val run = ++emptyTrashRun
+        _state.update {
+            it.copy(
+                isEmptyingTrash = true, emptyingProgress = 0, emptyingDeleted = 0, emptyingTotal = 0, emptyingDone = false,
+                selectMode = false, selectedIds = emptySet(),
+            )
+        }
         viewModelScope.launch {
             val batch = 50
-            var total: Int? = null
+            var total = 0
             var remaining = Int.MAX_VALUE
+            var failed = false
+            var lastReload = System.currentTimeMillis()
             try {
                 while (remaining > 0) {
                     val res = trashRepository.dumpBatch(batch).getOrElse { t ->
                         android.util.Log.e("BrowseVM", "emptyTrash failed", t)
                         _state.update { it.copy(toast = "Falha: ${t.message ?: t::class.java.simpleName}") }
+                        failed = true
                         null
                     } ?: break
                     remaining = res.remaining
-                    if (total == null) total = res.deleted + res.remaining
-                    val t = total ?: 0
-                    val pct = if (t > 0) (t - remaining) * 100 / t else 100
-                    _state.update { it.copy(emptyingProgress = pct.coerceIn(0, 99)) }
-                    if (_state.value.mode == BrowseMode.Trash) reloadTrashItems()
-                    if (res.deleted == 0) break
+                    // Itens que chegam ao lixo a meio alargam o total (nunca "60 / 50").
+                    total = maxOf(total, res.deleted + res.remaining, remaining)
+                    val done = (total - remaining).coerceIn(0, total)
+                    val pct = if (total > 0) done * 100 / total else 100
+                    _state.update { it.copy(emptyingProgress = pct.coerceIn(0, 99), emptyingDeleted = done, emptyingTotal = total) }
+                    // Lote sem progresso com itens por apagar: pára e avisa (sem loop infinito).
+                    if (res.deleted == 0 && remaining > 0) {
+                        _state.update { it.copy(toast = "Alguns itens não puderam ser eliminados".tr()) }
+                        failed = true
+                        break
+                    }
+                    if (remaining > 0 && System.currentTimeMillis() - lastReload >= RELOAD_MS) {
+                        reloadTrashItems()
+                        lastReload = System.currentTimeMillis()
+                    }
                 }
-                _state.update { it.copy(emptyingProgress = 100) }
-                if (_state.value.mode == BrowseMode.Trash) reloadTrashItems()
-                _state.update { it.copy(toast = "Lixo esvaziado".tr()) }
+                if (!failed) _state.update { it.copy(emptyingProgress = 100, emptyingDeleted = total, emptyingTotal = total, emptyingDone = true) }
+                reloadTrashItems()
             } finally {
-                delay(400)
-                _state.update { it.copy(isEmptyingTrash = false, emptyingProgress = 0) }
+                // Blur sai logo; o toaster fica em "concluído" uns segundos.
+                _state.update { it.copy(isEmptyingTrash = false) }
+                if (!failed) delay(3000)
+                // Só limpa se nenhum flush novo começou entretanto.
+                if (run == emptyTrashRun) {
+                    _state.update { it.copy(emptyingProgress = 0, emptyingDeleted = 0, emptyingTotal = 0, emptyingDone = false) }
+                }
             }
         }
     }
 
-    // Recarrega a lista do lixo sem tocar no isLoading (sem skeleton): os itens
-    // já apagados desaparecem por trás do blur, mantendo a vista visível.
+    // Recarga silenciosa (sem skeleton) com o filtro/ordem atuais e as stats do
+    // cabeçalho; os itens apagados desaparecem por trás do blur.
     private suspend fun reloadTrashItems() {
-        trashRepository.list().onSuccess { items ->
-            if (_state.value.mode == BrowseMode.Trash) {
-                _state.update { it.copy(items = sorted(items)) }
-            }
+        if (_state.value.mode != BrowseMode.Trash) return
+        trashRepository.listPaged(browseQuery()).onSuccess { paged ->
+            if (_state.value.mode == BrowseMode.Trash) _state.update { it.copy(items = sorted(paged.items), stats = paged.stats) }
         }
     }
 
@@ -1316,6 +1389,22 @@ class BrowseViewModel @Inject constructor(
     // série ao abrir uma pasta grande, a causa principal do "lento a carregar".
     // Numa recarga silenciosa pedimos as primeiras `pages` páginas para repor o
     // que já estava visível, sem spinner e sem mexer no scroll.
+    // Dono: nomes selados à sua chave → em claro para os membros (como na web).
+    // Na raiz são as próprias Team Folders; dentro, a pasta aberta (o servidor
+    // sobe até à raiz da equipa). Um de cada vez, depois de a lista aparecer.
+    private fun clearTeamFolderNames(mode: BrowseMode.TeamFolder, items: List<BrowseItem>) {
+        val ids = mode.id?.let { listOf(it) } ?: items.filterIsInstance<BrowseItem.Folder>().map { it.id }
+        if (ids.isEmpty()) return
+        // Dentro de uma equipa as subpastas partilham o throttle pela raiz (a
+        // Team Folder na árvore de navegação; senão a própria pasta).
+        val rootKey = mode.id?.let { id -> teamRootOf(id) ?: id }
+        viewModelScope.launch {
+            var cleared = 0
+            for (id in ids) cleared += teamsRepository.clearEncryptedNames(id, rootKey ?: id)
+            if (cleared > 0 && mode == _state.value.mode) loadCurrent(silent = true)
+        }
+    }
+
     private suspend fun loadPaged(mode: BrowseMode, pages: Int, silent: Boolean) {
         val first = fetchPage(mode, 1) ?: return
         if (mode != _state.value.mode) return
@@ -1348,6 +1437,7 @@ class BrowseViewModel @Inject constructor(
                         root = firstPaged.root ?: it.root,
                     )
                 }
+                if (mode is BrowseMode.TeamFolder) clearTeamFolderNames(mode, all)
             }
             .onFailure { t ->
                 // Numa recarga silenciosa não apagamos a vista por um erro de rede.
@@ -1521,6 +1611,7 @@ class BrowseViewModel @Inject constructor(
     }
 
     companion object {
+        private const val RELOAD_MS = 1500L
         private const val POLL_INTERVAL_MS = 5_000L
     }
 }

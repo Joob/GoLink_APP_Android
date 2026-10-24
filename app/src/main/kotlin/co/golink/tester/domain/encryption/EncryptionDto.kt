@@ -89,6 +89,8 @@ data class E2EKeyEntry(
 
 @Serializable
 data class FolderMemberKeysResponse(
+    // Raiz é Team Folder: o nome do upload fica em claro (os membros leem-no).
+    val team: Boolean = false,
     val owner: E2EKeyEntry? = null,
     val recipients: List<E2EKeyEntry> = emptyList(),
 )

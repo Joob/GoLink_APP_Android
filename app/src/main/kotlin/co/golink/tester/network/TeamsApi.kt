@@ -38,6 +38,16 @@ interface TeamsApi {
         @Query("direction") direction: String? = null,
     ): Response<BrowseListResponse>
 
+    // Dono: nomes da Team Folder selados à sua chave → repostos em claro (como na web).
+    @GET("api/teams/folders/{id}/encrypted-names")
+    suspend fun encryptedNames(@Path("id") id: String): Response<co.golink.tester.domain.teams.TeamEncryptedNamesResponse>
+
+    @POST("api/teams/folders/{id}/clear-names")
+    suspend fun clearNames(
+        @Path("id") id: String,
+        @Body body: co.golink.tester.domain.teams.TeamClearNamesRequest,
+    ): Response<okhttp3.ResponseBody>
+
     @GET("api/teams/shared-with-me/{id}")
     suspend fun browseSharedWithMe(
         @Path("id") id: String,

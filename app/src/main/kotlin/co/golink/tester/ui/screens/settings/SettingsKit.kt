@@ -339,7 +339,7 @@ object SettingsColors {
     val Blue = Color(0xFF3B82F6)
     val Indigo = Color(0xFF6366F1)
     val Purple = Color(0xFF9D66FE)
-    val Green = Color(0xFF00BC7E)
+    val Green = Color(0xFF0F8A5F)
     val Teal = Color(0xFF14B8A6)
     val Orange = Color(0xFFF97316)
     val Amber = Color(0xFFF59E0B)

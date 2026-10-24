@@ -43,7 +43,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.files.FolderAppearance
+import co.golink.tester.domain.files.OfficeFormat
 import co.golink.tester.domain.files.OfficeKind
+import co.golink.tester.domain.files.createFormats
 import co.golink.tester.ui.i18n.tr
 
 /** Cores de pasta (iguais a helpers/folderColors.js da web). null = tema. */
@@ -190,22 +192,41 @@ fun CreateTextFileDialog(location: String, onDismiss: () -> Unit, onCreate: (Str
     }
 }
 
-/** Novo documento (docx) ou folha de cálculo (xlsx), abertos depois no editor. */
+/** Novo documento ou folha de cálculo, no formato escolhido (lembrado), aberto depois no editor. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun CreateDocumentDialog(kind: OfficeKind, location: String, onDismiss: () -> Unit, onCreate: (String, Boolean) -> Unit) {
+fun CreateDocumentDialog(
+    kind: OfficeKind,
+    location: String,
+    onDismiss: () -> Unit,
+    onCreate: (String, OfficeFormat, Boolean) -> Unit,
+    /** false com E2E: odt converte-se no servidor e não abriria no editor. */
+    allowServerConverted: Boolean = true,
+) {
     val doc = kind == OfficeKind.DOC
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = remember { context.getSharedPreferences("office_editor", android.content.Context.MODE_PRIVATE) }
+    val formats = remember(kind, allowServerConverted) { createFormats(kind).filter { allowServerConverted || !it.serverConverted } }
+    var format by remember {
+        mutableStateOf(formats.firstOrNull { it.extension == prefs.getString("create_format_${kind.name}", null) } ?: formats.first())
+    }
     var name by remember { mutableStateOf("") }
     var openEditor by remember { mutableStateOf(true) }
-    val base = name.trim().let { if (it.lowercase().endsWith(".${kind.extension}")) it.dropLast(kind.extension.length + 1) else it }
-        .trim().ifEmpty { (if (doc) "Documento sem título" else "Folha sem título").tr() }
-    val filename = "$base.${kind.extension}"
+    val base = name.trim().let { typed ->
+        formats.firstOrNull { typed.lowercase().endsWith(".${it.extension}") }?.let { typed.dropLast(it.extension.length + 1) } ?: typed
+    }.trim().ifEmpty { (if (doc) "Documento sem título" else "Folha sem título").tr() }
+    val filename = "$base.${format.extension}"
 
     DialogScaffold(
         title = (if (doc) "Novo documento" else "Nova folha de cálculo").tr(),
         subtitle = "Em %s".tr().format(location),
         onDismiss = onDismiss,
         confirmText = "Criar".tr(),
-        onConfirm = { onCreate(filename, openEditor); onDismiss() },
+        onConfirm = {
+            prefs.edit().putString("create_format_${kind.name}", format.extension).apply()
+            onCreate(filename, format, openEditor)
+            onDismiss()
+        },
     ) {
         OutlinedTextField(
             value = name,
@@ -213,8 +234,23 @@ fun CreateDocumentDialog(kind: OfficeKind, location: String, onDismiss: () -> Un
             label = { Text((if (doc) "Nome do documento" else "Nome da folha de cálculo").tr()) },
             singleLine = true,
             shape = RoundedCornerShape(12.dp),
-            suffix = { Text(".${kind.extension}", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+            suffix = { Text(".${format.extension}", color = MaterialTheme.colorScheme.onSurfaceVariant) },
             modifier = Modifier.fillMaxWidth(),
+        )
+        Text("Formato".tr(), style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            formats.forEach { option ->
+                androidx.compose.material3.FilterChip(
+                    selected = option == format,
+                    onClick = { format = option },
+                    label = { Text(".${option.extension}") },
+                )
+            }
+        }
+        Text(
+            officeFormatHint(format.extension),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
             "Vai ser criado como %s".tr().format(filename),
@@ -230,6 +266,14 @@ fun CreateDocumentDialog(kind: OfficeKind, location: String, onDismiss: () -> Un
         }
     }
 }
+
+private fun officeFormatHint(extension: String): String = when (extension) {
+    "docx" -> "Word · mais compatível"
+    "xlsx" -> "Excel · mais compatível"
+    "odt", "ods" -> "OpenDocument · LibreOffice"
+    "csv" -> "Só dados · uma folha"
+    else -> ""
+}.tr()
 
 /** Editar item: nome; nas pastas também cor ou emoji (como "Editar pasta" na web). */
 @OptIn(ExperimentalLayoutApi::class)

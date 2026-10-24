@@ -52,7 +52,7 @@ import co.golink.tester.domain.support.SupportDashboard
 import co.golink.tester.domain.support.SupportOptions
 import co.golink.tester.ui.i18n.tr
 
-private val CreatedColor = Color(0xFF00BC7E)
+private val CreatedColor = Color(0xFF0F8A5F)
 private val ClosedColor = Color(0xFF3B6CFF)
 
 /**

@@ -123,7 +123,7 @@ private fun schema(tab: String): List<SSection> = when (tab) {
     )
     "appearance" -> listOf(
         SSection("Geral".tr(), listOf(
-            SField("app_color", "Cor do tema".tr(), FieldKind.Color, "Hexadecimal, ex.: #00BC7E".tr()),
+            SField("app_color", "Cor do tema".tr(), FieldKind.Color, "Hexadecimal, ex.: #0F8A5F".tr()),
             SField("app_title", "Título da aplicação".tr()),
             SField("app_description", "Descrição".tr(), FieldKind.Multiline),
         )),
@@ -134,36 +134,19 @@ private fun schema(tab: String): List<SSection> = when (tab) {
             SField("android_download_link", "Link de download Android".tr()),
             SField("apple_download_link", "Link de download iOS".tr()),
         )),
+        // Rodapé das faturas (como em /admin/invoices na web): vazio → escondido.
+        SSection("Links da fatura".tr(), listOf(
+            SField("invoice_github_url", "GitHub"),
+            SField("invoice_googleplay_url", "Google Play"),
+            SField("invoice_appstore_url", "App Store"),
+        )),
     )
+    // A homepage nova usa textos fixos (i18n): só estes dois ainda contam.
     "homepage" -> listOf(
         SSection("Página inicial".tr(), listOf(
             SField("allow_homepage", "Mostrar página inicial".tr(), FieldKind.Switch),
-            SField("header_title", "Título do cabeçalho".tr()),
-            SField("header_description", "Descrição do cabeçalho".tr(), FieldKind.Multiline),
+            SField("section_pricing_content", "Mostrar secção de preços".tr(), FieldKind.Switch),
         )),
-        SSection("Funcionalidades".tr(), listOf(
-            SField("section_features", "Mostrar secção".tr(), FieldKind.Switch),
-            SField("features_title", "Título".tr()),
-            SField("features_description", "Descrição".tr(), FieldKind.Multiline),
-        )),
-        SSection("Caixas de funcionalidades".tr(), listOf(SField("section_feature_boxes", "Mostrar secção".tr(), FieldKind.Switch)) +
-            (1..3).flatMap { i ->
-                listOf(
-                    SField("feature_title_$i", "Título %d".tr().format(i)),
-                    SField("feature_description_$i", "Descrição %d".tr().format(i), FieldKind.Multiline),
-                )
-            }),
-        SSection("Preços".tr(), listOf(
-            SField("section_pricing_content", "Mostrar secção".tr(), FieldKind.Switch),
-            SField("pricing_title", "Título".tr()),
-            SField("pricing_description", "Descrição".tr(), FieldKind.Multiline),
-        )),
-        SSection("Começar".tr(), listOf(
-            SField("section_get_started", "Mostrar secção".tr(), FieldKind.Switch),
-            SField("get_started_title", "Título".tr()),
-            SField("get_started_description", "Descrição".tr(), FieldKind.Multiline),
-        )),
-        SSection("Rodapé".tr(), listOf(SField("footer_content", "Conteúdo do rodapé".tr(), FieldKind.Multiline))),
     )
     else -> emptyList()
 }

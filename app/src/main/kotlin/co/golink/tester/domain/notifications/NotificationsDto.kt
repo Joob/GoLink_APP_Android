@@ -29,7 +29,18 @@ data class NotificationAttributes(
     val description: String? = null,
     val action: JsonElement? = null,
     val created_at: String? = null,
+    val created_at_iso: String? = null,
     val read_at: String? = null,
+    val details: List<NotificationDetail> = emptyList(),
+    val sender: String? = null,
+    val message: String? = null,
+)
+
+/** Linha "rótulo → valor" do popup; o rótulo vem como chave (traduzida na app). */
+@Serializable
+data class NotificationDetail(
+    val key: String,
+    val value: String,
 )
 
 data class Notification(
@@ -41,8 +52,14 @@ data class Notification(
     /** Rota web do action (ex.: AdminSupportTicketDetail) e o id associado. */
     val actionRoute: String? = null,
     val actionId: String? = null,
+    /** Texto do botão principal (vem traduzido do servidor). */
+    val actionButton: String? = null,
     val createdAt: String?,
+    val createdAtIso: String? = null,
     val isRead: Boolean,
+    val details: List<NotificationDetail> = emptyList(),
+    val sender: String? = null,
+    val message: String? = null,
 ) {
     companion object {
         fun fromEnvelope(envelope: NotificationEnvelope): Notification {
@@ -55,8 +72,13 @@ data class Notification(
                 actionType = extractActionType(attrs.action),
                 actionRoute = actionParam(attrs.action, "route"),
                 actionId = actionParam(attrs.action, "id"),
+                actionButton = actionParam(attrs.action, "button"),
                 createdAt = attrs.created_at,
+                createdAtIso = attrs.created_at_iso,
                 isRead = attrs.read_at != null,
+                details = attrs.details,
+                sender = attrs.sender,
+                message = attrs.message,
             )
         }
 

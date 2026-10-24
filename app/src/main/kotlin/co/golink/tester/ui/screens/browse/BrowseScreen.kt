@@ -34,6 +34,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -49,6 +51,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -70,6 +73,7 @@ import co.golink.tester.ui.components.dialogs.GrantE2EAccessDialog
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
@@ -767,7 +771,7 @@ fun BrowseScreen(
                 if (state.mode == BrowseMode.Trash && state.items.isNotEmpty() && trashRetentionDays > 0 && !state.selectMode) {
                     TrashRetentionNotice(
                         days = trashRetentionDays,
-                        onEmptyNow = { activeDialog = ActionDialog.EmptyTrash },
+                        onEmptyNow = { if (!state.isEmptyingTrash) activeDialog = ActionDialog.EmptyTrash },
                     )
                 }
                 PullToRefreshBox(
@@ -776,7 +780,20 @@ fun BrowseScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .then(if (state.isEmptyingTrash) Modifier.blur(14.dp) else Modifier),
+                        .then(
+                            // Durante o flush a lista fica desfocada e não aceita toques
+                            // (restaurar/apagar um item que o próximo lote já apagou).
+                            if (state.isEmptyingTrash) {
+                                Modifier.blur(14.dp).pointerInput(Unit) {
+                                    awaitPointerEventScope {
+                                        while (true) {
+                                            awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                                                .changes.forEach { it.consume() }
+                                        }
+                                    }
+                                }
+                            } else Modifier
+                        ),
                 ) {
                     when {
                         state.mode == BrowseMode.Latest -> when {
@@ -1174,40 +1191,74 @@ fun BrowseScreen(
         }
     }
 
-    // Flush do lixo: cartão de progresso 0–100% por cima da lista desfocada,
-    // enquanto os ficheiros vão desaparecendo por trás a cada lote apagado.
-    if (state.isEmptyingTrash) {
+    // Flush do lixo: toaster em baixo (estilo do painel de uploads) com barra e %,
+    // enquanto os ficheiros vão desaparecendo por trás do blur a cada lote apagado.
+    // Só no Lixo; sem Surface (que engole toques) para não bloquear o que está por baixo.
+    if ((state.isEmptyingTrash || state.emptyingDone) && state.mode == BrowseMode.Trash) {
+        val accent = if (state.emptyingDone) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.12f)),
-            contentAlignment = Alignment.Center,
+            modifier = Modifier.fillMaxSize().navigationBarsPadding().padding(16.dp),
+            contentAlignment = Alignment.BottomCenter,
         ) {
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surface,
-                shadowElevation = 8.dp,
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 420.dp)
+                    .shadow(10.dp, RoundedCornerShape(18.dp))
+                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(18.dp)),
             ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(horizontal = 30.dp, vertical = 24.dp),
-                ) {
-                    CircularProgressIndicator(
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(40.dp)) {
+                            if (state.emptyingDone) {
+                                Surface(shape = CircleShape, color = accent, modifier = Modifier.size(40.dp)) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(22.dp))
+                                    }
+                                }
+                            } else {
+                                CircularProgressIndicator(
+                                    progress = { state.emptyingProgress / 100f },
+                                    color = accent,
+                                    trackColor = accent.copy(alpha = 0.15f),
+                                    strokeWidth = 3.5.dp,
+                                    modifier = Modifier.size(40.dp),
+                                )
+                                Icon(Icons.Filled.Delete, null, tint = accent, modifier = Modifier.size(17.dp))
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                if (state.emptyingDone) "Lixo esvaziado".tr() else "A eliminar permanentemente…".tr(),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                            )
+                            if (state.emptyingTotal > 0) {
+                                Text(
+                                    "${state.emptyingDeleted} / ${state.emptyingTotal}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        if (!state.emptyingDone) {
+                            Text(
+                                "${state.emptyingProgress}%",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = accent,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    LinearProgressIndicator(
                         progress = { state.emptyingProgress / 100f },
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    Spacer(Modifier.height(14.dp))
-                    Text(
-                        "A eliminar permanentemente…".tr(),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "${state.emptyingProgress}%",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.error,
+                        color = accent,
+                        trackColor = accent.copy(alpha = 0.15f),
+                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(50)),
                     )
                 }
             }
@@ -1275,8 +1326,9 @@ fun BrowseScreen(
             co.golink.tester.ui.components.dialogs.CreateDocumentDialog(
                 kind = kind,
                 location = state.crumbs.lastOrNull()?.name ?: "O meu Drive".tr(),
+                allowServerConverted = viewModel.canCreateServerConverted,
                 onDismiss = { activeDialog = ActionDialog.None },
-                onCreate = { filename, openEditor -> viewModel.createDocument(kind, filename, openEditor) },
+                onCreate = { filename, format, openEditor -> viewModel.createDocument(format, filename, openEditor) },
             )
         }
         ActionDialog.Rename -> actionTarget?.let { target ->

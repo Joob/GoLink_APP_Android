@@ -27,6 +27,7 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.style.TextAlign
@@ -119,6 +120,14 @@ fun NotificationsScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) { CircularProgressIndicator(color = MaterialTheme.colorScheme.primary) }
+                // Sem nada (ex. depois de "Apagar todas"): só a mensagem, sem tabs — como na web.
+                items.isEmpty() -> Text(
+                    "Sem notificações".tr(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp, horizontal = 16.dp),
+                )
                 else -> {
                     val systemItems = items.filter { it.category in SYSTEM_CATEGORIES }
                     val otherItems = items.filter { it.category !in SYSTEM_CATEGORIES }
@@ -128,6 +137,21 @@ fun NotificationsScreen(
                     // que tem novidades; Sistema tem prioridade.
                     var tab by rememberSaveable { mutableIntStateOf(if (systemUnread == 0 && otherUnread > 0) 1 else 0) }
                     val visible = if (tab == 0) systemItems else otherItems
+                    var openId by rememberSaveable { mutableStateOf<String?>(null) }
+
+                    // Popup de detalhe (como na web): abrir já não marca como lida, o ✓ é que marca.
+                    items.firstOrNull { it.id == openId }?.let { n ->
+                        val target = actionFor(n, onOpenSecurityActivity, onOpenSupportTicket)
+                        NotificationDetailDialog(
+                            notification = n,
+                            isSystem = n.category in SYSTEM_CATEGORIES,
+                            onDismiss = { openId = null },
+                            onToggleRead = { viewModel.toggleRead(n); openId = null },
+                            onDelete = { viewModel.delete(n.id); openId = null },
+                            // Seguir a ação conta como lida (abrir o popup não).
+                            onAction = target?.let { go -> { if (!n.isRead) viewModel.markRead(n.id); openId = null; go() } },
+                        )
+                    }
 
                     Column(modifier = Modifier.fillMaxSize()) {
                         TabRow(selectedTabIndex = tab) {
@@ -147,11 +171,7 @@ fun NotificationsScreen(
                             items(visible, key = { it.id }) { n ->
                                 NotificationRow(
                                     notification = n,
-                                    onTap = {
-                                        if (!n.isRead) viewModel.markRead(n.id)
-                                        if (n.category == "security-alert") onOpenSecurityActivity()
-                                        openSupportTicket(n, onOpenSupportTicket)
-                                    },
+                                    onTap = { openId = n.id },
                                     onToggleRead = { viewModel.toggleRead(n) },
                                     onDelete = { viewModel.delete(n.id) },
                                 )
@@ -233,14 +253,20 @@ private fun NotificationRow(
     }
 }
 
-/** Notificações de suporte: o action web traz a rota (fila do staff ou do user) e o id do ticket. */
-private fun openSupportTicket(
-    n: co.golink.tester.domain.notifications.Notification,
-    open: (String, Boolean) -> Unit,
-) {
-    val id = n.actionId ?: return
-    when (n.actionRoute) {
-        "AdminSupportTicketDetail" -> open(id, true)
-        "SupportTicketDetail" -> open(id, false)
+/**
+ * Destino do botão principal do popup. Segurança → atividade de segurança;
+ * suporte → o action web traz a rota (fila do staff ou do user) e o id do ticket.
+ */
+private fun actionFor(
+    n: Notification,
+    openSecurity: () -> Unit,
+    openTicket: (String, Boolean) -> Unit,
+): (() -> Unit)? {
+    if (n.category == "security-alert") return openSecurity
+    val id = n.actionId ?: return null
+    return when (n.actionRoute) {
+        "AdminSupportTicketDetail" -> { { openTicket(id, true) } }
+        "SupportTicketDetail" -> { { openTicket(id, false) } }
+        else -> null
     }
 }

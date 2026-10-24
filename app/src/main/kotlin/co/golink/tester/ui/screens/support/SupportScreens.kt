@@ -112,7 +112,7 @@ internal fun staffStatusLabel(s: String) = when (s) {
 }
 
 private val AVATAR_PALETTE = listOf(
-    Color(0xFF00BC7E), Color(0xFF3B6CFF), Color(0xFF8B5CF6), Color(0xFFF59E0B),
+    Color(0xFF0F8A5F), Color(0xFF3B6CFF), Color(0xFF8B5CF6), Color(0xFFF59E0B),
     Color(0xFFEC4899), Color(0xFF0EA5E9), Color(0xFF10B981), Color(0xFFF97316),
 )
 

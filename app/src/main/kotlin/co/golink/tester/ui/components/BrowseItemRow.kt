@@ -63,6 +63,7 @@ import coil.compose.AsyncImagePainter
 import coil.request.ImageRequest
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.TeamMember
+import co.golink.tester.ui.common.relativeAgo
 
 // Candidatos a preview, por ordem: thumbnail do servidor e, como fallback, o
 // próprio ficheiro. Logo após um upload o thumbnail ainda não foi gerado
@@ -154,11 +155,11 @@ private fun PlayBadge(modifier: Modifier = Modifier) {
 }
 
 @OptIn(ExperimentalFoundationApi::class)
-@Composable
-@OptIn(ExperimentalFoundationApi::class)
 private fun Modifier.itemClicks(onClick: () -> Unit, onLongClick: () -> Unit, clicks: Modifier?): Modifier =
     if (clicks != null) then(clicks) else combinedClickable(onClick = onClick, onLongClick = onLongClick)
 
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
 fun BrowseItemRow(
     item: BrowseItem,
     onClick: () -> Unit,
@@ -167,12 +168,14 @@ fun BrowseItemRow(
     onMembersClick: ((List<TeamMember>) -> Unit)? = null,
     selected: Boolean = false,
     selectionMode: Boolean = false,
-    // Substitui os cliques (ex.: arrastar para pasta, ver dragToFolderClicks).
-    clicks: Modifier? = null,
     // Itens partilhados: botão de copiar link ao lado do ⋮ (null = sem botão).
     onCopyLinkClick: (() -> Unit)? = null,
     // Zoom por pinça, nível 0: miniatura grande e nome em 2 linhas.
     large: Boolean = false,
+    // Maior item da lista: escala da barra de tamanho (0 = sem barra).
+    maxBytes: Long = 0,
+    // Substitui os cliques (ex.: arrastar para pasta, ver dragToFolderClicks).
+    clicks: Modifier? = null,
 ) {
     Card(
         modifier = Modifier
@@ -203,20 +206,27 @@ fun BrowseItemRow(
                     maxLines = if (large) 2 else 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.height(3.dp))
-                val members = (item as? BrowseItem.Folder)?.members.orEmpty()
-                if (item is BrowseItem.Folder && members.isNotEmpty()) {
-                    MemberAvatarRow(
-                        members = members,
-                        onClick = onMembersClick?.let { cb -> { cb(members) } },
-                    )
-                } else {
+                Spacer(Modifier.height(4.dp))
+                // Como na web: pílula do tipo · detalhe · "há X dias".
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TypePill(item)
+                    Spacer(Modifier.width(6.dp))
                     Text(
-                        metaFor(item),
+                        listOf(rowDetail(item), relativeAgo(rowDateIso(item)))
+                            .filter { it.isNotEmpty() }.joinToString(" · "),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                SizeBarLine(item, maxBytes)
+                val members = (item as? BrowseItem.Folder)?.members.orEmpty()
+                if (item is BrowseItem.Folder && members.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    MemberAvatarRow(
+                        members = members,
+                        onClick = onMembersClick?.let { cb -> { cb(members) } },
                     )
                 }
             }
@@ -250,6 +260,7 @@ fun BrowseItemGridCard(
     compactFolder: Boolean = false,
     // Zoom por pinça: NORMAL (2 col.), SMALL (3 col.), TINY (5 col., só miniatura).
     density: CardDensity = CardDensity.NORMAL,
+    clicks: Modifier? = null,
 ) {
     if (compactFolder && item is BrowseItem.Folder) {
         if (density == CardDensity.NORMAL) CompactFolderCard(item, onClick, onLongClick, onMoreClick, selected, selectionMode, clicks)
@@ -261,7 +272,6 @@ fun BrowseItemGridCard(
         return
     }
     val small = density == CardDensity.SMALL
-    clicks: Modifier? = null,
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -389,6 +399,7 @@ private fun CompactFolderCard(
     onMoreClick: () -> Unit,
     selected: Boolean,
     selectionMode: Boolean,
+    clicks: Modifier?,
 ) {
     val tint = parseHexColor(item.color) ?: MaterialTheme.colorScheme.primary
     Card(
@@ -400,7 +411,6 @@ private fun CompactFolderCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         border = selectionBorder(selected && selectionMode),
     ) {
-    clicks: Modifier?,
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth().padding(start = 10.dp, top = 10.dp, bottom = 10.dp, end = 0.dp),
@@ -470,6 +480,7 @@ private fun FolderTile(
     onLongClick: () -> Unit,
     selected: Boolean,
     selectionMode: Boolean,
+    clicks: Modifier?,
 ) {
     val tint = parseHexColor(item.color) ?: MaterialTheme.colorScheme.primary
     Card(
@@ -481,7 +492,6 @@ private fun FolderTile(
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
             Column(
-    clicks: Modifier?,
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 10.dp),
             ) {
@@ -517,6 +527,7 @@ private fun TinyTile(
     onLongClick: () -> Unit,
     selected: Boolean,
     selectionMode: Boolean,
+    clicks: Modifier?,
 ) {
     val active = selected && selectionMode
     Box(
@@ -528,7 +539,6 @@ private fun TinyTile(
             .then(if (active) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp)) else Modifier)
             .itemClicks(onClick, onLongClick, clicks),
         contentAlignment = Alignment.Center,
-    clicks: Modifier?,
     ) {
         when (item) {
             is BrowseItem.Folder -> Icon(
@@ -840,6 +850,82 @@ internal fun fileTypeLabel(item: BrowseItem.File): String = when (item.type) {
     "video" -> "Vídeo".tr()
     "audio" -> "Áudio".tr()
     else -> item.name.substringAfterLast('.', "").takeIf { it.isNotEmpty() && it.length <= 5 }?.uppercase() ?: "Ficheiro".tr()
+}
+
+// Data da linha: no lixo = quando foi para o lixo; ficheiros = EXIF ("Gravado") → upload; pastas = última alteração.
+private fun rowDateIso(item: BrowseItem): String? = item.deletedAtIso ?: when (item) {
+    is BrowseItem.File -> item.capturedAtIso ?: item.createdAtIso ?: item.updatedAtIso
+    is BrowseItem.Folder -> item.updatedAtIso ?: item.createdAtIso
+}
+
+// Linha da lista: "2 itens · Partilhada" nas pastas; nos ficheiros multimédia a
+// extensão ("MP4") — nos outros a pílula já mostra a extensão.
+private fun rowDetail(item: BrowseItem): String = when (item) {
+    is BrowseItem.Folder -> listOfNotNull(
+        item.devicePath ?: item.itemCount?.let { if (it == 1) "1 item".tr() else "%d itens".tr().format(it) },
+        if (item.share != null) "Partilhada".tr() else null,
+    ).joinToString(" · ")
+    is BrowseItem.File -> listOfNotNull(
+        scanLabel(item),
+        item.name.substringAfterLast('.', "").takeIf { it.isNotEmpty() && it.length <= 5 && item.type in setOf("image", "video", "audio") }?.uppercase(),
+    ).joinToString(" · ")
+}
+
+// Pílula do tipo (Pasta verde, Vídeo roxo, Imagem azul, Áudio laranja), igual à web.
+@Composable
+private fun TypePill(item: BrowseItem) {
+    val dark = co.golink.tester.ui.theme.LocalDarkTheme.current
+    val brand = MaterialTheme.colorScheme.primary
+    val (label, bg, fg) = when {
+        item is BrowseItem.Folder -> Triple("Pasta".tr(), brand.copy(alpha = if (dark) 0.18f else 0.12f), if (dark) Color(0xFF7FCCA8) else Color(0xFF0B6E4B))
+        item is BrowseItem.File && item.type == "video" -> Triple("Vídeo".tr(), if (dark) Color(0x298B5CF6) else Color(0xFFF1EDFD), if (dark) Color(0xFFC4B5FD) else Color(0xFF6D4BD8))
+        item is BrowseItem.File && item.type == "image" -> Triple("Imagem".tr(), if (dark) Color(0x2660A5FA) else Color(0xFFE8F1FD), if (dark) Color(0xFF93C5FD) else Color(0xFF2563EB))
+        item is BrowseItem.File && item.type == "audio" -> Triple("Áudio".tr(), if (dark) Color(0x26FB923C) else Color(0xFFFDF0E6), if (dark) Color(0xFFFDBA74) else Color(0xFFC2580C))
+        else -> Triple(fileTypeLabel(item as BrowseItem.File), if (dark) Color(0xFF2A2B2F) else Color(0xFFF3F4F6), if (dark) Color(0xFFD1D5DB) else Color(0xFF4B5563))
+    }
+    Text(
+        label,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = fg,
+        maxLines = 1,
+        modifier = Modifier.clip(RoundedCornerShape(5.dp)).background(bg).padding(horizontal = 6.dp, vertical = 1.dp),
+    )
+}
+
+// Barra de tamanho relativa ao maior item da lista + tamanho à direita.
+@Composable
+private fun SizeBarLine(item: BrowseItem, maxBytes: Long) {
+    val bytes = when (item) {
+        is BrowseItem.Folder -> item.filesizeBytes
+        is BrowseItem.File -> item.filesizeBytes
+    }
+    val size = when (item) {
+        is BrowseItem.Folder -> item.filesize?.takeIf { bytes > 0 }
+        is BrowseItem.File -> item.filesize
+    } ?: return
+    val fraction = if (maxBytes > 0 && bytes > 0) (bytes.toFloat() / maxBytes).coerceIn(0.03f, 1f) else 0f
+    val dark = co.golink.tester.ui.theme.LocalDarkTheme.current
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+        Box(
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .widthIn(max = 160.dp)
+                .fillMaxWidth()
+                .height(3.dp)
+                .clip(RoundedCornerShape(50))
+                .background(if (dark) Color(0xFF2A2B2F) else Color(0xFFE5E7EB)),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(fraction)
+                    .fillMaxHeight()
+                    .background(if (item is BrowseItem.Folder) MaterialTheme.colorScheme.primary else Color(0xFF9CA3AF)),
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(size, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+    }
 }
 
 // Pílula escura com o tamanho, no canto da miniatura (grelha, como na web).

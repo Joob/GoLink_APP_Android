@@ -12,7 +12,8 @@ import co.golink.tester.data.encryption.E2EKeyManager
 import co.golink.tester.data.encryption.EncryptedFileCodec
 import co.golink.tester.data.upload.UploadManager
 import co.golink.tester.domain.browse.BrowseItem
-import co.golink.tester.domain.files.officeKind
+import co.golink.tester.domain.browse.toItem
+import co.golink.tester.domain.files.officeMimeFor
 import co.golink.tester.network.FilesApi
 import co.golink.tester.network.UserEncryptionApi
 import co.golink.tester.ui.i18n.I18n
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -57,6 +59,8 @@ import retrofit2.Response
  * aqui: descarregar e decifrar, cifrar e gravar (com base_revision), versões,
  * cópias e transferências. O protocolo está em resources/js/services/editorBridge.js.
  */
+private const val COPY_TIMEOUT_MS = 3 * 60_000L
+
 @HiltViewModel
 class OfficeEditorViewModel @Inject constructor(
     private val session: FileViewerSession,
@@ -71,16 +75,22 @@ class OfficeEditorViewModel @Inject constructor(
     private val sessionManager: SessionManager,
 ) : ViewModel() {
 
-    val file: BrowseItem.File? = session.files.firstOrNull { it.id == session.startId } ?: session.files.firstOrNull()
+    /** Muda para a cópia docx/xlsx quando um formato antigo (doc/rtf/xls) é gravado. */
+    var file: BrowseItem.File? = session.files.firstOrNull { it.id == session.startId } ?: session.files.firstOrNull()
+        private set
 
     /** Do Lixo ou com o E2E trancado: abre só para ler. */
     val canEdit: Boolean
-        get() = file != null && !session.fromTrash && (!file.encrypted || e2eKeyManager.isUnlocked)
+        get() = file.let { f -> f != null && !session.fromTrash && (!f.encrypted || e2eKeyManager.isUnlocked) }
 
     val editorUrl: String get() = backendUrlHolder.current.trimEnd('/') + "/editor-embed"
 
     private val _toasts = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val toasts: SharedFlow<String> = _toasts.asSharedFlow()
+
+    // Partilhar a partir do editor: o ecrã abre a folha de partilha nativa.
+    private val _shareRequests = MutableSharedFlow<BrowseItem.File>(extraBufferCapacity = 1)
+    val shareRequests: SharedFlow<BrowseItem.File> = _shareRequests.asSharedFlow()
 
     private val _closeRequested = MutableStateFlow(false)
     val closeRequested: StateFlow<Boolean> = _closeRequested.asStateFlow()
@@ -98,17 +108,10 @@ class OfficeEditorViewModel @Inject constructor(
     fun infoJson(dark: Boolean): String {
         val f = file ?: return "null"
         return buildJsonObject {
-            put("file", buildJsonObject {
-                put("id", f.id)
-                put("name", f.name)
-                put("basename", f.basename)
-                put("mimetype", f.mimetype)
-                put("encrypted", f.encrypted)
-                // A lista pode estar desatualizada depois de uma gravação nossa.
-                put("content_revision", session.contentRevisions[f.id] ?: f.contentRevision)
-                put("filesize", f.filesize)
-            })
+            put("file", fileJson(f))
             put("canEdit", canEdit)
+            put("canComment", !session.fromTrash)
+            put("canShare", !session.fromTrash)
             put("supportsVersions", true)
             put("supportsCollab", true)
             currentUser()?.let { user ->
@@ -121,6 +124,17 @@ class OfficeEditorViewModel @Inject constructor(
             put("locale", I18n.lang)
             put("dark", dark)
         }.toString()
+    }
+
+    private fun fileJson(f: BrowseItem.File): JsonObject = buildJsonObject {
+        put("id", f.id)
+        put("name", f.name)
+        put("basename", f.basename)
+        put("mimetype", f.mimetype)
+        put("encrypted", f.encrypted)
+        // A lista pode estar desatualizada depois de uma gravação nossa.
+        put("content_revision", session.contentRevisions[f.id] ?: f.contentRevision)
+        put("filesize", f.filesize)
     }
 
     fun take(id: Int): String = results.remove(id) ?: """{"ok":false,"status":500}"""
@@ -188,21 +202,112 @@ class OfficeEditorViewModel @Inject constructor(
                 rememberRevision(f, body)
                 Json.parseToJsonElement(body)
             }
-            "save_copy" -> {
-                val name = args.string("name")
-                val kind = f.officeKind() ?: throw BridgeError(422)
-                uploadManager.createDocument(name, unb64(args.string("content")), kind.mimeType, f.parentId)
-                _toasts.tryEmit("Cópia guardada".tr() + ": " + name)
-                JsonNull
-            }
+            "save_copy" -> saveCopy(f, args.string("name"), unb64(args.string("content")), args["switch"]?.jsonPrimitive?.booleanOrNull == true)
             "download" -> {
                 val name = args.string("name")
-                val kind = f.officeKind() ?: throw BridgeError(422)
-                downloader.saveBytesToDownloads(name, kind.mimeType, unb64(args.string("content")))
+                downloader.saveBytesToDownloads(name, officeMimeFor(name), unb64(args.string("content")))
                 _toasts.tryEmit("Guardado em Transferências".tr())
                 JsonNull
             }
+            "share" -> {
+                _shareRequests.tryEmit(f)
+                JsonNull
+            }
+            // odt/doc/rtf ↔ docx (e pdf) pelo LibreOffice no servidor; nunca com E2E.
+            "convert" -> {
+                if (f.encrypted) throw BridgeError(422, "encrypted_not_convertible")
+                JsonPrimitive(b64(convert(unb64(args.string("content")), args.string("from"), args.string("to"))))
+            }
+            // Comentários: o corpo já vem cifrado da página nos ficheiros E2E.
+            "comments_list" -> api("GET", "file/${f.id}/comments")
+            "comments_create" -> api("POST", "file/${f.id}/comments", args)
+            "comments_update" -> api("PATCH", "comments/${args.string("id")}", JsonObject(args - "id"))
+            "comments_resolve" -> api("POST", "comments/${args.string("id")}/resolve", JsonObject(emptyMap()))
+            "comments_reopen" -> api("POST", "comments/${args.string("id")}/reopen", JsonObject(emptyMap()))
+            "comments_delete" -> api("DELETE", "comments/${args.string("id")}")
+            "comments_settings" -> api("PUT", "file/${f.id}/comment-settings", args)
             else -> throw BridgeError(400, "unknown_method")
+        }
+    }
+
+    /**
+     * Cópia na mesma pasta. Com [switch] (doc/rtf/xls gravados como docx/xlsx)
+     * espera pelo envio e o editor passa a gravar na cópia.
+     *
+     * Se o envio demorar (fila atrás de outros), a página recebe 504 mas o envio
+     * continua: o próximo save_copy reaproveita-o em vez de criar outra cópia e,
+     * se já terminou, grava nele o conteúdo mais recente.
+     */
+    private suspend fun saveCopy(f: BrowseItem.File, name: String, bytes: ByteArray, switch: Boolean): JsonElement {
+        if (!switch) {
+            uploadManager.createDocument(name, bytes, officeMimeFor(name), f.parentId)
+            _toasts.tryEmit("Cópia guardada".tr() + ": " + name)
+            return JsonNull
+        }
+        val reused = pendingCopy
+        val (taskId, job) = reused ?: uploadManager.createDocument(name, bytes, officeMimeFor(name), f.parentId, trackCreated = true)
+            .also { pendingCopy = it }
+        if (reused == null) _toasts.tryEmit("A guardar cópia…".tr())
+
+        val finished = withTimeoutOrNull(COPY_TIMEOUT_MS) { job.join() } != null
+        if (!finished) throw BridgeError(504, "upload_timeout")
+        pendingCopy = null
+        val created = uploadManager.takeCreated(taskId)?.toItem() as? BrowseItem.File
+            ?: throw BridgeError(500, "upload_failed")
+        // O nome pode vir cifrado (espaço privado): fica o que escrevemos.
+        val copy = created.copy(name = name)
+        switchTo(f, copy)
+        // Cópia criada num pedido anterior: leva o conteúdo atual.
+        if (reused != null) {
+            save(copy, bytes, null, null, null)
+        }
+        return buildJsonObject { put("file", fileJson(copy)) }
+    }
+
+    // Envio da cópia (doc/rtf/xls) ainda a decorrer depois de a página desistir.
+    private var pendingCopy: Pair<String, kotlinx.coroutines.Job>? = null
+
+    /** Passa a editar [copy]; o viewer (partilhar, reabrir) também segue a cópia. */
+    private fun switchTo(original: BrowseItem.File, copy: BrowseItem.File) {
+        file = copy
+        dataKey = null
+        session.files = session.files.map { if (it.id == original.id) copy else it }
+        if (session.startId == original.id) session.startId = copy.id
+    }
+
+    override fun onCleared() {
+        // A página fechou com a cópia a meio: não reter o resultado no UploadManager.
+        pendingCopy?.let { (taskId, job) -> job.invokeOnCompletion { uploadManager.takeCreated(taskId) } }
+        super.onCleared()
+    }
+
+    private suspend fun convert(content: ByteArray, from: String, to: String): ByteArray = withContext(Dispatchers.IO) {
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("content", "document.$from", content.toRequestBody("application/octet-stream".toMediaTypeOrNull()))
+            .addFormDataPart("from", from)
+            .addFormDataPart("to", to)
+            .build()
+        httpClient.newCall(authed("office/convert").post(body).build()).execute().use { response ->
+            if (!response.isSuccessful) throw httpError(response.code, response.body?.string())
+            response.body?.bytes() ?: ByteArray(0)
+        }
+    }
+
+    /** Pedido JSON à API (comentários): devolve o corpo tal como a web o recebe. */
+    private suspend fun api(method: String, path: String, payload: JsonObject? = null): JsonElement = withContext(Dispatchers.IO) {
+        val body = payload?.toString()?.toRequestBody("application/json".toMediaTypeOrNull())
+        val request = authed(path).addHeader("Accept", "application/json").method(method, body).build()
+        httpClient.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) throw httpError(response.code, text)
+            if (text.isBlank()) JsonNull else Json.parseToJsonElement(text)
+        }
+    }
+
+    private fun authed(path: String): Request.Builder {
+        val token = tokenStore.token
+        return Request.Builder().url(backendUrlHolder.current.trimEnd('/') + "/api/" + path).apply {
+            if (!token.isNullOrBlank()) addHeader("Authorization", "Bearer $token")
         }
     }
 

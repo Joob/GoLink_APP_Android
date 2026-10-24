@@ -59,6 +59,7 @@ data class UploadTask(
 }
 
 private const val MAX_PARALLEL_USER_UPLOADS = 3
+private const val MEMBER_KEYS_TTL_MS = 60_000L
 
 @Singleton
 class UploadManager @Inject constructor(
@@ -134,6 +135,21 @@ class UploadManager @Inject constructor(
         val treeUri: Uri? = null,
     )
     private val sources = mutableMapOf<String, Source>()
+
+    // Ficheiro criado, só para os envios que o pediram (o editor de documentos
+    // passa a gravar na cópia); os outros não ficam retidos.
+    private val createdWanted = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val createdEntries = java.util.concurrent.ConcurrentHashMap<String, co.golink.tester.domain.browse.BrowseEntry>()
+
+    private fun rememberCreated(taskId: String, entry: co.golink.tester.domain.browse.BrowseEntry?) {
+        if (entry != null && taskId in createdWanted) createdEntries[taskId] = entry
+    }
+
+    /** O ficheiro que o envio [taskId] criou (só uma vez; null se falhou ou não se soube). */
+    fun takeCreated(taskId: String): co.golink.tester.domain.browse.BrowseEntry? {
+        createdWanted.remove(taskId)
+        return createdEntries.remove(taskId)
+    }
     private val jobs = mutableMapOf<String, Job>()
 
     fun enqueue(uri: Uri, parentId: String?, existingFiles: Map<String, String> = emptyMap()): Job =
@@ -279,14 +295,18 @@ class UploadManager @Inject constructor(
      * vazio ou uma cópia gravada pelo editor. Mesmo caminho do texto: E2E,
      * quota e nomes ficam com o upload normal.
      */
-    fun createDocument(name: String, bytes: ByteArray, mimeType: String, parentId: String?): Pair<String, Job> {
+    /** Com E2E configurada todos os envios vão cifrados (odt não abre no editor). */
+    val encryptsUploads: Boolean get() = e2eKeyManager.configured.value || e2eKeyManager.isUnlocked
+
+    /** [trackCreated]: guarda o ficheiro criado para [takeCreated]. */
+    fun createDocument(name: String, bytes: ByteArray, mimeType: String, parentId: String?, trackCreated: Boolean = false): Pair<String, Job> {
         val ext = name.substringAfterLast('.', "bin")
         val temp = File.createTempFile("newdoc_", ".$ext", context.cacheDir)
         temp.writeBytes(bytes)
-        return createFromTemp(temp, name, ext, mimeType, parentId)
+        return createFromTemp(temp, name, ext, mimeType, parentId, trackCreated)
     }
 
-    private fun createFromTemp(temp: File, name: String, defaultExtension: String, mimeType: String, parentId: String?): Pair<String, Job> {
+    private fun createFromTemp(temp: File, name: String, defaultExtension: String, mimeType: String, parentId: String?, trackCreated: Boolean = false): Pair<String, Job> {
         val dot = name.lastIndexOf('.')
         val metadata = FileMetadata(
             displayName = name,
@@ -306,6 +326,7 @@ class UploadManager @Inject constructor(
         )
         sources[task.id] = Source(uri, parentId)
         update { list -> list + task }
+        if (trackCreated) createdWanted += task.id
 
         val job = runTask(task.id, uri, metadata, parentId)
         job.invokeOnCompletion { temp.delete() }
@@ -515,6 +536,7 @@ class UploadManager @Inject constructor(
         )
         if (response.code() == 409) throw ConflictException()
         if (!response.isSuccessful) error(httpErrorMessage(response.code(), response.errorBody()?.string()))
+        rememberCreated(taskId, response.body()?.data)
         updateProgress(taskId, 1f)
     }
 
@@ -547,7 +569,7 @@ class UploadManager @Inject constructor(
 
         // E2E Fase 2: cifra o nome só no espaço privado (ficheiro do próprio, sem
         // dono de team folder). Em team folders/partilhas mantém-se em claro.
-        val nameEncrypted = if (ownerPublicKey.isNullOrBlank() && e2eKeyManager.canSealUploadNames)
+        val nameEncrypted = if (ownerPublicKey.isNullOrBlank() && memberKeys?.team != true && e2eKeyManager.canSealUploadNames)
             e2eKeyManager.sealName(metadata.baseName) else null
 
         // Thumbnail E2E (imagem/vídeo): gerado no cliente e cifrado com a MESMA
@@ -596,6 +618,7 @@ class UploadManager @Inject constructor(
             if (!response.isSuccessful) error(httpErrorMessage(response.code(), response.errorBody()?.string()))
 
             val fileId = response.body()?.data?.id
+            rememberCreated(taskId, response.body()?.data)
 
             // Partilhar a data key com os membros da team folder (share-key) para
             // eles decifrarem o ficheiro acabado de enviar. Best-effort por membro.
@@ -641,17 +664,23 @@ class UploadManager @Inject constructor(
     // Parser para extrair o id do ficheiro criado na resposta do último chunk.
     private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
 
-    // Cache por pasta (uploads em lote vão para a mesma pasta) das chaves dos
-    // destinatários E2E. null = pasta sem team folder / sem info.
-    private val memberKeysCache = java.util.concurrent.ConcurrentHashMap<String, co.golink.tester.domain.encryption.FolderMemberKeysResponse>()
+    // Cache curta por pasta (uploads em lote vão para a mesma pasta) das chaves
+    // dos destinatários E2E. Expira para apanhar pastas convertidas em Team
+    // Folder ou membros novos; [invalidateMemberKeys] limpa já.
+    private val memberKeysCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, co.golink.tester.domain.encryption.FolderMemberKeysResponse>>()
+
+    fun invalidateMemberKeys() = memberKeysCache.clear()
 
     private suspend fun folderMemberKeys(folderId: String): co.golink.tester.domain.encryption.FolderMemberKeysResponse? {
-        memberKeysCache[folderId]?.let { return it }
+        memberKeysCache[folderId]?.let { (at, keys) ->
+            if (System.currentTimeMillis() - at < MEMBER_KEYS_TTL_MS) return keys
+            memberKeysCache.remove(folderId)
+        }
         return try {
             // Só cachear SUCESSO: numa team folder, uma falha cacheada faria selar
             // ao próprio (fallback) → o dono não abriria o ficheiro. Falha
             // transitória → tenta de novo no próximo upload.
-            api.folderMemberKeys(folderId).body()?.also { memberKeysCache[folderId] = it }
+            api.folderMemberKeys(folderId).body()?.also { memberKeysCache[folderId] = System.currentTimeMillis() to it }
         } catch (e: Throwable) {
             null
         }
@@ -769,7 +798,7 @@ class UploadManager @Inject constructor(
             }
 
             // E2E Fase 2: nome cifrado só no espaço privado (ficheiro do próprio).
-            nameEncrypted = if (ownerSelf && e2eKeyManager.canSealUploadNames)
+            nameEncrypted = if (ownerSelf && memberKeys?.team != true && e2eKeyManager.canSealUploadNames)
                 e2eKeyManager.sealName(metadata.baseName) else null
 
             encryptedThumb = try {
@@ -854,11 +883,11 @@ class UploadManager @Inject constructor(
             }
 
             // 3) id do ficheiro criado (resposta do último chunk)
-            val fileId = lastBody?.let {
-                runCatching {
-                    json.decodeFromString<co.golink.tester.domain.browse.BrowseEntryEnvelope>(it).data.id
-                }.getOrNull()
+            val createdEntry = lastBody?.let {
+                runCatching { json.decodeFromString<co.golink.tester.domain.browse.BrowseEntryEnvelope>(it).data }.getOrNull()
             }
+            rememberCreated(taskId, createdEntry)
+            val fileId = createdEntry?.id
 
             // 4) partilhar a data key com os membros da team folder (best-effort)
             if (fileId != null && recipients.isNotEmpty()) {
@@ -999,7 +1028,14 @@ class UploadManager @Inject constructor(
                 sent += filled
                 plainChunkIndex++
                 if (total > 0L) updateProgress(taskId, sent.toFloat() / total.toFloat())
-                if (isLast) break
+                if (isLast) {
+                    if (taskId in createdWanted) {
+                        response.body()?.string()?.let { body ->
+                            rememberCreated(taskId, runCatching { json.decodeFromString<co.golink.tester.domain.browse.BrowseEntryEnvelope>(body).data }.getOrNull())
+                        }
+                    }
+                    break
+                }
             }
         } ?: error("Não foi possível ler o ficheiro")
     }

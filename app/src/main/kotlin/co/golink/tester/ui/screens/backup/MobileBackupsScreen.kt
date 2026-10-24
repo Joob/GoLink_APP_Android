@@ -343,6 +343,10 @@ fun MobileBackupsScreen(
                     val sections = remember(state.items, state.sortMode, granularity) {
                         co.golink.tester.ui.screens.browse.browseSections(sortBackupItems(state.items, state.sortMode), byDate, granularity)
                     }
+                    // Barra de tamanho: escala pelo maior item da lista (pastas incluídas, como na web).
+                    val listMaxBytes = remember(state.items) {
+                        state.items.maxOfOrNull { if (it is BrowseItem.Folder) it.filesizeBytes else (it as BrowseItem.File).filesizeBytes } ?: 0L
+                    }
                     var collapsed by remember(state.tab, state.folderStack.size) { mutableStateOf(setOf<String>()) }
                     val toggle: (String) -> Unit = { k -> collapsed = if (k in collapsed) collapsed - k else collapsed + k }
                     if (state.viewMode == ViewMode.GRID) {
@@ -409,6 +413,7 @@ fun MobileBackupsScreen(
                                 if (!isCollapsed) items(section.items, key = { it.id }) { item ->
                                     BrowseItemRow(
                                         item = item,
+                                        maxBytes = listMaxBytes,
                                         large = zoom == 0,
                                         onClick = { onItemClick(item) },
                                         onLongClick = { onItemLongClick(item) },

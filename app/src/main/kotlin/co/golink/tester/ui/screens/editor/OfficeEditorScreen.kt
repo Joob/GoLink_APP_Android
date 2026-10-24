@@ -50,7 +50,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import co.golink.tester.ui.theme.LocalDarkTheme
 
 /**
- * Editor de documentos (docx/xlsx): o editor da web (/editor-embed) numa
+ * Editor de documentos (docx/odt/xlsx/ods/csv…): o editor da web (/editor-embed) numa
  * WebView. A página não tem sessão — fala com a app por window.GoLinkEditor
  * (ver [OfficeEditorViewModel]). Fechar e ir para segundo plano gravam antes.
  */
@@ -58,6 +58,7 @@ import co.golink.tester.ui.theme.LocalDarkTheme
 @Composable
 fun OfficeEditorScreen(
     onClose: () -> Unit,
+    onShare: (co.golink.tester.domain.browse.BrowseItem.File) -> Unit = {},
     viewModel: OfficeEditorViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -71,6 +72,9 @@ fun OfficeEditorScreen(
     LaunchedEffect(closeRequested) { if (closeRequested) onClose() }
     LaunchedEffect(Unit) {
         viewModel.toasts.collect { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+    }
+    LaunchedEffect(Unit) {
+        viewModel.shareRequests.collect { onShare(it) }
     }
 
     // Inserir imagem no documento (<input type="file"> da página).

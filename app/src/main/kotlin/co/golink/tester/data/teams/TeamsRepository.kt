@@ -61,6 +61,44 @@ class TeamsRepository @Inject constructor(
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { body.toPaged(page) }
     }
 
+    // Throttle por raiz de equipa (o servidor sobe até à raiz e devolve a árvore
+    // toda): no máximo uma passagem por NAMES_TTL_MS. Antes era uma vez por
+    // sessão e por pasta aberta — nomes selados depois disso só eram repostos
+    // ao reiniciar a app, e cada subpasta repetia a árvore inteira.
+    private val namesClearedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** Força nova passagem na próxima abertura (ex.: depois de criar/enviar itens). */
+    fun invalidateClearedNames() = namesClearedAt.clear()
+
+    /**
+     * Dono de uma Team Folder: repõe em claro os nomes que ficaram selados à sua
+     * chave (itens criados antes da conversão, ou uploads quando nenhum membro
+     * tinha E2E). Sem isto os membros viam "•". Só o dono consegue abri-los; o
+     * servidor aceita só do dono. Best-effort, silencioso. Paridade com a web
+     * (e2eNames.clearTeamFolderNames). Devolve quantos nomes foram repostos.
+     * [rootKey]: raiz da equipa quando conhecida (chave do throttle).
+     */
+    suspend fun clearEncryptedNames(folderId: String, rootKey: String = folderId): Int {
+        if (!keys.canSealNames) return 0
+        val now = System.currentTimeMillis()
+        val last = namesClearedAt[rootKey]
+        if (last != null && now - last < NAMES_TTL_MS) return 0
+        namesClearedAt[rootKey] = now
+        return runCatching {
+            val rows = api.encryptedNames(folderId).body()?.data.orEmpty()
+            val items = rows.mapNotNull { r ->
+                keys.openNameOrNull(r.name_encrypted)?.let { co.golink.tester.domain.teams.TeamClearName(r.id, r.type, it) }
+            }
+            items.chunked(200).forEach { chunk ->
+                check(api.clearNames(folderId, co.golink.tester.domain.teams.TeamClearNamesRequest(chunk)).isSuccessful)
+            }
+            items.size
+        }.getOrElse {
+            namesClearedAt.remove(rootKey) // tenta de novo numa próxima abertura
+            0
+        }
+    }
+
     private fun BrowseListResponse.toPaged(requestedPage: Int): PagedItems {
         // E2E Fase 2: itens criados no espaço privado antes de a pasta ser Team
         // Folder têm o nome selado à chave do dono — decifra (o dono consegue;
@@ -83,5 +121,6 @@ class TeamsRepository @Inject constructor(
     companion object {
         const val ROOT = "root"
         const val PAGE_SIZE = 20
+        private const val NAMES_TTL_MS = 2 * 60_000L
     }
 }

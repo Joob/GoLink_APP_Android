@@ -137,8 +137,16 @@ fun FileViewerScreen(
     viewModel: FileViewerViewModel = hiltViewModel(),
 ) {
     // Documentos (docx/xlsx) abrem no editor — abre-se sempre só com esse ficheiro.
-    if (viewModel.current?.isOfficeFile() == true) {
-        co.golink.tester.ui.screens.editor.OfficeEditorScreen(onClose = onClose)
+    if (viewModel.current?.isOfficeFile() == true && !viewModel.opensAsText) {
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val viewerState by viewModel.state.collectAsStateWithLifecycle()
+        LaunchedEffect(viewerState.toast) {
+            val msg = viewerState.toast ?: return@LaunchedEffect
+            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+            viewModel.consumeToast()
+        }
+        co.golink.tester.ui.screens.editor.OfficeEditorScreen(onClose = onClose, onShare = { file -> viewModel.openShareDialog(file) })
+        ViewerShareDialog(viewModel)
         return
     }
 
@@ -460,28 +468,7 @@ fun FileViewerScreen(
         )
     }
 
-    val shareState by viewModel.shareState.collectAsStateWithLifecycle()
-    shareState?.let { ss ->
-        ShareDialog(
-            state = ShareDialogState(
-                item = ss.item,
-                share = ss.share,
-                qrSvg = ss.qrSvg,
-                sendingEmail = ss.sendingEmail,
-                loadingQr = ss.loadingQr,
-                isWorking = ss.isWorking,
-                emailDialogVisible = ss.emailDialogVisible,
-            ),
-            onDismiss = { viewModel.closeShareDialog() },
-            onCreate = { pwd, perm, minutes, limit, views -> viewModel.createShare(pwd, perm, minutes, limit, views) },
-            onUpdate = { pwd, perm, minutes, limit, views, prot -> viewModel.updateCurrentShare(pwd, perm, minutes, limit, views, prot) },
-            onCopy = { /* clipboard handled inside dialog */ },
-            onShowQr = viewModel::fetchQrCode,
-            onSendEmail = viewModel::sendShareEmail,
-            onShowEmailDialog = viewModel::setEmailDialogVisible,
-            onRevoke = viewModel::revokeCurrentShare,
-        )
-    }
+    ViewerShareDialog(viewModel)
 
     when (dialog) {
         ViewerDialog.Rename -> TextInputDialog(
@@ -1418,5 +1405,32 @@ private fun PdfPagesSheet(
                 }
             }
         }
+    }
+}
+
+/** Folha de partilha do ficheiro aberto (visualizador e editor de documentos). */
+@Composable
+private fun ViewerShareDialog(viewModel: FileViewerViewModel) {
+    val shareState by viewModel.shareState.collectAsStateWithLifecycle()
+    shareState?.let { ss ->
+        ShareDialog(
+            state = ShareDialogState(
+                item = ss.item,
+                share = ss.share,
+                qrSvg = ss.qrSvg,
+                sendingEmail = ss.sendingEmail,
+                loadingQr = ss.loadingQr,
+                isWorking = ss.isWorking,
+                emailDialogVisible = ss.emailDialogVisible,
+            ),
+            onDismiss = { viewModel.closeShareDialog() },
+            onCreate = { pwd, perm, minutes, limit, views -> viewModel.createShare(pwd, perm, minutes, limit, views) },
+            onUpdate = { pwd, perm, minutes, limit, views, prot -> viewModel.updateCurrentShare(pwd, perm, minutes, limit, views, prot) },
+            onCopy = { /* clipboard handled inside dialog */ },
+            onShowQr = viewModel::fetchQrCode,
+            onSendEmail = viewModel::sendShareEmail,
+            onShowEmailDialog = viewModel::setEmailDialogVisible,
+            onRevoke = viewModel::revokeCurrentShare,
+        )
     }
 }

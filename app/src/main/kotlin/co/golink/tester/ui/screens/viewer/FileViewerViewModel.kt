@@ -82,6 +82,9 @@ class FileViewerViewModel @Inject constructor(
 
     val current: BrowseItem.File? get() = _state.value.files.getOrNull(_state.value.currentIndex)
 
+    /** Criado como ficheiro de texto (ex.: .csv): abre no editor de texto, não na folha de cálculo. */
+    val opensAsText: Boolean = session.startInEditMode
+
     fun authedUrlFor(file: BrowseItem.File): String {
         val backend = backendUrlHolder.current.trimEnd('/')
         val token = tokenStore.token
@@ -227,9 +230,10 @@ class FileViewerViewModel @Inject constructor(
 
     // ----- Sharing -----
 
-    fun openShareDialog() {
-        val file = current ?: return
-        _shareState.value = ShareDialogUiState(item = file, share = file.share)
+    /** [file]: o editor de documentos pode ter passado para uma cópia (doc → docx). */
+    fun openShareDialog(file: BrowseItem.File? = null) {
+        val target = file ?: current ?: return
+        _shareState.value = ShareDialogUiState(item = target, share = target.share)
     }
 
     /** Para os Detalhes atualizarem visualizações/downloads com a folha aberta. */
@@ -246,7 +250,7 @@ class FileViewerViewModel @Inject constructor(
             shareRepository.create(cur.item, password, permission, expirationMinutes, downloadLimit, viewLimit, null)
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
-                    applyShareToCurrent(info)
+                    applyShareToCurrent(info, cur.item.id)
                     _state.update { it.copy(toast = "Partilha criada".tr()) }
                 }
                 .onFailure { t ->
@@ -274,7 +278,7 @@ class FileViewerViewModel @Inject constructor(
             )
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
-                    applyShareToCurrent(info)
+                    applyShareToCurrent(info, cur.item.id)
                     _state.update { it.copy(toast = "Partilha actualizada".tr()) }
                 }
                 .onFailure { t ->
@@ -292,7 +296,7 @@ class FileViewerViewModel @Inject constructor(
             shareRepository.revoke(token)
                 .onSuccess {
                     _shareState.value = null
-                    applyShareToCurrent(null)
+                    applyShareToCurrent(null, cur.item.id)
                     _state.update { it.copy(toast = "Partilha revogada".tr()) }
                 }
                 .onFailure { t ->
@@ -329,9 +333,11 @@ class FileViewerViewModel @Inject constructor(
     }
 
     /** Keep the open file's share state in sync so the menu label updates. */
-    private fun applyShareToCurrent(info: ShareInfo?) {
+    private fun applyShareToCurrent(info: ShareInfo?, itemId: String) {
         val idx = _state.value.currentIndex
         val file = _state.value.files.getOrNull(idx) ?: return
+        // A folha pode ser de outro ficheiro (cópia criada pelo editor).
+        if (itemId != file.id) return
         val newList = _state.value.files.toMutableList()
         newList[idx] = file.copy(share = info)
         session.files = newList

@@ -9,6 +9,12 @@ object I18nRedesign {
 
     private val rows: List<Array<String>> = listOf(
         // Backups por dispositivo
+        // Editor de documentos: formatos ao criar
+        r("Formato", "Format", "Format", "Formato"),
+        r("Word · mais compatível", "Word · most compatible", "Word · le plus compatible", "Word · más compatible"),
+        r("Excel · mais compatível", "Excel · most compatible", "Excel · le plus compatible", "Excel · más compatible"),
+        r("OpenDocument · LibreOffice", "OpenDocument · LibreOffice", "OpenDocument · LibreOffice", "OpenDocument · LibreOffice"),
+        r("Só dados · uma folha", "Plain data · one sheet", "Données brutes · une feuille", "Solo datos · una hoja"),
         r("Em pausa", "Paused", "En pause", "En pausa"),
         r("Ainda sem envios", "No uploads yet", "Aucun envoi", "Aún sin envíos"),
         r("Último envio: %s", "Last upload: %s", "Dernier envoi : %s", "Último envío: %s"),
@@ -209,6 +215,14 @@ object I18nRedesign {
         r("Plano e pagamentos", "Plan and payments", "Forfait et paiements", "Plan y pagos"),
         r("Donativos e histórico", "Donations and history", "Dons et historique", "Donaciones e historial"),
         r("Ajuda e suporte", "Help and support", "Aide et assistance", "Ayuda y soporte"),
+        r("E-mail", "Email", "E-mail", "Correo electrónico"),
+        r("Alterar o e-mail da conta", "Change your account email", "Changer l'e-mail du compte", "Cambiar el correo de la cuenta"),
+        r("Password e 2FA", "Password & 2FA", "Mot de passe et 2FA", "Contraseña y 2FA"),
+        r("Password e verificação em dois passos", "Password and two-step verification", "Mot de passe et validation en deux étapes", "Contraseña y verificación en dos pasos"),
+        r("Tokens API", "API tokens", "Jetons API", "Tokens API"),
+        r("Chaves de acesso pessoal", "Personal access keys", "Clés d'accès personnelles", "Claves de acceso personal"),
+        r("Donativos, faturação e histórico", "Donations, billing and history", "Dons, facturation et historique", "Donaciones, facturación e historial"),
+        r("Nome, fotografia e fuso horário", "Name, photo and time zone", "Nom, photo et fuseau horaire", "Nombre, foto y zona horaria"),
         r("Perguntas frequentes e contacto", "FAQ and contact", "FAQ et contact", "Preguntas frecuentes y contacto"),
         r("Backup automático", "Automatic backup", "Sauvegarde automatique", "Copia automática"),
         r("Ativo · %s", "On · %s", "Activée · %s", "Activa · %s"),

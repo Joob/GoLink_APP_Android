@@ -3,9 +3,9 @@ package co.golink.tester.ui.theme
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.ui.graphics.Color
 
-val BrandGreen = Color(0xFF00BC7E)
-val BrandGreenDark = Color(0xFF019163)
-val BrandGreenLight = Color(0xFFECF7F2)
+val BrandGreen = Color(0xFF0F8A5F)
+val BrandGreenDark = Color(0xFF0B6E4B)
+val BrandGreenLight = Color(0xFFE3F3EA)
 
 val TextPrimary = Color(0xFF1B2539)
 val TextMuted = Color(0xCC1B2539)

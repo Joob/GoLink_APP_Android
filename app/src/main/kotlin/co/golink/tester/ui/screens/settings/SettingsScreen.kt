@@ -75,6 +75,7 @@ import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Email
+import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.SupportAgent
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MailOutline
@@ -162,6 +163,8 @@ private sealed interface SettingsRoute {
     data object Menu : SettingsRoute
     data object Profile : SettingsRoute
     data object Password : SettingsRoute
+    data object Email : SettingsRoute
+    data object ApiTokens : SettingsRoute
     data object Encryption : SettingsRoute
     data object Storage : SettingsRoute
     data object SecurityActivity : SettingsRoute
@@ -243,7 +246,9 @@ fun SettingsScreen(
     val title = when (route) {
         SettingsRoute.Menu -> "Definições".tr()
         SettingsRoute.Profile -> "Perfil".tr()
-        SettingsRoute.Password -> "Password e acesso".tr()
+        SettingsRoute.Password -> "Password e 2FA".tr()
+        SettingsRoute.Email -> "E-mail".tr()
+        SettingsRoute.ApiTokens -> "Tokens API".tr()
         SettingsRoute.Encryption -> "Encriptação".tr()
         SettingsRoute.Storage -> "Armazenamento".tr()
         SettingsRoute.Sessions -> "Sessões ativas".tr()
@@ -303,23 +308,29 @@ fun SettingsScreen(
                     onUpdateAvatar = viewModel::updateAvatar,
                 )
                 SettingsRoute.Password -> PasswordPane(
-                    currentEmail = user?.email.orEmpty(),
-                    emailChange = state,
-                    onRequestEmailChange = viewModel::requestEmailChange,
-                    onConfirmEmailChange = viewModel::confirmEmailChange,
-                    onCancelEmailChange = viewModel::cancelEmailChange,
                     isLoading = state.isUpdatingPassword,
                     onSubmit = viewModel::updatePassword,
+                    twoFactorEnabled = state.twoFactorEnabled,
+                    backendUrl = backendUrl,
+                    onRefreshUser = viewModel::refreshUser,
+                    onResetCsrf = viewModel::resetCsrf,
+                )
+                SettingsRoute.Email -> PaneColumn {
+                    EmailChangeSection(
+                        currentEmail = user?.email.orEmpty(),
+                        state = state,
+                        onRequest = viewModel::requestEmailChange,
+                        onConfirm = viewModel::confirmEmailChange,
+                        onCancel = viewModel::cancelEmailChange,
+                    )
+                }
+                SettingsRoute.ApiTokens -> ApiTokensPane(
                     tokens = state.tokens,
                     isLoadingTokens = state.isLoadingTokens,
                     newTokenPlaintext = state.newTokenPlaintext,
                     onCreateToken = viewModel::createToken,
                     onDeleteToken = viewModel::deleteToken,
                     onConsumeNewToken = viewModel::consumeNewToken,
-                    twoFactorEnabled = state.twoFactorEnabled,
-                    backendUrl = backendUrl,
-                    onRefreshUser = viewModel::refreshUser,
-                    onResetCsrf = viewModel::resetCsrf,
                 )
                 SettingsRoute.Encryption -> EncryptionPane(
                     e2eUnlocked = e2eUnlocked,
@@ -361,6 +372,8 @@ fun SettingsScreen(
                     isStartingCheckout = state.isStartingCheckout,
                     onUpgrade = viewModel::selectPlan,
                     onRefresh = viewModel::loadTransactions,
+                    isUpdatingProfile = state.isUpdatingProfile,
+                    onUpdateField = viewModel::updateProfileField,
                 )
                 SettingsRoute.DeleteAccount -> DeleteAccountPane(userEmail = user?.email, scheduledFor = user?.deletionScheduledFor)
                 SettingsRoute.AppSecurity -> AppSecurityPane(
@@ -602,18 +615,16 @@ private fun MenuPane(
         Spacer(Modifier.height(20.dp))
 
         SettingsGroup(title = "Conta".tr()) {
-            SettingsNavRow(Icons.Outlined.Person, SettingsColors.Blue, "Perfil".tr(), "Nome, e-mail e fotografia".tr()) { onNavigate(SettingsRoute.Profile) }
-            SettingsNavRow(Icons.Outlined.Lock, SettingsColors.Indigo, "Password", "Password de acesso e tokens".tr()) { onNavigate(SettingsRoute.Password) }
-            SettingsNavRow(Icons.Outlined.VpnKey, SettingsColors.Green, "Encriptação".tr(), "Frase-passe e impressão digital da chave".tr()) { onNavigate(SettingsRoute.Encryption) }
-            SettingsNavRow(
-                Icons.Outlined.CloudQueue, SettingsColors.Teal, "Armazenamento".tr(), "Espaço utilizado e disponível".tr(),
-                showDivider = false,
-            ) { onNavigate(SettingsRoute.Storage) }
+            SettingsNavRow(Icons.Outlined.Person, SettingsColors.Blue, "Perfil".tr(), "Nome, fotografia e fuso horário".tr()) { onNavigate(SettingsRoute.Profile) }
+            SettingsNavRow(Icons.Outlined.Email, SettingsColors.Teal, "E-mail".tr(), "Alterar o e-mail da conta".tr(), showDivider = false) { onNavigate(SettingsRoute.Email) }
         }
 
         Spacer(Modifier.height(20.dp))
 
         SettingsGroup(title = "Segurança".tr()) {
+            SettingsNavRow(Icons.Outlined.Lock, SettingsColors.Indigo, "Password e 2FA".tr(), "Password e verificação em dois passos".tr()) { onNavigate(SettingsRoute.Password) }
+            SettingsNavRow(Icons.Outlined.Code, SettingsColors.Blue, "Tokens API".tr(), "Chaves de acesso pessoal".tr()) { onNavigate(SettingsRoute.ApiTokens) }
+            SettingsNavRow(Icons.Outlined.VpnKey, SettingsColors.Green, "Encriptação".tr(), "Frase-passe e impressão digital da chave".tr()) { onNavigate(SettingsRoute.Encryption) }
             SettingsNavRow(
                 Icons.Outlined.Devices, SettingsColors.Orange, "Sessões ativas".tr(), "Dispositivos com sessão iniciada".tr(),
                 trailing = activeSessions.takeIf { it > 0 }?.toString(),
@@ -624,9 +635,10 @@ private fun MenuPane(
 
         Spacer(Modifier.height(20.dp))
 
-        SettingsGroup(title = "Plano e ajuda".tr()) {
+        SettingsGroup(title = "Plano".tr()) {
             val hasSupport = user?.role != "admin"
-            SettingsNavRow(Icons.Outlined.CreditCard, SettingsColors.Amber, "Plano e pagamentos".tr(), "Donativos e histórico".tr(), showDivider = hasSupport) { onNavigate(SettingsRoute.Billing) }
+            SettingsNavRow(Icons.Outlined.CloudQueue, SettingsColors.Teal, "Armazenamento".tr(), "Espaço utilizado e disponível".tr()) { onNavigate(SettingsRoute.Storage) }
+            SettingsNavRow(Icons.Outlined.CreditCard, SettingsColors.Amber, "Plano e pagamentos".tr(), "Donativos, faturação e histórico".tr(), showDivider = hasSupport) { onNavigate(SettingsRoute.Billing) }
             // Como na web: o admin não abre tickets. A Administração e o Support Desk
             // vivem agora na gaveta (toggle Drive | Admin / Support).
             if (hasSupport) {
@@ -877,24 +889,13 @@ private fun ProfilePane(
     var firstName by remember(user.id) { mutableStateOf(user.firstName.orEmpty()) }
     var lastName by remember(user.id) { mutableStateOf(user.lastName.orEmpty()) }
     var phoneNumber by remember(user.id) { mutableStateOf(user.phoneNumber.orEmpty()) }
-    var address by remember(user.id) { mutableStateOf(user.address.orEmpty()) }
-    var city by remember(user.id) { mutableStateOf(user.city.orEmpty()) }
-    var postalCode by remember(user.id) { mutableStateOf(user.postalCode.orEmpty()) }
-    var country by remember(user.id) { mutableStateOf(user.country.orEmpty()) }
-    var state by remember(user.id) { mutableStateOf(user.state.orEmpty()) }
     var timezone by remember(user.id) { mutableStateOf(user.timezone.orEmpty()) }
-    var billingOpen by remember { mutableStateOf(false) }
 
     // Só os campos alterados vão ao servidor; sem alterações o botão fica inativo.
     val changes = listOf(
         "first_name" to (firstName to user.firstName.orEmpty()),
         "last_name" to (lastName to user.lastName.orEmpty()),
         "timezone" to (timezone to user.timezone.orEmpty()),
-        "address" to (address to user.address.orEmpty()),
-        "city" to (city to user.city.orEmpty()),
-        "postal_code" to (postalCode to user.postalCode.orEmpty()),
-        "state" to (state to user.state.orEmpty()),
-        "country" to (country to user.country.orEmpty()),
         "phone_number" to (phoneNumber to user.phoneNumber.orEmpty()),
     ).filter { (_, v) -> v.first.trim() != v.second.trim() && v.first.isNotBlank() }
     val dirty = changes.isNotEmpty()
@@ -947,7 +948,7 @@ private fun ProfilePane(
             ) { Text("Mudar fotografia".tr(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface) }
         }
 
-        // O e-mail muda-se em "Password e acesso" (código de verificação).
+        // O e-mail muda-se no ecrã "E-mail" (código de verificação).
         PaneSection("Os teus dados".tr())
         PaneCard {
             SettingsField("Nome".tr(), firstName, { firstName = it })
@@ -957,42 +958,7 @@ private fun ProfilePane(
                 Spacer(Modifier.height(6.dp))
                 TimezoneDropdown(value = timezone, onValueChange = { timezone = it })
             }
-        }
-
-        // Faturação: opcional, recolhida por omissão.
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .clickable { billingOpen = !billingOpen }
-                .padding(horizontal = 4.dp, vertical = 8.dp),
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Dados de faturação".tr(), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Opcional · só para recibos de donativos".tr(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
-            }
-            Icon(
-                if (billingOpen) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        AnimatedVisibility(visible = billingOpen) {
-            PaneCard {
-                SettingsField("Morada".tr(), address, { address = it })
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SettingsField("Cidade".tr(), city, { city = it }, modifier = Modifier.weight(1f))
-                    SettingsField("Código postal".tr(), postalCode, { postalCode = it }, modifier = Modifier.weight(1f))
-                }
-                Column {
-                    Text("País".tr(), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(6.dp))
-                    CountryDropdown(value = country, onValueChange = { country = it })
-                }
-                SettingsField("Estado/Região".tr(), state, { state = it }, placeholder = "Se aplicável, ex.: Lisboa".tr())
-                SettingsField("Telefone".tr(), phoneNumber, { phoneNumber = it }, keyboardType = KeyboardType.Phone)
-            }
+            SettingsField("Telefone".tr(), phoneNumber, { phoneNumber = it }, keyboardType = KeyboardType.Phone)
         }
 
         SettingsPrimaryButton(
@@ -1106,19 +1072,8 @@ private fun CountryDropdown(value: String, onValueChange: (String) -> Unit) {
 
 @Composable
 private fun PasswordPane(
-    currentEmail: String,
-    emailChange: SettingsUiState,
-    onRequestEmailChange: (email: String, password: String) -> Unit,
-    onConfirmEmailChange: (code: String) -> Unit,
-    onCancelEmailChange: () -> Unit,
     isLoading: Boolean,
     onSubmit: (current: String, new: String) -> Unit,
-    tokens: List<AccessToken>,
-    isLoadingTokens: Boolean,
-    newTokenPlaintext: String?,
-    onCreateToken: (String) -> Unit,
-    onDeleteToken: (Long) -> Unit,
-    onConsumeNewToken: () -> Unit,
     twoFactorEnabled: Boolean,
     backendUrl: String,
     onRefreshUser: () -> Unit,
@@ -1155,26 +1110,6 @@ private fun PasswordPane(
     val tooShort = newPassword.isNotEmpty() && newPassword.length < MIN_PASSWORD_LENGTH
     val canSubmit = !isLoading && current.isNotBlank() &&
         newPassword.length >= MIN_PASSWORD_LENGTH && newPassword == confirmation
-
-    var showCreateTokenDialog by remember { mutableStateOf(false) }
-    var newTokenName by remember { mutableStateOf("") }
-
-    val clipboard = LocalClipboardManager.current
-
-    if (showCreateTokenDialog) {
-        val close = { showCreateTokenDialog = false; newTokenName = "" }
-        SettingsDialog(
-            title = "Novo token de acesso".tr(),
-            message = "Dá-lhe um nome para o reconheceres mais tarde (ex.: script de backup).".tr(),
-            icon = Icons.Outlined.VpnKey,
-            confirmText = "Criar".tr(),
-            confirmEnabled = newTokenName.isNotBlank(),
-            onConfirm = { onCreateToken(newTokenName.trim()); close() },
-            onDismiss = close,
-        ) {
-            SettingsField("Nome do token".tr(), newTokenName, { newTokenName = it })
-        }
-    }
 
     // Força simples (4 traços): comprimento, maiúsculas+minúsculas, números, símbolos.
     val strength = listOf(
@@ -1259,14 +1194,56 @@ private fun PasswordPane(
             )
         }
 
-        EmailChangeSection(
-            currentEmail = currentEmail,
-            state = emailChange,
-            onRequest = onRequestEmailChange,
-            onConfirm = onConfirmEmailChange,
-            onCancel = onCancelEmailChange,
-        )
+        PaneSection("Resolução de problemas".tr())
+        PaneCard {
+            Column {
+                Text("Repor token de sessão (CSRF)".tr(), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Usa só se tiveres erros ao iniciar sessão ou ao guardar.".tr(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlinedButton(
+                onClick = onResetCsrf,
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Repor token".tr(), color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold) }
+        }
+    }
+}
 
+@Composable
+private fun ApiTokensPane(
+    tokens: List<AccessToken>,
+    isLoadingTokens: Boolean,
+    newTokenPlaintext: String?,
+    onCreateToken: (String) -> Unit,
+    onDeleteToken: (Long) -> Unit,
+    onConsumeNewToken: () -> Unit,
+) {
+    var showCreateTokenDialog by remember { mutableStateOf(false) }
+    var newTokenName by remember { mutableStateOf("") }
+
+    val clipboard = LocalClipboardManager.current
+
+    if (showCreateTokenDialog) {
+        val close = { showCreateTokenDialog = false; newTokenName = "" }
+        SettingsDialog(
+            title = "Novo token de acesso".tr(),
+            message = "Dá-lhe um nome para o reconheceres mais tarde (ex.: script de backup).".tr(),
+            icon = Icons.Outlined.VpnKey,
+            confirmText = "Criar".tr(),
+            confirmEnabled = newTokenName.isNotBlank(),
+            onConfirm = { onCreateToken(newTokenName.trim()); close() },
+            onDismiss = close,
+        ) {
+            SettingsField("Nome do token".tr(), newTokenName, { newTokenName = it })
+        }
+    }
+
+    PaneColumn {
         PaneSection("Tokens de acesso pessoal".tr(), action = "+ " + "Criar".tr(), onAction = { showCreateTokenDialog = true })
         // Token novo: mostrado uma única vez.
         newTokenPlaintext?.let { token ->
@@ -1319,24 +1296,6 @@ private fun PasswordPane(
                     )
                 }
             }
-        }
-
-        PaneSection("Resolução de problemas".tr())
-        PaneCard {
-            Column {
-                Text("Repor token de sessão (CSRF)".tr(), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Usa só se tiveres erros ao iniciar sessão ou ao guardar.".tr(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            OutlinedButton(
-                onClick = onResetCsrf,
-                shape = RoundedCornerShape(10.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Repor token".tr(), color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold) }
         }
     }
 }
@@ -1924,6 +1883,8 @@ private fun BillingPane(
     isStartingCheckout: Boolean,
     onUpgrade: (Plan) -> Unit,
     onRefresh: () -> Unit,
+    isUpdatingProfile: Boolean,
+    onUpdateField: (name: String, value: String) -> Unit,
 ) {
     var showHistory by remember { mutableStateOf(false) }
     var showYearly by remember { mutableStateOf(false) }
@@ -2031,6 +1992,57 @@ private fun BillingPane(
                 }
             }
         }
+
+        // Dados de faturação (saíram do Perfil): opcionais, só para recibos.
+        user?.let { BillingAddressSection(it, isUpdatingProfile, onUpdateField) }
+    }
+}
+
+@Composable
+private fun BillingAddressSection(
+    user: User,
+    isUpdating: Boolean,
+    onUpdateField: (name: String, value: String) -> Unit,
+) {
+    var address by remember(user.id) { mutableStateOf(user.address.orEmpty()) }
+    var city by remember(user.id) { mutableStateOf(user.city.orEmpty()) }
+    var postalCode by remember(user.id) { mutableStateOf(user.postalCode.orEmpty()) }
+    var country by remember(user.id) { mutableStateOf(user.country.orEmpty()) }
+    var state by remember(user.id) { mutableStateOf(user.state.orEmpty()) }
+
+    val changes = listOf(
+        "address" to (address to user.address.orEmpty()),
+        "city" to (city to user.city.orEmpty()),
+        "postal_code" to (postalCode to user.postalCode.orEmpty()),
+        "state" to (state to user.state.orEmpty()),
+        "country" to (country to user.country.orEmpty()),
+    ).filter { (_, v) -> v.first.trim() != v.second.trim() && v.first.isNotBlank() }
+    val dirty = changes.isNotEmpty()
+
+    PaneSection("Dados de faturação".tr())
+    PaneCard {
+        Text(
+            "Opcional · só para recibos de donativos".tr(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        SettingsField("Morada".tr(), address, { address = it })
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SettingsField("Cidade".tr(), city, { city = it }, modifier = Modifier.weight(1f))
+            SettingsField("Código postal".tr(), postalCode, { postalCode = it }, modifier = Modifier.weight(1f))
+        }
+        Column {
+            Text("País".tr(), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            CountryDropdown(value = country, onValueChange = { country = it })
+        }
+        SettingsField("Estado/Região".tr(), state, { state = it }, placeholder = "Se aplicável, ex.: Lisboa".tr())
+        SettingsPrimaryButton(
+            text = if (dirty) "Guardar alterações".tr() else "Sem alterações".tr(),
+            onClick = { changes.forEach { (field, v) -> onUpdateField(field, v.first.trim()) } },
+            enabled = dirty,
+            loading = isUpdating,
+        )
     }
 }
 

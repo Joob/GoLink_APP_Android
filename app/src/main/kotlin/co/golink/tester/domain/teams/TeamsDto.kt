@@ -19,3 +19,28 @@ data class CreateTeamFolderRequest(
 data class ConvertToTeamFolderRequest(
     val invitations: List<TeamInvitation>,
 )
+
+// Nomes de uma Team Folder selados à chave do dono (encrypted-names / clear-names).
+@Serializable
+data class TeamEncryptedName(
+    val id: String,
+    val type: String,
+    val name_encrypted: String,
+)
+
+@Serializable
+data class TeamEncryptedNamesResponse(
+    val data: List<TeamEncryptedName> = emptyList(),
+)
+
+@Serializable
+data class TeamClearName(
+    val id: String,
+    val type: String,
+    val name: String,
+)
+
+@Serializable
+data class TeamClearNamesRequest(
+    val items: List<TeamClearName>,
+)

@@ -55,6 +55,8 @@ sealed interface BrowseItem {
     // ISO-8601 (UTC) para ordenação; createdAt/updatedAt são strings localizadas.
     val createdAtIso: String?
     val updatedAtIso: String?
+    // Só itens no lixo (ISO-8601): a linha do lixo mostra "há X dias" desde que foi para o lixo.
+    val deletedAtIso: String?
     val share: ShareInfo?
 
     // E2E Fase 2: ciphertext do nome (quando cifrado). Guardado para poder
@@ -71,6 +73,7 @@ sealed interface BrowseItem {
         override val createdAtIso: String?,
         override val updatedAtIso: String?,
         override val share: ShareInfo?,
+        override val deletedAtIso: String? = null,
         val color: String?,
         val emoji: String?,
         val isTeamFolder: Boolean,
@@ -95,6 +98,7 @@ sealed interface BrowseItem {
         override val createdAtIso: String?,
         override val updatedAtIso: String?,
         override val share: ShareInfo?,
+        override val deletedAtIso: String? = null,
         val basename: String,
         val mimetype: String?,
         val type: String,
@@ -171,6 +175,7 @@ fun BrowseEntry.toItem(): BrowseItem = if (type == "folder") {
         createdAtIso = attributes.created_at_iso,
         updatedAtIso = attributes.updated_at_iso,
         share = relationships.toShareInfo(),
+        deletedAtIso = attributes.deleted_at,
         color = attributes.color,
         emoji = attributes.emoji.asEmoji(),
         isTeamFolder = attributes.isTeamFolder,
@@ -192,6 +197,7 @@ fun BrowseEntry.toItem(): BrowseItem = if (type == "folder") {
         createdAtIso = attributes.created_at_iso,
         updatedAtIso = attributes.updated_at_iso,
         share = relationships.toShareInfo(),
+        deletedAtIso = attributes.deleted_at,
         basename = attributes.basename ?: attributes.name,
         mimetype = attributes.mimetype,
         type = type,

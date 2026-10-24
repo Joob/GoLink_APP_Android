@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="brand_green">#00BC7E</color>
-    <color name="brand_green_light">#ECF7F2</color>
+    <color name="brand_green">#0F8A5F</color>
+    <color name="brand_green_light">#E3F3EA</color>
     <color name="dark_background">#151515</color>
     <color name="dark_foreground">#1E2024</color>
     <!-- Splash window background (overridden in values-night). -->
