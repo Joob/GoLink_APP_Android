@@ -74,6 +74,8 @@ data class TeamMemberAttributes(
     val avatar: String? = null,
     val color: String? = null,
     val permission: String? = null,
+    // Só nos membros: com atividade nos últimos ~2 min.
+    val online: Boolean = false,
     // Só nos convites: pending / accepted / rejected.
     val status: String? = null,
 )

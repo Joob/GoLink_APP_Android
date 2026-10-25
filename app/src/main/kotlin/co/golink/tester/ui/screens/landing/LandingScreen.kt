@@ -30,6 +30,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewModelScope
+import co.golink.tester.data.config.ConfigRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,7 +61,9 @@ import co.golink.tester.ui.theme.BrandGreenLight
 fun LandingScreen(
     onSignIn: () -> Unit,
     onRegister: () -> Unit,
+    viewModel: LandingViewModel = hiltViewModel(),
 ) {
+    val registrationAllowed by viewModel.registrationAllowed.collectAsStateWithLifecycle()
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -117,6 +131,8 @@ fun LandingScreen(
 
             Spacer(Modifier.weight(1f))
 
+            // Registo desligado no servidor: só "Entrar" (como o link no SignIn).
+            if (registrationAllowed) {
             Button(
                 onClick = onRegister,
                 shape = RoundedCornerShape(14.dp),
@@ -133,6 +149,7 @@ fun LandingScreen(
             }
 
             Spacer(Modifier.height(12.dp))
+            }
 
             OutlinedButton(
                 onClick = onSignIn,
@@ -161,7 +178,7 @@ fun LandingScreen(
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "All Rights Reserved",
+                    "All Rights Reserved".tr(),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     textAlign = TextAlign.Center,
@@ -169,6 +186,22 @@ fun LandingScreen(
             }
 
             Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@HiltViewModel
+class LandingViewModel @Inject constructor(
+    configRepository: ConfigRepository,
+) : ViewModel() {
+    private val _registrationAllowed = MutableStateFlow(true)
+    val registrationAllowed: StateFlow<Boolean> = _registrationAllowed.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            configRepository.load().onSuccess { cfg ->
+                _registrationAllowed.value = cfg.registration?.isAllowed ?: true
+            }
         }
     }
 }

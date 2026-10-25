@@ -160,6 +160,7 @@ fun ColumnScope.AppDrawerContent(
     onOpenNotifications: () -> Unit,
     storage: StorageUsage?,
     onUpgrade: () -> Unit,
+    canUpgrade: Boolean = false,
     appVersion: String,
     onProfile: () -> Unit,
     onAvatarClick: () -> Unit,
@@ -223,7 +224,7 @@ fun ColumnScope.AppDrawerContent(
     }
 
     if (area == DrawerArea.Drive && storage != null && lockedContent == null) {
-        StorageCard(storage = storage, onUpgrade = onUpgrade)
+        StorageCard(storage = storage, canUpgrade = canUpgrade, onUpgrade = onUpgrade)
     }
 
     HorizontalDivider(color = MaterialTheme.colorScheme.outline)
@@ -442,7 +443,7 @@ private fun storageColor(level: StorageLevel): Color {
 }
 
 @Composable
-private fun StorageCard(storage: StorageUsage, onUpgrade: () -> Unit) {
+private fun StorageCard(storage: StorageUsage, canUpgrade: Boolean, onUpgrade: () -> Unit) {
     val accent = storageColor(storage.level)
     Column(
         modifier = Modifier
@@ -477,10 +478,11 @@ private fun StorageCard(storage: StorageUsage, onUpgrade: () -> Unit) {
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (storage.isLow) {
+        // Como na web: plano fixo mostra sempre o upgrade; com pouco espaço o apelo é mais forte.
+        if (storage.isLow || canUpgrade) {
             Spacer(Modifier.height(6.dp))
             Text(
-                "Obter mais espaço".tr() + " →",
+                (if (storage.isLow) "Obter mais espaço".tr() else "Melhorar plano".tr()) + " →",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = accent,

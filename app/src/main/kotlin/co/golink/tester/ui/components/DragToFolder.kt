@@ -27,7 +27,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -66,6 +70,20 @@ class DragToFolderState {
 
     val isDragging: Boolean get() = dragging.isNotEmpty()
 
+    // Toque longo ainda sem mover: já mostra para onde se pode largar.
+    var held by mutableStateOf<List<BrowseItem>>(emptyList())
+        private set
+
+    /** Realça todos os destinos possíveis (durante o hold e o arrastar). */
+    val showZones: Boolean get() = isDragging || held.isNotEmpty()
+
+    /** Destino possível: não é uma das pastas a ser arrastada. */
+    fun isPossible(target: DropTarget): Boolean =
+        dragging.ifEmpty { held }.none { it.id == target.toId }
+
+    fun hold(items: List<BrowseItem>) { held = items }
+    fun release() { held = emptyList() }
+
     // Fora do estado observável: muda a cada frame de scroll.
     private val targets = mutableMapOf<String, Pair<DropTarget, Rect>>()
 
@@ -96,7 +114,7 @@ class DragToFolderState {
         return result
     }
 
-    fun cancel() { dragging = emptyList(); targetKey = null }
+    fun cancel() { dragging = emptyList(); held = emptyList(); targetKey = null }
 }
 
 /**
@@ -128,6 +146,7 @@ fun Modifier.dragToFolderClicks(
                 val down = awaitFirstDown(requireUnconsumed = false)
                 val press = awaitLongPressOrCancellation(down.id) ?: return@awaitEachGesture
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                state.hold(currentItems())
                 val toRoot = { p: Offset -> coords?.takeIf { it.isAttached }?.localToRoot(p) ?: p }
                 var dragging = false
                 var pin: androidx.compose.ui.layout.PinnableContainer.PinnedHandle? = null
@@ -149,6 +168,7 @@ fun Modifier.dragToFolderClicks(
                     if (dragging) state.end()?.let { (items, t) -> currentDrop(items, t) } else currentLongClick()
                 } finally {
                     pin?.release()
+                    state.release()
                     if (dragging && state.isDragging) state.cancel()
                 }
             }
@@ -160,12 +180,27 @@ fun Modifier.dropTarget(target: DropTarget?, state: DragToFolderState, radius: D
     if (target == null) return@composed this
     DisposableEffect(target.key) { onDispose { state.unregister(target.key) } }
     val active = state.targetKey == target.key
+    val possible = !active && state.showZones && state.isPossible(target)
+    val primary = MaterialTheme.colorScheme.primary
     this
         .onGloballyPositioned { if (it.isAttached) state.register(target, it.boundsInRoot()) }
         .then(
             if (active) Modifier
-                .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(radius))
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f), RoundedCornerShape(radius))
+                .border(2.dp, primary, RoundedCornerShape(radius))
+                .background(primary.copy(alpha = 0.10f), RoundedCornerShape(radius))
+            // Zonas possíveis: contorno tracejado e fundo leve.
+            else if (possible) Modifier.drawBehind {
+                val r = CornerRadius(radius.toPx())
+                drawRoundRect(primary.copy(alpha = 0.05f), cornerRadius = r)
+                drawRoundRect(
+                    primary.copy(alpha = 0.55f),
+                    cornerRadius = r,
+                    style = Stroke(
+                        width = 1.5.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx())),
+                    ),
+                )
+            }
             else Modifier
         )
 }

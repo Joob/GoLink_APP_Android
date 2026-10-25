@@ -677,7 +677,8 @@ internal fun MemberAvatar(
         .background(MaterialTheme.colorScheme.surface)
     // Avatar que não carrega (link expirado, ficheiro em falta): mostra as iniciais.
     var avatarFailed by remember(member.avatarUrl) { androidx.compose.runtime.mutableStateOf(false) }
-    Box(modifier = modifier.then(borderMod).padding(1.dp)) {
+    Box(modifier = modifier.size(size)) {
+    Box(modifier = borderMod.padding(1.dp)) {
         if (!member.avatarUrl.isNullOrBlank() && !avatarFailed) {
             val ctx = LocalContext.current
             val req = remember(member.avatarUrl) {
@@ -717,6 +718,20 @@ internal fun MemberAvatar(
                 )
             }
         }
+    }
+    // Online agora (como o ponto verde da web).
+    if (member.online) {
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .size((size.value * 0.32f).coerceAtLeast(8f).dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(1.5.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF22C55E)),
+        )
+    }
     }
 }
 

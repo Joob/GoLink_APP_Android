@@ -39,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.KeyboardType
@@ -499,35 +500,40 @@ private fun DeletionCodeInput(
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
         modifier = modifier.focusRequester(focusRequester),
-        decorationBox = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-            ) {
-                repeat(length) { index ->
-                    val char = value.getOrNull(index)?.toString() ?: ""
-                    val isActive = enabled && index == value.length.coerceAtMost(length - 1) && value.length < length
-                    val borderColor = when {
-                        isError -> MaterialTheme.colorScheme.error
-                        isActive -> MaterialTheme.colorScheme.primary
-                        else -> MaterialTheme.colorScheme.outline
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(width = 46.dp, height = 56.dp)
-                            .border(
-                                width = if (isError || isActive) 2.dp else 1.dp,
-                                color = borderColor,
-                                shape = RoundedCornerShape(12.dp),
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = char,
-                            textAlign = TextAlign.Center,
-                            style = LocalTextStyle.current.merge(MaterialTheme.typography.headlineSmall),
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
+        decorationBox = { inner ->
+            // O campo real fica (invisível) por cima das caixas: sem ele colocado,
+            // o menu "Colar" aparecia no topo do ecrã em vez de junto ao código.
+            Box(contentAlignment = Alignment.Center) {
+                Box(Modifier.alpha(0f)) { inner() }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                ) {
+                    repeat(length) { index ->
+                        val char = value.getOrNull(index)?.toString() ?: ""
+                        val isActive = enabled && index == value.length.coerceAtMost(length - 1) && value.length < length
+                        val borderColor = when {
+                            isError -> MaterialTheme.colorScheme.error
+                            isActive -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.outline
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(width = 46.dp, height = 56.dp)
+                                .border(
+                                    width = if (isError || isActive) 2.dp else 1.dp,
+                                    color = borderColor,
+                                    shape = RoundedCornerShape(12.dp),
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = char,
+                                textAlign = TextAlign.Center,
+                                style = LocalTextStyle.current.merge(MaterialTheme.typography.headlineSmall),
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
                     }
                 }
             }

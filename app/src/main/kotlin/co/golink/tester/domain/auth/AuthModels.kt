@@ -98,4 +98,6 @@ data class ErrorBody(
     // segundos que faltam para poder tentar de novo.
     val otp_code: String? = null,
     val remaining_cooldown: Int? = null,
+    // rate_limited no envio do código (429).
+    val remaining_wait: Int? = null,
 )

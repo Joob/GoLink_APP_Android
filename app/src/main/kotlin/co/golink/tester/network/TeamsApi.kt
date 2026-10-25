@@ -24,6 +24,9 @@ interface TeamsApi {
     @retrofit2.http.DELETE("api/teams/folders/{id}")
     suspend fun dissolveTeamFolder(@Path("id") id: String): Response<okhttp3.ResponseBody>
 
+    @GET("api/teams/folders/{id}/presence")
+    suspend fun teamFolderPresence(@Path("id") id: String): co.golink.tester.domain.teams.TeamPresenceResponse
+
     @retrofit2.http.DELETE("api/teams/folders/{id}/leave")
     suspend fun leaveTeamFolder(@Path("id") id: String): Response<okhttp3.ResponseBody>
 
@@ -47,6 +50,10 @@ interface TeamsApi {
         @Path("id") id: String,
         @Body body: co.golink.tester.domain.teams.TeamClearNamesRequest,
     ): Response<okhttp3.ResponseBody>
+
+    // Assinatura leve (contagem + última modificação) para o polling.
+    @GET("api/teams/shared-with-me/{id}/fingerprint")
+    suspend fun sharedWithMeFingerprint(@Path("id") id: String): Response<co.golink.tester.domain.browse.FolderFingerprint>
 
     @GET("api/teams/shared-with-me/{id}")
     suspend fun browseSharedWithMe(

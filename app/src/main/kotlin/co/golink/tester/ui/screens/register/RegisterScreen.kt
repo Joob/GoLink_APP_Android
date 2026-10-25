@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Lock
@@ -51,6 +53,7 @@ fun RegisterScreen(
         if (invited) viewModel.initInvitation(invitationToken!!)
     }
 
+    val submitFromKeyboard = { if (!state.isLoading && !state.invitationInvalid) viewModel.submit() }
     LaunchedEffect(state.success) {
         if (state.success) onRegistered(state.requiresVerification)
     }
@@ -83,7 +86,7 @@ fun RegisterScreen(
         Spacer(Modifier.height(14.dp))
         Field(
             label = "Password".tr(),
-            placeholder = "Mínimo 6 caracteres".tr(),
+            placeholder = "Mínimo 8 caracteres".tr(),
             value = state.password,
             onChange = viewModel::onPassword,
             error = state.fieldErrors["password"],
@@ -101,6 +104,7 @@ fun RegisterScreen(
             icon = Icons.Outlined.Lock,
             type = KeyboardType.Password,
             password = true,
+            onDone = if (invited) submitFromKeyboard else null,
         )
         if (!invited) {
             Spacer(Modifier.height(14.dp))
@@ -111,17 +115,18 @@ fun RegisterScreen(
                 onChange = viewModel::onInvitationToken,
                 error = state.fieldErrors["invitation_token"],
                 icon = Icons.Outlined.VpnKey,
+                onDone = submitFromKeyboard,
             )
         }
 
-        state.error?.let {
+        (state.error ?: state.invitationError)?.let {
             Spacer(Modifier.height(10.dp))
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
         }
         Spacer(Modifier.height(20.dp))
         Button(
             onClick = viewModel::submit,
-            enabled = !state.isLoading,
+            enabled = !state.isLoading && !state.invitationInvalid,
             shape = RoundedCornerShape(14.dp),
             contentPadding = PaddingValues(vertical = 16.dp),
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
@@ -152,6 +157,7 @@ private fun Field(
     cap: KeyboardCapitalization = KeyboardCapitalization.None,
     password: Boolean = false,
     enabled: Boolean = true,
+    onDone: (() -> Unit)? = null,
 ) {
     Text(
         text = label,
@@ -175,7 +181,9 @@ private fun Field(
             keyboardType = type,
             capitalization = cap,
             autoCorrectEnabled = type != KeyboardType.Email && type != KeyboardType.Password,
+            imeAction = if (onDone != null) ImeAction.Done else ImeAction.Next,
         ),
+        keyboardActions = KeyboardActions(onDone = { onDone?.invoke() }),
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier.fillMaxWidth(),
     )

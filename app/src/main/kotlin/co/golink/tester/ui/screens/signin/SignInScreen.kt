@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -52,6 +54,7 @@ fun SignInScreen(
     onForgotPassword: () -> Unit,
     onSocialite: (String) -> Unit,
     onBack: (() -> Unit)? = null,
+    notice: String? = null,
     viewModel: SignInViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -61,6 +64,10 @@ fun SignInScreen(
     }
 
     AuthScaffold(title = "Entrar".tr(), subtitle = "Bem-vindo de volta".tr(), onBack = onBack) {
+        notice?.let {
+            Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(12.dp))
+        }
         FieldLabel("Email".tr())
         OutlinedTextField(
             value = state.email,
@@ -74,6 +81,7 @@ fun SignInScreen(
                 keyboardType = KeyboardType.Email,
                 capitalization = KeyboardCapitalization.None,
                 autoCorrectEnabled = false,
+                imeAction = ImeAction.Next,
             ),
             shape = RoundedCornerShape(14.dp),
             modifier = Modifier.fillMaxWidth(),
@@ -90,12 +98,13 @@ fun SignInScreen(
             supportingText = state.passwordError?.let { { Text(it) } },
             leadingIcon = { Icon(Icons.Outlined.Lock, contentDescription = null) },
             visualTransformation = if (state.showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { if (!state.isLoading) viewModel.login() }),
             trailingIcon = {
                 IconButton(onClick = viewModel::togglePasswordVisibility) {
                     Icon(
                         if (state.showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                        contentDescription = if (state.showPassword) "Esconder" else "Mostrar",
+                        contentDescription = if (state.showPassword) "Esconder".tr() else "Mostrar".tr(),
                     )
                 }
             },

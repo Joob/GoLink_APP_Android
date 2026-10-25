@@ -39,6 +39,7 @@ data class TeamMember(
     val avatarUrl: String?,
     val color: String?,
     val permission: String?,
+    val online: Boolean = false,
 )
 
 // @Immutable: estes modelos nunca são mutados após criação (a lista de membros
@@ -142,6 +143,7 @@ private fun BrowseRelationships?.toMembers(): List<TeamMember> =
             avatarUrl = entry.attributes.avatar,
             color = entry.attributes.color,
             permission = entry.attributes.permission,
+            online = entry.attributes.online,
         )
     }?.distinctBy { it.id } ?: emptyList() // o dono chegou a vir 2× do servidor
 

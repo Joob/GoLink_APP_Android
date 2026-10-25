@@ -33,6 +33,12 @@ data class TeamEncryptedNamesResponse(
     val data: List<TeamEncryptedName> = emptyList(),
 )
 
+// Membros online de uma Team Folder (GET api/teams/folders/{id}/presence).
+@Serializable
+data class TeamPresenceResponse(
+    val online: List<String> = emptyList(),
+)
+
 @Serializable
 data class TeamClearName(
     val id: String,

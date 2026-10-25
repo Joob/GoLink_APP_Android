@@ -47,8 +47,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.BrowseStats
-import co.golink.tester.ui.common.formatBytes
-import co.golink.tester.ui.common.relativeAgo
 import co.golink.tester.ui.i18n.tr
 
 /** Estado da pasta mostrado antes das contagens ("🔒 Privada", "Equipa"…). */
@@ -187,7 +185,7 @@ fun FolderHeader(
                         }
                     }
                 }
-                StatusLine(badge = badge, stats = stats, updatedIso = folder?.updatedAtIso)
+                badge?.let { BadgeLine(it) }
             }
         }
 
@@ -213,47 +211,18 @@ private fun HeaderTile(folder: BrowseItem.Folder?, section: HeaderSection) {
     }
 }
 
-// "🔒 Privada · 1 pasta, 2 documentos · 8.74 MB · atualizada há 1 h"
+// "🔒 Privada" / "Partilhada" debaixo do título (sem contagens nem tamanho).
 @Composable
-private fun StatusLine(badge: FolderBadge?, stats: BrowseStats?, updatedIso: String?) {
-    val counts = buildList {
-        stats?.let { s ->
-            if (s.folders > 0) add(plural(s.folders, "%d pasta", "%d pastas"))
-            if (s.video > 0) add(plural(s.video, "%d vídeo", "%d vídeos"))
-            if (s.image > 0) add(plural(s.image, "%d imagem", "%d imagens"))
-            if (s.audio > 0) add(plural(s.audio, "%d áudio", "%d áudios"))
-            if (s.file > 0) add(plural(s.file, "%d documento", "%d documentos"))
-        }
-    }.joinToString(", ")
-    val parts = buildList {
-        if (counts.isNotEmpty()) add(counts)
-        stats?.bytes?.takeIf { it > 0 }?.let { add(formatBytes(it)) }
-        updatedIso?.let { relativeAgo(it) }?.takeIf { it.isNotEmpty() }?.let { add("atualizada %s".tr().format(it)) }
+private fun BadgeLine(badge: FolderBadge) {
+    val color = when (badge.tone) {
+        FolderBadge.Tone.Green -> MaterialTheme.colorScheme.primary
+        FolderBadge.Tone.Blue -> Color(0xFF2563EB)
+        FolderBadge.Tone.Gray -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    if (badge == null && parts.isEmpty()) return
-
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(top = 3.dp),
-    ) {
-        if (badge != null) {
-            val color = when (badge.tone) {
-                FolderBadge.Tone.Green -> MaterialTheme.colorScheme.primary
-                FolderBadge.Tone.Blue -> Color(0xFF2563EB)
-                FolderBadge.Tone.Gray -> MaterialTheme.colorScheme.onSurfaceVariant
-            }
-            Icon(badge.icon, contentDescription = null, tint = color, modifier = Modifier.size(12.dp))
-            Spacer(Modifier.width(3.dp))
-            Text(badge.label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
-            if (parts.isNotEmpty()) Text("  ·  ", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
-        }
-        Text(
-            parts.joinToString(" · "),
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 3.dp)) {
+        Icon(badge.icon, contentDescription = null, tint = color, modifier = Modifier.size(12.dp))
+        Spacer(Modifier.width(3.dp))
+        Text(badge.label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
     }
 }
 
@@ -303,6 +272,3 @@ private fun TypeChips(stats: BrowseStats?, typeFilter: String?, onTypeFilter: (S
         }
     }
 }
-
-private fun plural(n: Int, one: String, many: String): String =
-    (if (n == 1) one else many).tr().format(n)

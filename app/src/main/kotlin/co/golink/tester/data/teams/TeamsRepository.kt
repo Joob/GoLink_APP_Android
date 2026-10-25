@@ -35,6 +35,10 @@ class TeamsRepository @Inject constructor(
         check(response.isSuccessful) { "HTTP ${response.code()}" }
     }
 
+    /** Ids dos membros online agora (null se falhar — fica o que veio na listagem). */
+    suspend fun onlineMembers(id: String): Set<String>? =
+        runCatching { api.teamFolderPresence(id).online.toSet() }.getOrNull()
+
     suspend fun listTeamFolder(
         id: String?,
         page: Int,
@@ -46,6 +50,12 @@ class TeamsRepository @Inject constructor(
         check(response.isSuccessful) { "HTTP ${response.code()}: ${response.errorBody()?.string()?.take(300)}" }
         val body = response.body() ?: error("Resposta vazia")
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { body.toPaged(page) }
+    }
+
+    suspend fun sharedWithMeFingerprint(id: String?): Result<String> = runCatching {
+        val response = api.sharedWithMeFingerprint(id ?: ROOT)
+        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        (response.body() ?: error("Resposta vazia")).signature
     }
 
     suspend fun listSharedWithMe(

@@ -47,9 +47,10 @@ class CreateNewPasswordViewModel @Inject constructor(
         if (s.email.isBlank()) errors["email"] = "Email obrigatório".tr()
         if (s.password.length < 8) errors["password"] = "Mínimo 8 caracteres".tr()
         if (s.password != s.passwordConfirmation) errors["password_confirmation"] = "Não coincide".tr()
-        if (s.token.isBlank()) errors["email"] = "Link inválido ou expirado".tr()
-        if (errors.isNotEmpty()) {
-            _state.update { it.copy(fieldErrors = errors) }
+        if (errors.isNotEmpty() || s.token.isBlank()) {
+            // Token em falta não é erro de um campo: vai para a mensagem geral.
+            val tokenError = if (s.token.isBlank()) "Link inválido ou expirado".tr() else null
+            _state.update { it.copy(fieldErrors = errors, error = tokenError) }
             return
         }
         _state.update { it.copy(isLoading = true, error = null) }
@@ -67,7 +68,13 @@ class CreateNewPasswordViewModel @Inject constructor(
                             it.copy(
                                 isLoading = false,
                                 fieldErrors = t.fields.mapValues { (_, msgs) -> co.golink.tester.ui.i18n.ServerMessages.localize(msgs.firstOrNull()).orEmpty() },
-                                error = if (t.fields.isEmpty()) co.golink.tester.ui.i18n.ServerMessages.localize(t.message) else null,
+                                // "token" não tem campo no ecrã: mostrá-lo na mensagem geral.
+                                error = when {
+                                    t.fields.isEmpty() -> co.golink.tester.ui.i18n.ServerMessages.localize(t.message)
+                                    t.fields["token"] != null -> co.golink.tester.ui.i18n.ServerMessages.localize(t.fields["token"]?.firstOrNull())
+                                        ?: "Link inválido ou expirado".tr()
+                                    else -> null
+                                },
                             )
                         }
                         else -> _state.update { it.copy(isLoading = false, error = co.golink.tester.ui.i18n.ServerMessages.localize(t.message)) }

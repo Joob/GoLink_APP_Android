@@ -22,6 +22,10 @@ data class RegisterUiState(
     val invitationToken: String = "",
     val emailLocked: Boolean = false,
     val invitationLoading: Boolean = false,
+    /** Falha ao carregar o convite (não é limpo ao escrever, ao contrário de `error`). */
+    val invitationError: String? = null,
+    /** Convite inexistente/usado/expirado (404): o registo fica bloqueado. */
+    val invitationInvalid: Boolean = false,
     val isLoading: Boolean = false,
     val error: String? = null,
     val fieldErrors: Map<String, String> = emptyMap(),
@@ -66,7 +70,20 @@ class RegisterViewModel @Inject constructor(
                         )
                     }
                 }
-                .onFailure { _state.update { it.copy(invitationLoading = false) } }
+                .onFailure { t ->
+                    val invalid = t is AuthError.AccountNotFound
+                    _state.update {
+                        it.copy(
+                            invitationLoading = false,
+                            invitationInvalid = invalid,
+                            invitationError = if (invalid) {
+                                "Este convite é inválido, já foi usado ou expirou.".tr()
+                            } else {
+                                "Não foi possível carregar o convite. Verifica a ligação e tenta de novo.".tr()
+                            },
+                        )
+                    }
+                }
         }
     }
 
@@ -78,6 +95,7 @@ class RegisterViewModel @Inject constructor(
 
     fun submit() {
         val s = _state.value
+        if (s.invitationInvalid) return
         val errors = mutableMapOf<String, String>()
         if (s.name.isBlank()) errors["name"] = "Nome obrigatório".tr()
         if (s.email.isBlank()) errors["email"] = "Email obrigatório".tr()

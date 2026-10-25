@@ -533,6 +533,7 @@ fun BrowseScreen(
                 onOpenNotifications = go(onOpenNotifications),
                 storage = storage,
                 onUpgrade = go(onOpenBilling),
+                canUpgrade = subscriptionType == "fixed",
                 appVersion = co.golink.tester.BuildConfig.VERSION_NAME,
                 onProfile = go(onOpenProfile),
                 onAvatarClick = {
@@ -546,7 +547,13 @@ fun BrowseScreen(
                 onSettings = go(onOpenSettings),
                 onLogout = go { activeDialog = ActionDialog.Logout },
                 onNewUpload = go {
-                    if (state.mode !is BrowseMode.Folder) viewModel.openRoot()
+                    // Dentro de uma pasta de equipa/partilhada (com edição) carrega lá.
+                    val inTeam = when (val m = state.mode) {
+                        is BrowseMode.TeamFolder -> m.id != null
+                        is BrowseMode.SharedWithMe -> m.id != null && !state.readOnly
+                        else -> false
+                    }
+                    if (state.mode !is BrowseMode.Folder && !inTeam) viewModel.openRoot()
                     viewModel.exitSelectMode()
                     fabMenuOpen = true
                 },
@@ -1121,9 +1128,15 @@ fun BrowseScreen(
             }
         }
 
-        // Botão "+" por cima do separador "Ficheiros", com as ações em bolhas.
-        // Só no separador Ficheiros (como o antigo "+" da barra de cima).
-        if (state.mode is BrowseMode.Folder && !e2eLocked && !state.selectMode) {
+        // Botão "+" com as ações em bolhas: Ficheiros e, dentro de uma pasta,
+        // Pastas de equipa / Partilhado comigo (não em "só ver").
+        val inFiles = state.mode is BrowseMode.Folder
+        val inTeamFolder = when (val m = state.mode) {
+            is BrowseMode.TeamFolder -> m.id != null
+            is BrowseMode.SharedWithMe -> m.id != null && !state.readOnly
+            else -> false
+        }
+        if ((inFiles || inTeamFolder) && !e2eLocked && !state.selectMode) {
             val primary = MaterialTheme.colorScheme.primary
             val secondary = MaterialTheme.colorScheme.secondary
             val tertiary = MaterialTheme.colorScheme.tertiary
@@ -1135,7 +1148,7 @@ fun BrowseScreen(
                 actions = run {
                     val up = "Carregar".tr()
                     val mk = "Criar".tr()
-                    listOf(
+                    listOfNotNull(
                         co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.FileUpload, "Carregar ficheiros".tr(), primary, "Do telemóvel".tr(), up) {
                             filePicker.launch(arrayOf("*/*"))
                         },
@@ -1157,12 +1170,13 @@ fun BrowseScreen(
                         co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.Description, "Novo ficheiro de texto".tr(), primary, "Escreva e edite aqui".tr(), mk, accent = false) {
                             activeDialog = ActionDialog.CreateTextFile
                         },
-                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.GroupAdd, "Pasta de equipa".tr(), primary, "Partilhada com membros".tr(), mk, accent = false) {
+                        // Pasta de equipa e pedidos de ficheiros só no espaço privado.
+                        if (inFiles) co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.GroupAdd, "Pasta de equipa".tr(), primary, "Partilhada com membros".tr(), mk, accent = false) {
                             activeDialog = ActionDialog.CreateTeamFolder
-                        },
-                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.NoteAdd, "Pedir ficheiros".tr(), primary, "Receba de outras pessoas".tr(), mk, accent = false) {
+                        } else null,
+                        if (inFiles) co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.NoteAdd, "Pedir ficheiros".tr(), primary, "Receba de outras pessoas".tr(), mk, accent = false) {
                             actionTarget = null; activeDialog = ActionDialog.FileRequest
-                        },
+                        } else null,
                     )
                 },
             )
@@ -1307,6 +1321,7 @@ fun BrowseScreen(
         TeamMembersPopup(
             folder = folder,
             onDismiss = { membersPopupFolder = null },
+            loadOnline = { viewModel.onlineMembers(folder.id) },
         )
     }
 
@@ -2286,11 +2301,27 @@ internal fun BrowseItemDetailsSheet(
 private fun TeamMembersPopup(
     folder: BrowseItem.Folder,
     onDismiss: () -> Unit,
+    loadOnline: suspend () -> Set<String>?,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
     val e2eShare = remember { E2EShareService.get(context) }
     var grantMember by remember { mutableStateOf<TeamMember?>(null) }
+
+    // Presença: atualiza ao abrir e a cada minuto enquanto a folha está aberta.
+    var onlineIds by remember(folder.id) { mutableStateOf<Set<String>?>(null) }
+    LaunchedEffect(folder.id) {
+        while (true) {
+            loadOnline()?.let { onlineIds = it }
+            kotlinx.coroutines.delay(60_000)
+        }
+    }
+    val members = remember(folder.members, onlineIds) {
+        folder.members
+            .map { m -> onlineIds?.let { ids -> m.copy(online = m.id in ids) } ?: m }
+            .sortedWith(compareByDescending<TeamMember> { it.permission == "owner" }.thenByDescending { it.online })
+    }
+    val onlineCount = members.count { it.online }
 
     grantMember?.let { m ->
         GrantE2EAccessDialog(member = m, folderId = folder.id, onDismiss = { grantMember = null })
@@ -2323,13 +2354,21 @@ private fun TeamMembersPopup(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (onlineCount > 0) {
+                        Text(
+                            "%d online agora".tr().format(onlineCount),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF16A34A),
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
                 }
             }
             HorizontalDivider(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
                 modifier = Modifier.padding(bottom = 12.dp),
             )
-            folder.members.forEach { member ->
+            members.forEach { member ->
                 MemberRow(
                     member = member,
                     onGrant = if (e2eShare.isUnlocked && member.permission != "owner") {
@@ -2373,9 +2412,10 @@ private fun MemberRow(member: TeamMember, onGrant: (() -> Unit)? = null) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (member.name != null) {
+            val sub = listOfNotNull(member.email.takeIf { member.name != null }, if (member.online) "online agora".tr() else null)
+            if (sub.isNotEmpty()) {
                 Text(
-                    member.email,
+                    sub.joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

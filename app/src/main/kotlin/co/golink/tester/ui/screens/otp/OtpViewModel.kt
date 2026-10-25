@@ -25,6 +25,8 @@ data class OtpUiState(
     val codeSentOnce: Boolean = false,
     val remainingSeconds: Int = 0,
     val expired: Boolean = false,
+    /** Cooldown do servidor ativo: o ecrã mostra os segundos que faltam. */
+    val cooldown: Boolean = false,
 )
 
 @HiltViewModel
@@ -47,6 +49,12 @@ class OtpViewModel @Inject constructor(
         val digits = value.filter { it.isDigit() }.take(6)
         _state.update { it.copy(code = digits, error = null) }
         if (digits.length == 6) validate()
+    }
+
+    /** Sair do ecrã OTP: termina a sessão pendente (o gate volta ao início). */
+    fun cancel() {
+        countdownJob?.cancel()
+        viewModelScope.launch { authRepository.logout() }
     }
 
     fun sendCode(initial: Boolean = false) {
@@ -75,6 +83,11 @@ class OtpViewModel @Inject constructor(
                     startCountdown(remaining)
                 }
                 .onFailure { t ->
+                    if (t is AuthError.OtpCooldown) {
+                        _state.update { it.copy(sending = false, codeSentOnce = true, code = "", info = null) }
+                        startCooldown(t.remainingSeconds)
+                        return@onFailure
+                    }
                     // Erro do servidor (5xx): mensagem clara em vez de "Server Error (HTTP 500)".
                     val msg = if (t is AuthError.Server && t.statusCode >= 500) {
                         "Não foi possível enviar o código. Tenta novamente daqui a pouco.".tr()
@@ -90,7 +103,7 @@ class OtpViewModel @Inject constructor(
     // entered code is cleared and the user is asked to request a new one.
     private fun startCountdown(seconds: Int = VALIDITY_SECONDS) {
         countdownJob?.cancel()
-        _state.update { it.copy(remainingSeconds = seconds, expired = false) }
+        _state.update { it.copy(remainingSeconds = seconds, expired = false, cooldown = false) }
         countdownJob = viewModelScope.launch {
             var remaining = seconds
             while (remaining > 0) {
@@ -109,7 +122,7 @@ class OtpViewModel @Inject constructor(
     private fun startCooldown(seconds: Int) {
         if (seconds <= 0) return
         countdownJob?.cancel()
-        _state.update { it.copy(remainingSeconds = seconds, expired = true) }
+        _state.update { it.copy(remainingSeconds = seconds, expired = true, cooldown = true, error = null) }
         countdownJob = viewModelScope.launch {
             var remaining = seconds
             while (remaining > 0) {
@@ -117,7 +130,7 @@ class OtpViewModel @Inject constructor(
                 remaining -= 1
                 _state.update { it.copy(remainingSeconds = remaining) }
             }
-            _state.update { it.copy(remainingSeconds = 0) }
+            _state.update { it.copy(remainingSeconds = 0, cooldown = false) }
         }
     }
 
@@ -135,18 +148,18 @@ class OtpViewModel @Inject constructor(
                     // Cooldown do servidor (5 tentativas falhadas): trava a
                     // entrada e faz a contagem decrescente até poder tentar de novo.
                     if (t is AuthError.OtpCooldown) {
-                        _state.update {
-                            it.copy(
-                                isLoading = false,
-                                code = "",
-                                error = "Demasiadas tentativas. Aguarda %d s.".tr().format(t.remainingSeconds),
-                            )
-                        }
+                        _state.update { it.copy(isLoading = false, code = "") }
                         startCooldown(t.remainingSeconds)
                         return@onFailure
                     }
 
-                    val msg = if (t is AuthError.OtpInvalid) "Código inválido ou expirado".tr() else t.message
+                    val msg = when {
+                        t is AuthError.OtpInvalid -> "Código inválido ou expirado".tr()
+                        t is AuthError.Server && t.statusCode >= 500 ->
+                            "Não foi possível validar o código. Tenta novamente daqui a pouco.".tr()
+                        else -> co.golink.tester.ui.i18n.ServerMessages.localize(t.message)
+                            ?: "Erro ao validar o código".tr()
+                    }
                     _state.update { it.copy(isLoading = false, error = msg, code = "") }
                 }
         }

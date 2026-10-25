@@ -1,6 +1,7 @@
 package co.golink.tester.ui.screens.otp
 
 import co.golink.tester.ui.i18n.tr
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.style.TextAlign
@@ -43,11 +45,14 @@ fun OtpScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(state.validated) { if (state.validated) onValidated() }
+    val cancel = { viewModel.cancel(); onCancel() }
+    // OTP é a raiz da pilha: sem isto o "voltar" fechava a app e a sessão pendente ficava.
+    BackHandler(onBack = cancel)
 
     AuthScaffold(
         title = "Verificação".tr(),
         subtitle = "Introduz o código de 6 dígitos que enviámos para o teu email".tr(),
-        onBack = onCancel,
+        onBack = cancel,
     ) {
         OtpCodeInput(
             value = state.code,
@@ -61,6 +66,11 @@ fun OtpScreen(
         Spacer(Modifier.height(10.dp))
 
         when {
+            state.cooldown -> Text(
+                "Demasiadas tentativas. Aguarda %d s.".tr().format(state.remainingSeconds),
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium,
+            )
             state.error != null -> Text(
                 state.error!!,
                 color = MaterialTheme.colorScheme.error,
@@ -121,8 +131,8 @@ fun OtpScreen(
                 Text(
                     when {
                         state.sending -> "A enviar…".tr()
-                        state.remainingSeconds > 0 -> "Reenviar (${formatCountdown(state.remainingSeconds)})"
-                        else -> "Reenviar"
+                        state.remainingSeconds > 0 -> "${"Reenviar".tr()} (${formatCountdown(state.remainingSeconds)})"
+                        else -> "Reenviar".tr()
                     }
                 )
             }
@@ -159,35 +169,40 @@ private fun OtpCodeInput(
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
         modifier = modifier.focusRequester(focusRequester),
-        decorationBox = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-            ) {
-                repeat(length) { index ->
-                    val char = value.getOrNull(index)?.toString() ?: ""
-                    val isActive = enabled && index == value.length.coerceAtMost(length - 1) && value.length < length
-                    val borderColor = when {
-                        isError -> MaterialTheme.colorScheme.error
-                        isActive -> MaterialTheme.colorScheme.primary
-                        else -> MaterialTheme.colorScheme.outline
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(width = 46.dp, height = 56.dp)
-                            .border(
-                                width = if (isError || isActive) 2.dp else 1.dp,
-                                color = borderColor,
-                                shape = RoundedCornerShape(12.dp),
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = char,
-                            textAlign = TextAlign.Center,
-                            style = LocalTextStyle.current.merge(MaterialTheme.typography.headlineSmall),
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
+        decorationBox = { inner ->
+            // O campo real fica (invisível) por cima das caixas: sem ele colocado,
+            // o menu "Colar" aparecia no topo do ecrã em vez de junto ao código.
+            Box(contentAlignment = Alignment.Center) {
+                Box(Modifier.alpha(0f)) { inner() }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                ) {
+                    repeat(length) { index ->
+                        val char = value.getOrNull(index)?.toString() ?: ""
+                        val isActive = enabled && index == value.length.coerceAtMost(length - 1) && value.length < length
+                        val borderColor = when {
+                            isError -> MaterialTheme.colorScheme.error
+                            isActive -> MaterialTheme.colorScheme.primary
+                            else -> MaterialTheme.colorScheme.outline
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(width = 46.dp, height = 56.dp)
+                                .border(
+                                    width = if (isError || isActive) 2.dp else 1.dp,
+                                    color = borderColor,
+                                    shape = RoundedCornerShape(12.dp),
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = char,
+                                textAlign = TextAlign.Center,
+                                style = LocalTextStyle.current.merge(MaterialTheme.typography.headlineSmall),
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
                     }
                 }
             }

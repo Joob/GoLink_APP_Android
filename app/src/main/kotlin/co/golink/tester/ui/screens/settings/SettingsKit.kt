@@ -52,6 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -206,28 +207,33 @@ fun SettingsPinInput(value: String, onValueChange: (String) -> Unit, isError: Bo
         onValueChange = { v -> onValueChange(v.filter { it.isDigit() }.take(length)) },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
         modifier = Modifier.fillMaxWidth().focusRequester(focus),
-        decorationBox = {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), modifier = Modifier.fillMaxWidth()) {
-                repeat(length) { i ->
-                    val filled = i < value.length
-                    val active = i == value.length
-                    Box(
-                        Modifier
-                            .size(52.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(settingsCardColor())
-                            .border(
-                                if (active) 1.5.dp else 1.dp,
-                                when {
-                                    isError -> MaterialTheme.colorScheme.error
-                                    active -> SettingsAccent
-                                    else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
-                                },
-                                RoundedCornerShape(12.dp),
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (filled) Box(Modifier.size(12.dp).clip(androidx.compose.foundation.shape.CircleShape).background(MaterialTheme.colorScheme.onSurface))
+        decorationBox = { inner ->
+            // O campo real fica (invisível) por cima das caixas: sem ele colocado,
+            // o menu "Colar" aparecia no topo do ecrã em vez de junto ao código.
+            Box(contentAlignment = Alignment.Center) {
+                Box(Modifier.alpha(0f)) { inner() }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally), modifier = Modifier.fillMaxWidth()) {
+                    repeat(length) { i ->
+                        val filled = i < value.length
+                        val active = i == value.length
+                        Box(
+                            Modifier
+                                .size(52.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(settingsCardColor())
+                                .border(
+                                    if (active) 1.5.dp else 1.dp,
+                                    when {
+                                        isError -> MaterialTheme.colorScheme.error
+                                        active -> SettingsAccent
+                                        else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+                                    },
+                                    RoundedCornerShape(12.dp),
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (filled) Box(Modifier.size(12.dp).clip(androidx.compose.foundation.shape.CircleShape).background(MaterialTheme.colorScheme.onSurface))
+                        }
                     }
                 }
             }

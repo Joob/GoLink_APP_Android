@@ -32,11 +32,12 @@ object I18n {
 
     fun current(): Lang = languages.firstOrNull { it.code == lang } ?: languages.first()
 
-    var lang by mutableStateOf(PT)
+    // Instalação nova (sem escolha guardada) arranca em inglês.
+    var lang by mutableStateOf(EN)
         private set
 
     fun init(context: Context) {
-        lang = prefs(context).getString(KEY, PT) ?: PT
+        lang = prefs(context).getString(KEY, EN) ?: EN
     }
 
     fun set(context: Context, code: String) {

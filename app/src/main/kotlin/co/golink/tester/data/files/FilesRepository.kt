@@ -28,6 +28,7 @@ class FilesRepository @Inject constructor(
     private val keys: E2EKeyManager,
     private val shareService: E2EShareService,
     private val userEncryptionApi: UserEncryptionApi,
+    private val notifications: co.golink.tester.data.notifications.NotificationsRepository,
 ) {
     // E2E Fase 2: cifra o nome no espaço privado (encryptName) quando há chave.
     // A resposta traz o placeholder → repomos o nome em claro que definimos.
@@ -148,6 +149,8 @@ class FilesRepository @Inject constructor(
         })
         val response = api.remove(payload)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
+        // O servidor esconde as notificações de ficheiros no lixo (ex.: comentários).
+        notifications.refresh()
     }
 
     suspend fun move(items: List<BrowseItem>, toFolderId: String?): Result<Unit> = runCatching {

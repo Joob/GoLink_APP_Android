@@ -487,6 +487,8 @@ object I18nDict {
         r("Escreve aqui a notícia importante...", "Write the important news here...", "Écrivez l'actualité importante ici...", "Escribe aquí la noticia importante..."),
         r("Aparece num retângulo laranja no topo dos files, na app e no site.", "Appears in an orange box at the top of files, in the app and on the site.", "Apparaît dans un encadré orange en haut des fichiers, dans l'app et sur le site.", "Aparece en un recuadro naranja en la parte superior de los archivos, en la app y en el sitio."),
         r("Fechar notícia", "Close news", "Fermer l'actualité", "Cerrar noticia"),
+        r("online agora", "online now", "en ligne", "en línea ahora"),
+        r("%d online agora", "%d online now", "%d en ligne maintenant", "%d en línea ahora"),
         r("Convidados online", "Guests online", "Invités en ligne", "Invitados en línea"),
         r("Top países", "Top countries", "Pays principaux", "Países principales"),
 
@@ -735,6 +737,7 @@ object I18nDict {
         r("Editar", "Edit", "Modifier", "Editar"),
         r("o.teu.email@exemplo.com", "your.email@example.com", "ton.email@exemple.com", "tu.email@ejemplo.com"),
         r("Upgrade", "Upgrade", "Mettre à niveau", "Mejorar"),
+        r("Melhorar plano", "Upgrade Plan", "Changer de forfait", "Mejorar plan"),
         r("%1\$s de %2\$s utilizados", "%1\$s of %2\$s used", "%1\$s sur %2\$s utilisés", "%1\$s de %2\$s usados"),
 
         // Atividade recente / histórico / copiar link
@@ -803,6 +806,13 @@ object I18nDict {
         r("Responde dentro de %s para o reabrir. Depois disso terás de abrir um novo ticket.", "Reply within %s to reopen it. After that you'll need to open a new ticket.", "Répondez dans %s pour le rouvrir. Ensuite, il faudra ouvrir un nouveau ticket.", "Responde en %s para reabrirlo. Después tendrás que abrir un ticket nuevo."),
         // Erros de autenticação / servidor
         r("Não foi possível enviar o código. Tenta novamente daqui a pouco.", "Couldn't send the code. Please try again shortly.", "Impossible d'envoyer le code. Réessayez dans un instant.", "No se pudo enviar el código. Inténtalo de nuevo en un momento."),
+        r("Não foi possível validar o código. Tenta novamente daqui a pouco.", "Couldn't verify the code. Please try again shortly.", "Impossible de vérifier le code. Réessayez dans un instant.", "No se pudo verificar el código. Inténtalo de nuevo en un momento."),
+        r("Erro ao validar o código", "Error verifying the code", "Erreur lors de la vérification du code", "Error al verificar el código"),
+        r("Conta criada. Confirma o teu email através do link que te enviámos e depois entra.", "Account created. Confirm your email using the link we sent you, then sign in.", "Compte créé. Confirmez votre e-mail via le lien que nous vous avons envoyé, puis connectez-vous.", "Cuenta creada. Confirma tu email con el enlace que te enviamos y luego inicia sesión."),
+        r("Conta criada. Já podes entrar.", "Account created. You can sign in now.", "Compte créé. Vous pouvez maintenant vous connecter.", "Cuenta creada. Ya puedes iniciar sesión."),
+        r("Este convite é inválido, já foi usado ou expirou.", "This invitation is invalid, has already been used or has expired.", "Cette invitation est invalide, a déjà été utilisée ou a expiré.", "Esta invitación no es válida, ya se ha usado o ha caducado."),
+        r("Não foi possível carregar o convite. Verifica a ligação e tenta de novo.", "Couldn't load the invitation. Check your connection and try again.", "Impossible de charger l'invitation. Vérifiez votre connexion et réessayez.", "No se pudo cargar la invitación. Comprueba la conexión e inténtalo de nuevo."),
+        r("All Rights Reserved", "All Rights Reserved", "Tous droits réservés", "Todos los derechos reservados"),
         r("Não existe nenhuma conta com este email", "There is no account with this email", "Aucun compte n'existe avec cet e-mail", "No existe ninguna cuenta con este email"),
         r("Enviámos o link para repor a password", "We sent you the password reset link", "Nous vous avons envoyé le lien de réinitialisation", "Te hemos enviado el enlace para restablecer la contraseña"),
         r("Aguarda um pouco antes de tentar de novo", "Please wait a moment before trying again", "Veuillez patienter avant de réessayer", "Espera un momento antes de volver a intentarlo"),

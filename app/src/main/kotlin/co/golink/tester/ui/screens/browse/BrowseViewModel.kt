@@ -461,9 +461,10 @@ class BrowseViewModel @Inject constructor(
     fun consumeToast() = _state.update { it.copy(toast = null) }
 
     fun createFolder(name: String, color: String? = null) {
-        val parentId = (state.value.mode as? BrowseMode.Folder)?.id
+        val parentId = currentParentId()
         viewModelScope.launch {
-            filesRepository.createFolder(name.trim(), parentId, color = color)
+            // Em equipa/partilhado o nome fica em claro (os membros têm de o ler).
+            filesRepository.createFolder(name.trim(), parentId, encryptName = isPrivateNameContext() && isPrivateTarget(parentId), color = color)
                 .onSuccess { _state.update { it.copy(toast = "Pasta criada".tr()) }; loadCurrent() }
                 .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
         }
@@ -471,7 +472,7 @@ class BrowseViewModel @Inject constructor(
 
     /** Cria um ficheiro .txt vazio na pasta atual (o nome ganha .txt se faltar). */
     fun createTextFile(name: String, openEditor: Boolean = true) {
-        val parentId = (state.value.mode as? BrowseMode.Folder)?.id
+        val parentId = currentParentId()
         val filename = withTextExtension(name)
         // Sem toast: quem confirma é o painel de uploads (e a lista recarrega no
         // completedTick) — anunciar "criado" aqui mentia se o upload falhasse.
@@ -486,7 +487,7 @@ class BrowseViewModel @Inject constructor(
 
     /** Documento ou folha de cálculo vazios no formato escolhido, a partir dos modelos em assets/office. */
     fun createDocument(format: OfficeFormat, name: String, openEditor: Boolean = true) {
-        val parentId = (state.value.mode as? BrowseMode.Folder)?.id
+        val parentId = currentParentId()
         val filename = withOfficeExtension(name, format)
         val asset = format.asset ?: return
         if (format.serverConverted && !canCreateServerConverted) return
@@ -543,7 +544,7 @@ class BrowseViewModel @Inject constructor(
                     _state.update { it.copy(toast = "Pasta criada".tr()) }
                     teamsRepository.invalidateClearedNames()
                     loadNavigationTree()
-                    if ((state.value.mode as? BrowseMode.Folder)?.id == parentId) loadCurrent()
+                    if (currentParentId() == parentId) loadCurrent()
                 }
                 .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
         }
@@ -579,6 +580,14 @@ class BrowseViewModel @Inject constructor(
 
     // E2E Fase 2: só ciframos nomes no espaço privado do utilizador — não em
     // pastas de equipa / partilhas / resultados de pesquisa.
+    /** Pasta onde o botão + cria/carrega: Ficheiros, Pastas de equipa ou Partilhado comigo. */
+    private fun currentParentId(): String? = when (val m = state.value.mode) {
+        is BrowseMode.Folder -> m.id
+        is BrowseMode.TeamFolder -> m.id
+        is BrowseMode.SharedWithMe -> m.id
+        else -> null
+    }
+
     private fun isPrivateNameContext(): Boolean = when (state.value.mode) {
         is BrowseMode.Folder, BrowseMode.Latest, BrowseMode.Favourites, BrowseMode.Trash -> true
         else -> false
@@ -634,7 +643,7 @@ class BrowseViewModel @Inject constructor(
     fun upload(uri: Uri) = uploadMany(listOf(uri))
 
     fun uploadMany(uris: List<Uri>) {
-        val parentId = (state.value.mode as? BrowseMode.Folder)?.id
+        val parentId = currentParentId()
         val names = visibleFileNames()
         viewModelScope.launch {
             if (!canUpload(uris)) return@launch
@@ -706,7 +715,7 @@ class BrowseViewModel @Inject constructor(
             _state.update { it.copy(toast = "Insira pelo menos um URL válido".tr()) }
             return
         }
-        val parentId = (state.value.mode as? BrowseMode.Folder)?.id
+        val parentId = currentParentId()
         viewModelScope.launch {
             filesRepository.remoteUpload(urls, parentId)
                 .onSuccess { _state.update { it.copy(toast = "${urls.size} URL(s) na fila") }; loadCurrent() }
@@ -734,7 +743,7 @@ class BrowseViewModel @Inject constructor(
     // pasta passa o id dessa pasta. Ao criar, copiamos o link para a área de
     // transferência, como faz a Web.
     fun createFileRequest(name: String?, email: String?, notes: String?, folderId: String? = null, expiresInDays: Int? = null) {
-        val effectiveFolder = folderId ?: (state.value.mode as? BrowseMode.Folder)?.id
+        val effectiveFolder = folderId ?: currentParentId()
         viewModelScope.launch {
             uploadRequestRepository.createFileRequest(name, email, notes, effectiveFolder, expiresInDays)
                 .onSuccess { link ->
@@ -753,7 +762,7 @@ class BrowseViewModel @Inject constructor(
     }
 
     fun uploadFolder(treeUri: Uri) {
-        val parentId = (state.value.mode as? BrowseMode.Folder)?.id
+        val parentId = currentParentId()
         viewModelScope.launch {
             // Percorrer a pasta (SAF) é lento em pastas grandes: em IO.
             val files = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { collectFilesFromTree(treeUri) }
@@ -1180,6 +1189,8 @@ class BrowseViewModel @Inject constructor(
         teamsRepository.leave(folder.id)
     }
 
+    suspend fun onlineMembers(folderId: String): Set<String>? = teamsRepository.onlineMembers(folderId)
+
     private fun teamAction(folder: BrowseItem.Folder, success: String, call: suspend () -> Result<Unit>) {
         viewModelScope.launch {
             call()
@@ -1471,13 +1482,17 @@ class BrowseViewModel @Inject constructor(
     private suspend fun pollFolderOnce() {
         val s = _state.value
         val mode = s.mode
-        // Só pastas pessoais têm endpoint de fingerprint; evitar interferir
-        // durante carregamentos ou enquanto o utilizador selecciona itens.
-        if (mode !is BrowseMode.Folder) return
+        // Pastas pessoais e Partilhado comigo têm endpoint de fingerprint; evitar
+        // interferir durante carregamentos ou enquanto o utilizador selecciona itens.
         if (s.isLoading || s.isLoadingMore || s.isRefreshing) return
         if (s.selectedIds.isNotEmpty()) return
 
-        val signature = repository.folderFingerprint(mode.id).getOrNull() ?: return
+        val signature = when (mode) {
+            is BrowseMode.Folder -> repository.folderFingerprint(mode.id)
+            // Edições/uploads de outros membros aparecem logo (modified, tamanho…).
+            is BrowseMode.SharedWithMe -> teamsRepository.sharedWithMeFingerprint(mode.id)
+            else -> return
+        }.getOrNull() ?: return
         if (mode != _state.value.mode) return // navegou entretanto
 
         val previous = lastFingerprint

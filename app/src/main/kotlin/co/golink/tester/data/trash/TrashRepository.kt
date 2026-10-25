@@ -14,6 +14,7 @@ import javax.inject.Singleton
 class TrashRepository @Inject constructor(
     private val api: TrashApi,
     private val keys: E2EKeyManager,
+    private val notifications: co.golink.tester.data.notifications.NotificationsRepository,
 ) {
     // O viewer restaura/apaga a partir do preview do Lixo: a lista volta a carregar.
     private val _changes = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
@@ -61,6 +62,8 @@ class TrashRepository @Inject constructor(
         val response = api.restore(payload)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         notifyChanged()
+        // Notificações dos ficheiros restaurados voltam a aparecer.
+        notifications.refresh()
     }
 
     // Apaga até `limit` itens do lixo e devolve deleted/remaining para o progresso.

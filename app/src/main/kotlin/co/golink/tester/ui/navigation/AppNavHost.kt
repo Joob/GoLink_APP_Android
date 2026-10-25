@@ -191,8 +191,15 @@ fun AppNavHost(
                 onRegister = { navController.navigate(Routes.REGISTER) },
             )
         }
-        composable(Routes.SIGN_IN) {
+        composable(Routes.SIGN_IN) { entry ->
+            // Vindo do registo: true = falta confirmar o email, false = já pode entrar.
+            val registered by entry.savedStateHandle.getStateFlow<Boolean?>("registered", null).collectAsState()
             SignInScreen(
+                notice = when (registered) {
+                    true -> "Conta criada. Confirma o teu email através do link que te enviámos e depois entra.".tr()
+                    false -> "Conta criada. Já podes entrar.".tr()
+                    null -> null
+                },
                 onLoginSucceeded = { /* gate handles transition */ },
                 onRegister = { navController.navigate(Routes.REGISTER) },
                 onForgotPassword = { navController.navigate(Routes.FORGOT) },
@@ -202,7 +209,13 @@ fun AppNavHost(
         }
         composable(Routes.REGISTER) {
             RegisterScreen(
-                onRegistered = { _ -> navController.popBackStack() },
+                onRegistered = { requiresVerification ->
+                    navController.navigate(Routes.SIGN_IN) {
+                        popUpTo(Routes.LANDING)
+                        launchSingleTop = true
+                    }
+                    navController.currentBackStackEntry?.savedStateHandle?.set("registered", requiresVerification)
+                },
                 onBack = { navController.popBackStack() },
             )
         }
@@ -243,11 +256,12 @@ fun AppNavHost(
         ) { backStackEntry ->
             val invitation = backStackEntry.arguments?.getString("invitation").orEmpty()
             RegisterScreen(
-                onRegistered = { _ ->
+                onRegistered = { requiresVerification ->
                     navController.navigate(Routes.SIGN_IN) {
                         popUpTo(0) { inclusive = true }
                         launchSingleTop = true
                     }
+                    navController.currentBackStackEntry?.savedStateHandle?.set("registered", requiresVerification)
                 },
                 onBack = { navController.popBackStack() },
                 invitationToken = invitation,
@@ -256,7 +270,7 @@ fun AppNavHost(
         composable(Routes.OTP) {
             OtpScreen(
                 onValidated = { /* gate transitions to Home */ },
-                onCancel = { /* logout button on Home is the primary exit */ },
+                onCancel = { /* OtpViewModel.cancel() faz logout; o gate volta à Landing */ },
             )
         }
         composable(

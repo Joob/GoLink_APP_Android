@@ -45,7 +45,7 @@ class ApiErrorParser @Inject constructor(
         val body = runCatching { json.decodeFromString(ErrorBody.serializer(), raw) }.getOrNull()
 
         return AuthError.OtpCooldown(
-            remainingSeconds = body?.remaining_cooldown ?: 0,
+            remainingSeconds = body?.remaining_cooldown ?: body?.remaining_wait ?: 0,
             message = body?.otp_code ?: body?.message ?: "Demasiadas tentativas",
         )
     }

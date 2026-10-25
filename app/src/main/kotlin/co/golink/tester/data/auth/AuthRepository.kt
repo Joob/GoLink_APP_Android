@@ -97,8 +97,13 @@ class AuthRepository @Inject constructor(
 
     suspend fun sendOtp(): Result<Unit> = runCatching {
         val response = api.sendOtp()
-        if (!response.isSuccessful && response.code() !in 409..429) {
-            throw errorParser.parse(response)
+        if (response.isSuccessful) return@runCatching
+        when (response.code()) {
+            // valid_otp_exists: já há um código válido no email → seguir com ele.
+            409 -> Unit
+            // cooldown_active / rate_limited: nenhum código foi enviado.
+            429 -> throw errorParser.parseOtpCooldown(response)
+            else -> throw errorParser.parse(response)
         }
     }.recoverCatching { throw errorParser.fromThrowable(it) }
 
@@ -114,10 +119,6 @@ class AuthRepository @Inject constructor(
             // 429: 5 tentativas falhadas seguidas → cooldown imposto pelo servidor.
             if (response.code() == 429) throw errorParser.parseOtpCooldown(response)
             if (response.code() == 422) throw AuthError.OtpInvalid()
-            if (response.code() == 400) {
-                tokenStore.markOtpValidated()
-                return@runCatching
-            }
             throw errorParser.parse(response)
         }
         tokenStore.markOtpValidated()
