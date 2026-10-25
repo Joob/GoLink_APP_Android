@@ -24,23 +24,14 @@ class TrashRepository @Inject constructor(
         _changes.tryEmit(Unit)
     }
 
-    suspend fun list(): Result<List<BrowseItem>> = runCatching {
-        val response = api.list()
-        check(response.isSuccessful) { "HTTP ${response.code()}" }
-        // E2E Fase 2: os itens do espaço privado chegam com o placeholder "•" e o
-        // nome real em name_encrypted — decifra-o como nas outras listagens.
-        response.body()?.data?.map { entry ->
-            val plain = keys.openNameOrNull(entry.data.attributes.name_encrypted)
-            if (plain != null) entry.data.copy(attributes = entry.data.attributes.copy(name = plain)).toItem()
-            else entry.data.toItem()
-        }.orEmpty()
-    }
-
     /** Lixo com contagens (chips) e filtro/ordenação no servidor. */
     suspend fun listPaged(
         query: co.golink.tester.domain.browse.BrowseQuery = co.golink.tester.domain.browse.BrowseQuery(),
+        page: Int = 1,
+        perPage: Int = co.golink.tester.data.browse.BrowseRepository.PAGE_SIZE,
     ): Result<co.golink.tester.data.browse.PagedItems> = runCatching {
-        val response = api.list(type = query.type, sort = query.sort, direction = query.direction)
+        // Paginado como a web: o lixo pode ter milhares de itens (antes page=all).
+        val response = api.list(page = page.toString(), perPage = perPage, type = query.type, sort = query.sort, direction = query.direction)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val body = response.body() ?: error("Resposta vazia")
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
@@ -49,7 +40,14 @@ class TrashRepository @Inject constructor(
                 if (plain != null) entry.data.copy(attributes = entry.data.attributes.copy(name = plain)).toItem()
                 else entry.data.toItem()
             }
-            co.golink.tester.data.browse.PagedItems(items = items, currentPage = 1, lastPage = 1, total = items.size, stats = body.meta?.stats)
+            val paginate = body.meta?.paginate
+            co.golink.tester.data.browse.PagedItems(
+                items = items,
+                currentPage = paginate?.current_page ?: page,
+                lastPage = paginate?.last_page ?: page,
+                total = paginate?.total ?: items.size,
+                stats = body.meta?.stats,
+            )
         }
     }
 

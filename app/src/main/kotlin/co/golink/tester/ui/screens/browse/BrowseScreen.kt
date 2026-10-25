@@ -790,7 +790,7 @@ fun BrowseScreen(
                         .then(
                             // Durante o flush a lista fica desfocada e não aceita toques
                             // (restaurar/apagar um item que o próximo lote já apagou).
-                            if (state.isEmptyingTrash) {
+                            if (state.isEmptyingTrash && state.mode == BrowseMode.Trash) {
                                 Modifier.blur(14.dp).pointerInput(Unit) {
                                     awaitPointerEventScope {
                                         while (true) {
@@ -849,6 +849,7 @@ fun BrowseScreen(
                                 title = "Sem conteúdo".tr(),
                                 subtitle = when (state.mode) {
                                     is BrowseMode.SearchResults -> "Sem resultados para \"${(state.mode as BrowseMode.SearchResults).query}\""
+                                    BrowseMode.Trash -> "O lixo está vazio".tr()
                                     else -> "Esta pasta está vazia".tr()
                                 },
                             )
@@ -1205,6 +1206,11 @@ fun BrowseScreen(
         }
     }
 
+    // Fim do flush: a quota/barra de armazenamento reflete o espaço libertado.
+    LaunchedEffect(state.emptyingDone) {
+        if (state.emptyingDone) shell.refreshStorage()
+    }
+
     // Flush do lixo: toaster em baixo (estilo do painel de uploads) com barra e %,
     // enquanto os ficheiros vão desaparecendo por trás do blur a cada lote apagado.
     // Só no Lixo; sem Surface (que engole toques) para não bloquear o que está por baixo.
@@ -1436,8 +1442,8 @@ fun BrowseScreen(
             if (count > 0) {
                 ConfirmDialog(
                     title = "Eliminar permanentemente?".tr(),
-                    message = if (multi) "$count itens serão removidos para sempre. Esta acção não pode ser desfeita."
-                              else "${actionTarget?.name} será removido para sempre. Esta acção não pode ser desfeita.",
+                    message = if (multi) "%d itens serão removidos para sempre. Esta acção não pode ser desfeita.".tr().format(count)
+                              else "%s será removido para sempre. Esta acção não pode ser desfeita.".tr().format(actionTarget?.name ?: ""),
                     confirmText = "Eliminar permanentemente".tr(),
                     destructive = true,
                     onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },

@@ -610,7 +610,7 @@ class BrowseViewModel @Inject constructor(
                 .onSuccess { _state.update { it.copy(processing = null, toast = if (permanent) "Eliminado" else "Movido para o lixo".tr()) }; loadCurrent() }
                 .onFailure { t ->
                     android.util.Log.e("BrowseVM", "delete failed", t)
-                    _state.update { it.copy(processing = null, toast = "Falha: ${t.message ?: t::class.java.simpleName}") }
+                    _state.update { it.copy(processing = null, toast = "Falha: %s".tr().format(t.message ?: t::class.java.simpleName)) }
                 }
         }
     }
@@ -915,7 +915,7 @@ class BrowseViewModel @Inject constructor(
     /** Texto de erro para toasts; 403 = sem permissão de edição (ex.: membro só de leitura). */
     private fun failText(t: Throwable): String =
         if (t.message?.startsWith("HTTP 403") == true) "Não tens permissão de edição nesta pasta".tr()
-        else "Falha: ${t.message}"
+        else "Falha: %s".tr().format(t.message)
 
     // ---- Atividade recente ----------------------------------------------------
 
@@ -1211,7 +1211,7 @@ class BrowseViewModel @Inject constructor(
         _state.update { it.copy(processing = "A restaurar…".tr()) }
         viewModelScope.launch {
             trashRepository.restore(targets)
-                .onSuccess { _state.update { it.copy(processing = null, toast = "Restaurado".tr()) }; loadCurrent() }
+                .onSuccess { _state.update { it.copy(processing = null, toast = "Restaurado".tr()) } }
                 .onFailure { t -> _state.update { it.copy(processing = null, toast = failText(t)) } }
         }
     }
@@ -1220,10 +1220,10 @@ class BrowseViewModel @Inject constructor(
         _state.update { it.copy(processing = "A restaurar…".tr()) }
         viewModelScope.launch {
             trashRepository.restore(listOf(item))
-                .onSuccess { _state.update { it.copy(processing = null, toast = "Restaurado") }; loadCurrent() }
+                .onSuccess { _state.update { it.copy(processing = null, toast = "Restaurado".tr()) } }
                 .onFailure { t ->
                     android.util.Log.e("BrowseVM", "restore failed", t)
-                    _state.update { it.copy(processing = null, toast = "Falha: ${t.message ?: t::class.java.simpleName}") }
+                    _state.update { it.copy(processing = null, toast = "Falha: %s".tr().format(t.message ?: t::class.java.simpleName)) }
                 }
         }
     }
@@ -1255,7 +1255,7 @@ class BrowseViewModel @Inject constructor(
                 while (remaining > 0) {
                     val res = trashRepository.dumpBatch(batch).getOrElse { t ->
                         android.util.Log.e("BrowseVM", "emptyTrash failed", t)
-                        _state.update { it.copy(toast = "Falha: ${t.message ?: t::class.java.simpleName}") }
+                        _state.update { it.copy(toast = "Falha: %s".tr().format(t.message ?: t::class.java.simpleName)) }
                         failed = true
                         null
                     } ?: break
@@ -1294,9 +1294,8 @@ class BrowseViewModel @Inject constructor(
     // cabeçalho; os itens apagados desaparecem por trás do blur.
     private suspend fun reloadTrashItems() {
         if (_state.value.mode != BrowseMode.Trash) return
-        trashRepository.listPaged(browseQuery()).onSuccess { paged ->
-            if (_state.value.mode == BrowseMode.Trash) _state.update { it.copy(items = sorted(paged.items), stats = paged.stats) }
-        }
+        // Repõe as páginas que já estavam abertas (paginado, sem skeleton).
+        loadPaged(BrowseMode.Trash, _state.value.currentPage.coerceAtLeast(1), silent = true)
     }
 
     fun toggleFavourite(folder: BrowseItem.Folder) {
@@ -1343,7 +1342,6 @@ class BrowseViewModel @Inject constructor(
         loadJob = viewModelScope.launch {
             when (mode) {
                 BrowseMode.Favourites -> handleSimple(Result.success(favouriteFolders.value.toList<BrowseItem>()), mode)
-                BrowseMode.Trash -> handleTrash(trashRepository.listPaged(browseQuery()), mode)
                 is BrowseMode.SearchResults -> handleSimple(repository.search(mode.query), mode)
                 else -> loadPaged(mode, pagesToReload, silent)
             }
@@ -1351,10 +1349,11 @@ class BrowseViewModel @Inject constructor(
     }
 
     // Carrega uma única página da fonte correspondente ao modo actual.
-    // Devolve null para modos não paginados (Favoritos/Lixo/Pesquisa).
+    // Devolve null para modos não paginados (Favoritos/Pesquisa).
     private suspend fun fetchPage(mode: BrowseMode, page: Int): Result<PagedItems>? = when (mode) {
         is BrowseMode.Folder -> repository.listFolder(mode.id, page = page, query = browseQuery())
         BrowseMode.Latest -> repository.listLatest(page = page)
+        BrowseMode.Trash -> trashRepository.listPaged(browseQuery(), page = page)
         BrowseMode.Shared -> repository.listShared(page = page, query = browseQuery())
         is BrowseMode.TeamFolder -> teamsRepository.listTeamFolder(mode.id, page = page, query = browseQuery())
         is BrowseMode.SharedWithMe -> teamsRepository.listSharedWithMe(mode.id, page = page, query = browseQuery())
@@ -1379,19 +1378,6 @@ class BrowseViewModel @Inject constructor(
         if (s.typeFilter == type) return
         _state.update { it.copy(typeFilter = type, typeFilterMode = if (type != null) s.mode else null, selectedIds = emptySet()) }
         loadCurrent()
-    }
-
-    private fun handleTrash(result: Result<PagedItems>, mode: BrowseMode) {
-        if (mode != _state.value.mode) return
-        result
-            .onSuccess { paged ->
-                _state.update {
-                    it.copy(items = sorted(paged.items), stats = paged.stats, isLoading = false, isRefreshing = false, currentPage = 1, lastPage = 1)
-                }
-            }
-            .onFailure { t ->
-                _state.update { it.copy(items = emptyList(), isLoading = false, isRefreshing = false, error = t.message) }
-            }
     }
 
     // Carregamento paginado preguiçoso: a abertura normal pede só a página 1; as

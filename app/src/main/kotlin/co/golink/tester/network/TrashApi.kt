@@ -17,6 +17,7 @@ interface TrashApi {
     suspend fun list(
         @Path("id") id: String = "root",
         @Query("page") page: String = "all",
+        @Query("per_page") perPage: Int? = null,
         @Query("type") type: String? = null,
         @Query("sort") sort: String? = null,
         @Query("direction") direction: String? = null,
