@@ -183,6 +183,8 @@ class OfficeEditorViewModel @Inject constructor(
             "collab_get" -> Json.parseToJsonElement(
                 raw(filesApi.collabState(f.id, args.string("client"), args["after"]?.jsonPrimitive?.longOrNull ?: 0))
             )
+            "collab_members" -> Json.parseToJsonElement(raw(filesApi.fileMembers(f.id)))
+            "collab_viewers" -> Json.parseToJsonElement(raw(filesApi.fileViewers(f.id, args.string("client"))))
             "collab_session", "collab_updates", "collab_compact", "collab_awareness", "collab_leave" -> Json.parseToJsonElement(
                 raw(filesApi.collabPost(f.id, method.removePrefix("collab_"), args.toString().toRequestBody("application/json".toMediaTypeOrNull())))
             )

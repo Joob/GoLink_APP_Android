@@ -107,6 +107,7 @@ fun EncryptedThumbnail(
     fileId: String,
     contentDescription: String?,
     modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Crop,
     fallback: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
@@ -122,7 +123,7 @@ fun EncryptedThumbnail(
         Image(
             bitmap = bmp,
             contentDescription = contentDescription,
-            contentScale = ContentScale.Crop,
+            contentScale = contentScale,
             modifier = modifier.fillMaxSize(),
         )
     } else {

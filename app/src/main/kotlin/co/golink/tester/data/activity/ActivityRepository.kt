@@ -80,7 +80,7 @@ class ActivityRepository @Inject constructor(
             val groups = files.groupBy { (f, _) -> "${f.filesizeBytes}|${f.name.lowercase()}" }
                 .values.filter { it.size > 1 }
                 .map { g -> co.golink.tester.domain.activity.DuplicateGroup(g.first().first.name, g.first().first.filesize, g.map { it.first }, g.map { it.second }.distinct(), g.map { it.second }) }
-            co.golink.tester.domain.activity.ActivitySummary(dto.uploaded_7d, dto.folders_changed_7d, groups)
+            co.golink.tester.domain.activity.ActivitySummary(dto.uploaded_7d, dto.folders_changed_7d, groups, dto.uploaded_by_day.map { it.date to it.count })
         }
     }
 

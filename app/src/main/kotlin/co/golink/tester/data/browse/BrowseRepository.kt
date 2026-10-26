@@ -8,6 +8,8 @@ import co.golink.tester.domain.browse.NavFolder
 import co.golink.tester.domain.browse.NavigationSection
 import co.golink.tester.domain.browse.toItem
 import co.golink.tester.network.BrowseApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -184,7 +186,57 @@ class BrowseRepository @Inject constructor(
         encryptedResults.filter { it.id !in seen } + serverResults
     }
 
-    private suspend fun loadNameIndex(): co.golink.tester.domain.encryption.NameIndexResponse? {
+    /**
+     * Pesquisa progressiva: servidor e índice de nomes cifrados correm em paralelo
+     * e cada parte é emitida assim que chega (lista acumulada, sem duplicados).
+     * Falha só se o servidor falhar.
+     */
+    fun searchProgressive(query: String): kotlinx.coroutines.flow.Flow<List<BrowseItem>> =
+        kotlinx.coroutines.flow.channelFlow {
+            if (query.isBlank()) { send(emptyList()); return@channelFlow }
+            val parsed = co.golink.tester.domain.search.SearchQueryParser.parse(query)
+            val f = parsed.filters
+            val lock = kotlinx.coroutines.sync.Mutex()
+            var server: List<BrowseItem>? = null
+            var encrypted: List<BrowseItem> = emptyList()
+            suspend fun emitMerged() = lock.withLock {
+                val s = server.orEmpty()
+                val seen = s.map { it.id }.toSet()
+                send(encrypted.filter { it.id !in seen } + s)
+            }
+            launch {
+                val found = runCatching { searchEncryptedNames(parsed.text, f) }.getOrDefault(emptyList())
+                if (found.isNotEmpty()) { lock.withLock { encrypted = found }; emitMerged() }
+            }
+            val response = api.search(
+                query = parsed.text.ifBlank { null },
+                kind = f.kind,
+                types = f.types.ifEmpty { null },
+                extensions = f.extensions.ifEmpty { null },
+                dateFrom = f.dateFrom,
+                dateTo = f.dateTo,
+                sizeMin = f.sizeMin,
+                sizeMax = f.sizeMax,
+            )
+            check(response.isSuccessful) { "HTTP ${response.code()}" }
+            val items = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                response.body()?.data?.map { it.data.decItem() }.orEmpty()
+            }
+            lock.withLock { server = items }
+            emitMerged()
+        }
+
+    /** Aquece o índice de nomes cifrados (rede + decifrar) antes da 1.ª pesquisa. */
+    suspend fun warmSearchIndex() {
+        if (!keys.isUnlocked) return
+        val index = loadNameIndex() ?: return
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            index.files.forEach { decryptedNameOf(it) }
+            index.folders.forEach { decryptedNameOf(it) }
+        }
+    }
+
+    private suspend fun loadNameIndex():co.golink.tester.domain.encryption.NameIndexResponse? {
         val now = System.currentTimeMillis()
         nameIndexCache?.let { if (now - nameIndexAt < 60_000) return it }
         val body = runCatching { encryptionApi.nameIndex().body() }.getOrNull() ?: return null
@@ -210,12 +262,15 @@ class BrowseRepository @Inject constructor(
         // Com filtros, muitos matches de nome caem fora no servidor: pedir mais candidatos.
         val limit = if (filters.isEmpty) 15 else 100
 
-        val fileIds = index.files.asSequence()
-            .filter { decryptedNameOf(it)?.lowercase()?.contains(q) == true }
-            .map { it.id }.take(limit).toList()
-        val folderIds = index.folders.asSequence()
-            .filter { decryptedNameOf(it)?.lowercase()?.contains(q) == true }
-            .map { it.id }.take(limit).toList()
+        // Decifrar nomes é CPU: fora da main thread.
+        val (fileIds, folderIds) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            index.files.asSequence()
+                .filter { decryptedNameOf(it)?.lowercase()?.contains(q) == true }
+                .map { it.id }.take(limit).toList() to
+                index.folders.asSequence()
+                    .filter { decryptedNameOf(it)?.lowercase()?.contains(q) == true }
+                    .map { it.id }.take(limit).toList()
+        }
         if (fileIds.isEmpty() && folderIds.isEmpty()) return emptyList()
 
         val response = api.searchEncryptedIds(

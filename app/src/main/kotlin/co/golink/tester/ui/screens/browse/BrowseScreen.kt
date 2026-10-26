@@ -750,6 +750,12 @@ fun BrowseScreen(
                     showViewControls = state.mode != BrowseMode.Latest,
                     focusRequest = searchFocusRequest,
                 )
+                // Resultados vão aparecendo; a barra indica que ainda chegam mais.
+                if (state.mode is BrowseMode.SearchResults && state.isLoading && state.items.isNotEmpty()) {
+                    androidx.compose.material3.LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(2.dp),
+                    )
+                }
                 // Filtros reconhecidos na frase (parser local, sem IA): "PDF · março 2026".
                 if (state.mode is BrowseMode.SearchResults && state.searchChips.isNotEmpty()) {
                     Text(
@@ -836,6 +842,8 @@ fun BrowseScreen(
                                 onRestore = { item -> viewModel.restore(item) },
                                 onMore = { entry -> entry.item?.let { sheetItem = it } },
                                 onLoadMore = viewModel::loadMoreFeed,
+                                onTrashDuplicates = viewModel::trashDuplicates,
+                                onOpenDuplicateFolder = viewModel::openDuplicateFolder,
                             )
                         }
                         state.isLoading && state.items.isEmpty() -> {

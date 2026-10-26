@@ -377,6 +377,7 @@ class BrowseViewModel @Inject constructor(
 
     fun setSearchQuery(query: String) {
         val parsed = co.golink.tester.domain.search.SearchQueryParser.parse(query)
+        if (_state.value.searchQuery.isBlank() && query.isNotBlank()) warmSearch()
         _state.update { it.copy(searchQuery = query, searchChips = parsed.chips) }
         searchJob?.cancel()
         if (query.isBlank()) return
@@ -385,20 +386,25 @@ class BrowseViewModel @Inject constructor(
         // Com filtros reconhecidos ("pdf") a pesquisa já faz sentido.
         if (!parsed.hasFilters && query.trim().length < 2) return
         searchJob = viewModelScope.launch {
-            delay(300)
+            delay(200)
+            // Os resultados anteriores ficam visíveis até chegarem os novos.
             _state.update { it.copy(mode = BrowseMode.SearchResults(query), isLoading = true, error = null) }
-            repository.search(query)
-                .onSuccess { items ->
-                    if (_state.value.searchQuery == query) {
-                        _state.update { it.copy(items = items, isLoading = false) }
-                    }
+            try {
+                repository.searchProgressive(query).collect { items ->
+                    if (_state.value.searchQuery == query) _state.update { it.copy(items = items) }
                 }
-                .onFailure { t ->
-                    if (_state.value.searchQuery == query) {
-                        _state.update { it.copy(isLoading = false, error = t.message) }
-                    }
-                }
+                if (_state.value.searchQuery == query) _state.update { it.copy(isLoading = false) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                if (_state.value.searchQuery == query) _state.update { it.copy(isLoading = false, error = t.message) }
+            }
         }
+    }
+
+    /** Chamado ao abrir a pesquisa: aquece o índice de nomes cifrados. */
+    fun warmSearch() {
+        viewModelScope.launch { runCatching { repository.warmSearchIndex() } }
     }
 
     fun clearSearch() {
@@ -1021,6 +1027,42 @@ class BrowseViewModel @Inject constructor(
             ?: Crumb(null, "Atividade".tr(), origin = BrowseMode.Latest)
         _state.update {
             it.copy(mode = mode, crumbs = listOf(root, Crumb(folder.id, folder.name)), searchQuery = "", searchChips = emptyList())
+        }
+        loadCurrent()
+    }
+
+    /** Duplicados: saem já do resumo e vão para o lixo (reversível) num só pedido. */
+    fun trashDuplicates(files: List<BrowseItem.File>) {
+        if (files.isEmpty()) return
+        val ids = files.map { it.id }.toSet()
+        _feed.update { st ->
+            val s = st.summary ?: return@update st
+            val groups = s.duplicates
+                .map { g ->
+                    val keep = g.files.indices.filter { g.files[it].id !in ids }
+                    val folders = keep.mapNotNull { g.fileFolders.getOrNull(it) }
+                    g.copy(files = keep.map { g.files[it] }, fileFolders = folders, folders = folders.distinct())
+                }
+                .filter { it.files.size > 1 }
+            st.copy(summary = s.copy(duplicates = groups))
+        }
+        viewModelScope.launch {
+            filesRepository.delete(files, false)
+                .onSuccess { _state.update { it.copy(toast = "Movido para o lixo".tr()) }; loadCurrent() }
+                .onFailure { t -> _state.update { it.copy(toast = failText(t)) }; loadCurrent() }
+        }
+    }
+
+    /** "Abrir pasta" de uma cópia duplicada (sem pasta-mãe → O meu Drive). */
+    fun openDuplicateFolder(parentId: String?, name: String) {
+        if (parentId == null) {
+            openRoot()
+            return
+        }
+        val root = _state.value.crumbs.firstOrNull()?.takeIf { it.origin != null }
+            ?: Crumb(null, "Atividade".tr(), origin = BrowseMode.Latest)
+        _state.update {
+            it.copy(mode = BrowseMode.Folder(id = parentId, name = name), crumbs = listOf(root, Crumb(parentId, name)), searchQuery = "", searchChips = emptyList())
         }
         loadCurrent()
     }

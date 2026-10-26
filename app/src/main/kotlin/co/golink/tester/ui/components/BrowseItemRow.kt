@@ -85,6 +85,7 @@ internal fun FilePreview(
     item: BrowseItem.File,
     iconSize: Dp,
     modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Crop,
 ) {
     // E2E: thumbnail cifrado — decifra em memória (não há URL do servidor).
     if (item.encrypted && (item.type == "image" || item.type == "video")) {
@@ -93,6 +94,7 @@ internal fun FilePreview(
                 fileId = item.id,
                 contentDescription = item.name,
                 modifier = Modifier.fillMaxSize(),
+                contentScale = contentScale,
                 fallback = {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         FileTypeIcon(item, Modifier.height(iconSize))
@@ -126,7 +128,7 @@ internal fun FilePreview(
             AsyncImage(
                 model = req,
                 contentDescription = null,
-                contentScale = ContentScale.Crop,
+                contentScale = contentScale,
                 onState = { state -> if (state is AsyncImagePainter.State.Error) index++ },
                 modifier = Modifier.fillMaxSize(),
             )
@@ -908,7 +910,7 @@ private fun TypePill(item: BrowseItem) {
     )
 }
 
-// Barra de tamanho relativa ao maior item da lista + tamanho à direita.
+// Tamanho do item (sem barra).
 @Composable
 private fun SizeBarLine(item: BrowseItem, maxBytes: Long) {
     val bytes = when (item) {
@@ -919,28 +921,14 @@ private fun SizeBarLine(item: BrowseItem, maxBytes: Long) {
         is BrowseItem.Folder -> item.filesize?.takeIf { bytes > 0 }
         is BrowseItem.File -> item.filesize
     } ?: return
-    val fraction = if (maxBytes > 0 && bytes > 0) (bytes.toFloat() / maxBytes).coerceIn(0.03f, 1f) else 0f
-    val dark = co.golink.tester.ui.theme.LocalDarkTheme.current
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-        Box(
-            modifier = Modifier
-                .weight(1f, fill = false)
-                .widthIn(max = 160.dp)
-                .fillMaxWidth()
-                .height(3.dp)
-                .clip(RoundedCornerShape(50))
-                .background(if (dark) Color(0xFF2A2B2F) else Color(0xFFE5E7EB)),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(fraction)
-                    .fillMaxHeight()
-                    .background(if (item is BrowseItem.Folder) MaterialTheme.colorScheme.primary else Color(0xFF9CA3AF)),
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        Text(size, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
-    }
+    Text(
+        size,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurface,
+        maxLines = 1,
+        modifier = Modifier.padding(top = 6.dp),
+    )
 }
 
 // Pílula escura com o tamanho, no canto da miniatura (grelha, como na web).

@@ -65,6 +65,17 @@ interface FilesApi {
         @Query("after") after: Long,
     ): Response<ResponseBody>
 
+    // Membros da Team Folder do ficheiro, com "online".
+    @GET("api/file/{id}/members")
+    suspend fun fileMembers(@Path("id") id: String): Response<ResponseBody>
+
+    // Quem tem o ficheiro aberto (sem tempo real).
+    @GET("api/file/{id}/viewers")
+    suspend fun fileViewers(
+        @Path("id") id: String,
+        @Query("client") client: String,
+    ): Response<ResponseBody>
+
     @POST("api/file/{id}/collab/{action}")
     suspend fun collabPost(
         @Path("id") id: String,

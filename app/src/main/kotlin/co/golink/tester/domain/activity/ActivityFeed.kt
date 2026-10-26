@@ -53,9 +53,14 @@ data class FeedResponse(
 // ---- GET api/activity/summary -----------------------------------------------------
 
 @Serializable
+data class UploadDayDto(val date: String = "", val count: Int = 0)
+
+@Serializable
 data class ActivitySummaryDto(
     val uploaded_7d: Int = 0,
     val folders_changed_7d: Int = 0,
+    /** Carregamentos por dia civil (hoje é o último). */
+    val uploaded_by_day: List<UploadDayDto> = emptyList(),
     val duplicate_candidates: List<BrowseEntryEnvelope> = emptyList(),
 )
 
@@ -95,4 +100,10 @@ data class DuplicateGroup(
 )
 
 @Immutable
-data class ActivitySummary(val uploaded7d: Int, val foldersChanged7d: Int, val duplicates: List<DuplicateGroup>)
+data class ActivitySummary(
+    val uploaded7d: Int,
+    val foldersChanged7d: Int,
+    val duplicates: List<DuplicateGroup>,
+    /** (yyyy-MM-dd, carregamentos) dos últimos 7 dias, hoje no fim. */
+    val uploadsByDay: List<Pair<String, Int>> = emptyList(),
+)
