@@ -222,6 +222,10 @@ class BrowseViewModel @Inject constructor(
     @Volatile private var lastFingerprint: String? = null
 
     init {
+        // Config do servidor logo no arranque: com sessão já iniciada não se passa
+        // pelo login/landing, e sem ela o tipo de faturação ficava "none" (sem
+        // "Melhorar plano" no cartão de armazenamento nem o grupo Faturação).
+        viewModelScope.launch { configRepository.load() }
         // Restaura vista/ordenação guardadas antes do primeiro load, para a lista
         // já vir ordenada como o utilizador deixou.
         _state.update {
