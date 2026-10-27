@@ -88,8 +88,8 @@ class BrowseRepository @Inject constructor(
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { body.toPaged(page) }
     }
 
-    suspend fun listMobileBackup(type: String, page: Int, perPage: Int = PAGE_SIZE): Result<PagedItems> = runCatching {
-        val response = api.mobileBackup(type = type, page = page.toString(), perPage = perPage)
+    suspend fun listMobileBackup(type: String, page: Int, perPage: Int = PAGE_SIZE, deviceId: String? = null): Result<PagedItems> = runCatching {
+        val response = api.mobileBackup(type = type, page = page.toString(), perPage = perPage, deviceId = deviceId)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val body = response.body() ?: error("Resposta vazia")
         body.toPaged(page)
@@ -97,8 +97,8 @@ class BrowseRepository @Inject constructor(
 
     // page="all" — o ecrã de backups não tem paginação; pedir só a página 1
     // escondia tudo o que passasse dos primeiros 20 itens.
-    suspend fun listAllMobileBackup(type: String): Result<List<BrowseItem>> = runCatching {
-        val response = api.mobileBackup(type = type, page = "all")
+    suspend fun listAllMobileBackup(type: String, deviceId: String? = null): Result<List<BrowseItem>> = runCatching {
+        val response = api.mobileBackup(type = type, page = "all", deviceId = deviceId)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val body = response.body() ?: error("Resposta vazia")
         body.data.map { it.data.decItem() }
@@ -116,8 +116,8 @@ class BrowseRepository @Inject constructor(
     }
 
     // Contagem por tipo para o badge do separador, sem transferir a lista.
-    suspend fun countMobileBackup(type: String): Result<Int> = runCatching {
-        val response = api.mobileBackup(type = type, page = "1", perPage = 1, withFolders = true, countOnly = true)
+    suspend fun countMobileBackup(type: String, deviceId: String? = null): Result<Int> = runCatching {
+        val response = api.mobileBackup(type = type, page = "1", perPage = 1, withFolders = true, countOnly = true, deviceId = deviceId)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         (response.body() ?: error("Resposta vazia")).meta?.paginate?.total ?: 0
     }
@@ -125,12 +125,13 @@ class BrowseRepository @Inject constructor(
     // Navegação nas abas de backup: devolve as pastas de origem (Camera,
     // Screenshots, …) e os ficheiros do nível pedido, filtrados por tipo no
     // servidor. parentId=null é a raiz do backup.
-    suspend fun listMobileBackupTree(type: String, parentId: String?): Result<List<BrowseItem>> = runCatching {
+    suspend fun listMobileBackupTree(type: String, parentId: String?, deviceId: String? = null): Result<List<BrowseItem>> = runCatching {
         val response = api.mobileBackup(
             type = type,
             page = "all",
             withFolders = true,
             parentId = parentId,
+            deviceId = deviceId,
         )
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val body = response.body() ?: error("Resposta vazia")

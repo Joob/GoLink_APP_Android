@@ -23,11 +23,15 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 
 @HiltWorker
 class AutoBackupWorker @AssistedInject constructor(
@@ -81,9 +85,11 @@ class AutoBackupWorker @AssistedInject constructor(
         } finally {
             manager.endRun()
             manager.finishRun()
-            // Reagenda o próximo "tick" de ~1 min enquanto o backup estiver ligado
-            // e não tiver sido cancelado (isStopped = utilizador desligou/Doze parou).
-            if (preferences.enabled && !isStopped) manager.scheduleNextTickAfter(id)
+            // Reagenda o próximo "tick" de ~1 min enquanto o backup estiver ligado.
+            // Não depende de isStopped: desligar e voltar a ligar depressa cancela
+            // este worker, mas o enable() já não arma nada (runLock ainda preso)
+            // — sem isto só sobrava o periódico de 30 min. Desligado = sem tick.
+            if (preferences.enabled) manager.scheduleNextTickAfter(id)
         }
     }
 
@@ -198,10 +204,16 @@ class AutoBackupWorker @AssistedInject constructor(
         val sources = enabledSources()
         // null = o MediaStore falhou: não se sabe o que ainda existe, por isso
         // as falhas ficam guardadas tal como estão.
-        val retryItems: Map<SourceSpec, List<BackupItem>?> = sources.associateWith { src ->
-            val failed = src.failed().filterValues { it < MAX_ATTEMPTS }
+        // Inclui as que já desistiram (>= MAX_ATTEMPTS) só para saber se ainda
+        // existem: as apagadas/movidas saem do conjunto em vez de se acumularem.
+        val failedScan: Map<SourceSpec, List<BackupItem>?> = sources.associateWith { src ->
+            val failed = src.failed()
             if (failed.isEmpty()) emptyList()
             else safeList { scanner.scanIds(src.collection, failed.keys, setOf(src.folder)) }
+        }
+        val retryItems: Map<SourceSpec, List<BackupItem>?> = sources.associateWith { src ->
+            val failed = src.failed()
+            failedScan.getValue(src)?.filter { (failed[it.mediaStoreId] ?: 0) < MAX_ATTEMPTS }
         }
         val totalPending = sources.sumOf { src ->
             retryItems.getValue(src).orEmpty().size +
@@ -298,29 +310,45 @@ class AutoBackupWorker @AssistedInject constructor(
             // acabou fica nas falhas sem gastar tentativa.
             suspend fun runBatch(batch: List<BackupItem>, advanceCursorTo: Long?): List<ItemResult> {
                 val done = java.util.concurrent.ConcurrentHashMap<Long, ItemResult>()
+                val started = java.util.concurrent.ConcurrentHashMap<Long, Pair<String, Job>>()
                 try {
                     coroutineScope {
                         batch.map { item ->
                             async(Dispatchers.IO) {
-                                semaphore.withPermit { done[item.mediaStoreId] = uploadOne(item, totalPending, source.collection) }
+                                semaphore.withPermit {
+                                    done[item.mediaStoreId] = uploadOne(item, totalPending, source.collection) { taskId, job ->
+                                        started[item.mediaStoreId] = taskId to job
+                                    }
+                                }
                             }
                         }.awaitAll()
                     }
                 } finally {
-                    val results = done.values
-                    // Falhou o lote inteiro = rede/servidor, não o ficheiro: não
-                    // conta como tentativa (senão uma queda de rede desistia de
-                    // ficheiros bons).
-                    val itemSpecific = results.any { it.success }
+                    // Cancelado a meio: pára os uploads deste lote antes de os dar
+                    // como falhados. Um que tenha chegado ao servidor entretanto
+                    // conta como feito — senão era reenviado (duplicado com E2E).
+                    if (batch.any { done[it.mediaStoreId] == null }) withContext(NonCancellable) {
+                        for (item in batch) {
+                            if (done[item.mediaStoreId] != null) continue
+                            val (taskId, job) = started[item.mediaStoreId] ?: continue
+                            job.cancelAndJoin()
+                            val state = uploadManager.tasks.value.firstOrNull { it.id == taskId }?.state
+                            if (state == UploadTask.State.Completed || state == UploadTask.State.Conflict) {
+                                done[item.mediaStoreId] = ItemResult(item, success = true, conflict = state == UploadTask.State.Conflict)
+                            }
+                        }
+                    }
                     for (item in batch) {
                         val result = done[item.mediaStoreId]
                         when {
                             result?.success == true -> failed.remove(item.mediaStoreId)
                             result == null -> failed.putIfAbsent(item.mediaStoreId, 0)
                             else -> {
+                                // Só erros do próprio ficheiro gastam tentativa; rede,
+                                // servidor (5xx), sessão, pausa e falta de espaço não
+                                // — senão uma ligação instável desistia de ficheiros bons.
                                 val attempts = failed[item.mediaStoreId] ?: 0
-                                failed[item.mediaStoreId] =
-                                    if (itemSpecific && !isQuotaError(result.error)) attempts + 1 else attempts
+                                failed[item.mediaStoreId] = if (result.transient) attempts else attempts + 1
                             }
                         }
                     }
@@ -330,7 +358,10 @@ class AutoBackupWorker @AssistedInject constructor(
                 return batch.mapNotNull { done[it.mediaStoreId] }
             }
 
-            fun tally(results: List<ItemResult>): Int {
+            // Devolve true quando o lote inteiro falhou por causa sistémica
+            // (rede/servidor): aí não adianta continuar. Falhas do próprio
+            // ficheiro já ficam registadas e não travam os seguintes.
+            fun tally(results: List<ItemResult>, size: Int): Boolean {
                 val batchFailed = results.count { !it.success }
                 uploadedTotal += results.count { it.success && !it.conflict }
                 conflictTotal += results.count { it.conflict }
@@ -338,24 +369,24 @@ class AutoBackupWorker @AssistedInject constructor(
                 // Servidor recusou por falta de espaço (HTTP 507) — pára já o
                 // resto do run: não adianta continuar a enviar.
                 if (results.any { !it.success && isQuotaError(it.error) }) quotaExceeded = true
-                return batchFailed
+                return batchFailed == size && results.all { it.transient }
             }
 
             // 1) Falhas de execuções anteriores. As que já não existem (apagadas
             // ou movidas para fora da pasta) saem do conjunto.
             val retry = retryItems.getValue(source).orEmpty()
-            if (retryItems.getValue(source) != null) {
-                val existing = retry.mapTo(HashSet()) { it.mediaStoreId }
-                failed.keys.retainAll { it in existing || (failed[it] ?: 0) >= MAX_ATTEMPTS }
+            failedScan.getValue(source)?.let { scan ->
+                val existing = scan.mapTo(HashSet()) { it.mediaStoreId }
+                failed.keys.retainAll { it in existing }
             }
             var retryAllFailed = false
             for (chunk in retry.chunked(BATCH_SIZE)) {
                 if (isStopped || quotaExceeded) break
                 val results = runBatch(chunk, advanceCursorTo = null)
-                if (tally(results) == chunk.size) { retryAllFailed = true; break }
+                if (tally(results, chunk.size)) { retryAllFailed = true; break }
             }
             if (retry.isEmpty()) source.setFailed(failed)
-            // Tudo a falhar outra vez = sistémico: não adianta ir aos novos.
+            // Tudo a falhar outra vez por rede/servidor: não adianta ir aos novos.
             if (retryAllFailed) continue
 
             // 2) Novos acima do cursor.
@@ -367,7 +398,7 @@ class AutoBackupWorker @AssistedInject constructor(
 
                 updateProgressNotification(manager.runProgress.value.done, totalPending, source.collection)
                 val results = runBatch(batch, advanceCursorTo = scanId)
-                val batchFailed = tally(results)
+                val systemic = tally(results, batch.size)
                 if (quotaExceeded) break
 
                 // Bound the in-memory task list — see pruneFinishedBackups.
@@ -378,8 +409,8 @@ class AutoBackupWorker @AssistedInject constructor(
 
                 updateProgressNotification(manager.runProgress.value.done, totalPending, source.collection)
 
-                // Whole batch failed — back off instead of hammering the API.
-                if (batchFailed == batch.size) break
+                // Whole batch failed (network/server) — back off instead of hammering the API.
+                if (systemic) break
             }
         }
 
@@ -451,7 +482,12 @@ class AutoBackupWorker @AssistedInject constructor(
         info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }.getOrDefault(false)
 
-    private suspend fun uploadOne(item: BackupItem, totalPending: Int, collection: BackupCollection): ItemResult {
+    private suspend fun uploadOne(
+        item: BackupItem,
+        totalPending: Int,
+        collection: BackupCollection,
+        onStarted: (String, Job) -> Unit,
+    ): ItemResult {
         val (taskId, job) = uploadManager.enqueueWithId(
             item.uri,
             parentId = null,
@@ -459,6 +495,7 @@ class AutoBackupWorker @AssistedInject constructor(
             backupFolder = item.bucket ?: item.collection.defaultFolder,
             backupPath = item.devicePath,
         )
+        onStarted(taskId, job)
         job.join()
         val task = uploadManager.tasks.value.firstOrNull { it.id == taskId }
         val result = when (task?.state) {
@@ -467,7 +504,12 @@ class AutoBackupWorker @AssistedInject constructor(
                 uploadManager.skipConflict(taskId)
                 ItemResult(item, success = true, conflict = true)
             }
-            else -> ItemResult(item, success = false, error = task?.errorMessage)
+            else -> ItemResult(
+                item,
+                success = false,
+                error = task?.errorMessage,
+                transient = task == null || task.networkError || task.e2eLocked || isTransientError(task.errorMessage),
+            )
         }
         if (result.success && !result.conflict) {
             preferences.recordUploaded(item.collection, item.sizeBytes)
@@ -586,6 +628,13 @@ class AutoBackupWorker @AssistedInject constructor(
     private fun isQuotaError(error: String?): Boolean =
         error != null && error.contains("HTTP 507")
 
+    // Erros que não são do ficheiro: servidor (5xx, inclui 507 sem espaço),
+    // sessão (401), aparelho em pausa (403), limite de pedidos (429) e timeout (408).
+    private fun isTransientError(error: String?): Boolean {
+        val code = error?.let { Regex("^HTTP (\\d{3})").find(it)?.groupValues?.get(1)?.toIntOrNull() } ?: return false
+        return code >= 500 || code in setOf(401, 403, 408, 429)
+    }
+
     private fun humanBytes(bytes: Long): String {
         if (bytes < 1024) return "$bytes B"
         val units = arrayOf("KB", "MB", "GB", "TB")
@@ -656,6 +705,8 @@ class AutoBackupWorker @AssistedInject constructor(
         val success: Boolean,
         val conflict: Boolean = false,
         val error: String? = null,
+        // Falha que não é do ficheiro (rede/servidor/sessão): não gasta tentativa.
+        val transient: Boolean = false,
     )
 
     companion object {

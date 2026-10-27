@@ -7,6 +7,8 @@ import kotlinx.serialization.Serializable
 data class BackupSummary(
     val enabled: Boolean = true,
     val devices: List<BackupDevice> = emptyList(),
+    /** Ficheiros antigos sem aparelho quando não há Android registado (id "legacy"). */
+    val legacy: BackupDevice? = null,
     val totals: BackupTotals = BackupTotals(),
 )
 
@@ -14,6 +16,7 @@ data class BackupSummary(
 data class BackupDevice(
     val id: String,
     val platform: String = "android",
+    val os_version: String? = null,
     val name: String = "Android",
     val paused: Boolean = false,
     /** É este telemóvel (o servidor compara o X-Device-Id). */
@@ -22,6 +25,8 @@ data class BackupDevice(
     val folders: Int = 0,
     val items: Int = 0,
     val bytes: Long = 0,
+    /** Itens por separador (photos/videos/audios/files). */
+    val tabs: Map<String, Int> = emptyMap(),
 )
 
 @Serializable

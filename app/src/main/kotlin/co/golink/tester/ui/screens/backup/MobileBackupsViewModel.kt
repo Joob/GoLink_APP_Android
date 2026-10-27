@@ -73,6 +73,9 @@ data class MobileBackupsState(
     // Cartões dos telemóveis (o deste aparelho vem marcado `current`).
     val summary: co.golink.tester.domain.backup.BackupSummary? = null,
     val pausingDevice: Boolean = false,
+    // Telemóvel cujos backups se mostram (device_id no browse); null = todos
+    // (só se o resumo falhar). Abre no próprio aparelho, como a web.
+    val selectedDeviceId: String? = null,
 )
 
 @HiltViewModel
@@ -121,8 +124,8 @@ class MobileBackupsViewModel @Inject constructor(
                 sortMode = viewPreferences.sortMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, SortMode.DATE_DESC),
             )
         }
-        selectTab(MobileBackupTab.Images)
-        loadCounts()
+        // A lista e as contagens só arrancam depois de o resumo escolher o
+        // telemóvel — senão apareciam as pastas de todos misturadas.
         loadSummary()
         observeUploadsForCounts()
     }
@@ -141,12 +144,38 @@ class MobileBackupsViewModel @Inject constructor(
         }
     }
 
+    // false até o primeiro resumo (ou a sua falha) definir o telemóvel.
+    private var deviceResolved = false
+
     fun loadSummary() {
         viewModelScope.launch {
-            repository.mobileBackupSummary().onSuccess { summary ->
-                _state.update { it.copy(summary = summary) }
-            }
+            repository.mobileBackupSummary()
+                .onSuccess { summary ->
+                    // Lido só agora: um selectDevice() feito durante o pedido manda.
+                    val previous = _state.value.selectedDeviceId
+                    val ids = summary.devices.map { it.id } + listOfNotNull(summary.legacy?.id)
+                    val chosen = previous?.takeIf { it in ids }
+                        ?: summary.devices.firstOrNull { it.current }?.id
+                        ?: ids.firstOrNull()
+                    _state.update { it.copy(summary = summary, selectedDeviceId = chosen) }
+                    if (!deviceResolved || chosen != previous) showDevice()
+                }
+                .onFailure { if (!deviceResolved) showDevice() }
         }
+    }
+
+    /** Escolher outro telemóvel nos cartões: volta à raiz e recarrega. */
+    fun selectDevice(id: String) {
+        if (id == _state.value.selectedDeviceId) return
+        _state.update { it.copy(selectedDeviceId = id, counts = emptyMap()) }
+        showDevice()
+    }
+
+    private fun showDevice() {
+        deviceResolved = true
+        _state.update { it.copy(items = emptyList(), error = null, folderStack = emptyList(), selectMode = false, selectedIds = emptySet()) }
+        load()
+        loadCounts()
     }
 
     /** Pausar / retomar só este telemóvel (o mesmo botão do cartão na web). */
@@ -254,10 +283,12 @@ class MobileBackupsViewModel @Inject constructor(
     }
 
     private fun loadCounts() {
+        if (!deviceResolved) return
+        val deviceId = _state.value.selectedDeviceId
         // Um total por separador (count_only) — barato, sem transferir a lista.
         MobileBackupTab.entries.forEach { tab ->
             viewModelScope.launch {
-                repository.countMobileBackup(tab.apiKey)
+                repository.countMobileBackup(tab.apiKey, deviceId)
                     .onSuccess { total -> _state.update { it.copy(counts = it.counts + (tab to total)) } }
             }
         }
@@ -468,7 +499,12 @@ class MobileBackupsViewModel @Inject constructor(
     }
 
     private fun load() {
+        if (!deviceResolved) {
+            _state.update { it.copy(isRefreshing = false) }
+            return
+        }
         val current = _state.value.tab
+        val deviceId = _state.value.selectedDeviceId
         val folder = _state.value.folderStack.lastOrNull()
         // Cancel any previous in-flight load (e.g. when switching tabs) so we
         // never have two list requests racing.
@@ -479,9 +515,9 @@ class MobileBackupsViewModel @Inject constructor(
         _state.update { it.copy(isLoading = it.items.isEmpty(), error = null) }
         loadJob = viewModelScope.launch {
             // Devolve as pastas de backup + ficheiros do nível (raiz ou pasta),
-            // já filtrados por tipo no servidor. As contagens dos separadores
-            // vêm de loadCounts (globais), por isso aqui não mexemos nelas.
-            repository.listMobileBackupTree(current.apiKey, folder?.id)
+            // já filtrados por tipo e telemóvel no servidor. As contagens dos
+            // separadores vêm de loadCounts, por isso aqui não mexemos nelas.
+            repository.listMobileBackupTree(current.apiKey, folder?.id, deviceId)
                 .onSuccess { items ->
                     // distinctBy: ids repetidos vindos do servidor rebentavam o
                     // LazyColumn ("Key was already used") e a app ia abaixo. Corre

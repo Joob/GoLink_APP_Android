@@ -57,6 +57,8 @@ interface BrowseApi {
         @Query("parent_id") parentId: String? = null,
         // count_only=true: só o total do tipo (badge), sem transferir a lista.
         @Query("count_only") countOnly: Boolean? = null,
+        // Só os ficheiros/pastas deste telemóvel (uuid ou "legacy"); null = todos.
+        @Query("device_id") deviceId: String? = null,
     ): Response<BrowseListResponse>
 
     // Cartões dos telemóveis (nome, último envio, totais, pausa por aparelho).

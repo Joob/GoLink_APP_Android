@@ -282,6 +282,8 @@ fun MobileBackupsScreen(
                         summary = summary,
                         accountEnabled = summary.enabled,
                         busy = state.pausingDevice,
+                        selectedId = state.selectedDeviceId,
+                        onSelect = { viewModel.selectDevice(it.id) },
                         onSetPaused = { device, paused -> viewModel.setDevicePaused(device.id, paused) },
                         modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
                     )

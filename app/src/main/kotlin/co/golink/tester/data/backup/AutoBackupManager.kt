@@ -96,7 +96,9 @@ class AutoBackupManager @Inject constructor(
         // desligado antes): o worker confirma o ligar antes de ler a flag.
         preferences.pendingServerEnable = true
         logger.log("AutoBackup", "Backup automático activado")
-        reschedule()
+        // O runNow() arma a cadeia; o oneshot de 1 min do reschedule() era logo
+        // substituído. A correr (runLock), o finally do worker agenda o tick.
+        reschedule(armTick = false)
         runNow()
     }
 
@@ -150,7 +152,7 @@ class AutoBackupManager @Inject constructor(
         BackupNotifications.cancelProgress(context)
     }
 
-    fun reschedule() {
+    fun reschedule(armTick: Boolean = true) {
         if (!preferences.enabled) return
         val request = PeriodicWorkRequestBuilder<AutoBackupWorker>(PERIOD_MINUTES, TimeUnit.MINUTES)
             // Sem atraso inicial a primeira execução periódica dispara logo e
@@ -168,7 +170,7 @@ class AutoBackupManager @Inject constructor(
         // Re-arma a cadeia de 1 min com as novas condições. Um tick pendente
         // tem as condições antigas: substitui-o (a correr, o finally do worker
         // agenda o seguinte já com as novas).
-        if (!isRunning) enqueueOneshot(buildConstraints(), delayMinutes = TICK_MINUTES)
+        if (armTick && !isRunning) enqueueOneshot(buildConstraints(), delayMinutes = TICK_MINUTES)
     }
 
     /**

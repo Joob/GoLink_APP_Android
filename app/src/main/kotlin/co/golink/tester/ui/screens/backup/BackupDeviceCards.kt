@@ -54,10 +54,12 @@ fun BackupDeviceCards(
     summary: BackupSummary,
     accountEnabled: Boolean,
     busy: Boolean,
+    selectedId: String?,
+    onSelect: (BackupDevice) -> Unit,
     onSetPaused: (BackupDevice, Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val devices = summary.devices.sortedByDescending { it.current }
+    val devices = summary.devices.sortedByDescending { it.current } + listOfNotNull(summary.legacy)
     if (devices.isEmpty()) return
 
     LazyRow(
@@ -70,6 +72,8 @@ fun BackupDeviceCards(
                 device = device,
                 accountEnabled = accountEnabled,
                 busy = busy,
+                selected = device.id == selectedId,
+                onClick = { onSelect(device) },
                 onSetPaused = { onSetPaused(device, it) },
                 modifier = if (devices.size == 1) Modifier.fillParentMaxWidth() else Modifier.width(300.dp),
             )
@@ -82,9 +86,13 @@ private fun DeviceCard(
     device: BackupDevice,
     accountEnabled: Boolean,
     busy: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit,
     onSetPaused: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Ficheiros antigos sem aparelho: não há telemóvel para pausar.
+    val legacy = device.id == "legacy"
     val paused = !accountEnabled || device.paused
     val ios = device.platform == "ios"
     val dot = when {
@@ -99,11 +107,12 @@ private fun DeviceCard(
     }
 
     Surface(
+        onClick = onClick,
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(
-            if (device.current) 2.dp else 1.dp,
-            if (device.current) BrandGreen else MaterialTheme.colorScheme.outlineVariant,
+            if (selected) 2.dp else 1.dp,
+            if (selected) BrandGreen else MaterialTheme.colorScheme.outlineVariant,
         ),
         modifier = modifier,
     ) {
@@ -168,7 +177,7 @@ private fun DeviceCard(
                     modifier = Modifier.weight(1f),
                 )
                 // Pausa da conta só se retoma no ecrã de Backup automático.
-                if (accountEnabled) {
+                if (accountEnabled && !legacy) {
                     OutlinedButton(
                         onClick = { onSetPaused(!device.paused) },
                         enabled = !busy,

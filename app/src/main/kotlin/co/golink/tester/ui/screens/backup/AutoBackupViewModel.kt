@@ -267,8 +267,29 @@ class AutoBackupViewModel @Inject constructor(
     }
 
     fun cancelTask(id: String) = uploadManager.cancel(id)
-    fun retryTask(id: String) = uploadManager.retry(id)
-    fun retryFailed() = uploadManager.retryFailed()
+    // As falhas do backup já estão no conjunto de falhas do worker: reenviá-las
+    // pelo UploadManager deixava o id lá e o worker voltava a enviá-las
+    // (duplicado com E2E). Larga a tarefa e deixa o worker retomar.
+    fun retryTask(id: String) {
+        val task = uploadManager.tasks.value.firstOrNull { it.id == id } ?: return
+        if (!task.mobileBackup) return uploadManager.retry(id)
+        uploadManager.cancel(id)
+        requeueBackupFailures()
+    }
+
+    fun retryFailed() {
+        val failed = uploadManager.tasks.value.filter { it.state == UploadTask.State.Failed }
+        failed.filterNot { it.mobileBackup }.forEach { uploadManager.retry(it.id) }
+        val backup = failed.filter { it.mobileBackup }
+        if (backup.isEmpty()) return
+        backup.forEach { uploadManager.cancel(it.id) }
+        requeueBackupFailures()
+    }
+
+    private fun requeueBackupFailures() {
+        preferences.requeueFailed()
+        manager.runNow()
+    }
     fun dismissTasks() = uploadManager.clearFinished()
     fun overwriteTask(id: String) = uploadManager.overwriteConflict(id)
     fun skipTask(id: String) = uploadManager.skipConflict(id)
