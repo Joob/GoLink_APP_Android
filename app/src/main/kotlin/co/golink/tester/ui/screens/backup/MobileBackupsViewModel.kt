@@ -133,12 +133,10 @@ class MobileBackupsViewModel @Inject constructor(
     @OptIn(FlowPreview::class)
     private fun observeUploadsForCounts() {
         viewModelScope.launch {
-            uploadManager.completedTick.sample(2000).collect { t ->
-                if (t > 0) {
-                    loadCounts()
-                    loadSummary()
-                    load()
-                }
+            // Só uploads de backup, e a cada 10 s: durante um backup grande isto
+            // eram ~7 pedidos (contagens, resumo e lista com nomes E2E) a cada 2 s.
+            uploadManager.completedBackupTick.sample(10_000).collect { t ->
+                if (t > 0) refresh()
             }
         }
     }

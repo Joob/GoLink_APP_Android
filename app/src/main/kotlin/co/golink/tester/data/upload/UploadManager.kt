@@ -119,8 +119,13 @@ class UploadManager @Inject constructor(
     private val _tasks = MutableStateFlow<List<UploadTask>>(emptyList())
     val tasks: StateFlow<List<UploadTask>> = _tasks.asStateFlow()
 
+    // Separados: um backup grande completa milhares de uploads e cada tick
+    // fazia o explorador (e o ecrã de backups) recarregar tudo.
     private val _completed = MutableStateFlow<Long>(0)
     val completedTick: StateFlow<Long> = _completed.asStateFlow()
+
+    private val _completedBackup = MutableStateFlow<Long>(0)
+    val completedBackupTick: StateFlow<Long> = _completedBackup.asStateFlow()
 
     private data class Source(
         val uri: Uri,
@@ -394,7 +399,8 @@ class UploadManager @Inject constructor(
                 }
                 update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Completed, progress = 1f, errorMessage = null, waitingForNetwork = false, networkError = false) else it } }
                 forgetTask(taskId)
-                _completed.value = System.currentTimeMillis()
+                if (mobileBackup) _completedBackup.value = System.currentTimeMillis()
+                else _completed.value = System.currentTimeMillis()
             } catch (t: Throwable) {
                 if (t is kotlinx.coroutines.CancellationException) throw t
                 if (t is ConflictException) {
@@ -489,7 +495,9 @@ class UploadManager @Inject constructor(
     // em memória degrada a UI e acaba em OOM. Só toca em tarefas mobileBackup;
     // uploads do browser ficam intactos.
     fun pruneFinishedBackups(keepLast: Int = 0) {
-        val finished = setOf(UploadTask.State.Completed, UploadTask.State.Cancelled)
+        // Failed também: as falhas ficam guardadas no worker e são retomadas
+        // como tarefas novas — sem isto somava-se uma linha falhada por execução.
+        val finished = setOf(UploadTask.State.Completed, UploadTask.State.Cancelled, UploadTask.State.Failed)
         val done = _tasks.value.filter { it.mobileBackup && it.state in finished }
         if (done.size <= keepLast) return
         val removeIds = done.dropLast(keepLast).map { it.id }.toSet()

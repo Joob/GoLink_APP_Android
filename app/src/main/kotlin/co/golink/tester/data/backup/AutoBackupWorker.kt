@@ -17,6 +17,7 @@ import co.golink.tester.data.encryption.E2EKeyManager
 import co.golink.tester.ui.i18n.tr
 import co.golink.tester.data.upload.UploadManager
 import co.golink.tester.data.upload.UploadTask
+import co.golink.tester.domain.settings.MobileBackupSettingRequest
 import co.golink.tester.network.SettingsApi
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -52,25 +53,38 @@ class AutoBackupWorker @AssistedInject constructor(
         ),
     )
 
-    override suspend fun doWork(): Result = try {
-        runBackup()
-    } catch (c: CancellationException) {
-        // Normal cancellation (user toggled off, REPLACE policy, etc.). Let it
-        // propagate so WorkManager can mark us as STOPPED cleanly.
-        BackupNotifications.cancelProgress(applicationContext)
-        throw c
-    } catch (t: Throwable) {
-        // Last-resort safety net. Anything reaching here would otherwise crash
-        // the worker thread and, on some OEM builds, the entire app process.
-        logger.log("AutoBackup", "Erro inesperado no worker: ${t.message}")
-        preferences.lastError = "Erro inesperado: ${t.message ?: t::class.simpleName}"
-        BackupNotifications.cancelProgress(applicationContext)
-        Result.retry()
-    } finally {
-        manager.endRun()
-        // Reagenda o próximo "tick" de ~1 min enquanto o backup estiver ligado
-        // e não tiver sido cancelado (isStopped = utilizador desligou/Doze parou).
-        if (preferences.enabled && !isStopped) manager.scheduleNextTick()
+    override suspend fun doWork(): Result {
+        // Outro worker (periódico vs tick/botão) já está a varrer os mesmos
+        // cursores: sai sem tocar em nada. O que está a correr reagenda o tick.
+        if (!manager.tryBeginRun()) {
+            logger.log("AutoBackup", "Já há um backup a correr — execução ignorada")
+            return Result.success()
+        }
+        return try {
+            runBackup()
+        } catch (c: CancellationException) {
+            // Normal cancellation (user toggled off, Doze stop, etc.). Let it
+            // propagate so WorkManager can mark us as STOPPED cleanly. Os
+            // uploads entregues ao UploadManager sobrevivem ao worker: sem os
+            // cancelar acabavam sozinhos e a execução seguinte, sem os ter
+            // registado, enviava-os outra vez.
+            uploadManager.cancelBackups()
+            BackupNotifications.cancelProgress(applicationContext)
+            throw c
+        } catch (t: Throwable) {
+            // Last-resort safety net. Anything reaching here would otherwise crash
+            // the worker thread and, on some OEM builds, the entire app process.
+            logger.log("AutoBackup", "Erro inesperado no worker: ${t.message}")
+            preferences.lastError = "Erro inesperado: ${t.message ?: t::class.simpleName}"
+            BackupNotifications.cancelProgress(applicationContext)
+            Result.retry()
+        } finally {
+            manager.endRun()
+            manager.finishRun()
+            // Reagenda o próximo "tick" de ~1 min enquanto o backup estiver ligado
+            // e não tiver sido cancelado (isStopped = utilizador desligou/Doze parou).
+            if (preferences.enabled && !isStopped) manager.scheduleNextTickAfter(id)
+        }
     }
 
     private suspend fun runBackup(): Result {
@@ -115,6 +129,24 @@ class AutoBackupWorker @AssistedInject constructor(
         // the outer try/catch in doWork can't tell the difference between "user
         // cancelled" and "network failed", and we end up showing "Sem ligação ao
         // servidor: Job was cancelled" with the work in a retry loop.
+        // Ligado no telemóvel com o POST ainda por confirmar (offline, ou o
+        // worker arrancou antes do pedido do ecrã): confirma primeiro, senão
+        // a leitura abaixo devolvia o "desligado" antigo e desligava-se sozinho.
+        if (preferences.pendingServerEnable) {
+            try {
+                val response = settingsApi.setMobileBackupEnabled(MobileBackupSettingRequest(enabled = true, device = true))
+                if (response.isSuccessful) preferences.pendingServerEnable = false
+            } catch (c: CancellationException) {
+                throw c
+            } catch (t: Throwable) {
+                logger.log("AutoBackup", "Confirmar activação falhou: ${t.message}")
+            }
+            if (preferences.pendingServerEnable) {
+                preferences.lastError = "Sem ligação ao servidor — a tentar de novo."
+                return Result.retry()
+            }
+        }
+
         var devicePaused = false
         val serverEnabled = try {
             val response = settingsApi.getMobileBackupSetting()
@@ -161,14 +193,25 @@ class AutoBackupWorker @AssistedInject constructor(
 
         // Snapshot total work for accurate "X of N" progress. Cancellation must
         // still propagate; only treat genuine MediaStore errors as "0 pending".
+        // Cada fonte: primeiro as falhas por retomar (ids guardados), depois o
+        // que é novo acima do cursor.
         val sources = enabledSources()
+        // null = o MediaStore falhou: não se sabe o que ainda existe, por isso
+        // as falhas ficam guardadas tal como estão.
+        val retryItems: Map<SourceSpec, List<BackupItem>?> = sources.associateWith { src ->
+            val failed = src.failed().filterValues { it < MAX_ATTEMPTS }
+            if (failed.isEmpty()) emptyList()
+            else safeList { scanner.scanIds(src.collection, failed.keys, setOf(src.folder)) }
+        }
         val totalPending = sources.sumOf { src ->
-            safeCount { scanner.countNew(src.collection, src.cursor(), setOf(src.folder)) }
+            retryItems.getValue(src).orEmpty().size +
+                safeCount { scanner.countNew(src.collection, src.cursor(), setOf(src.folder)) }
         }
         // Total de bytes por enviar nesta execução — denominador fixo do
         // "X MB de Y MB" na barra de progresso.
         val totalBytesPending = sources.sumOf { src ->
-            safeLong { scanner.sumNewBytes(src.collection, src.cursor(), setOf(src.folder)) }
+            retryItems.getValue(src).orEmpty().sumOf { it.sizeBytes.coerceAtLeast(0L) } +
+                safeLong { scanner.sumNewBytes(src.collection, src.cursor(), setOf(src.folder)) }
         }
 
         if (totalPending == 0) {
@@ -209,7 +252,7 @@ class AutoBackupWorker @AssistedInject constructor(
 
         // Verifica o espaço da conta ANTES de enviar: se os bytes por enviar não
         // cabem no que resta, não vale a pena tentar (o servidor rejeitaria os
-        // uploads). Avisa nas notificações e cancela — o próximo tick volta a
+        // uploads). Avisa nas notificações e pára — o próximo tick volta a
         // verificar e retoma assim que houver espaço.
         when (val quota = checkQuota(totalBytesPending)) {
             is QuotaResult.Insufficient -> {
@@ -223,7 +266,7 @@ class AutoBackupWorker @AssistedInject constructor(
                     text = "Faltam $shortfallLabel para enviar ${humanBytes(totalBytesPending)}. " +
                         "O backup fica em pausa até libertares espaço na conta.",
                 )
-                return Result.failure()
+                return Result.success()
             }
             QuotaResult.Ok, QuotaResult.Unknown -> Unit
         }
@@ -239,98 +282,93 @@ class AutoBackupWorker @AssistedInject constructor(
         var quotaExceeded = false
         val semaphore = Semaphore(PARALLEL)
 
-        // As colecções são processadas sequencialmente. Os cursores de scan
-        // avançam por tudo o que foi *visto* nesta execução, mesmo itens que
-        // falharam — os cursores persistidos (preferences.last*Id) só avançam
-        // pelo prefixo contíguo de sucessos: um ficheiro a falhar nunca faz o
-        // scan devolver o mesmo lote em loop, e as falhas são retomadas na
-        // execução seguinte.
+        // As colecções são processadas sequencialmente. O cursor persistido
+        // avança por tudo o que foi *visto* em cada lote; o que falhou (ou ficou
+        // a meio por cancelamento) vai para o conjunto de falhas da fonte e é
+        // retomado no início da execução seguinte. Antes o cursor parava no
+        // primeiro id falhado e tudo o que já tinha subido acima dele era
+        // reenviado em cada execução — com E2E o servidor não devolve 409, por
+        // isso ficavam cópias.
         for (source in sources) {
             if (isStopped || quotaExceeded) break
-            var scanId = source.cursor()
-            // Avanço do cursor por prefixo contíguo, calculado de forma
-            // incremental: `minFailedId` é o menor id que falhou nesta execução
-            // e `cursor` o maior id seguido de sucessos abaixo dele. Antes
-            // acumulávamos TODOS os ItemResult e re-ordenávamos a lista inteira
-            // a cada lote (O(n²) em memória e CPU) — pesado em galerias grandes.
-            var minFailedId = Long.MAX_VALUE
-            var cursor = source.cursor()
+            val failed = source.failed().toMutableMap()
 
+            // Envia um lote e regista o desfecho de cada item, mesmo se o worker
+            // for cancelado a meio (finally): o que acabou fica feito, o que não
+            // acabou fica nas falhas sem gastar tentativa.
+            suspend fun runBatch(batch: List<BackupItem>, advanceCursorTo: Long?): List<ItemResult> {
+                val done = java.util.concurrent.ConcurrentHashMap<Long, ItemResult>()
+                try {
+                    coroutineScope {
+                        batch.map { item ->
+                            async(Dispatchers.IO) {
+                                semaphore.withPermit { done[item.mediaStoreId] = uploadOne(item, totalPending, source.collection) }
+                            }
+                        }.awaitAll()
+                    }
+                } finally {
+                    val results = done.values
+                    // Falhou o lote inteiro = rede/servidor, não o ficheiro: não
+                    // conta como tentativa (senão uma queda de rede desistia de
+                    // ficheiros bons).
+                    val itemSpecific = results.any { it.success }
+                    for (item in batch) {
+                        val result = done[item.mediaStoreId]
+                        when {
+                            result?.success == true -> failed.remove(item.mediaStoreId)
+                            result == null -> failed.putIfAbsent(item.mediaStoreId, 0)
+                            else -> {
+                                val attempts = failed[item.mediaStoreId] ?: 0
+                                failed[item.mediaStoreId] =
+                                    if (itemSpecific && !isQuotaError(result.error)) attempts + 1 else attempts
+                            }
+                        }
+                    }
+                    if (advanceCursorTo != null && advanceCursorTo > source.cursor()) source.setCursor(advanceCursorTo)
+                    source.setFailed(failed)
+                }
+                return batch.mapNotNull { done[it.mediaStoreId] }
+            }
+
+            fun tally(results: List<ItemResult>): Int {
+                val batchFailed = results.count { !it.success }
+                uploadedTotal += results.count { it.success && !it.conflict }
+                conflictTotal += results.count { it.conflict }
+                failedTotal += batchFailed
+                // Servidor recusou por falta de espaço (HTTP 507) — pára já o
+                // resto do run: não adianta continuar a enviar.
+                if (results.any { !it.success && isQuotaError(it.error) }) quotaExceeded = true
+                return batchFailed
+            }
+
+            // 1) Falhas de execuções anteriores. As que já não existem (apagadas
+            // ou movidas para fora da pasta) saem do conjunto.
+            val retry = retryItems.getValue(source).orEmpty()
+            if (retryItems.getValue(source) != null) {
+                val existing = retry.mapTo(HashSet()) { it.mediaStoreId }
+                failed.keys.retainAll { it in existing || (failed[it] ?: 0) >= MAX_ATTEMPTS }
+            }
+            var retryAllFailed = false
+            for (chunk in retry.chunked(BATCH_SIZE)) {
+                if (isStopped || quotaExceeded) break
+                val results = runBatch(chunk, advanceCursorTo = null)
+                if (tally(results) == chunk.size) { retryAllFailed = true; break }
+            }
+            if (retry.isEmpty()) source.setFailed(failed)
+            // Tudo a falhar outra vez = sistémico: não adianta ir aos novos.
+            if (retryAllFailed) continue
+
+            // 2) Novos acima do cursor.
+            var scanId = source.cursor()
             while (!isStopped && !quotaExceeded) {
                 val batch = scanner.scanNew(source.collection, scanId, BATCH_SIZE, setOf(source.folder))
                 if (batch.isEmpty()) break
                 scanId = batch.maxOf { it.mediaStoreId }
 
                 updateProgressNotification(manager.runProgress.value.done, totalPending, source.collection)
-
-                val results = coroutineScope {
-                    batch.map { item ->
-                        async(Dispatchers.IO) {
-                            semaphore.withPermit {
-                                val (taskId, job) = uploadManager.enqueueWithId(
-                                    item.uri,
-                                    parentId = null,
-                                    mobileBackup = true,
-                                    backupFolder = item.bucket ?: item.collection.defaultFolder,
-                                    backupPath = item.devicePath,
-                                )
-                                job.join()
-                                val task = uploadManager.tasks.value.firstOrNull { it.id == taskId }
-                                val result = when (task?.state) {
-                                    UploadTask.State.Completed -> ItemResult(item, success = true)
-                                    UploadTask.State.Conflict -> {
-                                        uploadManager.skipConflict(taskId)
-                                        ItemResult(item, success = true, conflict = true)
-                                    }
-                                    else -> ItemResult(item, success = false, error = task?.errorMessage)
-                                }
-                                // Bump the visible counters as soon as each upload finishes.
-                                // We intentionally do NOT advance the MediaStore cursor here:
-                                // items run in parallel and can finish out of order, so
-                                // moving the cursor per-item could skip a still-pending
-                                // smaller id. Cursor advancement is done after awaitAll
-                                // using the contiguous-prefix rule.
-                                if (result.success && !result.conflict) {
-                                    preferences.recordUploaded(item.collection, item.sizeBytes)
-                                }
-                                // Progresso item-a-item (sucesso, conflito ou falha):
-                                // a UI e a notificação contam de forma monótona em
-                                // vez de saltar por lote. Os bytes do ficheiro
-                                // alimentam o "X MB de Y MB".
-                                manager.recordProcessed(item.sizeBytes)
-                                updateProgressNotification(manager.runProgress.value.done, totalPending, source.collection)
-                                result
-                            }
-                        }
-                    }.awaitAll()
-                }
-
-                // Avança o cursor persistido pela regra do prefixo contíguo, mas
-                // de forma incremental: os lotes são lidos por id ascendente
-                // (cada lote tem ids > os do lote anterior), por isso o menor id
-                // falhado em qualquer ponto da execução tapa tudo o que vem
-                // depois. O cursor fica no maior sucesso abaixo desse limite.
-                val batchMinFailed = results.asSequence()
-                    .filter { !it.success }
-                    .minOfOrNull { it.item.mediaStoreId } ?: Long.MAX_VALUE
-                if (batchMinFailed < minFailedId) minFailedId = batchMinFailed
-                val batchContiguous = results.asSequence()
-                    .filter { it.success && it.item.mediaStoreId < minFailedId }
-                    .maxOfOrNull { it.item.mediaStoreId }
-                if (batchContiguous != null && batchContiguous > cursor) cursor = batchContiguous
-                source.setCursor(cursor)
-
-                val batchFailed = results.count { !it.success }
-                uploadedTotal += results.count { it.success && !it.conflict }
-                conflictTotal += results.count { it.conflict }
-                failedTotal += batchFailed
-
-                // Servidor recusou por falta de espaço (HTTP 507) — pára já o
-                // resto do run: não adianta continuar a enviar.
-                if (results.any { !it.success && isQuotaError(it.error) }) {
-                    quotaExceeded = true
-                    break
-                }
+                val results = runBatch(batch, advanceCursorTo = scanId)
+                val batchFailed = tally(results)
+                if (quotaExceeded) break
 
                 // Bound the in-memory task list — see pruneFinishedBackups.
                 // keepLast generoso: a lista da UI tem scroll e remover linhas
@@ -359,7 +397,7 @@ class AutoBackupWorker @AssistedInject constructor(
                 title = "Sem espaço para o backup",
                 text = "A conta está cheia. O backup fica em pausa até libertares espaço ou fazeres upgrade.",
             )
-            return Result.failure()
+            return Result.success()
         }
 
         return if (failedTotal > 0) {
@@ -369,7 +407,9 @@ class AutoBackupWorker @AssistedInject constructor(
                 title = "Backup terminou com erros",
                 text = "$uploadedTotal enviados, $failedTotal falharam.",
             )
-            Result.retry()
+            // As falhas ficam guardadas e são retomadas no próximo tick; retry()
+            // só somava um backoff exponencial ao tick.
+            Result.success()
         } else {
             preferences.lastError = null
             if (uploadedTotal > 0) {
@@ -410,6 +450,35 @@ class AutoBackupWorker @AssistedInject constructor(
         ActivityManager.getMyMemoryState(info)
         info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }.getOrDefault(false)
+
+    private suspend fun uploadOne(item: BackupItem, totalPending: Int, collection: BackupCollection): ItemResult {
+        val (taskId, job) = uploadManager.enqueueWithId(
+            item.uri,
+            parentId = null,
+            mobileBackup = true,
+            backupFolder = item.bucket ?: item.collection.defaultFolder,
+            backupPath = item.devicePath,
+        )
+        job.join()
+        val task = uploadManager.tasks.value.firstOrNull { it.id == taskId }
+        val result = when (task?.state) {
+            UploadTask.State.Completed -> ItemResult(item, success = true)
+            UploadTask.State.Conflict -> {
+                uploadManager.skipConflict(taskId)
+                ItemResult(item, success = true, conflict = true)
+            }
+            else -> ItemResult(item, success = false, error = task?.errorMessage)
+        }
+        if (result.success && !result.conflict) {
+            preferences.recordUploaded(item.collection, item.sizeBytes)
+        }
+        // Progresso item-a-item (sucesso, conflito ou falha): a UI e a
+        // notificação contam de forma monótona em vez de saltar por lote. Os
+        // bytes do ficheiro alimentam o "X MB de Y MB".
+        manager.recordProcessed(item.sizeBytes)
+        updateProgressNotification(manager.runProgress.value.done, totalPending, collection)
+        return result
+    }
 
     private fun collectionLabel(collection: BackupCollection): String = when (collection) {
         BackupCollection.IMAGES -> "imagens"
@@ -459,6 +528,8 @@ class AutoBackupWorker @AssistedInject constructor(
         val folder: String,
         val cursor: () -> Long,
         val setCursor: (Long) -> Unit,
+        val failed: () -> Map<Long, Int>,
+        val setFailed: (Map<Long, Int>) -> Unit,
     )
 
     // Expande cada colecção ligada nas suas pastas seleccionadas. Opt-in: sem
@@ -473,6 +544,8 @@ class AutoBackupWorker @AssistedInject constructor(
                         folder = folder,
                         cursor = { preferences.folderCursor(collection, folder) },
                         setCursor = { preferences.setFolderCursor(collection, folder, it) },
+                        failed = { preferences.failedIds(collection, folder) },
+                        setFailed = { preferences.setFailedIds(collection, folder, it) },
                     ),
                 )
             }
@@ -490,6 +563,14 @@ class AutoBackupWorker @AssistedInject constructor(
         throw c
     } catch (_: Throwable) {
         0
+    }
+
+    private inline fun safeList(block: () -> List<BackupItem>): List<BackupItem>? = try {
+        block()
+    } catch (c: CancellationException) {
+        throw c
+    } catch (_: Throwable) {
+        null
     }
 
     private inline fun safeLong(block: () -> Long): Long = try {
@@ -582,5 +663,8 @@ class AutoBackupWorker @AssistedInject constructor(
         const val WORK_ONESHOT = "auto_backup_oneshot"
         private const val BATCH_SIZE = 25
         private const val PARALLEL = 3
+        // Falhas do próprio ficheiro (ilegível, 413, rejeitado pelo antivírus)
+        // antes de desistir; "Procurar de novo" volta a pô-las na fila.
+        private const val MAX_ATTEMPTS = 5
     }
 }

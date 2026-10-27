@@ -13,15 +13,22 @@ import co.golink.tester.data.AppLogger
 import co.golink.tester.data.upload.UploadManager
 import co.golink.tester.data.upload.UploadTask
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 
 /**
  * Progresso da execução actual do worker: itens processados / total e os bytes
@@ -43,6 +50,21 @@ class AutoBackupManager @Inject constructor(
     private val logger: AppLogger,
 ) {
     private val workManager: WorkManager get() = WorkManager.getInstance(context)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    // Um só worker de cada vez, seja qual for o pedido (periódico, tick ou
+    // botão): têm nomes únicos diferentes e o WorkManager não os serializa
+    // entre si. O segundo a chegar sai logo sem tocar nos cursores.
+    private val runLock = Mutex()
+
+    /** Há um worker a varrer/enviar neste momento. */
+    val isRunning: Boolean get() = runLock.isLocked
+
+    internal fun tryBeginRun(): Boolean = runLock.tryLock()
+
+    internal fun finishRun() {
+        if (runLock.isLocked) runLock.unlock()
+    }
 
     // O ecrã calculava "X de Y" a partir da lista de tarefas em memória, que o
     // worker poda a cada lote (pruneFinishedBackups) — a contagem encolhia e
@@ -70,9 +92,11 @@ class AutoBackupManager @Inject constructor(
 
     fun enable() {
         preferences.enabled = true
+        // O servidor pode ainda ter "desligado" (pausa da web, ou este aparelho
+        // desligado antes): o worker confirma o ligar antes de ler a flag.
+        preferences.pendingServerEnable = true
         logger.log("AutoBackup", "Backup automático activado")
         reschedule()
-        scheduleNextTick()
         runNow()
     }
 
@@ -81,12 +105,10 @@ class AutoBackupManager @Inject constructor(
     // que se reagenda a si própria ao fim de cada execução (ver o worker). O
     // periódico de 30 min fica como rede de segurança se o Doze matar a cadeia.
     //
-    // CRÍTICO: o tick e o "Fazer backup agora" partilham o MESMO nome único
-    // (WORK_ONESHOT) para o WorkManager os serializar — nunca correm dois
-    // workers em paralelo nos mesmos cursores. O tick usa KEEP (não perturba um
-    // já pendente/a correr); o botão usa REPLACE (assume prioridade). Antes eram
-    // nomes distintos e corriam em paralelo: o "Fazer backup agora" ficava sem
-    // efeito por vezes (o tick já tinha avançado o cursor / o botão desactivado).
+    // O tick e o "Fazer backup agora" partilham o nome único WORK_ONESHOT: o
+    // tick usa KEEP (não perturba um já pendente); o botão usa REPLACE, mas só
+    // quando nada está a correr (ver runNow). A exclusão entre workers é o
+    // runLock.
     fun scheduleNextTick() {
         if (!preferences.enabled) return
         val request = OneTimeWorkRequestBuilder<AutoBackupWorker>()
@@ -98,6 +120,21 @@ class AutoBackupManager @Inject constructor(
             ExistingWorkPolicy.KEEP,
             request,
         )
+    }
+
+    /**
+     * Agenda o próximo tick quando o worker [workId] sair de RUNNING. Chamado do
+     * finally do próprio worker: aí o WORK_ONESHOT ainda está RUNNING e um
+     * enqueue com KEEP era ignorado — a cadeia de 1 min morria ao fim do
+     * primeiro tick e só sobrava o periódico de 30 min.
+     */
+    fun scheduleNextTickAfter(workId: UUID) {
+        scope.launch {
+            runCatching {
+                workManager.getWorkInfoByIdFlow(workId).first { it == null || it.state != WorkInfo.State.RUNNING }
+                scheduleNextTick()
+            }.onFailure { logger.log("AutoBackup", "Reagendar tick falhou: ${it.message}") }
+        }
     }
 
     fun disable() {
@@ -128,16 +165,37 @@ class AutoBackupManager @Inject constructor(
             ExistingPeriodicWorkPolicy.UPDATE,
             request,
         )
-        // Re-arma a cadeia de 1 min com as novas condições.
-        scheduleNextTick()
+        // Re-arma a cadeia de 1 min com as novas condições. Um tick pendente
+        // tem as condições antigas: substitui-o (a correr, o finally do worker
+        // agenda o seguinte já com as novas).
+        if (!isRunning) enqueueOneshot(buildConstraints(), delayMinutes = TICK_MINUTES)
     }
 
-    fun runNow() {
-        if (!preferences.enabled) return
-        // User-initiated run: any network is enough so it starts immediately
-        // even on mobile data. The worker promotes itself to a foreground
-        // service inside doWork() so it can keep uploading even when the app
-        // is backgrounded.
+    /**
+     * Corre já. [userInitiated] = botão "Fazer backup agora": basta haver rede
+     * (o utilizador pediu explicitamente), mas respeita "só Wi-Fi". Activar,
+     * "Procurar de novo" e "Tentar de novo" seguem todas as condições — antes
+     * enviavam a galeria inteira por dados móveis/bateria.
+     *
+     * Nunca substitui um worker a correr: o REPLACE cancelava-o, mas os uploads
+     * já entregues ao UploadManager continuavam e o novo worker voltava a
+     * enviá-los (duplicados, o servidor não os deteta com E2E).
+     */
+    fun runNow(userInitiated: Boolean = false) {
+        if (!preferences.enabled || isRunning) return
+        val constraints = if (userInitiated) {
+            Constraints.Builder()
+                .setRequiredNetworkType(if (preferences.allowCellular) NetworkType.CONNECTED else NetworkType.UNMETERED)
+                .build()
+        } else {
+            buildConstraints()
+        }
+        enqueueOneshot(constraints, delayMinutes = 0L)
+    }
+
+    private fun enqueueOneshot(constraints: Constraints, delayMinutes: Long) {
+        // The worker promotes itself to a foreground service inside doWork()
+        // so it can keep uploading even when the app is backgrounded.
         //
         // We deliberately do NOT use setExpedited() — on Android 14+ that asks
         // the framework to start a `shortService` foreground service before
@@ -147,11 +205,8 @@ class AutoBackupManager @Inject constructor(
         // promptly enough for a user-initiated tap, and once doWork() calls
         // setForeground() we're protected from Doze.
         val request = OneTimeWorkRequestBuilder<AutoBackupWorker>()
-            .setConstraints(
-                Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                    .build(),
-            )
+            .setInitialDelay(delayMinutes, TimeUnit.MINUTES)
+            .setConstraints(constraints)
             .build()
         workManager.enqueueUniqueWork(
             AutoBackupWorker.WORK_ONESHOT,

@@ -479,7 +479,7 @@ object I18nRedesign {
         r("Marcar todas", "Select all", "Tout sélectionner", "Marcar todas"),
         r("Avançado", "Advanced", "Avancé", "Avanzado"),
         r("Procurar de novo na galeria", "Rescan the gallery", "Analyser à nouveau la galerie", "Volver a buscar en la galería"),
-        r("Verifica outra vez as fotos e vídeos. Os que já estão guardados não são enviados de novo.", "Checks your photos and videos again. Items already saved aren't uploaded again.", "Vérifie à nouveau vos photos et vidéos. Celles déjà enregistrées ne sont pas renvoyées.", "Vuelve a revisar tus fotos y vídeos. Los ya guardados no se envían de nuevo."),
+        r("Tenta outra vez os ficheiros que falharam. Os que já estão guardados não são enviados de novo.", "Tries the files that failed again. Items already saved aren't uploaded again.", "Réessaie les fichiers qui ont échoué. Ceux déjà enregistrés ne sont pas renvoyés.", "Vuelve a intentar los archivos que fallaron. Los ya guardados no se envían de nuevo."),
     )
 
     val en: Map<String, String> = rows.associate { it[0] to it[1] }

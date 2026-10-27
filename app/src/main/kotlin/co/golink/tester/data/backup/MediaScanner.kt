@@ -49,6 +49,11 @@ class MediaScanner @Inject constructor(
         folders: Set<String>? = null,
     ): List<BackupItem> = query(collection, sinceId, limit, folders)
 
+    /** Itens com estes ids que ainda existem (e continuam na pasta) — retoma de falhas. */
+    fun scanIds(collection: BackupCollection, ids: Collection<Long>, folders: Set<String>? = null): List<BackupItem> =
+        if (ids.isEmpty()) emptyList()
+        else ids.chunked(MAX_IN_ARGS).flatMap { query(collection, 0L, it.size, folders, ids = it) }
+
     fun countNew(collection: BackupCollection, sinceId: Long, folders: Set<String>? = null): Int {
         val projection = arrayOf(MediaStore.MediaColumns._ID)
         val (selection, args) = selectionFor(collection, sinceId, folders)
@@ -122,9 +127,16 @@ class MediaScanner @Inject constructor(
         collection: BackupCollection,
         sinceId: Long,
         folders: Set<String>?,
+        ids: Collection<Long>? = null,
     ): Pair<String, Array<String>> {
-        val base = "${MediaStore.MediaColumns._ID} > ?"
-        val args = mutableListOf(sinceId.toString())
+        val args = mutableListOf<String>()
+        val base = if (ids != null) {
+            args += ids.map { it.toString() }
+            "${MediaStore.MediaColumns._ID} IN (${ids.joinToString(",") { "?" }})"
+        } else {
+            args += sinceId.toString()
+            "${MediaStore.MediaColumns._ID} > ?"
+        }
         val extra = when (collection) {
             BackupCollection.DOCUMENTS, BackupCollection.DOWNLOADS -> {
                 val pathColumn: String
@@ -142,14 +154,31 @@ class MediaScanner @Inject constructor(
             }
             else -> ""
         }
-        // Filtro por pastas seleccionadas (opt-in). Só aplicável onde a coluna
-        // BUCKET_DISPLAY_NAME existe: colecções de média em qualquer versão e
-        // Files a partir do Android 10. Fora disso o filtro é ignorado.
-        val bucketFilter = if (!folders.isNullOrEmpty() && bucketColumnAvailable(collection)) {
-            val placeholders = folders.joinToString(",") { "?" }
-            args += folders
-            " AND ${MediaStore.MediaColumns.BUCKET_DISPLAY_NAME} IN ($placeholders)"
-        } else ""
+        // Filtro por pastas seleccionadas (opt-in). Com BUCKET_DISPLAY_NAME
+        // (média em qualquer versão, Files a partir do Android 10) filtra pela
+        // coluna; os ficheiros sem pasta aparecem no listFolders com o nome por
+        // omissão da colecção, por isso esse nome também apanha os NULL. Sem a
+        // coluna (Files antes do 10) filtra pela pasta-mãe no DATA — antes o
+        // filtro era ignorado e cada pasta escolhida varria a colecção inteira.
+        val bucketFilter = when {
+            folders.isNullOrEmpty() -> ""
+            bucketColumnAvailable(collection) -> {
+                val column = MediaStore.MediaColumns.BUCKET_DISPLAY_NAME
+                args += folders
+                val nullBucket = if (collection.defaultFolder in folders) " OR $column IS NULL" else ""
+                " AND ($column IN (${folders.joinToString(",") { "?" }})$nullBucket)"
+            }
+            else -> {
+                val column = MediaStore.MediaColumns.DATA
+                val clauses = folders.map { folder ->
+                    val escaped = folder.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    args += "%/$escaped/%"
+                    args += "%/$escaped/%/%"
+                    "($column LIKE ? ESCAPE '\\' AND $column NOT LIKE ? ESCAPE '\\')"
+                }
+                " AND (${clauses.joinToString(" OR ")})"
+            }
+        }
         return (base + extra + bucketFilter) to args.toTypedArray()
     }
 
@@ -176,7 +205,13 @@ class MediaScanner @Inject constructor(
     }?.trim('/', ' ')?.takeIf { it.isNotBlank() }?.take(255)
 
     @Suppress("DEPRECATION")
-    private fun query(collection: BackupCollection, sinceId: Long, limit: Int, folders: Set<String>?): List<BackupItem> {
+    private fun query(
+        collection: BackupCollection,
+        sinceId: Long,
+        limit: Int,
+        folders: Set<String>?,
+        ids: Collection<Long>? = null,
+    ): List<BackupItem> {
         val out = mutableListOf<BackupItem>()
         // BUCKET_DISPLAY_NAME só existe na colecção Files a partir do Android 10;
         // nas colecções de média existe desde sempre. Fallback: extrai do DATA.
@@ -190,7 +225,7 @@ class MediaScanner @Inject constructor(
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) add(MediaStore.MediaColumns.DATA)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(MediaStore.MediaColumns.RELATIVE_PATH)
         }.toTypedArray()
-        val (selection, selectionArgs) = selectionFor(collection, sinceId, folders)
+        val (selection, selectionArgs) = selectionFor(collection, sinceId, folders, ids)
         val sortOrder = "${MediaStore.MediaColumns._ID} ASC"
         val contentUri = contentUri(collection)
 
@@ -241,5 +276,11 @@ class MediaScanner @Inject constructor(
             }
         }
         return out
+    }
+
+    private companion object {
+        // Limite de variáveis do SQLite (999 nas versões antigas), com folga
+        // para os argumentos de pasta.
+        const val MAX_IN_ARGS = 500
     }
 }

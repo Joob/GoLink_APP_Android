@@ -120,18 +120,24 @@ class AutoBackupViewModel @Inject constructor(
         }.onFailure {
             preferences.lastError = "Não foi possível activar o backup: ${it.message ?: it::class.simpleName}"
         }
-        // Marca a flag como activa no servidor. Antes era o worker que enviava
-        // true a cada execução, mas isso sobrepunha-se ao pause remoto da Web.
-        // Agora o ligar é da responsabilidade exclusiva do dispositivo, aqui.
+        // Marca como activo no servidor (este aparelho, e levanta uma pausa da
+        // conta). Se falhar, o worker repete antes de ler a flag
+        // (pendingServerEnable) — não se desliga sozinho com o valor antigo.
         viewModelScope.launch {
-            runCatching { settingsApi.setMobileBackupEnabled(MobileBackupSettingRequest(true)) }
+            runCatching {
+                val response = settingsApi.setMobileBackupEnabled(MobileBackupSettingRequest(enabled = true, device = true))
+                if (response.isSuccessful) preferences.pendingServerEnable = false
+            }
         }
     }
 
+    // Desligar no telemóvel pausa só ESTE aparelho no servidor. Antes mandava
+    // a flag da conta a false e os outros telemóveis desligavam-se sozinhos.
     fun disable() {
         runCatching { manager.disable() }
+        preferences.pendingServerEnable = false
         viewModelScope.launch {
-            runCatching { settingsApi.setMobileBackupEnabled(MobileBackupSettingRequest(false)) }
+            runCatching { settingsApi.setMobileBackupEnabled(MobileBackupSettingRequest(enabled = false, device = true)) }
         }
     }
 
@@ -161,7 +167,7 @@ class AutoBackupViewModel @Inject constructor(
         if (runState.value == AutoBackupManager.RunState.Running) return
         runCatching {
             preferences.clearError()
-            manager.runNow()
+            manager.runNow(userInitiated = true)
         }.onFailure {
             preferences.lastError = "Não foi possível iniciar o backup: ${it.message ?: it::class.simpleName}"
         }
@@ -173,11 +179,13 @@ class AutoBackupViewModel @Inject constructor(
     // (mobile_backup_enabled=false) desligamos localmente — o ecrã volta logo ao
     // cartão "Activar backup". Chamado ao abrir/retomar o ecrã e em polling curto.
     fun syncServerEnabledState() {
-        if (!preferences.enabled) return
+        if (!preferences.enabled || preferences.pendingServerEnable) return
         viewModelScope.launch {
             runCatching {
                 val response = settingsApi.getMobileBackupSetting()
-                if (response.isSuccessful && response.body()?.mobile_backup_enabled == false) {
+                if (response.isSuccessful && response.body()?.mobile_backup_enabled == false &&
+                    !preferences.pendingServerEnable
+                ) {
                     manager.disable()
                 }
             }
@@ -249,8 +257,12 @@ class AutoBackupViewModel @Inject constructor(
         preferences.includeDownloads = value
     }
 
+    // "Procurar de novo": volta a tentar os ficheiros que falharam (incluindo
+    // os que já tinham desistido). Já não repõe os cursores — com E2E o
+    // servidor não deteta duplicados e reenviava a galeria inteira.
     fun resetCursors() {
-        preferences.resetCursors()
+        if (manager.isRunning) return
+        preferences.requeueFailed()
         manager.runNow()
     }
 

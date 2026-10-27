@@ -246,6 +246,10 @@ fun AutoBackupScreen(
         }
     }
 
+    // Áudio tem o seu próprio launcher: o partilhado chamava enable() outra vez
+    // (reagendar, runNow, POST) com o backup já ligado.
+    val audioPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+
     BackHandler(onBack = onBack)
 
     // Sincroniza com o servidor enquanto o ecrã está visível: se a Web pausar o
@@ -341,7 +345,7 @@ fun AutoBackupScreen(
                                 if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                                     ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) != PackageManager.PERMISSION_GRANTED
                                 ) {
-                                    permissionLauncher.launch(arrayOf(Manifest.permission.READ_MEDIA_AUDIO))
+                                    audioPermissionLauncher.launch(arrayOf(Manifest.permission.READ_MEDIA_AUDIO))
                                 }
                             }
                             BackupCollection.DOCUMENTS -> {
@@ -1077,7 +1081,7 @@ private fun RescanCard(onReset: () -> Unit) {
                     Text("Procurar de novo na galeria".tr(), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        "Verifica outra vez as fotos e vídeos. Os que já estão guardados não são enviados de novo.".tr(),
+                        "Tenta outra vez os ficheiros que falharam. Os que já estão guardados não são enviados de novo.".tr(),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

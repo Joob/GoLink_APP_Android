@@ -150,6 +150,8 @@ data class UpdateProfileFieldRequest(
 @Serializable
 data class MobileBackupSettingRequest(
     val enabled: Boolean,
+    // true = só este aparelho (X-Device-Id); sem ele é a flag da conta inteira.
+    val device: Boolean? = null,
 )
 
 @Serializable

@@ -113,6 +113,46 @@ class AutoBackupPreferences @Inject constructor(
     private fun folderCursorKey(collection: BackupCollection, folder: String): String =
         "$FOLDER_CURSOR_PREFIX${collection.name}|$folder"
 
+    // --- Falhas por pasta ----------------------------------------------------
+    // O cursor avança por tudo o que foi visto; o que falhou fica aqui (id →
+    // tentativas) e é retomado no início da execução seguinte. Antes o cursor
+    // ficava parado na primeira falha e tudo o que vinha depois era reenviado a
+    // cada execução — com E2E o servidor não deteta duplicados (sem 409).
+
+    @Synchronized
+    fun failedIds(collection: BackupCollection, folder: String): Map<Long, Int> =
+        prefs.getString(failedKey(collection, folder), null)
+            ?.split(',')
+            ?.mapNotNull { entry ->
+                val id = entry.substringBefore(':').toLongOrNull() ?: return@mapNotNull null
+                id to (entry.substringAfter(':', "0").toIntOrNull() ?: 0)
+            }
+            ?.toMap()
+            .orEmpty()
+
+    @Synchronized
+    fun setFailedIds(collection: BackupCollection, folder: String, value: Map<Long, Int>) {
+        prefs.edit {
+            if (value.isEmpty()) remove(failedKey(collection, folder))
+            else putString(failedKey(collection, folder), value.entries.joinToString(",") { "${it.key}:${it.value}" })
+        }
+    }
+
+    /** "Procurar de novo": volta a tentar também as falhas que já tinham desistido. */
+    @Synchronized
+    fun requeueFailed() {
+        prefs.edit {
+            prefs.all.filterKeys { it.startsWith(FAILED_PREFIX) }.forEach { (key, value) ->
+                val reset = (value as? String)?.split(',')
+                    ?.joinToString(",") { "${it.substringBefore(':')}:0" }
+                if (reset.isNullOrEmpty()) remove(key) else putString(key, reset)
+            }
+        }
+    }
+
+    private fun failedKey(collection: BackupCollection, folder: String): String =
+        "$FAILED_PREFIX${collection.name}|$folder"
+
     var lastImageId: Long
         get() = prefs.getLong(KEY_LAST_IMAGE_ID, 0L)
         set(value) { prefs.edit { putLong(KEY_LAST_IMAGE_ID, value) }; refresh() }
@@ -143,6 +183,13 @@ class AutoBackupPreferences @Inject constructor(
     var lastError: String?
         get() = prefs.getString(KEY_LAST_ERROR, null)
         set(value) { prefs.edit { putString(KEY_LAST_ERROR, value) }; refresh() }
+
+    // Ligado no telemóvel mas o servidor ainda não sabe (POST por confirmar).
+    // Enquanto true, um "desligado" lido do servidor é a flag antiga — não
+    // pode desligar localmente o que o utilizador acabou de ligar.
+    var pendingServerEnable: Boolean
+        get() = prefs.getBoolean(KEY_PENDING_SERVER_ENABLE, false)
+        set(value) = prefs.edit { putBoolean(KEY_PENDING_SERVER_ENABLE, value) }
 
     // Synchronized: o worker faz uploads em paralelo e este é um
     // read-modify-write — sem lock os incrementos perdem-se.
@@ -228,6 +275,8 @@ class AutoBackupPreferences @Inject constructor(
         const val KEY_FOLDERS_DOCUMENTS = "folders_documents"
         const val KEY_FOLDERS_DOWNLOADS = "folders_downloads"
         const val FOLDER_CURSOR_PREFIX = "fcursor|"
+        const val FAILED_PREFIX = "ffailed|"
+        const val KEY_PENDING_SERVER_ENABLE = "pending_server_enable"
         const val KEY_LAST_IMAGE_ID = "last_image_id"
         const val KEY_LAST_VIDEO_ID = "last_video_id"
         const val KEY_LAST_AUDIO_ID = "last_audio_id"
