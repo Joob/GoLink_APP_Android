@@ -33,7 +33,9 @@ class UploadRequestRepository @Inject constructor(
             )
         )
         check(response.isSuccessful) { "HTTP ${response.code()}: ${response.errorBody()?.string()?.take(300)}" }
-        val id = response.body()?.data?.id ?: error("ID not returned")
-        "${backendUrlHolder.current.trimEnd('/')}/request/$id/upload"
+        val data = response.body()?.data
+        val id = data?.id ?: error("ID not returned")
+        // Servidor antigo sem `link`: monta-se com o URL do backend.
+        data.attributes?.link ?: "${backendUrlHolder.current.trimEnd('/')}/request/$id/upload"
     }
 }

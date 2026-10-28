@@ -9,6 +9,7 @@ import co.golink.tester.domain.auth.LoginData
 import co.golink.tester.domain.auth.LoginRequest
 import co.golink.tester.domain.auth.OtpStatus
 import co.golink.tester.domain.auth.PendingTokenResponse
+import co.golink.tester.domain.auth.RegisterData
 import co.golink.tester.domain.auth.RegisterRequest
 import co.golink.tester.domain.auth.ResetPasswordRequest
 import co.golink.tester.domain.auth.SocialiteUrl
@@ -25,7 +26,7 @@ interface AuthApi {
     suspend fun login(@Body body: LoginRequest): Response<ApiEnvelope<LoginData>>
 
     @POST("api/register")
-    suspend fun register(@Body body: RegisterRequest): Response<ApiEnvelope<Unit>>
+    suspend fun register(@Body body: RegisterRequest): Response<ApiEnvelope<RegisterData>>
 
     @POST("api/logout")
     suspend fun logout(): Response<Unit>

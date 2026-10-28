@@ -228,8 +228,10 @@ fun FileViewerScreen(
                 },
                 actions = {
                     if (!viewModel.fromTrash) {
-                        IconButton(onClick = { viewModel.openShareDialog() }) {
-                            Icon(Icons.Outlined.Link, contentDescription = "Partilhar".tr())
+                        if (viewModel.canShare(current)) {
+                            IconButton(onClick = { viewModel.openShareDialog() }) {
+                                Icon(Icons.Outlined.Link, contentDescription = "Partilhar".tr())
+                            }
                         }
                         IconButton(onClick = { dialog = ViewerDialog.Details }) {
                             Icon(Icons.Outlined.Info, contentDescription = "Detalhes".tr())
@@ -455,7 +457,7 @@ fun FileViewerScreen(
             isShared = current.share != null,
             onDismiss = { fileSheetOpen = false },
             onDownload = { viewModel.download() },
-            onShare = { viewModel.openShareDialog() },
+            onShare = if (viewModel.canShare(current)) { { viewModel.openShareDialog() } } else null,
             onToggleFavourite = {},
             onRename = { dialog = ViewerDialog.Rename },
             onMove = {
@@ -464,6 +466,7 @@ fun FileViewerScreen(
             },
             onDelete = { dialog = ViewerDialog.Delete },
             onDetails = { dialog = ViewerDialog.Details },
+            canEdit = viewModel.canEdit(current),
             showFolderCollaboration = false,
         )
     }
@@ -498,7 +501,7 @@ fun FileViewerScreen(
         ViewerDialog.Details -> co.golink.tester.ui.components.ItemDetailsSheet(
             item = current,
             onDismiss = { dialog = ViewerDialog.None },
-            onShare = { viewModel.openShareDialog() },
+            onShare = if (viewModel.canShare(current)) { { viewModel.openShareDialog() } } else null,
             fetchShare = viewModel::fetchShare,
         )
         ViewerDialog.Move -> {

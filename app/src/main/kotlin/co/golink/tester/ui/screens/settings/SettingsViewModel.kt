@@ -87,6 +87,7 @@ class SettingsViewModel @Inject constructor(
     private val billingRepository: BillingRepository,
     private val e2eKeyManager: co.golink.tester.data.encryption.E2EKeyManager,
     autoBackupPreferences: co.golink.tester.data.backup.AutoBackupPreferences,
+    private val autoBackupManager: co.golink.tester.data.backup.AutoBackupManager,
     private val fileViewerSession: co.golink.tester.ui.screens.viewer.FileViewerSession,
 ) : ViewModel() {
 
@@ -110,6 +111,8 @@ class SettingsViewModel @Inject constructor(
     val hasPinSet: Boolean get() = securityPrefs.hasPinSet
 
     init {
+        // O cartão do backup reflecte pausas feitas na web sem abrir o ecrã do backup.
+        viewModelScope.launch { autoBackupManager.syncServerState() }
         loadStorage()
         loadSessions()
         loadTokens()
@@ -132,6 +135,7 @@ class SettingsViewModel @Inject constructor(
     val isUpdatingAvatar: StateFlow<Boolean> = _isUpdatingAvatar
 
     fun updateAvatar(jpeg: ByteArray) {
+        if (_isUpdatingAvatar.value) return
         _isUpdatingAvatar.value = true
         viewModelScope.launch {
             repository.updateAvatar(jpeg)
@@ -139,7 +143,7 @@ class SettingsViewModel @Inject constructor(
                     sessionManager.refreshUser()
                     _state.update { it.copy(toast = "Imagem de perfil actualizada".tr()) }
                 }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+                .onFailure { t -> _state.update { it.copy(toast = t.message ?: "Falha ao atualizar a imagem".tr()) } }
             _isUpdatingAvatar.value = false
         }
     }
@@ -172,6 +176,8 @@ class SettingsViewModel @Inject constructor(
         fileViewerSession.files = listOf(file)
         fileViewerSession.startId = file.id
         fileViewerSession.fromTrash = false
+        fileViewerSession.readOnlyIds = emptySet()
+        fileViewerSession.notOwnedIds = emptySet()
     }
 
     fun loadSessions() {
@@ -318,15 +324,25 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun updateProfileField(name: String, value: String) {
+    fun updateProfileField(name: String, value: String) = updateProfileFields(mapOf(name to value))
+
+    // Um campo de cada vez; pára no primeiro erro e só refresca o utilizador uma vez.
+    fun updateProfileFields(changes: Map<String, String>) {
+        if (changes.isEmpty() || _state.value.isUpdatingProfile) return
         _state.update { it.copy(isUpdatingProfile = true) }
         viewModelScope.launch {
-            repository.updateProfileField(name, value)
-                .onSuccess {
-                    sessionManager.refreshUser()
-                    _state.update { it.copy(isUpdatingProfile = false, toast = "Perfil actualizado".tr()) }
-                }
-                .onFailure { t -> _state.update { it.copy(isUpdatingProfile = false, toast = t.message) } }
+            var failure: Throwable? = null
+            for ((name, value) in changes) {
+                failure = repository.updateProfileField(name, value).exceptionOrNull()
+                if (failure != null) break
+            }
+            sessionManager.refreshUser()
+            _state.update {
+                it.copy(
+                    isUpdatingProfile = false,
+                    toast = failure?.let { t -> t.message ?: "Falha ao atualizar o perfil".tr() } ?: "Perfil actualizado".tr(),
+                )
+            }
         }
     }
 

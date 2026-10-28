@@ -363,7 +363,7 @@ fun BrowseItemGridCard(
                     }
                 }
                 if (item.share != null) {
-                    ShareBadge(modifier = Modifier.align(Alignment.BottomStart).padding(6.dp))
+                    ShareBadge(modifier = Modifier.align(Alignment.BottomStart).padding(6.dp), expired = item.share?.active == false)
                 }
             }
             Spacer(Modifier.height(if (small) 4.dp else 6.dp))
@@ -433,7 +433,7 @@ private fun CompactFolderCard(
                 } else {
                     Icon(Icons.Filled.Folder, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
                 }
-                if (item.share != null) ShareBadge(Modifier.align(Alignment.BottomEnd).size(14.dp))
+                item.share?.let { ShareBadge(Modifier.align(Alignment.BottomEnd).size(14.dp), expired = !it.active) }
             }
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -782,7 +782,7 @@ internal fun Leading(item: BrowseItem, large: Boolean = false) {
             }
         }
         if (item.share != null) {
-            ShareBadge(modifier = Modifier.align(Alignment.BottomEnd))
+            ShareBadge(modifier = Modifier.align(Alignment.BottomEnd), expired = item.share?.active == false)
         }
     }
 }
@@ -811,18 +811,20 @@ private fun CopyLinkButton(onClick: () -> Unit, modifier: Modifier, iconSize: Dp
 }
 
 @Composable
-private fun ShareBadge(modifier: Modifier = Modifier) {
+private fun ShareBadge(modifier: Modifier = Modifier, expired: Boolean = false) {
+    // Expirado/esgotado: a vermelho, como o badge "expirado" da web.
+    val colors = MaterialTheme.colorScheme
     Box(
         modifier = modifier
             .size(18.dp)
             .clip(RoundedCornerShape(5.dp))
-            .background(MaterialTheme.colorScheme.primary),
+            .background(if (expired) colors.error else colors.primary),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             Icons.Outlined.Link,
-            contentDescription = "Partilhado".tr(),
-            tint = MaterialTheme.colorScheme.onPrimary,
+            contentDescription = (if (expired) "Expirado" else "Partilhado").tr(),
+            tint = if (expired) colors.onError else colors.onPrimary,
             modifier = Modifier.size(11.dp),
         )
     }
@@ -880,7 +882,7 @@ private fun rowDateIso(item: BrowseItem): String? = item.deletedAtIso ?: when (i
 private fun rowDetail(item: BrowseItem): String = when (item) {
     is BrowseItem.Folder -> listOfNotNull(
         item.devicePath ?: item.itemCount?.let { if (it == 1) "1 item".tr() else "%d itens".tr().format(it) },
-        if (item.share != null) "Partilhada".tr() else null,
+        item.share?.let { (if (it.active) "Partilhada" else "Expirado").tr() },
     ).joinToString(" · ")
     is BrowseItem.File -> listOfNotNull(
         scanLabel(item),

@@ -141,15 +141,43 @@ fun AppNavHost(
         }
     }
 
+    fun gateTarget(): String? = when (top) {
+        TopState.NeedsAuth -> Routes.LANDING
+        TopState.NeedsOtp -> Routes.OTP
+        TopState.Authenticated -> Routes.HOME
+        TopState.BootstrapFailed -> Routes.BOOTSTRAP_ERROR
+        TopState.Loading -> null
+    }
+
+    // Voltar sem nada útil atrás (raiz da pilha ou splash de um deep link):
+    // recomeça no destino do gate em vez de esvaziar o NavHost ou ficar no splash.
+    fun backOrRestart() {
+        val previous = navController.previousBackStackEntry?.destination?.route
+        if (previous != null && previous != Routes.SPLASH) {
+            navController.popBackStack()
+            return
+        }
+        navController.navigate(gateTarget() ?: Routes.LANDING) {
+            popUpTo(0) { inclusive = true }
+            launchSingleTop = true
+        }
+    }
+
+    // Login "limpo" (após repor a password ou registo por convite): Landing → Login.
+    fun freshSignIn(registered: Boolean? = null) {
+        navController.navigate(Routes.LANDING) {
+            popUpTo(0) { inclusive = true }
+            launchSingleTop = true
+        }
+        navController.navigate(Routes.SIGN_IN)
+        if (registered != null) {
+            navController.currentBackStackEntry?.savedStateHandle?.set("registered", registered)
+        }
+    }
+
     LaunchedEffect(top, splashElapsed) {
         if (!splashElapsed) return@LaunchedEffect
-        val target = when (top) {
-            TopState.NeedsAuth -> Routes.LANDING
-            TopState.NeedsOtp -> Routes.OTP
-            TopState.Authenticated -> Routes.HOME
-            TopState.BootstrapFailed -> Routes.BOOTSTRAP_ERROR
-            TopState.Loading -> null
-        } ?: return@LaunchedEffect
+        val target = gateTarget() ?: return@LaunchedEffect
         val current = navController.currentDestination?.route
         val inAuthStack = current != null && (
             current == Routes.LANDING ||
@@ -204,7 +232,7 @@ fun AppNavHost(
                 onRegister = { navController.navigate(Routes.REGISTER) },
                 onForgotPassword = { navController.navigate(Routes.FORGOT) },
                 onSocialite = { provider -> navController.navigate(Routes.socialite(provider)) },
-                onBack = { navController.popBackStack() },
+                onBack = { backOrRestart() },
             )
         }
         composable(Routes.REGISTER) {
@@ -235,15 +263,12 @@ fun AppNavHost(
             ),
         ) { backStackEntry ->
             val token = backStackEntry.arguments?.getString("token").orEmpty()
+            // Gesto de voltar num deep link: a entrada anterior é o splash.
+            androidx.activity.compose.BackHandler { backOrRestart() }
             CreateNewPasswordScreen(
                 token = token,
-                onDone = {
-                    navController.navigate(Routes.SIGN_IN) {
-                        popUpTo(0) { inclusive = true }
-                        launchSingleTop = true
-                    }
-                },
-                onBack = { navController.popBackStack() },
+                onDone = { freshSignIn() },
+                onBack = { backOrRestart() },
             )
         }
         composable(
@@ -255,15 +280,11 @@ fun AppNavHost(
             ),
         ) { backStackEntry ->
             val invitation = backStackEntry.arguments?.getString("invitation").orEmpty()
+            // Gesto de voltar num deep link: a entrada anterior é o splash.
+            androidx.activity.compose.BackHandler { backOrRestart() }
             RegisterScreen(
-                onRegistered = { requiresVerification ->
-                    navController.navigate(Routes.SIGN_IN) {
-                        popUpTo(0) { inclusive = true }
-                        launchSingleTop = true
-                    }
-                    navController.currentBackStackEntry?.savedStateHandle?.set("registered", requiresVerification)
-                },
-                onBack = { navController.popBackStack() },
+                onRegistered = { requiresVerification -> freshSignIn(requiresVerification) },
+                onBack = { backOrRestart() },
                 invitationToken = invitation,
             )
         }

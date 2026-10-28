@@ -57,6 +57,7 @@ data class ShareResponseData(
 
 @Serializable
 data class ShareResponseAttributes(
+    val active: Boolean? = null,
     val permission: String? = null,
     val protected: Boolean? = null,
     val item_id: String,

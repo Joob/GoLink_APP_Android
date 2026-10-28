@@ -13,6 +13,9 @@ import javax.inject.Provider
 class App : Application(), Configuration.Provider, ImageLoaderFactory {
     @Inject lateinit var workerFactory: HiltWorkerFactory
 
+    // Desliga o backup automático ao sair da conta (criado já no arranque).
+    @Inject lateinit var autoBackupSessionGuard: co.golink.tester.data.backup.AutoBackupSessionGuard
+
     override fun onCreate() {
         super.onCreate()
         // Carrega o idioma guardado antes de qualquer UI compor.

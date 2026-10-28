@@ -305,6 +305,8 @@ class MobileBackupsViewModel @Inject constructor(
             .filter { it.isViewable() }
         fileViewerSession.startId = start.id
         fileViewerSession.fromTrash = false
+        fileViewerSession.readOnlyIds = emptySet()
+        fileViewerSession.notOwnedIds = emptySet()
     }
 
     fun download(item: BrowseItem.File) {
@@ -352,7 +354,11 @@ class MobileBackupsViewModel @Inject constructor(
         _state.update { it.copy(processing = "A converter…".tr()) }
         viewModelScope.launch {
             teamsRepository.convertToTeamFolder(folderId, invitations)
-                .onSuccess { _state.update { it.copy(processing = null, toast = "Pasta convertida".tr()) }; load() }
+                .onSuccess {
+                    _state.update { it.copy(processing = null, toast = "Pasta convertida".tr()) }
+                    load()
+                    teamsRepository.clearEncryptedNames(folderId)
+                }
                 .onFailure { t -> _state.update { it.copy(processing = null, toast = "Falha: ${t.message}") } }
         }
     }

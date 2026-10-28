@@ -74,7 +74,10 @@ fun CreateTeamFolderDialog(
     var email by remember { mutableStateOf("") }
     val invitations = remember { mutableStateListOf<InviteEntry>() }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val emailValid = email.trim().let { it.contains('@') && it.substringAfter('@').contains('.') }
+    val emailValid = android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
+    var submitted by remember { mutableStateOf(false) }
+    // O servidor exige pelo menos um convite; conta o e-mail escrito e ainda não adicionado.
+    val canSubmit = !submitted && (isConvert || name.isNotBlank()) && (invitations.isNotEmpty() || emailValid)
 
     fun addInvite() {
         val e = email.trim().lowercase()
@@ -118,7 +121,6 @@ fun CreateTeamFolderDialog(
             Text(
                 buildAnnotatedString {
                     withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append("Convidar".tr()) }
-                    withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) { append(" (" + "opcional".tr() + ")") }
                 },
                 fontSize = 13.sp,
                 modifier = Modifier.padding(top = 4.dp),
@@ -185,7 +187,7 @@ fun CreateTeamFolderDialog(
                 }
             }
             Text(
-                "Podes convidar pessoas agora ou mais tarde.".tr(),
+                "Adiciona pelo menos uma pessoa.".tr(),
                 fontSize = 11.5.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -193,11 +195,14 @@ fun CreateTeamFolderDialog(
             Spacer(Modifier.height(4.dp))
             Button(
                 onClick = {
+                    if (submitted) return@Button
+                    submitted = true
+                    addInvite()
                     val mapped = invitations.map { TeamInvitation(it.email, it.permission) }
                     if (isConvert) onConvert(mapped) else onCreate(name.trim(), mapped)
                     onDismiss()
                 },
-                enabled = isConvert || name.isNotBlank(),
+                enabled = canSubmit,
                 shape = RoundedCornerShape(14.dp),
                 contentPadding = PaddingValues(vertical = 15.dp),
                 modifier = Modifier.fillMaxWidth(),

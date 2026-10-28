@@ -17,7 +17,6 @@ import co.golink.tester.data.encryption.E2EKeyManager
 import co.golink.tester.ui.i18n.tr
 import co.golink.tester.data.upload.UploadManager
 import co.golink.tester.data.upload.UploadTask
-import co.golink.tester.domain.settings.MobileBackupSettingRequest
 import co.golink.tester.network.SettingsApi
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -57,7 +56,11 @@ class AutoBackupWorker @AssistedInject constructor(
         ),
     )
 
+    // "Fazer backup agora": ignora "só a carregar" também a meio da execução.
+    private val userInitiated = inputData.getBoolean(KEY_USER_INITIATED, false)
+
     override suspend fun doWork(): Result {
+        if (userInitiated) manager.userRunStarted()
         // Outro worker (periódico vs tick/botão) já está a varrer os mesmos
         // cursores: sai sem tocar em nada. O que está a correr reagenda o tick.
         if (!manager.tryBeginRun()) {
@@ -109,7 +112,7 @@ class AutoBackupWorker @AssistedInject constructor(
             return Result.retry()
         }
 
-        if (!hasMediaPermissions()) {
+        if (!hasMediaPermissions(enabledSources())) {
             preferences.lastError = "Falta permissão para ler fotos/vídeos. Reactiva a permissão e tenta de novo."
             return Result.failure()
         }
@@ -139,16 +142,9 @@ class AutoBackupWorker @AssistedInject constructor(
         // worker arrancou antes do pedido do ecrã): confirma primeiro, senão
         // a leitura abaixo devolvia o "desligado" antigo e desligava-se sozinho.
         if (preferences.pendingServerEnable) {
-            try {
-                val response = settingsApi.setMobileBackupEnabled(MobileBackupSettingRequest(enabled = true, device = true))
-                if (response.isSuccessful) preferences.pendingServerEnable = false
-            } catch (c: CancellationException) {
-                throw c
-            } catch (t: Throwable) {
-                logger.log("AutoBackup", "Confirmar activação falhou: ${t.message}")
-            }
+            manager.pushDeviceState()
             if (preferences.pendingServerEnable) {
-                preferences.lastError = "Sem ligação ao servidor — a tentar de novo."
+                preferences.lastError = "${AutoBackupManager.OFFLINE_ERROR} — a tentar de novo."
                 return Result.retry()
             }
         }
@@ -177,23 +173,24 @@ class AutoBackupWorker @AssistedInject constructor(
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
-            preferences.lastError = "Sem ligação ao servidor: ${t.message ?: t::class.simpleName}"
+            preferences.lastError = "${AutoBackupManager.OFFLINE_ERROR}: ${t.message ?: t::class.simpleName}"
             logger.log("AutoBackup", "Leitura backend erro: ${t.message}")
             return Result.retry()
         }
 
         if (!serverEnabled) {
             logger.log("AutoBackup", "Backup pausado a partir da Web — a desactivar localmente")
-            preferences.lastError = "Backups automáticos pausados a partir da Web."
+            preferences.lastError = AutoBackupManager.ACCOUNT_PAUSED_ERROR
             manager.disable()
             return Result.success()
         }
 
         // Pausa só deste telemóvel (na web): não desliga localmente — o próximo
         // ciclo retoma sozinho quando for retomado na web.
+        manager.setDevicePaused(devicePaused)
         if (devicePaused) {
             logger.log("AutoBackup", "Backup deste aparelho em pausa na Web")
-            preferences.lastError = "Backup deste telemóvel em pausa na Web."
+            preferences.lastError = AutoBackupManager.DEVICE_PAUSED_ERROR
             return Result.success()
         }
 
@@ -292,6 +289,17 @@ class AutoBackupWorker @AssistedInject constructor(
         // Sinalizado quando o servidor recusa por falta de espaço (HTTP 507) a
         // meio do envio — ex.: outra sessão encheu a conta depois do pre-flight.
         var quotaExceeded = false
+        // Definições mudadas a meio (rede, carregamento, backup desligado): as
+        // fontes e as constraints foram lidas no arranque, por isso verifica-se
+        // antes de cada ficheiro. O que fica por enviar vai para as falhas sem
+        // gastar tentativa e o próximo tick já usa as novas condições.
+        val conditionsChanged = java.util.concurrent.atomic.AtomicBoolean(false)
+        fun conditionsOk(): Boolean {
+            if (conditionsChanged.get()) return false
+            if (preferences.enabled && manager.conditionsMet(userInitiated)) return true
+            conditionsChanged.set(true)
+            return false
+        }
         val semaphore = Semaphore(PARALLEL)
 
         // As colecções são processadas sequencialmente. O cursor persistido
@@ -302,8 +310,11 @@ class AutoBackupWorker @AssistedInject constructor(
         // reenviado em cada execução — com E2E o servidor não devolve 409, por
         // isso ficavam cópias.
         for (source in sources) {
-            if (isStopped || quotaExceeded) break
+            if (isStopped || quotaExceeded || !conditionsOk()) break
+            // Colecção desligada ou pasta desmarcada depois do arranque.
+            if (!source.wanted()) continue
             val failed = source.failed().toMutableMap()
+            fun mayUpload(): Boolean = conditionsOk() && source.wanted()
 
             // Envia um lote e regista o desfecho de cada item, mesmo se o worker
             // for cancelado a meio (finally): o que acabou fica feito, o que não
@@ -316,6 +327,8 @@ class AutoBackupWorker @AssistedInject constructor(
                         batch.map { item ->
                             async(Dispatchers.IO) {
                                 semaphore.withPermit {
+                                    // Fica sem resultado: vai para as falhas sem gastar tentativa.
+                                    if (!mayUpload()) return@withPermit
                                     done[item.mediaStoreId] = uploadOne(item, totalPending, source.collection) { taskId, job ->
                                         started[item.mediaStoreId] = taskId to job
                                     }
@@ -381,7 +394,7 @@ class AutoBackupWorker @AssistedInject constructor(
             }
             var retryAllFailed = false
             for (chunk in retry.chunked(BATCH_SIZE)) {
-                if (isStopped || quotaExceeded) break
+                if (isStopped || quotaExceeded || !mayUpload()) break
                 val results = runBatch(chunk, advanceCursorTo = null)
                 if (tally(results, chunk.size)) { retryAllFailed = true; break }
             }
@@ -391,7 +404,7 @@ class AutoBackupWorker @AssistedInject constructor(
 
             // 2) Novos acima do cursor.
             var scanId = source.cursor()
-            while (!isStopped && !quotaExceeded) {
+            while (!isStopped && !quotaExceeded && mayUpload()) {
                 val batch = scanner.scanNew(source.collection, scanId, BATCH_SIZE, setOf(source.folder))
                 if (batch.isEmpty()) break
                 scanId = batch.maxOf { it.mediaStoreId }
@@ -416,6 +429,7 @@ class AutoBackupWorker @AssistedInject constructor(
 
         preferences.lastBackupAt = System.currentTimeMillis()
         BackupNotifications.cancelProgress(applicationContext)
+        if (conditionsChanged.get()) logger.log("AutoBackup", "Condições mudaram a meio — o resto fica para o próximo ciclo")
 
         // Sem espaço a meio do run: avisa e pausa (o servidor também envia
         // notificação/email). O próximo tick volta a verificar e retoma quando
@@ -432,7 +446,7 @@ class AutoBackupWorker @AssistedInject constructor(
         }
 
         return if (failedTotal > 0) {
-            preferences.lastError = "$failedTotal ficheiro(s) falharam"
+            preferences.lastError = "$failedTotal ${AutoBackupManager.FAILED_FILES_ERROR}"
             BackupNotifications.showResult(
                 applicationContext,
                 title = "Backup terminou com erros",
@@ -572,13 +586,15 @@ class AutoBackupWorker @AssistedInject constructor(
         val setCursor: (Long) -> Unit,
         val failed: () -> Map<Long, Int>,
         val setFailed: (Map<Long, Int>) -> Unit,
+        // A colecção continua ligada e a pasta escolhida (lido a cada ficheiro).
+        val wanted: () -> Boolean,
     )
 
     // Expande cada colecção ligada nas suas pastas seleccionadas. Opt-in: sem
     // pastas, a colecção não gera fontes.
     private fun enabledSources(): List<SourceSpec> = buildList {
-        fun addCollection(enabled: Boolean, collection: BackupCollection) {
-            if (!enabled) return
+        for (collection in BackupCollection.entries) {
+            if (!preferences.isIncluded(collection)) continue
             preferences.selectedFolders(collection).sorted().forEach { folder ->
                 add(
                     SourceSpec(
@@ -588,15 +604,11 @@ class AutoBackupWorker @AssistedInject constructor(
                         setCursor = { preferences.setFolderCursor(collection, folder, it) },
                         failed = { preferences.failedIds(collection, folder) },
                         setFailed = { preferences.setFailedIds(collection, folder, it) },
+                        wanted = { preferences.isIncluded(collection) && folder in preferences.selectedFolders(collection) },
                     ),
                 )
             }
         }
-        addCollection(preferences.includeImages, BackupCollection.IMAGES)
-        addCollection(preferences.includeVideos, BackupCollection.VIDEOS)
-        addCollection(preferences.includeAudios, BackupCollection.AUDIOS)
-        addCollection(preferences.includeDocuments, BackupCollection.DOCUMENTS)
-        addCollection(preferences.includeDownloads, BackupCollection.DOWNLOADS)
     }
 
     private inline fun safeCount(block: () -> Int): Int = try {
@@ -685,19 +697,25 @@ class AutoBackupWorker @AssistedInject constructor(
         return if (needed > free) QuotaResult.Insufficient(needed - free) else QuotaResult.Ok
     }
 
-    private fun hasMediaPermissions(): Boolean {
-        val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            buildList {
-                add(Manifest.permission.READ_MEDIA_IMAGES)
-                add(Manifest.permission.READ_MEDIA_VIDEO)
-                // Áudio só é exigido se a fonte estiver activa — não bloquear
-                // o backup de fotos por falta de uma permissão que não é usada.
-                if (preferences.includeAudios) add(Manifest.permission.READ_MEDIA_AUDIO)
-            }
-        } else {
-            listOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+    // Só as permissões das colecções com pastas escolhidas: Documentos/Downloads
+    // não precisam de nenhuma no Android 13+, e o "acesso limitado" do Android
+    // 14 (READ_MEDIA_VISUAL_USER_SELECTED) chega para fotos/vídeos — o scan vê
+    // apenas o que foi partilhado. Antes exigia sempre fotos+vídeos e falhava.
+    private fun hasMediaPermissions(sources: List<SourceSpec>): Boolean {
+        fun granted(p: String) = ContextCompat.checkSelfPermission(applicationContext, p) == PackageManager.PERMISSION_GRANTED
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return sources.isEmpty() || granted(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
-        return perms.all { ContextCompat.checkSelfPermission(applicationContext, it) == PackageManager.PERMISSION_GRANTED }
+        val limitedVisual = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+        return sources.map { it.collection }.toSet().all { collection ->
+            when (collection) {
+                BackupCollection.IMAGES -> granted(Manifest.permission.READ_MEDIA_IMAGES) || limitedVisual
+                BackupCollection.VIDEOS -> granted(Manifest.permission.READ_MEDIA_VIDEO) || limitedVisual
+                BackupCollection.AUDIOS -> granted(Manifest.permission.READ_MEDIA_AUDIO)
+                BackupCollection.DOCUMENTS, BackupCollection.DOWNLOADS -> true
+            }
+        }
     }
 
     private data class ItemResult(
@@ -712,6 +730,7 @@ class AutoBackupWorker @AssistedInject constructor(
     companion object {
         const val WORK_NAME = "auto_backup_periodic"
         const val WORK_ONESHOT = "auto_backup_oneshot"
+        const val KEY_USER_INITIATED = "user_initiated"
         private const val BATCH_SIZE = 25
         private const val PARALLEL = 3
         // Falhas do próprio ficheiro (ilegível, 413, rejeitado pelo antivírus)

@@ -123,6 +123,12 @@ fun RegisterScreen(
             Spacer(Modifier.height(10.dp))
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
         }
+        if (state.error == null && state.invitationError != null && !state.invitationInvalid) {
+            androidx.compose.material3.TextButton(
+                onClick = viewModel::retryInvitation,
+                enabled = !state.invitationLoading,
+            ) { Text("Tentar novamente".tr()) }
+        }
         Spacer(Modifier.height(20.dp))
         Button(
             onClick = viewModel::submit,

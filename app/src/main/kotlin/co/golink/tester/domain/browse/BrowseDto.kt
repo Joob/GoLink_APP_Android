@@ -109,6 +109,8 @@ data class SharedRefAttributes(
     val token: String? = null,
     val link: String? = null,
     val type: String? = null,
+    // Expirado ou sem downloads/visualizações: Links públicos lista-os na mesma.
+    val active: Boolean? = null,
 )
 
 @Serializable
@@ -124,6 +126,9 @@ data class BrowseAttributes(
     val color: String? = null,
     val emoji: JsonElement? = null,
     val isTeamFolder: Boolean = false,
+    // Raiz da Team Folder (os filhos herdam isTeamFolder) e dono; null = servidor antigo.
+    val is_team_root: Boolean? = null,
+    val owner_id: String? = null,
     val items: Int? = null,
     val trashed_items: Int? = null,
     val parent_id: String? = null,

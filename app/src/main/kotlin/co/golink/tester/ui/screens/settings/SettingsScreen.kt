@@ -5,6 +5,7 @@ import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.border
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.PriorityHigh
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.animation.togetherWith
@@ -41,6 +42,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import co.golink.tester.data.backup.AutoBackupManager
+import co.golink.tester.data.backup.AutoBackupState
+import co.golink.tester.data.backup.BackupCollection
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Add
@@ -189,6 +193,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val user by viewModel.user.collectAsStateWithLifecycle()
+    val isUpdatingAvatar by viewModel.isUpdatingAvatar.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
     val backupState by viewModel.autoBackupState.collectAsStateWithLifecycle()
     val backendUrl by viewModel.backendUrl.collectAsStateWithLifecycle()
@@ -304,8 +309,10 @@ fun SettingsScreen(
                 SettingsRoute.Profile -> ProfilePane(
                     user = user,
                     isUpdating = state.isUpdatingProfile,
-                    onUpdateField = viewModel::updateProfileField,
+                    isUpdatingAvatar = isUpdatingAvatar,
+                    onUpdateFields = viewModel::updateProfileFields,
                     onUpdateAvatar = viewModel::updateAvatar,
+                    onRetry = { viewModel.refreshUser() },
                 )
                 SettingsRoute.Password -> PasswordPane(
                     isLoading = state.isUpdatingPassword,
@@ -429,7 +436,7 @@ private fun MenuPane(
     user: User?,
     storage: co.golink.tester.domain.settings.StorageUsage?,
     activeSessions: Int,
-    backup: co.golink.tester.data.backup.AutoBackupState,
+    backup: AutoBackupState,
     onNavigate: (SettingsRoute) -> Unit,
     onOpenAutoBackup: () -> Unit,
     onOpenSupport: (admin: Boolean) -> Unit,
@@ -739,12 +746,30 @@ private fun MenuDivider() {
 }
 
 @Composable
-private fun AutoBackupFeaturedRow(backup: co.golink.tester.data.backup.AutoBackupState, onClick: () -> Unit) {
+private fun AutoBackupFeaturedRow(backup: AutoBackupState, onClick: () -> Unit) {
     val on = backup.enabled
-    val what = when {
-        backup.includeImages && backup.includeVideos -> "fotos e vídeos deste telemóvel".tr()
-        backup.includeVideos -> "vídeos deste telemóvel".tr()
-        else -> "fotos deste telemóvel".tr()
+    // Só conta o que é mesmo enviado (a mesma regra do worker).
+    val kinds = backup.activeCollections()
+    val what = when (kinds) {
+        emptySet<BackupCollection>() -> "nenhuma pasta escolhida".tr()
+        setOf(BackupCollection.IMAGES) -> "fotos deste telemóvel".tr()
+        setOf(BackupCollection.VIDEOS) -> "vídeos deste telemóvel".tr()
+        setOf(BackupCollection.IMAGES, BackupCollection.VIDEOS) -> "fotos e vídeos deste telemóvel".tr()
+        else -> "ficheiros deste telemóvel".tr()
+    }
+    val summary = when {
+        !on && backup.lastError == AutoBackupManager.ACCOUNT_PAUSED_ERROR -> "Em pausa na Web · toca para retomar".tr()
+        !on -> "Desativado · toca para configurar".tr()
+        backup.devicePaused -> "Em pausa na Web · toca para retomar".tr()
+        backup.needsAttention -> "Ativo · requer atenção".tr()
+        else -> "Ativo · %s".tr().format(what)
+    }
+    // ✓ verde só quando está mesmo a enviar; ligado mas parado → "!" âmbar.
+    val healthy = on && !backup.devicePaused && !backup.needsAttention && kinds.isNotEmpty()
+    val indicator = when {
+        healthy -> SettingsColors.Green
+        on -> SettingsColors.Amber
+        else -> Color.Transparent
     }
     // Cartão claro (mockup): mosaico verde, estado e indicador ✓.
     Surface(
@@ -777,7 +802,7 @@ private fun AutoBackupFeaturedRow(backup: co.golink.tester.data.backup.AutoBacku
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
-                    if (on) "Ativo · %s".tr().format(what) else "Desativado · toca para configurar".tr(),
+                    summary,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -789,15 +814,20 @@ private fun AutoBackupFeaturedRow(backup: co.golink.tester.data.backup.AutoBacku
                 modifier = Modifier
                     .size(22.dp)
                     .clip(RoundedCornerShape(6.dp))
-                    .background(if (on) SettingsColors.Green else Color.Transparent)
+                    .background(indicator)
                     .border(
                         1.5.dp,
-                        if (on) SettingsColors.Green else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                        if (on) indicator else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                         RoundedCornerShape(6.dp),
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                if (on) Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                if (on) Icon(
+                    if (healthy) Icons.Filled.Check else Icons.Filled.PriorityHigh,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp),
+                )
             }
         }
     }
@@ -876,32 +906,49 @@ private fun PaneColumn(content: @Composable ColumnScope.() -> Unit) {
 private fun ProfilePane(
     user: User?,
     isUpdating: Boolean,
-    onUpdateField: (name: String, value: String) -> Unit,
+    isUpdatingAvatar: Boolean,
+    onUpdateFields: (Map<String, String>) -> Unit,
     onUpdateAvatar: (ByteArray) -> Unit,
+    onRetry: () -> Unit,
 ) {
     if (user == null) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
             CircularProgressIndicator()
+            Spacer(Modifier.height(12.dp))
+            androidx.compose.material3.TextButton(onClick = onRetry) { Text("Tentar de novo".tr()) }
         }
         return
     }
 
-    var firstName by remember(user.id) { mutableStateOf(user.firstName.orEmpty()) }
-    var lastName by remember(user.id) { mutableStateOf(user.lastName.orEmpty()) }
-    var phoneNumber by remember(user.id) { mutableStateOf(user.phoneNumber.orEmpty()) }
-    var timezone by remember(user.id) { mutableStateOf(user.timezone.orEmpty()) }
+    // Cada campo volta ao valor do servidor quando este muda (após guardar ou alteração na web).
+    var firstName by remember(user.id, user.firstName) { mutableStateOf(user.firstName.orEmpty()) }
+    var lastName by remember(user.id, user.lastName) { mutableStateOf(user.lastName.orEmpty()) }
+    var phoneNumber by remember(user.id, user.phoneNumber) { mutableStateOf(user.phoneNumber.orEmpty()) }
+    var timezone by remember(user.id, user.timezone) { mutableStateOf(user.timezone.orEmpty()) }
 
     // Só os campos alterados vão ao servidor; sem alterações o botão fica inativo.
+    // Apelido e telefone podem ficar vazios; o nome não. Fuso compara-se pelo número ("1" == "1.0").
     val changes = listOf(
         "first_name" to (firstName to user.firstName.orEmpty()),
         "last_name" to (lastName to user.lastName.orEmpty()),
         "timezone" to (timezone to user.timezone.orEmpty()),
         "phone_number" to (phoneNumber to user.phoneNumber.orEmpty()),
-    ).filter { (_, v) -> v.first.trim() != v.second.trim() && v.first.isNotBlank() }
+    ).filter { (field, v) ->
+        val (new, old) = v.first.trim() to v.second.trim()
+        val changed = if (field == "timezone") {
+            val (n, o) = new.toDoubleOrNull() to old.toDoubleOrNull()
+            if (n != null && o != null) n != o else new != old
+        } else new != old
+        changed && (field != "first_name" || new.isNotEmpty())
+    }.associate { (field, v) -> field to v.first.trim() }
     val dirty = changes.isNotEmpty()
 
     // Fotografia: escolher → recortar → enviar (igual ao menu).
-    var pickedImage by remember { mutableStateOf<android.net.Uri?>(null) }
+    var pickedImage by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<android.net.Uri?>(null) }
     val avatarPicker = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia(),
     ) { uri -> if (uri != null) pickedImage = uri }
@@ -923,7 +970,7 @@ private fun ProfilePane(
     PaneColumn {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
             Box(
-                modifier = Modifier.size(76.dp).clip(CircleShape).clickable(onClick = pickAvatar),
+                modifier = Modifier.size(76.dp).clip(CircleShape).clickable(enabled = !isUpdatingAvatar, onClick = pickAvatar),
                 contentAlignment = Alignment.Center,
             ) {
                 if (user.avatar != null) {
@@ -938,10 +985,16 @@ private fun ProfilePane(
                         )
                     }
                 }
+                if (isUpdatingAvatar) {
+                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp, color = Color.White)
+                    }
+                }
             }
             Spacer(Modifier.height(10.dp))
             OutlinedButton(
                 onClick = pickAvatar,
+                enabled = !isUpdatingAvatar,
                 shape = RoundedCornerShape(50),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
@@ -963,8 +1016,8 @@ private fun ProfilePane(
 
         SettingsPrimaryButton(
             text = if (dirty) "Guardar alterações".tr() else "Sem alterações".tr(),
-            onClick = { changes.forEach { (field, v) -> onUpdateField(field, v.first.trim()) } },
-            enabled = dirty,
+            onClick = { onUpdateFields(changes) },
+            enabled = dirty && !isUpdating,
             loading = isUpdating,
         )
     }
@@ -976,6 +1029,7 @@ private val TIMEZONES = listOf(
     "-12.0" to "Ilha Baker (GMT-12)",
     "-11.0" to "Samoa, Midway (GMT-11)",
     "-10.0" to "Havai (GMT-10)",
+    "-9.5" to "Marquesas (GMT-9:30)",
     "-9.0" to "Alasca (GMT-9)",
     "-8.0" to "Los Angeles, Vancouver (GMT-8)",
     "-7.0" to "Denver, Phoenix (GMT-7)",
@@ -1002,8 +1056,12 @@ private val TIMEZONES = listOf(
     "9.0" to "Tóquio, Seul (GMT+9)",
     "9.5" to "Adelaide, Darwin (GMT+9:30)",
     "10.0" to "Sydney, Guam (GMT+10)",
+    "10.5" to "Ilha Lord Howe (GMT+10:30)",
     "11.0" to "Ilhas Salomão (GMT+11)",
     "12.0" to "Auckland, Fiji (GMT+12)",
+    "12.75" to "Ilhas Chatham (GMT+12:45)",
+    "13.0" to "Tonga, Samoa (GMT+13)",
+    "14.0" to "Kiritimati (GMT+14)",
 )
 
 private val COUNTRIES = listOf(

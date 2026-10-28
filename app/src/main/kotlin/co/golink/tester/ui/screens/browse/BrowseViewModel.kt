@@ -19,6 +19,7 @@ import co.golink.tester.data.teams.TeamsRepository
 import co.golink.tester.data.trash.TrashRepository
 import co.golink.tester.data.upload.UploadManager
 import co.golink.tester.domain.files.withTextExtension
+import co.golink.tester.domain.files.freeFileName
 import co.golink.tester.domain.files.OfficeFormat
 import co.golink.tester.domain.files.isOfficeFile
 import co.golink.tester.domain.files.withOfficeExtension
@@ -156,14 +157,6 @@ data class ActivityFeedUiState(
     val summary: co.golink.tester.domain.activity.ActivitySummary? = null,
 )
 
-data class RecentActivityUiState(
-    val sections: Map<co.golink.tester.domain.activity.ActivitySection, co.golink.tester.domain.activity.ActivityPage> = emptyMap(),
-    val loaded: Boolean = false,
-    val isLoading: Boolean = false,
-    val loadingMore: Set<co.golink.tester.domain.activity.ActivitySection> = emptySet(),
-    val error: String? = null,
-)
-
 @HiltViewModel
 class BrowseViewModel @Inject constructor(
     private val repository: BrowseRepository,
@@ -189,14 +182,10 @@ class BrowseViewModel @Inject constructor(
     private val _state = MutableStateFlow(BrowseUiState())
     val state: StateFlow<BrowseUiState> = _state.asStateFlow()
 
-    private val _activity = MutableStateFlow(RecentActivityUiState())
-
     // Feed da Atividade recente (redesign igual à web).
     private val _feed = MutableStateFlow(ActivityFeedUiState())
     val feed: StateFlow<ActivityFeedUiState> = _feed.asStateFlow()
     private var feedJob: Job? = null
-    val activity: StateFlow<RecentActivityUiState> = _activity.asStateFlow()
-    private var activityJob: Job? = null
 
     private val _shareState = MutableStateFlow<ShareDialogUiState?>(null)
     val shareState: StateFlow<ShareDialogUiState?> = _shareState.asStateFlow()
@@ -208,7 +197,11 @@ class BrowseViewModel @Inject constructor(
     val favouriteFolders: StateFlow<List<BrowseItem.Folder>> =
         kotlinx.coroutines.flow.combine(sessionManager.state, e2eKeys.unlocked) { s, _ ->
             val list = if (s is AuthState.Authenticated) s.user.favouriteFolders else emptyList()
-            list.map { f -> e2eKeys.openNameOrNull(f.nameEncrypted)?.let { f.copy(name = it) } ?: f }
+            // Trancado: o servidor só tem o placeholder; mostra "Protegido" em vez de "•".
+            list.map { f ->
+                e2eKeys.openNameOrNull(f.nameEncrypted)?.let { f.copy(name = it) }
+                    ?: if (f.nameEncrypted.isNullOrEmpty()) f else f.copy(name = "Protegido".tr())
+            }
         }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private var searchJob: Job? = null
@@ -254,13 +247,13 @@ class BrowseViewModel @Inject constructor(
                     // Itens novos podem ter ficado selados ao dono (Team Folder).
                     teamsRepository.invalidateClearedNames()
                     loadCurrent()
-                    pendingTextFileName?.let { openNewTextFileWhenListed(it) }
                 }
             }
         }
         viewModelScope.launch {
-            favouriteFolders.collect {
-                if (_state.value.mode == BrowseMode.Favourites) loadCurrent()
+            // Recarga silenciosa: mantém seleção e scroll (e não duplica o load do unlock).
+            favouriteFolders.collect { list ->
+                if (_state.value.mode == BrowseMode.Favourites) handleSimple(Result.success(list), BrowseMode.Favourites)
             }
         }
         viewModelScope.launch {
@@ -298,15 +291,32 @@ class BrowseViewModel @Inject constructor(
     }
 
     fun openFolder(item: BrowseItem.Folder) {
-        val newMode = when (_state.value.mode) {
-            is BrowseMode.TeamFolder -> BrowseMode.TeamFolder(id = item.id, name = item.name)
-            is BrowseMode.SharedWithMe -> BrowseMode.SharedWithMe(id = item.id, name = item.name)
+        val mode = _state.value.mode
+        val newMode = when {
+            mode is BrowseMode.TeamFolder -> BrowseMode.TeamFolder(id = item.id, name = item.name)
+            mode is BrowseMode.SharedWithMe -> BrowseMode.SharedWithMe(id = item.id, name = item.name)
+            // Links públicos: uma pasta de equipa abre no seu contexto (badge, nomes em claro).
+            mode == BrowseMode.Shared && item.isTeamFolder ->
+                if (item.ownerId == null || item.ownerId == currentUserId()) BrowseMode.TeamFolder(id = item.id, name = item.name)
+                else BrowseMode.SharedWithMe(id = item.id, name = item.name)
             else -> BrowseMode.Folder(id = item.id, name = item.name)
         }
         _state.update {
             it.copy(
                 mode = newMode,
                 crumbs = it.crumbs + Crumb(item.id, item.name),
+                searchQuery = "", searchChips = emptyList(),
+            )
+        }
+        loadCurrent()
+    }
+
+    /** Atalho do drawer: abre a favorita a partir de Favoritos, seja qual for a secção atual. */
+    fun openFavourite(folder: BrowseItem.Folder) {
+        _state.update {
+            it.copy(
+                mode = BrowseMode.Folder(id = folder.id, name = folder.name),
+                crumbs = listOf(Crumb(null, "Favoritos".tr(), origin = BrowseMode.Favourites), Crumb(folder.id, folder.name)),
                 searchQuery = "", searchChips = emptyList(),
             )
         }
@@ -349,7 +359,7 @@ class BrowseViewModel @Inject constructor(
     }
 
     fun openLatest() = switchTo(BrowseMode.Latest, "Atividade".tr())
-    fun openShared() = switchTo(BrowseMode.Shared, "Partilhado".tr())
+    fun openShared() = switchTo(BrowseMode.Shared, "Links públicos".tr())
     fun openFavourites() = switchTo(BrowseMode.Favourites, "Favoritos".tr())
     fun openTrash() {
         // Dias do aviso de retenção (config do servidor; carregado uma vez).
@@ -421,19 +431,32 @@ class BrowseViewModel @Inject constructor(
         loadCurrent()
     }
 
-    fun notifyComingSoon() {
-        _state.update { it.copy(toast = "Em breve".tr()) }
-    }
-
-    fun prepareViewer(files: List<BrowseItem.File>, startId: String, fromTrash: Boolean = _state.value.mode == BrowseMode.Trash) {
+    fun prepareViewer(
+        files: List<BrowseItem.File>,
+        startId: String,
+        fromTrash: Boolean = _state.value.mode == BrowseMode.Trash,
+        // Membro can-view (ou raiz do "Partilhado comigo", onde a permissão por ficheiro não se
+        // sabe — como no menu): o viewer não oferece editar/mover/apagar.
+        readOnlyIds: Set<String> = _state.value.let { st ->
+            val sharedRoot = (st.mode as? BrowseMode.SharedWithMe)?.let { it.id == null } == true
+            if (st.readOnly || sharedRoot) files.mapTo(HashSet()) { it.id } else emptySet()
+        },
+        // De outro dono (owner_id; servidor antigo → Partilhado comigo): sem partilhar (exige ser o dono).
+        notOwnedIds: Set<String> = currentUserId().let { me ->
+            val shared = _state.value.mode is BrowseMode.SharedWithMe
+            files.filter { f -> f.ownerId?.let { it != me } ?: shared }.mapTo(HashSet()) { it.id }
+        },
+    ) {
         fileViewerSession.files = files
         fileViewerSession.startId = startId
         fileViewerSession.fromTrash = fromTrash
+        fileViewerSession.readOnlyIds = readOnlyIds
+        fileViewerSession.notOwnedIds = notOwnedIds
     }
 
     fun downloadFile(item: BrowseItem.File) {
         downloader.downloadFile(item)
-            .onSuccess { _state.update { it.copy(toast = "Download iniciado: ${item.name}") } }
+            .onSuccess { _state.update { it.copy(toast = "Download iniciado: %s".tr().format(item.name)) } }
             .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
     }
 
@@ -441,7 +464,7 @@ class BrowseViewModel @Inject constructor(
         when (item) {
             is BrowseItem.File -> downloadFile(item)
             is BrowseItem.Folder -> downloader.downloadFolder(item)
-                .onSuccess { _state.update { it.copy(toast = "A preparar zip: ${item.name}") } }
+                .onSuccess { _state.update { it.copy(toast = "A preparar zip: %s".tr().format(item.name)) } }
                 .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
         }
     }
@@ -457,7 +480,7 @@ class BrowseViewModel @Inject constructor(
             downloadItem(items.first())
         } else {
             downloader.downloadZip(items, suggestedName = "ficheiros.zip")
-                .onSuccess { _state.update { it.copy(toast = "A preparar zip (${items.size})") } }
+                .onSuccess { _state.update { it.copy(toast = "A preparar zip (%d)".tr().format(items.size)) } }
                 .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
         }
     }
@@ -475,7 +498,13 @@ class BrowseViewModel @Inject constructor(
         viewModelScope.launch {
             // Em equipa/partilhado o nome fica em claro (os membros têm de o ler).
             filesRepository.createFolder(name.trim(), parentId, encryptName = isPrivateNameContext() && isPrivateTarget(parentId), color = color)
-                .onSuccess { _state.update { it.copy(toast = "Pasta criada".tr()) }; loadCurrent() }
+                .onSuccess {
+                    _state.update { it.copy(toast = "Pasta criada".tr()) }
+                    // Como em createFolderIn: a árvore (Mover, isPrivateTarget) tem de a ver.
+                    teamsRepository.invalidateClearedNames()
+                    loadNavigationTree()
+                    loadCurrent()
+                }
                 .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
         }
     }
@@ -483,14 +512,17 @@ class BrowseViewModel @Inject constructor(
     /** Cria um ficheiro .txt vazio na pasta atual (o nome ganha .txt se faltar). */
     fun createTextFile(name: String, openEditor: Boolean = true) {
         val parentId = currentParentId()
-        val filename = withTextExtension(name)
+        val filename = freeNameHere(withTextExtension(name))
         // Sem toast: quem confirma é o painel de uploads (e a lista recarrega no
         // completedTick) — anunciar "criado" aqui mentia se o upload falhasse.
-        uploadManager.createTextFile(filename, "", parentId)
+        val (taskId, job) = uploadManager.createTextFile(filename, "", parentId, trackCreated = openEditor)
         // "Abrir o editor depois de criar" desmarcado: só cria.
-        pendingTextFileName = if (openEditor) filename else null
-        pendingIsText = true
+        if (openEditor) openWhenCreated(taskId, job, isText = true)
     }
+
+    // Nome já usado na pasta → "notas (1).txt": criar nunca substitui.
+    private fun freeNameHere(filename: String): String =
+        freeFileName(filename, state.value.items.filterIsInstance<BrowseItem.File>().map { it.name })
 
     /** Formatos convertidos no servidor (odt) só se o ficheiro não for cifrado. */
     val canCreateServerConverted: Boolean get() = !uploadManager.encryptsUploads
@@ -498,40 +530,36 @@ class BrowseViewModel @Inject constructor(
     /** Documento ou folha de cálculo vazios no formato escolhido, a partir dos modelos em assets/office. */
     fun createDocument(format: OfficeFormat, name: String, openEditor: Boolean = true) {
         val parentId = currentParentId()
-        val filename = withOfficeExtension(name, format)
+        val filename = freeNameHere(withOfficeExtension(name, format))
         val asset = format.asset ?: return
         if (format.serverConverted && !canCreateServerConverted) return
         val bytes = runCatching { appContext.assets.open(asset).use { it.readBytes() } }.getOrElse { t ->
             _state.update { it.copy(toast = failText(t)) }
             return
         }
-        uploadManager.createDocument(filename, bytes, format.mimeType, parentId)
-        pendingTextFileName = if (openEditor) filename else null
-        pendingIsText = false
+        val (taskId, job) = uploadManager.createDocument(filename, bytes, format.mimeType, parentId, trackCreated = openEditor)
+        if (openEditor) openWhenCreated(taskId, job, isText = false)
     }
 
-    // Nome do ficheiro de texto (ou documento) acabado de criar, à espera de
-    // aparecer na lista recarregada para o abrirmos no editor.
-    private var pendingTextFileName: String? = null
-    // Criado pelo "Novo ficheiro de texto" (um .csv abre no editor de texto).
-    private var pendingIsText = false
-
     /**
+     * Abre o ficheiro que ESTE envio criou (pelo id, nunca pelo nome — um
+     * homónimo antigo abria em edição). Falhou, conflito ou cancelado → nada.
      * A recarga da lista corre em background, por isso esperamos que o ficheiro
      * novo apareça antes de pedir ao ecrã que abra o viewer em modo de edição.
+     * [isText]: criado pelo "Novo ficheiro de texto" (um .csv abre no editor de texto).
      */
-    private fun openNewTextFileWhenListed(name: String) {
+    private fun openWhenCreated(taskId: String, job: Job, isText: Boolean) {
         viewModelScope.launch {
+            job.join()
+            val id = uploadManager.takeCreated(taskId)?.id ?: return@launch
             val file = withTimeoutOrNull(15_000) {
                 _state
-                    .map { s -> s.items.filterIsInstance<BrowseItem.File>().firstOrNull { it.name == name } }
+                    .map { s -> s.items.filterIsInstance<BrowseItem.File>().firstOrNull { it.id == id } }
                     .filterNotNull()
                     .first()
-            }
-            pendingTextFileName = null
-            if (file == null) return@launch
+            } ?: return@launch
 
-            if (file.isOfficeFile() && !pendingIsText) {
+            if (file.isOfficeFile() && !isText) {
                 // O viewer abre-o no editor de documentos.
                 prepareViewer(listOf(file), file.id)
             } else {
@@ -608,7 +636,7 @@ class BrowseViewModel @Inject constructor(
             // Pela localização do item (em Recentes/Favoritos pode estar numa equipa).
             val private = !(item is BrowseItem.Folder && item.isTeamFolder) && isPrivateTarget(item.parentId)
             filesRepository.rename(item, newName.trim(), encryptName = private, appearance = appearance)
-                .onSuccess { _state.update { it.copy(toast = "Renomeado") }; loadCurrent() }
+                .onSuccess { _state.update { it.copy(toast = "Renomeado".tr()) }; loadCurrent() }
                 .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
         }
     }
@@ -617,7 +645,7 @@ class BrowseViewModel @Inject constructor(
         if (permanent) _state.update { it.copy(processing = "A eliminar…".tr()) }
         viewModelScope.launch {
             filesRepository.delete(listOf(item), permanent)
-                .onSuccess { _state.update { it.copy(processing = null, toast = if (permanent) "Eliminado" else "Movido para o lixo".tr()) }; loadCurrent() }
+                .onSuccess { _state.update { it.copy(processing = null, toast = if (permanent) "Eliminado".tr() else "Movido para o lixo".tr()) }; reloadAfterRemoving(item) }
                 .onFailure { t ->
                     android.util.Log.e("BrowseVM", "delete failed", t)
                     _state.update { it.copy(processing = null, toast = "Falha: %s".tr().format(t.message ?: t::class.java.simpleName)) }
@@ -628,8 +656,18 @@ class BrowseViewModel @Inject constructor(
     fun move(item: BrowseItem, toFolderId: String?) {
         viewModelScope.launch {
             filesRepository.move(listOf(item), toFolderId)
-                .onSuccess { _state.update { it.copy(toast = "Movido") }; teamsRepository.invalidateClearedNames(); loadCurrent() }
+                .onSuccess { _state.update { it.copy(toast = "Movido".tr()) }; teamsRepository.invalidateClearedNames(); reloadAfterRemoving(item) }
                 .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
+        }
+    }
+
+    /** Apagou/moveu a pasta onde se está (menu do cabeçalho): sobe um nível. */
+    private fun reloadAfterRemoving(item: BrowseItem) {
+        val crumbs = _state.value.crumbs
+        when {
+            crumbs.lastOrNull()?.id != item.id -> loadCurrent()
+            crumbs.size > 1 -> goToCrumb(crumbs.size - 2)
+            else -> openRoot()
         }
     }
 
@@ -708,6 +746,21 @@ class BrowseViewModel @Inject constructor(
         return false
     }
 
+    /**
+     * Restrições da conta (faturação/espaço), como na web: recusa antes de abrir
+     * o diálogo em vez de um "HTTP 401" no fim. Criar ficheiros conta como envio.
+     */
+    fun allowCreateFolder(): Boolean = allowed({ it.canCreateFolder }, "Criação de pastas temporariamente desativada".tr())
+
+    fun allowUpload(): Boolean = allowed({ it.canUpload }, "Envio temporariamente desativado".tr())
+
+    private fun allowed(check: (co.golink.tester.domain.user.User) -> Boolean, title: String): Boolean {
+        val user = (sessionManager.state.value as? AuthState.Authenticated)?.user ?: return true
+        if (check(user)) return true
+        _state.update { it.copy(uploadBlocked = UploadBlock(title, "Reveja o espaço disponível e as definições de faturação.".tr())) }
+        return false
+    }
+
     fun dismissUploadBlocked() = _state.update { it.copy(uploadBlocked = null) }
 
     private fun formatBytes(bytes: Long): String = when {
@@ -717,8 +770,10 @@ class BrowseViewModel @Inject constructor(
         else -> "$bytes B"
     }
 
-    fun remoteUpload(rawInput: String) {
-        val urls = rawInput.split(Regex("[\\s,]+"))
+    // Recebe a lista já separada pelo diálogo: voltar a juntar e partir por
+    // vírgulas cortava URLs válidos (ex. ?size=800,600).
+    fun remoteUpload(input: List<String>) {
+        val urls = input
             .map { it.trim() }
             .filter { it.startsWith("http://", ignoreCase = true) || it.startsWith("https://", ignoreCase = true) }
         if (urls.isEmpty()) {
@@ -728,7 +783,7 @@ class BrowseViewModel @Inject constructor(
         val parentId = currentParentId()
         viewModelScope.launch {
             filesRepository.remoteUpload(urls, parentId)
-                .onSuccess { _state.update { it.copy(toast = "${urls.size} URL(s) na fila") }; loadCurrent() }
+                .onSuccess { _state.update { it.copy(toast = "%d URL(s) na fila".tr().format(urls.size)) }; loadCurrent() }
                 .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
         }
     }
@@ -736,7 +791,12 @@ class BrowseViewModel @Inject constructor(
     fun createTeamFolder(name: String, invitations: List<TeamInvitation>) {
         viewModelScope.launch {
             teamsRepository.createTeamFolder(name.trim(), invitations)
-                .onSuccess { _state.update { it.copy(toast = "Pasta de equipa criada".tr()) }; uploadManager.invalidateMemberKeys(); loadCurrent() }
+                .onSuccess {
+                    _state.update { it.copy(toast = "Pasta de equipa criada".tr()) }
+                    uploadManager.invalidateMemberKeys()
+                    // Fora de Pastas de equipa a nova pasta não aparece: ir para lá.
+                    if ((_state.value.mode as? BrowseMode.TeamFolder)?.id == null && _state.value.mode is BrowseMode.TeamFolder) loadCurrent() else openTeamFolders()
+                }
                 .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
         }
     }
@@ -744,7 +804,13 @@ class BrowseViewModel @Inject constructor(
     fun convertToTeamFolder(folderId: String, invitations: List<TeamInvitation>) {
         viewModelScope.launch {
             teamsRepository.convertToTeamFolder(folderId, invitations)
-                .onSuccess { _state.update { it.copy(toast = "Pasta convertida".tr()) }; uploadManager.invalidateMemberKeys(); loadCurrent() }
+                .onSuccess {
+                    _state.update { it.copy(toast = "Pasta convertida".tr()) }
+                    uploadManager.invalidateMemberKeys()
+                    loadCurrent()
+                    // Como a web (clearTeamFolderNames): sem isto os membros veem "•".
+                    teamsRepository.clearEncryptedNames(folderId)
+                }
                 .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
         }
     }
@@ -775,41 +841,73 @@ class BrowseViewModel @Inject constructor(
         val parentId = currentParentId()
         viewModelScope.launch {
             // Percorrer a pasta (SAF) é lento em pastas grandes: em IO.
-            val files = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { collectFilesFromTree(treeUri) }
-            if (files.isEmpty()) {
+            val (rootName, entries) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                treeDisplayName(treeUri) to collectFilesFromTree(treeUri)
+            }
+            if (entries.isEmpty()) {
                 _state.update { it.copy(toast = "Pasta vazia ou sem ficheiros".tr()) }
                 return@launch
             }
-            if (!canUpload(files)) return@launch
+            if (!canUpload(entries.map { it.first })) return@launch
+            // Mantém a estrutura: cria a pasta raiz e as subpastas antes de enviar
+            // (antes ia tudo solto para a pasta atual e os nomes repetidos colidiam).
+            val encryptName = isPrivateNameContext() && isPrivateTarget(parentId)
+            val folderIds = mutableMapOf<String, String>()
+            val targets = runCatching {
+                // Pais antes dos filhos: ordenar por caminho garante "A" antes de "A/B".
+                entries.map { (_, dir) -> if (dir.isEmpty()) rootName else "$rootName/$dir" }
+                    .flatMap { full -> full.split('/').indices.map { i -> full.split('/').take(i + 1).joinToString("/") } }
+                    .distinct().sortedBy { it.count { c -> c == '/' } }
+                    .forEach { path ->
+                        val parent = if (path.contains('/')) folderIds.getValue(path.substringBeforeLast('/')) else parentId
+                        folderIds[path] = filesRepository.createFolder(path.substringAfterLast('/'), parent, encryptName = encryptName).getOrThrow().id
+                    }
+                entries.map { (uri, dir) -> uri to folderIds.getValue(if (dir.isEmpty()) rootName else "$rootName/$dir") }
+            }.getOrElse { t ->
+                _state.update { it.copy(toast = failText(t)) }
+                loadCurrent()
+                return@launch
+            }
             // A permissão persistente é da árvore: guarda-a para retomar após fechar a app.
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                files.forEach { uploadManager.enqueueWithId(it, parentId, treeUri = treeUri) }
+                targets.forEach { (uri, folderId) -> uploadManager.enqueueWithId(uri, folderId, treeUri = treeUri) }
             }
-            _state.update { it.copy(toast = "${files.size} ficheiro(s) na fila") }
+            loadCurrent()
+            _state.update { it.copy(toast = "%d ficheiro(s) na fila".tr().format(entries.size)) }
         }
     }
 
-    private fun collectFilesFromTree(treeUri: Uri): List<Uri> {
-        val out = mutableListOf<Uri>()
+    private fun treeDisplayName(treeUri: Uri): String {
+        val rootUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, DocumentsContract.getTreeDocumentId(treeUri))
+        return appContext.contentResolver.query(rootUri, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)
+            ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+            ?.takeIf { it.isNotBlank() } ?: "Pasta"
+    }
+
+    /** Ficheiros da árvore com o caminho relativo da pasta onde estão ("" = raiz). */
+    private fun collectFilesFromTree(treeUri: Uri): List<Pair<Uri, String>> {
+        val out = mutableListOf<Pair<Uri, String>>()
         val rootDocId = DocumentsContract.getTreeDocumentId(treeUri)
-        walkTree(treeUri, rootDocId, out)
+        walkTree(treeUri, rootDocId, "", out)
         return out
     }
 
-    private fun walkTree(treeUri: Uri, docId: String, out: MutableList<Uri>) {
+    private fun walkTree(treeUri: Uri, docId: String, path: String, out: MutableList<Pair<Uri, String>>) {
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId)
         val projection = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
         )
         appContext.contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
             while (cursor.moveToNext()) {
                 val childId = cursor.getString(0)
                 val mime = cursor.getString(1)
                 if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
-                    walkTree(treeUri, childId, out)
+                    val name = cursor.getString(2)?.replace('/', '_') ?: childId
+                    walkTree(treeUri, childId, if (path.isEmpty()) name else "$path/$name", out)
                 } else {
-                    out += DocumentsContract.buildDocumentUriUsingTree(treeUri, childId)
+                    out += DocumentsContract.buildDocumentUriUsingTree(treeUri, childId) to path
                 }
             }
         }
@@ -923,9 +1021,24 @@ class BrowseViewModel @Inject constructor(
     }
 
     /** Texto de erro para toasts; 403 = sem permissão de edição (ex.: membro só de leitura). */
-    private fun failText(t: Throwable): String =
-        if (t.message?.startsWith("HTTP 403") == true) "Não tens permissão de edição nesta pasta".tr()
-        else "Falha: %s".tr().format(t.message)
+    private fun failText(t: Throwable): String {
+        val msg = t.message.orEmpty()
+        if (msg.startsWith("HTTP 403")) return "Não tens permissão de edição nesta pasta".tr()
+        // "HTTP 4xx: {json}" dos repositórios: mostra a mensagem do servidor, não o JSON.
+        val body = runCatching {
+            kotlinx.serialization.json.Json.parseToJsonElement(msg.substringAfter(": ", "")) as kotlinx.serialization.json.JsonObject
+        }.getOrNull()
+        val serverMsg = body?.let { o ->
+            val errors = o["errors"] as? kotlinx.serialization.json.JsonObject
+            val first = (errors?.values?.firstOrNull() as? kotlinx.serialization.json.JsonArray)?.firstOrNull()
+            ((first ?: o["message"]) as? kotlinx.serialization.json.JsonPrimitive)?.content
+        } ?: return "Falha: %s".tr().format(msg)
+        return when {
+            serverMsg.contains("members limit", ignoreCase = true) -> "Atingiste o limite de membros do teu plano.".tr()
+            serverMsg.contains("action is not allowed", ignoreCase = true) -> "Esta ação não é permitida no teu plano.".tr()
+            else -> "Falha: %s".tr().format(serverMsg)
+        }
+    }
 
     // ---- Atividade recente ----------------------------------------------------
 
@@ -974,46 +1087,6 @@ class BrowseViewModel @Inject constructor(
     }
 
     fun setActivityTab(tab: String) = _feed.update { it.copy(tab = tab) }
-
-    @Suppress("unused")
-    private fun loadRecentActivitySections(silent: Boolean = false) {
-        activityJob?.cancel()
-        if (!silent) _activity.update { it.copy(isLoading = true, error = null) }
-        activityJob = viewModelScope.launch {
-            activityRepository.recent()
-                .onSuccess { sections ->
-                    _activity.update { RecentActivityUiState(sections = sections, loaded = true) }
-                }
-                .onFailure { t ->
-                    _activity.update { it.copy(isLoading = false, error = if (it.loaded) null else t.message) }
-                    if (_activity.value.loaded) _state.update { it.copy(toast = failText(t)) }
-                }
-            _state.update { it.copy(isRefreshing = false) }
-        }
-    }
-
-    fun loadMoreActivity(section: co.golink.tester.domain.activity.ActivitySection) {
-        val current = _activity.value.sections[section] ?: return
-        if (!current.hasMore || section in _activity.value.loadingMore) return
-        _activity.update { it.copy(loadingMore = it.loadingMore + section) }
-        viewModelScope.launch {
-            activityRepository.recentSection(section, current.page + 1)
-                .onSuccess { next ->
-                    _activity.update { st ->
-                        val prev = st.sections[section] ?: return@update st
-                        val seen = prev.entries.map { it.id }.toSet()
-                        val merged = prev.copy(
-                            entries = prev.entries + next.entries.filter { it.id !in seen },
-                            hasMore = next.hasMore,
-                            page = next.page,
-                        )
-                        st.copy(sections = st.sections + (section to merged))
-                    }
-                }
-                .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
-            _activity.update { it.copy(loadingMore = it.loadingMore - section) }
-        }
-    }
 
     /** Histórico de um item (separador Atividade dos Detalhes). */
     suspend fun itemActivity(item: BrowseItem, page: Int): Result<co.golink.tester.domain.activity.ActivityPage> =
@@ -1072,6 +1145,42 @@ class BrowseViewModel @Inject constructor(
     }
 
     fun currentUserId(): String? = (sessionManager.state.value as? AuthState.Authenticated)?.user?.id
+
+    /** Dono conhecido e sou eu (sem sessão ou sem dono → não). */
+    fun isOwnedByMe(ownerId: String?): Boolean = ownerId != null && ownerId == currentUserId()
+
+    /**
+     * Itens da Atividade que não posso editar/mover/apagar. Nos lotes decide o
+     * can_edit de cada ficheiro: o do lote é falso se um só não for editável, e
+     * tirava a edição aos meus ficheiros num lote misto.
+     */
+    fun activityReadOnlyIds(): Set<String> = _feed.value.entries.flatMapTo(HashSet()) { e ->
+        val editable = e.editable()
+        (if (editable) emptyList() else listOfNotNull(e.base.item?.id)) +
+            e.files.filterNot { f -> e.fileCanEdit[f.id] ?: editable }.map { it.id }
+    }
+
+    /** Itens da Atividade de outro dono: sem partilhar/copiar link (exige ser o dono). */
+    fun activityNotOwnedIds(): Set<String> {
+        val me = currentUserId() ?: return emptySet()
+        return _feed.value.entries
+            .filter { e -> (e.base.itemOwnerId ?: e.folderOwnerId)?.let { it != me } == true }
+            .flatMapTo(HashSet()) { e -> listOfNotNull(e.base.item?.id) + e.files.map { it.id } }
+    }
+
+    /** Ficheiros visualizáveis da Atividade (deslizar no viewer), sem os que já estão no lixo. */
+    fun activityViewableFiles(): List<BrowseItem.File> = _feed.value.entries
+        .flatMap { e -> (if (e.base.itemTrashed) emptyList() else listOfNotNull(e.base.item)) + e.files.filterNot { it.id in e.trashedFileIds } }
+        .filterIsInstance<BrowseItem.File>()
+        .filter { it.isViewable() }
+        .distinctBy { it.id }
+
+    // Servidor sem can_edit: só o dono (num lote, o dono da pasta). Sessão em transição → decide o servidor.
+    private fun co.golink.tester.domain.activity.FeedEntry.editable(): Boolean = canEdit ?: run {
+        val me = currentUserId() ?: return@run true
+        val owner = base.itemOwnerId ?: folderOwnerId
+        owner == null || owner == me
+    }
 
     // ---- Copiar link -----------------------------------------------------------
 
@@ -1344,17 +1453,28 @@ class BrowseViewModel @Inject constructor(
         loadPaged(BrowseMode.Trash, _state.value.currentPage.coerceAtLeast(1), silent = true)
     }
 
+    // Duplo toque na estrela enquanto o pedido/refreshUser não termina: ignora.
+    private val favouriteInFlight = mutableSetOf<String>()
+
     fun toggleFavourite(folder: BrowseItem.Folder) {
+        if (!favouriteInFlight.add(folder.id)) return
         val isFavourite = isFavourite(folder)
         viewModelScope.launch {
-            val result = if (isFavourite) favouritesRepository.remove(folder.id)
-            else favouritesRepository.add(folder.id)
-            result
-                .onSuccess {
-                    sessionManager.refreshUser()
-                    _state.update { it.copy(toast = if (isFavourite) "Removido dos favoritos".tr() else "Adicionado aos favoritos".tr()) }
-                }
-                .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
+            try {
+                val result = if (isFavourite) favouritesRepository.remove(folder.id)
+                else favouritesRepository.add(folder.id)
+                result
+                    .onSuccess {
+                        val refreshed = sessionManager.refreshUser()
+                        _state.update {
+                            it.copy(toast = if (refreshed.isFailure) failText(refreshed.exceptionOrNull()!!)
+                            else if (isFavourite) "Removido dos favoritos".tr() else "Adicionado aos favoritos".tr())
+                        }
+                    }
+                    .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
+            } finally {
+                favouriteInFlight.remove(folder.id)
+            }
         }
     }
 
@@ -1387,7 +1507,17 @@ class BrowseViewModel @Inject constructor(
         }
         loadJob = viewModelScope.launch {
             when (mode) {
-                BrowseMode.Favourites -> handleSimple(Result.success(favouriteFolders.value.toList<BrowseItem>()), mode)
+                // A lista vem do utilizador: refresca-o (pull-to-refresh, após apagar/mover/renomear).
+                // Uma lista nova chega pelo coletor de favouriteFolders; aqui só se monta quando
+                // não muda (o coletor não emite) ou falha — então com a cache e o erro.
+                BrowseMode.Favourites -> {
+                    val before = favouriteFolders.value
+                    val refreshed = sessionManager.refreshUser()
+                    if (refreshed.isFailure || favouriteFolders.value == before) {
+                        handleSimple(Result.success(favouriteFolders.value.toList<BrowseItem>()), mode)
+                    }
+                    refreshed.exceptionOrNull()?.let { t -> _state.update { it.copy(toast = failText(t)) } }
+                }
                 is BrowseMode.SearchResults -> handleSimple(repository.search(mode.query), mode)
                 else -> loadPaged(mode, pagesToReload, silent)
             }
@@ -1523,6 +1653,10 @@ class BrowseViewModel @Inject constructor(
             is BrowseMode.Folder -> repository.folderFingerprint(mode.id)
             // Edições/uploads de outros membros aparecem logo (modified, tamanho…).
             is BrowseMode.SharedWithMe -> teamsRepository.sharedWithMeFingerprint(mode.id)
+            // Sem endpoint de fingerprint: assinatura da 1.ª página (links criados/revogados/expirados).
+            BrowseMode.Shared -> repository.listShared(page = 1, query = browseQuery()).map { p ->
+                "${p.total}|" + p.items.joinToString(",") { "${it.id}:${it.share?.token}:${it.share?.active}" }
+            }
             else -> return
         }.getOrNull() ?: return
         if (mode != _state.value.mode) return // navegou entretanto
@@ -1539,7 +1673,8 @@ class BrowseViewModel @Inject constructor(
         result
             .onSuccess { items ->
                 _state.update {
-                    it.copy(items = sorted(items), isLoading = false, isRefreshing = false, currentPage = 1, lastPage = 1)
+                    // Favoritos: ordem manual do servidor (favourite_folder.position), como no drawer e na web.
+                    it.copy(items = if (mode == BrowseMode.Favourites) items else sorted(items), isLoading = false, isRefreshing = false, currentPage = 1, lastPage = 1)
                 }
             }
             .onFailure { t ->
@@ -1635,7 +1770,7 @@ class BrowseViewModel @Inject constructor(
 
     fun setSortMode(mode: SortMode) {
         viewPreferences.setSortMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BROWSE, mode)
-        _state.update { it.copy(sortMode = mode, items = sortedWith(it.items, mode)) }
+        _state.update { it.copy(sortMode = mode, items = if (it.mode == BrowseMode.Favourites) it.items else sortedWith(it.items, mode)) }
         // Listas paginadas: a ordem tem de vir do servidor (senão só ordenava o que já carregou).
         if (_state.value.lastPage > 1) loadCurrent()
     }

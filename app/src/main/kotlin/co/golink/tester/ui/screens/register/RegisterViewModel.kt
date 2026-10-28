@@ -54,10 +54,23 @@ class RegisterViewModel @Inject constructor(
 
     private var invitationInitialized = false
 
+    /** Registo aberto por link de convite: o campo do código fica escondido. */
+    private var invitedFlow = false
+
+    /** Nova tentativa após falha de rede (um convite inválido não se repete). */
+    fun retryInvitation() {
+        val s = _state.value
+        if (s.invitationInvalid || s.invitationLoading || s.invitationToken.isBlank()) return
+        invitationInitialized = false
+        _state.update { it.copy(invitationError = null) }
+        initInvitation(s.invitationToken)
+    }
+
     /** Loads the invited email for a registration invitation token and locks the field. */
     fun initInvitation(token: String) {
         if (invitationInitialized || token.isBlank()) return
         invitationInitialized = true
+        invitedFlow = true
         _state.update { it.copy(invitationToken = token, invitationLoading = true) }
         viewModelScope.launch {
             authRepository.getInvitation(token)
@@ -114,14 +127,29 @@ class RegisterViewModel @Inject constructor(
                 passwordConfirmation = s.passwordConfirmation,
                 invitationToken = s.invitationToken.takeIf { it.isNotBlank() },
             )
-                .onSuccess { _state.update { it.copy(isLoading = false, success = true) } }
+                .onSuccess { requires ->
+                    _state.update {
+                        it.copy(isLoading = false, success = true, requiresVerification = requires ?: it.requiresVerification)
+                    }
+                }
                 .onFailure { t ->
                     when (t) {
                         is AuthError.Validation -> _state.update {
+                            // Erros em chaves sem campo visível (token do convite, turnstile…) vão para `error`.
+                            val visible = buildSet {
+                                addAll(listOf("name", "email", "password", "password_confirmation"))
+                                if (!invitedFlow) add("invitation_token")
+                            }
+                            val hidden = t.fields.filterKeys { k -> k !in visible }
                             it.copy(
                                 isLoading = false,
                                 fieldErrors = t.fields.mapValues { (_, msgs) -> co.golink.tester.ui.i18n.ServerMessages.localize(msgs.firstOrNull()).orEmpty() },
-                                error = if (t.fields.isEmpty()) co.golink.tester.ui.i18n.ServerMessages.localize(t.message) else null,
+                                error = when {
+                                    hidden.isNotEmpty() -> co.golink.tester.ui.i18n.ServerMessages.localize(hidden.values.first().firstOrNull())
+                                        ?: co.golink.tester.ui.i18n.ServerMessages.localize(t.message)
+                                    t.fields.isEmpty() -> co.golink.tester.ui.i18n.ServerMessages.localize(t.message)
+                                    else -> null
+                                },
                             )
                         }
                         is AuthError.RegistrationDisabled -> _state.update {

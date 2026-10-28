@@ -18,6 +18,19 @@ data class UserData(
     val type: String,
     val attributes: UserAttributes,
     val relationships: UserRelationships? = null,
+    val meta: UserMeta? = null,
+)
+
+@Serializable
+data class UserMeta(
+    val restrictions: UserRestrictions? = null,
+)
+
+// Restrições de faturação/espaço da conta (UserResource → meta.restrictions).
+@Serializable
+data class UserRestrictions(
+    val canUpload: Boolean = true,
+    val canCreateFolder: Boolean = true,
 )
 
 @Serializable
@@ -168,6 +181,8 @@ data class User(
     val daysLeftToPay: Int,
     val supportStaff: SupportStaffPermissions? = null,
     val deletionScheduledFor: String? = null,
+    val canUpload: Boolean = true,
+    val canCreateFolder: Boolean = true,
 ) {
     companion object {
         fun fromResponse(response: UserResponse): User {
@@ -209,6 +224,8 @@ data class User(
                 daysLeftToPay = subscription?.attributes?.days_left_to_pay ?: 0,
                 supportStaff = attrs.support_staff,
                 deletionScheduledFor = attrs.deletion_scheduled_for,
+                canUpload = response.data.meta?.restrictions?.canUpload ?: true,
+                canCreateFolder = response.data.meta?.restrictions?.canCreateFolder ?: true,
             )
         }
     }

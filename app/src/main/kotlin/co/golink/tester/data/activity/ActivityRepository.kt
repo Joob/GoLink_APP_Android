@@ -108,7 +108,10 @@ class ActivityRepository @Inject constructor(
             folder = folderItem,
             folderOwnerId = folder_owner_id,
             files = items.mapNotNull { it.item?.data?.decrypted()?.toItem() },
+            trashedFileIds = items.filter { it.trashed }.mapNotNullTo(HashSet()) { it.item?.data?.id },
+            fileCanEdit = items.mapNotNull { i -> i.item?.data?.id?.let { id -> i.can_edit?.let { id to it } } }.toMap(),
             extensions = extensions,
+            canEdit = can_edit,
         )
     }
 

@@ -273,9 +273,16 @@ class FileDownloader @Inject constructor(
                     if (!r.isSuccessful) error("manifest HTTP ${r.code}")
                     zipJson.decodeFromString<ZipManifestResponse>(r.body?.string() ?: error("vazio"))
                 }
-            }.getOrNull()
+            }.getOrElse { e ->
+                // Sem manifesto não se sabe se há ficheiros cifrados: o zip do
+                // servidor podia vir cheio de cifrado ilegível. Falha às claras.
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                val msg = "Não foi possível preparar o zip"
+                _events.tryEmit(Event.Failed(suggestedName, msg))
+                return Outcome.Failed(msg)
+            }
 
-            val hasEncrypted = manifest?.files?.any { it.encrypted } == true
+            val hasEncrypted = manifest.files.any { it.encrypted }
             if (hasEncrypted) {
                 onEncrypted()
                 if (!e2eKeyManager.isUnlocked) {
@@ -283,13 +290,15 @@ class FileDownloader @Inject constructor(
                     return Outcome.Failed("Desbloqueia a encriptação para descarregar")
                 }
                 val finalName = uniqueDestination(sanitize(suggestedName))
-                val failed = writeZipToDownloads(finalName, decryptManifestNames(manifest!!), backend, onProgress)
+                val failed = writeZipToDownloads(finalName, decryptManifestNames(manifest), backend, onProgress)
                 _events.tryEmit(Event.Completed(finalName))
                 Outcome.Completed(finalName, failed)
             } else {
                 // Sem ficheiros cifrados: zip do servidor via DownloadManager.
-                val url = "$backend/api/zip?items=${Uri.encode(payload)}&token=${Uri.encode(token)}"
-                enqueueViaManager(url, suggestedName)
+                // Token no cabeçalho: na query ficava gravado na base de dados
+                // do DownloadManager e nos logs de acesso.
+                val url = "$backend/api/zip?items=${Uri.encode(payload)}"
+                enqueueViaManager(url, suggestedName, bearer = token)
                 Outcome.ServerZipEnqueued
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -438,10 +447,11 @@ class FileDownloader @Inject constructor(
         return "$base ($i)$ext"
     }
 
-    private fun enqueueViaManager(url: String, name: String): Long {
+    private fun enqueueViaManager(url: String, name: String, bearer: String? = null): Long {
         val safe = uniqueDestination(sanitize(name))
         val request = DownloadManager.Request(Uri.parse(url))
             .addRequestHeader("Accept", "*/*")
+            .apply { if (!bearer.isNullOrEmpty()) addRequestHeader("Authorization", "Bearer $bearer") }
             .setTitle(safe)
             .setDescription("GoLink")
             .setMimeType(mimeTypeFor(name))

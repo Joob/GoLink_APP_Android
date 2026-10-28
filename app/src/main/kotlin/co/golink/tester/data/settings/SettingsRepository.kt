@@ -26,6 +26,7 @@ class SettingsRepository @Inject constructor(
     private val api: SettingsApi,
     private val json: kotlinx.serialization.json.Json,
     private val keys: co.golink.tester.data.encryption.E2EKeyManager,
+    private val errorParser: co.golink.tester.data.auth.ApiErrorParser,
 ) {
     /** Totais, Lixo, backups e maiores ficheiros (nomes decifrados quando E2E). */
     suspend fun storageInsights(): Result<co.golink.tester.domain.settings.StorageInsights> = runCatching {
@@ -130,7 +131,15 @@ class SettingsRepository @Inject constructor(
 
     suspend fun updateProfileField(name: String, value: String): Result<Unit> = runCatching {
         val response = api.updateProfileField(UpdateProfileFieldRequest(name = name, value = value))
-        check(response.isSuccessful) { "HTTP ${response.code()}: ${response.errorBody()?.string()?.take(300)}" }
+        check(response.isSuccessful) { validationMessage(response) }
+    }
+
+    // 422 → primeira mensagem do campo; resto → mensagem do servidor ou genérica.
+    private fun validationMessage(response: retrofit2.Response<*>): String {
+        val error = errorParser.parse(response)
+        return (error as? co.golink.tester.domain.auth.AuthError.Validation)
+            ?.fields?.values?.flatten()?.firstOrNull()
+            ?: error.message.orEmpty()
     }
 
     // Envia o avatar recortado (JPEG) para POST api/user/avatar (campo "avatar").
@@ -138,7 +147,7 @@ class SettingsRepository @Inject constructor(
         val body = jpeg.toRequestBody("image/jpeg".toMediaTypeOrNull())
         val part = okhttp3.MultipartBody.Part.createFormData("avatar", "avatar.jpg", body)
         val response = api.updateAvatar(part)
-        check(response.isSuccessful) { "HTTP ${response.code()}: ${response.errorBody()?.string()?.take(300)}" }
+        check(response.isSuccessful) { validationMessage(response) }
     }
 
     suspend fun listTokens(): Result<List<AccessToken>> = runCatching {

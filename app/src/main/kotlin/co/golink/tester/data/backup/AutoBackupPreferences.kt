@@ -8,6 +8,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 @Singleton
 class AutoBackupPreferences @Inject constructor(
@@ -66,6 +67,8 @@ class AutoBackupPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_INCLUDE_DOWNLOADS, false)
         set(value) { prefs.edit { putBoolean(KEY_INCLUDE_DOWNLOADS, value) }; refresh() }
 
+    fun isIncluded(collection: BackupCollection): Boolean = _state.value.isIncluded(collection)
+
     // --- Pastas seleccionadas por colecção (opt-in) -------------------------
     // O backup de cada colecção inclui apenas as pastas aqui guardadas. Vazio =
     // nada dessa colecção é enviado.
@@ -106,8 +109,9 @@ class AutoBackupPreferences @Inject constructor(
         prefs.getLong(folderCursorKey(collection, folder), 0L)
 
     fun setFolderCursor(collection: BackupCollection, folder: String, value: Long) {
+        // Sem refresh(): os cursores não fazem parte do estado do ecrã e isto
+        // corre uma vez por lote.
         prefs.edit { putLong(folderCursorKey(collection, folder), value) }
-        refresh()
     }
 
     private fun folderCursorKey(collection: BackupCollection, folder: String): String =
@@ -153,26 +157,6 @@ class AutoBackupPreferences @Inject constructor(
     private fun failedKey(collection: BackupCollection, folder: String): String =
         "$FAILED_PREFIX${collection.name}|$folder"
 
-    var lastImageId: Long
-        get() = prefs.getLong(KEY_LAST_IMAGE_ID, 0L)
-        set(value) { prefs.edit { putLong(KEY_LAST_IMAGE_ID, value) }; refresh() }
-
-    var lastVideoId: Long
-        get() = prefs.getLong(KEY_LAST_VIDEO_ID, 0L)
-        set(value) { prefs.edit { putLong(KEY_LAST_VIDEO_ID, value) }; refresh() }
-
-    var lastAudioId: Long
-        get() = prefs.getLong(KEY_LAST_AUDIO_ID, 0L)
-        set(value) { prefs.edit { putLong(KEY_LAST_AUDIO_ID, value) }; refresh() }
-
-    var lastDocumentId: Long
-        get() = prefs.getLong(KEY_LAST_DOCUMENT_ID, 0L)
-        set(value) { prefs.edit { putLong(KEY_LAST_DOCUMENT_ID, value) }; refresh() }
-
-    var lastDownloadId: Long
-        get() = prefs.getLong(KEY_LAST_DOWNLOAD_ID, 0L)
-        set(value) { prefs.edit { putLong(KEY_LAST_DOWNLOAD_ID, value) }; refresh() }
-
     var lastBackupAt: Long
         get() = prefs.getLong(KEY_LAST_BACKUP_AT, 0L)
         set(value) { prefs.edit { putLong(KEY_LAST_BACKUP_AT, value) }; refresh() }
@@ -190,6 +174,38 @@ class AutoBackupPreferences @Inject constructor(
     var pendingServerEnable: Boolean
         get() = prefs.getBoolean(KEY_PENDING_SERVER_ENABLE, false)
         set(value) = prefs.edit { putBoolean(KEY_PENDING_SERVER_ENABLE, value) }
+
+    // Desligado no telemóvel mas o POST de pausa deste aparelho falhou: repete
+    // na próxima sincronização, senão a web continuava a mostrá-lo activo.
+    var pendingServerDisable: Boolean
+        get() = prefs.getBoolean(KEY_PENDING_SERVER_DISABLE, false)
+        set(value) = prefs.edit { putBoolean(KEY_PENDING_SERVER_DISABLE, value) }
+
+    // Este aparelho está em pausa na web (device_paused). Não desliga o backup
+    // localmente, mas o ecrã mostra-o e oferece "Retomar".
+    var devicePaused: Boolean
+        get() = prefs.getBoolean(KEY_DEVICE_PAUSED, false)
+        set(value) { if (value != devicePaused) { prefs.edit { putBoolean(KEY_DEVICE_PAUSED, value) }; refresh() } }
+
+    /**
+     * Associa o estado do backup à conta [userId]. Outra conta no mesmo
+     * telemóvel começa do zero: com os cursores da anterior, tudo o que estava
+     * abaixo deles nunca chegava à conta nova. Sem dono guardado (instalações
+     * anteriores) assume a conta actual.
+     */
+    @Synchronized
+    fun claimOwner(userId: String) {
+        val owner = prefs.getString(KEY_OWNER_ID, null)
+        if (owner == userId) return
+        prefs.edit {
+            if (owner != null) clear()
+            putString(KEY_OWNER_ID, userId)
+            // clear() leva também a migração do wifi_only: repõe os defaults.
+            putBoolean(KEY_ALLOW_WIFI, true)
+            putBoolean(KEY_ALLOW_CELLULAR, false)
+        }
+        refresh()
+    }
 
     // Synchronized: o worker faz uploads em paralelo e este é um
     // read-modify-write — sem lock os incrementos perdem-se.
@@ -213,20 +229,17 @@ class AutoBackupPreferences @Inject constructor(
                 }
             }
         }
-        refresh()
-    }
-
-    fun resetCursors() {
-        prefs.edit {
-            putLong(KEY_LAST_IMAGE_ID, 0L)
-            putLong(KEY_LAST_VIDEO_ID, 0L)
-            putLong(KEY_LAST_AUDIO_ID, 0L)
-            putLong(KEY_LAST_DOCUMENT_ID, 0L)
-            putLong(KEY_LAST_DOWNLOAD_ID, 0L)
-            // Também os cursores por pasta, para "Voltar a verificar" reenviar tudo.
-            prefs.all.keys.filter { it.startsWith(FOLDER_CURSOR_PREFIX) }.forEach { remove(it) }
+        // Só os contadores mudam: refresh() relia todas as prefs (5 StringSets)
+        // a cada ficheiro enviado.
+        _state.update {
+            it.copy(
+                backedUpCount = prefs.getInt(KEY_BACKED_UP_COUNT, 0),
+                photosCount = prefs.getInt(KEY_PHOTOS_COUNT, 0),
+                photosBytes = prefs.getLong(KEY_PHOTOS_BYTES, 0L),
+                videosCount = prefs.getInt(KEY_VIDEOS_COUNT, 0),
+                videosBytes = prefs.getLong(KEY_VIDEOS_BYTES, 0L),
+            )
         }
-        refresh()
     }
 
     fun clearError() {
@@ -256,6 +269,7 @@ class AutoBackupPreferences @Inject constructor(
         videosCount = prefs.getInt(KEY_VIDEOS_COUNT, 0),
         videosBytes = prefs.getLong(KEY_VIDEOS_BYTES, 0L),
         lastError = prefs.getString(KEY_LAST_ERROR, null),
+        devicePaused = prefs.getBoolean(KEY_DEVICE_PAUSED, false),
     )
 
     private companion object {
@@ -277,11 +291,9 @@ class AutoBackupPreferences @Inject constructor(
         const val FOLDER_CURSOR_PREFIX = "fcursor|"
         const val FAILED_PREFIX = "ffailed|"
         const val KEY_PENDING_SERVER_ENABLE = "pending_server_enable"
-        const val KEY_LAST_IMAGE_ID = "last_image_id"
-        const val KEY_LAST_VIDEO_ID = "last_video_id"
-        const val KEY_LAST_AUDIO_ID = "last_audio_id"
-        const val KEY_LAST_DOCUMENT_ID = "last_document_id"
-        const val KEY_LAST_DOWNLOAD_ID = "last_download_id"
+        const val KEY_PENDING_SERVER_DISABLE = "pending_server_disable"
+        const val KEY_DEVICE_PAUSED = "device_paused"
+        const val KEY_OWNER_ID = "owner_id"
         const val KEY_OTHERS_COUNT = "others_count"
         const val KEY_OTHERS_BYTES = "others_bytes"
         const val KEY_LAST_BACKUP_AT = "last_backup_at"
@@ -312,4 +324,24 @@ data class AutoBackupState(
     val videosCount: Int = 0,
     val videosBytes: Long = 0L,
     val lastError: String? = null,
-)
+    val devicePaused: Boolean = false,
+) {
+    fun isIncluded(collection: BackupCollection): Boolean = when (collection) {
+        BackupCollection.IMAGES -> includeImages
+        BackupCollection.VIDEOS -> includeVideos
+        BackupCollection.AUDIOS -> includeAudios
+        BackupCollection.DOCUMENTS -> includeDocuments
+        BackupCollection.DOWNLOADS -> includeDownloads
+    }
+
+    /** O que o worker envia de facto: colecção ligada E com pastas escolhidas (opt-in). */
+    fun activeCollections(): Set<BackupCollection> =
+        BackupCollection.entries.filter { isIncluded(it) && selectedFolders[it].orEmpty().isNotEmpty() }.toSet()
+
+    /** Erro que pede acção do utilizador (não a pausa nem falhas que o próximo tick repete). */
+    val needsAttention: Boolean
+        get() = lastError != null &&
+            lastError != AutoBackupManager.DEVICE_PAUSED_ERROR &&
+            !lastError.startsWith(AutoBackupManager.OFFLINE_ERROR) &&
+            !lastError.endsWith(AutoBackupManager.FAILED_FILES_ERROR)
+}

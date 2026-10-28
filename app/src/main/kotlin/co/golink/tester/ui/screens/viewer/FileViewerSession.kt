@@ -19,6 +19,12 @@ class FileViewerSession @Inject constructor() {
     /** Aberto a partir do Lixo: só ver (sem editar, mover, partilhar ou renomear). */
     var fromTrash: Boolean = false
 
+    /** Ficheiros só de leitura (pasta can-view, atividade de outros): sem editar/mover/apagar. */
+    var readOnlyIds: Set<String> = emptySet()
+
+    /** Ficheiros de outro dono: sem partilhar/copiar link (a partilha exige ser o dono). */
+    var notOwnedIds: Set<String> = emptySet()
+
     /**
      * Editor de documentos: última content_revision gravada por ficheiro. A
      * lista de onde se abre pode ainda ter a antiga — sem isto a gravação

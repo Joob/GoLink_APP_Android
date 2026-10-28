@@ -56,7 +56,8 @@ fun CreateFileRequestDialog(
     var email by remember { mutableStateOf("") }
     var days by remember { mutableIntStateOf(7) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val emailOk = !notify || email.contains('@')
+    var submitted by remember { mutableStateOf(false) }
+    val emailOk = !notify || android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)) {
         Column(
@@ -151,10 +152,12 @@ fun CreateFileRequestDialog(
             Spacer(Modifier.height(4.dp))
             Button(
                 onClick = {
-                    onCreate(name.takeIf { it.isNotBlank() }, email.takeIf { notify && it.isNotBlank() }, notes.takeIf { it.isNotBlank() }, days)
+                    if (submitted) return@Button
+                    submitted = true
+                    onCreate(name.takeIf { it.isNotBlank() }, email.trim().takeIf { notify && it.isNotBlank() }, notes.takeIf { it.isNotBlank() }, days)
                     onDismiss()
                 },
-                enabled = emailOk,
+                enabled = emailOk && !submitted,
                 shape = RoundedCornerShape(14.dp),
                 contentPadding = PaddingValues(vertical = 15.dp),
                 modifier = Modifier.fillMaxWidth(),

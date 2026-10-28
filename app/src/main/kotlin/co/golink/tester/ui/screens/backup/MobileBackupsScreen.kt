@@ -486,7 +486,6 @@ fun MobileBackupsScreen(
             },
             onDelete = { dialogTarget = target; activeDialog = BackupItemDialog.Delete },
             onDetails = { dialogTarget = target; activeDialog = BackupItemDialog.Details },
-            onComingSoon = { /* no-op */ },
             onConvertToTeamFolder = { dialogTarget = target; activeDialog = BackupItemDialog.ConvertToTeamFolder },
             onFileRequest = { dialogTarget = target; activeDialog = BackupItemDialog.FileRequest },
             showFolderCollaboration = false,

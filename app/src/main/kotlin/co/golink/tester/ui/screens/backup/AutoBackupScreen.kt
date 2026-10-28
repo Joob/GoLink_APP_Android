@@ -312,7 +312,16 @@ fun AutoBackupScreen(
                     onRunNow = viewModel::backupNow,
                     onDisable = viewModel::disable,
                 )
-                state.lastError?.let { err ->
+                if (state.devicePaused) {
+                    val resuming by viewModel.resuming.collectAsStateWithLifecycle()
+                    ErrorCard(
+                        message = "Este telemóvel está em pausa na Web. Nada é enviado até retomares.".tr(),
+                        title = "Backup em pausa".tr(),
+                        actionLabel = "Retomar".tr(),
+                        actionEnabled = !resuming,
+                        onRetry = viewModel::resumeDevice,
+                    )
+                } else state.lastError?.let { err ->
                     ErrorCard(message = err, onDismiss = viewModel::dismissError, onRetry = viewModel::runNow)
                 }
                 if (tasks.isNotEmpty()) {
@@ -1094,7 +1103,14 @@ private fun RescanCard(onReset: () -> Unit) {
 }
 
 @Composable
-private fun ErrorCard(message: String, onDismiss: () -> Unit, onRetry: () -> Unit) {
+private fun ErrorCard(
+    message: String,
+    onRetry: () -> Unit,
+    onDismiss: (() -> Unit)? = null,
+    title: String = "Backup com erro".tr(),
+    actionLabel: String = "Tentar de novo".tr(),
+    actionEnabled: Boolean = true,
+) {
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f),
@@ -1110,7 +1126,7 @@ private fun ErrorCard(message: String, onDismiss: () -> Unit, onRetry: () -> Uni
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "Backup com erro".tr(),
+                    title,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.error,
@@ -1126,15 +1142,18 @@ private fun ErrorCard(message: String, onDismiss: () -> Unit, onRetry: () -> Uni
             Row {
                 Button(
                     onClick = onRetry,
+                    enabled = actionEnabled,
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = BackupAccent),
                 ) {
                     Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Tentar de novo".tr(), color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text(actionLabel, color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
-                Spacer(Modifier.width(8.dp))
-                TextButton(onClick = onDismiss) { Text("Limpar".tr()) }
+                if (onDismiss != null) {
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(onClick = onDismiss) { Text("Limpar".tr()) }
+                }
             }
         }
     }

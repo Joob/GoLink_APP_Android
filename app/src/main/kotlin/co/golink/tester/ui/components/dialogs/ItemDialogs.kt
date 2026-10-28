@@ -46,6 +46,8 @@ import co.golink.tester.domain.files.FolderAppearance
 import co.golink.tester.domain.files.OfficeFormat
 import co.golink.tester.domain.files.OfficeKind
 import co.golink.tester.domain.files.createFormats
+import co.golink.tester.domain.files.TEXT_EXTENSIONS
+import co.golink.tester.domain.files.VISIBLE_TEXT_EXTENSIONS
 import co.golink.tester.ui.i18n.tr
 
 /** Cores de pasta (iguais a helpers/folderColors.js da web). null = tema. */
@@ -133,17 +135,17 @@ private data class TextType(val ext: String, val label: String)
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CreateTextFileDialog(location: String, onDismiss: () -> Unit, onCreate: (String, Boolean) -> Unit) {
-    val types = listOf(
-        TextType("txt", "Texto".tr()), TextType("md", "Markdown"), TextType("json", "Dados".tr()),
-        TextType("csv", "Tabela".tr()), TextType("log", "Registo".tr()),
-    )
+    val labels = mapOf("txt" to "Texto".tr(), "md" to "Markdown", "json" to "Dados".tr(), "csv" to "Tabela".tr(), "log" to "Registo".tr())
+    val types = VISIBLE_TEXT_EXTENSIONS.map { TextType(it, labels[it] ?: it) }
     var name by remember { mutableStateOf("") }
     var ext by remember { mutableStateOf("txt") }
     var openEditor by remember { mutableStateOf(true) }
-    // "notas.md" escolhe a extensão; o nome fica sem ela.
-    val typedExt = name.substringAfterLast('.', "").lowercase().takeIf { t -> types.any { it.ext == t } }
-    val base = (if (typedExt != null) name.substringBeforeLast('.') else name).trim().ifEmpty { "Sem nome".tr() }
-    val filename = "$base.${typedExt ?: ext}"
+    // "notas.md" escolhe a extensão ao escrever; o chip escolhido depois manda
+    // (como na web). O nome final fica sempre sem a extensão de texto escrita.
+    val trimmed = name.trim().trimEnd('.')
+    val typedExt = trimmed.substringAfterLast('.', "").lowercase().takeIf { t -> t in TEXT_EXTENSIONS }
+    val base = (if (typedExt != null) trimmed.substringBeforeLast('.') else trimmed).trim().ifEmpty { "Sem nome".tr() }
+    val filename = "$base.$ext"
 
     DialogScaffold(
         title = "Novo ficheiro de texto".tr(),
@@ -158,7 +160,8 @@ fun CreateTextFileDialog(location: String, onDismiss: () -> Unit, onCreate: (Str
             label = { Text("Nome do ficheiro".tr()) },
             singleLine = true,
             shape = RoundedCornerShape(12.dp),
-            suffix = { Text(".$ext", color = MaterialTheme.colorScheme.onSurfaceVariant) },
+            // Sem sufixo quando o nome já acaba nele ("notas.md.md").
+            suffix = if (typedExt == ext) null else { { Text(".$ext", color = MaterialTheme.colorScheme.onSurfaceVariant) } },
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
@@ -168,7 +171,7 @@ fun CreateTextFileDialog(location: String, onDismiss: () -> Unit, onCreate: (Str
         )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             types.forEach { t ->
-                val active = (typedExt ?: ext) == t.ext
+                val active = ext == t.ext
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f) else MaterialTheme.colorScheme.surface,

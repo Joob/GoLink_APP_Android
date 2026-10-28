@@ -38,15 +38,19 @@ class ApiErrorParser @Inject constructor(
 
     /**
      * 429 do fluxo OTP: a mensagem vem em `otp_code` (não em `message`) e traz
-     * os segundos de cooldown que faltam.
+     * os segundos de cooldown que faltam. `remaining_wait` = rate_limited do
+     * envio (sem tentativas falhadas); o throttle do Laravel só traz
+     * `Retry-After` no cabeçalho.
      */
     fun parseOtpCooldown(response: Response<*>): AuthError {
         val raw = runCatching { response.errorBody()?.string().orEmpty() }.getOrDefault("")
         val body = runCatching { json.decodeFromString(ErrorBody.serializer(), raw) }.getOrNull()
+        val retryAfter = response.headers()["Retry-After"]?.trim()?.toIntOrNull()
 
         return AuthError.OtpCooldown(
-            remainingSeconds = body?.remaining_cooldown ?: body?.remaining_wait ?: 0,
+            remainingSeconds = body?.remaining_cooldown ?: body?.remaining_wait ?: retryAfter ?: 0,
             message = body?.otp_code ?: body?.message ?: "Demasiadas tentativas",
+            rateLimited = body?.remaining_cooldown == null && body?.remaining_wait != null,
         )
     }
 

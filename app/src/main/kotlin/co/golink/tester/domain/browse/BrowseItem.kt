@@ -25,6 +25,8 @@ data class ShareInfo(
     // devolver ao gravar — senão cada edição feita aqui apagava-a.
     val passwordTipAllowed: Boolean = false,
     val passwordTip: String? = null,
+    // false = expirado/esgotado (o link já não abre); servidor antigo → true.
+    val active: Boolean = true,
 )
 
 /** Horas (expire_in do backend) → dias, arredondando para cima; null/<=0 → null. */
@@ -87,6 +89,10 @@ sealed interface BrowseItem {
         val filesizeBytes: Long = 0,
         /** Backups do telemóvel: caminho real ("DCIM/Camera"). */
         val devicePath: String? = null,
+        /** Raiz da Team Folder (só ela tem membros: sair/dissolver); null = servidor antigo. */
+        val isTeamRoot: Boolean? = null,
+        /** Dono da pasta; null = servidor antigo. */
+        val ownerId: String? = null,
     ) : BrowseItem
 
     @Immutable
@@ -115,6 +121,8 @@ sealed interface BrowseItem {
         val scanStatus: String? = null,
         /** Revisão do conteúdo (editor de documentos envia-a como base_revision). */
         val contentRevision: Int? = null,
+        /** Dono do ficheiro; null = servidor antigo. */
+        val ownerId: String? = null,
     ) : BrowseItem
 }
 
@@ -164,6 +172,7 @@ private fun BrowseRelationships?.toShareInfo(): ShareInfo? {
         expiresAt = attrs.expires_at,
         passwordTipAllowed = attrs.protectedPasswordShow ?: false,
         passwordTip = attrs.showpassword_in,
+        active = attrs.active ?: true,
     )
 }
 
@@ -188,6 +197,8 @@ fun BrowseEntry.toItem(): BrowseItem = if (type == "folder") {
         pendingInvites = relationships.toPendingInvites(),
         filesizeBytes = attributes.filesize_bytes ?: 0,
         devicePath = attributes.device_path,
+        isTeamRoot = attributes.is_team_root,
+        ownerId = attributes.owner_id,
     )
 } else {
     BrowseItem.File(
@@ -212,5 +223,6 @@ fun BrowseEntry.toItem(): BrowseItem = if (type == "folder") {
         capturedAtIso = attributes.captured_at_iso,
         scanStatus = attributes.scan_status,
         contentRevision = attributes.content_revision,
+        ownerId = attributes.owner_id,
     )
 }

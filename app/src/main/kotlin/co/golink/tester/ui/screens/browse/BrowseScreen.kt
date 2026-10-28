@@ -196,10 +196,8 @@ import co.golink.tester.data.settings.SettingsRepository
 import co.golink.tester.data.user.UserRepository
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.TeamMember
-import co.golink.tester.domain.files.unsupportedExtension
 import co.golink.tester.domain.files.OfficeKind
 import co.golink.tester.domain.files.isOfficeFile
-import co.golink.tester.domain.files.visibleTextExtensionsLabel
 import co.golink.tester.domain.settings.StorageLevel
 import co.golink.tester.domain.settings.StorageUsage
 import co.golink.tester.domain.user.User
@@ -290,14 +288,14 @@ fun BrowseScreen(
             onTrashRequestHandled()
         }
     }
+    // Ficheiros de outros donos / can-view: o viewer não oferece editar/mover/apagar.
     val openActivityFile: (BrowseItem.File) -> Unit = { file ->
-        val viewable = viewModel.activity.value.sections.values
-            .flatMap { it.entries }
-            .filter { !it.itemTrashed }
-            .mapNotNull { it.item as? BrowseItem.File }
-            .filter { it.isViewable() }
-            .distinctBy { it.id }
-        viewModel.prepareViewer(viewable.ifEmpty { listOf(file) }, file.id)
+        val viewable = viewModel.activityViewableFiles().let { list -> if (list.any { it.id == file.id }) list else listOf(file) }
+        viewModel.prepareViewer(viewable, file.id, readOnlyIds = viewModel.activityReadOnlyIds(), notOwnedIds = viewModel.activityNotOwnedIds())
+        onOpenFile(file.id)
+    }
+    val openActivityOffice: (BrowseItem.File) -> Unit = { file ->
+        viewModel.prepareViewer(listOf(file), file.id, readOnlyIds = viewModel.activityReadOnlyIds(), notOwnedIds = viewModel.activityNotOwnedIds())
         onOpenFile(file.id)
     }
     val openFile: (BrowseItem.File) -> Unit = { file ->
@@ -312,18 +310,12 @@ fun BrowseScreen(
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val feedState by viewModel.feed.collectAsStateWithLifecycle()
-    val activityState by viewModel.activity.collectAsStateWithLifecycle()
     // Só o dono copia o link (a chave #k= só se monta com as chaves dele) — igual
     // à web ($checkPermission('master')). No lixo e em "Partilhado comigo" não.
     val canCopyLinks = state.mode != BrowseMode.Trash && state.mode !is BrowseMode.SharedWithMe
     // Atividade: itens de outros (Team Folders / Partilhado comigo) também abrem o menu.
-    val foreignActivityIds = remember(activityState.sections) {
-        val me = viewModel.currentUserId()
-        activityState.sections.values.flatMap { it.entries }
-            .filter { it.itemOwnerId != null && it.itemOwnerId != me }
-            .mapNotNull { it.item?.id }
-            .toSet()
-    }
+    val foreignActivityIds = remember(feedState.entries) { viewModel.activityReadOnlyIds() }
+    val notOwnedActivityIds = remember(feedState.entries) { viewModel.activityNotOwnedIds() }
     val uploads by viewModel.uploads.collectAsStateWithLifecycle()
     val user by shell.user.collectAsStateWithLifecycle()
     val unread by shell.unreadNotifications.collectAsStateWithLifecycle()
@@ -357,7 +349,8 @@ fun BrowseScreen(
     // Toque longo + arrastar para uma pasta ou para o caminho (Drive, equipa, partilhas).
     val dragState = remember { co.golink.tester.ui.components.DragToFolderState() }
     val dragEnabled = !state.readOnly && when (val m = state.mode) {
-        is BrowseMode.Folder, BrowseMode.Shared -> true
+        // Links públicos é uma lista plana: largar um item noutro movia-o sem se ver.
+        is BrowseMode.Folder -> true
         is BrowseMode.TeamFolder -> m.id != null
         is BrowseMode.SharedWithMe -> m.id != null
         else -> false
@@ -466,7 +459,7 @@ fun BrowseScreen(
                         DrawerItem(
                             folder.name, Icons.Outlined.Folder,
                             selected = (state.mode as? BrowseMode.Folder)?.id == folder.id,
-                            onClick = go { viewModel.openFolder(folder) },
+                            onClick = go { viewModel.openFavourite(folder) },
                         )
                     },
                     onClick = go(viewModel::openFavourites),
@@ -677,7 +670,10 @@ fun BrowseScreen(
                             selectedCount = state.selectedIds.size,
                             readOnly = state.readOnly,
                             summary = selectionSummary(state.items.filter { it.id in state.selectedIds }),
-                            onShare = if (state.mode is BrowseMode.Folder || state.mode is BrowseMode.TeamFolder || state.mode == BrowseMode.Shared) openShareForSelected else null,
+                            // Mesma regra do menu/Detalhes: só o dono partilha (senão 403).
+                            onShare = if ((state.mode is BrowseMode.Folder || state.mode is BrowseMode.TeamFolder || state.mode == BrowseMode.Shared) &&
+                                viewModel.selectedItems().firstOrNull()?.let { itemAccess(it, state, viewModel.currentUserId(), notOwnedActivityIds, foreignActivityIds).mine } == true
+                            ) openShareForSelected else null,
                             onRestore = { viewModel.restoreSelected() },
                         )
                     }
@@ -715,8 +711,10 @@ fun BrowseScreen(
                         stats = state.stats,
                         typeFilter = state.typeFilter,
                         isFavourite = root != null && favourites.any { it.id == root.id },
-                        canFavourite = root != null && state.mode is BrowseMode.Folder,
-                        canFolderMenu = root != null && !state.readOnly,
+                        // Como no menu: o servidor tira as pastas de equipa dos favoritos.
+                        canFavourite = canFavourite(root, state.mode),
+                        // can-view numa pasta de equipa: o menu fica (Transferir, Detalhes, Sair).
+                        canFolderMenu = root != null && (!state.readOnly || root.isTeamFolder),
                         onBack = if (inside && state.crumbs.size > 1) {
                             { viewModel.goToCrumb(state.crumbs.size - 2) }
                         } else null,
@@ -832,13 +830,13 @@ fun BrowseScreen(
                                         } else when (item) {
                                             is BrowseItem.Folder -> viewModel.openActivityFolder(
                                                 item,
-                                                ownedByMe = entry.itemOwnerId != null && entry.itemOwnerId == viewModel.currentUserId(),
+                                                ownedByMe = entry.itemOwnerId == null || viewModel.isOwnedByMe(entry.itemOwnerId),
                                             )
-                                            is BrowseItem.File -> if (item.isOfficeFile()) openOffice(item) else if (item.isViewable()) openActivityFile(item) else sheetItem = item
+                                            is BrowseItem.File -> if (item.isOfficeFile()) openActivityOffice(item) else if (item.isViewable()) openActivityFile(item) else sheetItem = item
                                         }
                                     }
                                 },
-                                onOpenFolder = { folder, ownerId -> viewModel.openActivityFolder(folder, ownedByMe = ownerId == null || ownerId == viewModel.currentUserId()) },
+                                onOpenFolder = { folder, ownerId -> viewModel.openActivityFolder(folder, ownedByMe = ownerId == null || viewModel.isOwnedByMe(ownerId)) },
                                 onRestore = { item -> viewModel.restore(item) },
                                 onMore = { entry -> entry.item?.let { sheetItem = it } },
                                 onLoadMore = viewModel::loadMoreFeed,
@@ -854,10 +852,11 @@ fun BrowseScreen(
                         }
                         state.items.isEmpty() -> {
                             EmptyState(
-                                title = "Sem conteúdo".tr(),
+                                title = (if (state.mode == BrowseMode.Shared) "Sem links públicos" else "Sem conteúdo").tr(),
                                 subtitle = when (state.mode) {
                                     is BrowseMode.SearchResults -> "Sem resultados para \"${(state.mode as BrowseMode.SearchResults).query}\""
                                     BrowseMode.Trash -> "O lixo está vazio".tr()
+                                    BrowseMode.Shared -> "Abre o menu de um ficheiro ou pasta e toca em Partilhar para criar um link.".tr()
                                     else -> "Esta pasta está vazia".tr()
                                 },
                             )
@@ -1168,16 +1167,16 @@ fun BrowseScreen(
                             activeDialog = ActionDialog.RemoteUpload
                         },
                         co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.CreateNewFolder, "Nova pasta".tr(), primary, "Organize os ficheiros".tr(), mk, accent = false) {
-                            activeDialog = ActionDialog.CreateFolder
+                            if (viewModel.allowCreateFolder()) activeDialog = ActionDialog.CreateFolder
                         },
                         co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.Article, "Novo documento".tr(), primary, "Word (.docx)".tr(), mk, accent = false) {
-                            activeDialog = ActionDialog.CreateDocument
+                            if (viewModel.allowUpload()) activeDialog = ActionDialog.CreateDocument
                         },
                         co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.TableChart, "Nova folha de cálculo".tr(), primary, "Excel (.xlsx)".tr(), mk, accent = false) {
-                            activeDialog = ActionDialog.CreateSheet
+                            if (viewModel.allowUpload()) activeDialog = ActionDialog.CreateSheet
                         },
                         co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.Description, "Novo ficheiro de texto".tr(), primary, "Escreva e edite aqui".tr(), mk, accent = false) {
-                            activeDialog = ActionDialog.CreateTextFile
+                            if (viewModel.allowUpload()) activeDialog = ActionDialog.CreateTextFile
                         },
                         // Pasta de equipa e pedidos de ficheiros só no espaço privado.
                         if (inFiles) co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.GroupAdd, "Pasta de equipa".tr(), primary, "Partilhada com membros".tr(), mk, accent = false) {
@@ -1294,18 +1293,26 @@ fun BrowseScreen(
     }
 
     sheetItem?.let { target ->
+        val folder = target as? BrowseItem.Folder
+        val me = viewModel.currentUserId()
+        val access = itemAccess(target, state, me, notOwnedActivityIds, foreignActivityIds)
+        val mine = access.mine
         ItemActionsSheet(
             item = target,
-            isFavourite = (target as? BrowseItem.Folder)?.let { f -> favourites.any { it.id == f.id } } ?: false,
+            isFavourite = folder?.let { f -> favourites.any { it.id == f.id } } ?: false,
             isShared = target.share != null,
+            canFavourite = canFavourite(target, state.mode),
             inTrash = state.mode == BrowseMode.Trash,
             onDismiss = { sheetItem = null },
             onDownload = { viewModel.downloadItem(target) },
-            onShare = {
-                actionTarget = target
-                viewModel.openShareDialog(target)
-                activeDialog = ActionDialog.Share
-            },
+            // A partilha exige ser o dono (403 para os membros).
+            onShare = if (mine) {
+                {
+                    actionTarget = target
+                    viewModel.openShareDialog(target)
+                    activeDialog = ActionDialog.Share
+                }
+            } else null,
             onToggleFavourite = { (target as? BrowseItem.Folder)?.let { viewModel.toggleFavourite(it) } },
             onRename = { actionTarget = target; activeDialog = ActionDialog.Rename },
             onMove = {
@@ -1317,15 +1324,24 @@ fun BrowseScreen(
             onRestore = { viewModel.restore(target) },
             onPermanentDelete = { actionTarget = target; activeDialog = ActionDialog.PermanentDelete },
             onDetails = { actionTarget = target; activeDialog = ActionDialog.Details },
-            onCopyLink = if (canCopyLinks && target.id !in foreignActivityIds) { { viewModel.copyShareLink(target) } } else null,
-            canEdit = !state.readOnly,
-            onComingSoon = { viewModel.notifyComingSoon() },
+            onCopyLink = if (canCopyLinks && mine && target.id !in foreignActivityIds) { { viewModel.copyShareLink(target) } } else null,
+            canEdit = access.canEdit,
             onConvertToTeamFolder = { actionTarget = target; activeDialog = ActionDialog.ConvertToTeamFolder },
             onFileRequest = { actionTarget = target; activeDialog = ActionDialog.FileRequest },
-            onDissolveTeam = (target as? BrowseItem.Folder)?.takeIf { state.mode is BrowseMode.TeamFolder && it.isTeamFolder }?.let { f ->
+            // Pedir ficheiros / transformar: o servidor exige ser o dono (Gate owner).
+            showFolderCollaboration = mine,
+            onDissolveTeam = folder?.takeIf { f ->
+                // Só o dono, só na raiz (os filhos herdam isTeamFolder; o servidor dá 422) e só
+                // em Pastas de equipa — ação destrutiva fora da sua secção não; sem sessão, não.
+                me != null && f.isTeamFolder && state.mode is BrowseMode.TeamFolder && when (f.isTeamRoot) {
+                    null -> f.members.firstOrNull { it.id == me }?.permission.let { p -> p == null || p == "owner" }
+                    else -> f.isTeamRoot && f.ownerId == me
+                }
+            }?.let { f ->
                 { actionTarget = f; activeDialog = ActionDialog.DissolveTeam }
             },
-            onLeaveTeam = (target as? BrowseItem.Folder)?.takeIf { state.mode is BrowseMode.SharedWithMe && (state.mode as BrowseMode.SharedWithMe).id == null || it.id == state.crumbs.getOrNull(1)?.id && state.mode is BrowseMode.SharedWithMe }?.let { f ->
+            // Só na raiz: numa subpasta o servidor não tem membro a remover.
+            onLeaveTeam = folder?.takeIf { f -> f.isTeamFolder && (f.isTeamRoot?.let { it && !mine } ?: access.legacySharedTop) }?.let { f ->
                 { actionTarget = f; activeDialog = ActionDialog.LeaveTeam }
             },
         )
@@ -1374,8 +1390,8 @@ fun BrowseScreen(
             if (count > 0) {
                 ConfirmDialog(
                     title = "Mover para o lixo?".tr(),
-                    message = if (multi) "$count itens ficarão no lixo e podes restaurar depois."
-                              else "$targetName ficará no lixo e podes restaurar depois.",
+                    message = if (multi) "%d itens ficarão no lixo e podes restaurar depois.".tr().format(count)
+                              else "%s ficará no lixo e podes restaurar depois.".tr().format(targetName),
                     confirmText = "Mover para o lixo".tr(),
                     destructive = true,
                     onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
@@ -1466,7 +1482,7 @@ fun BrowseScreen(
         ActionDialog.RemoteUpload -> co.golink.tester.ui.components.dialogs.RemoteUploadDialog(
             location = state.crumbs.lastOrNull()?.name ?: "O meu Drive".tr(),
             onDismiss = { activeDialog = ActionDialog.None },
-            onImport = { urls -> viewModel.remoteUpload(urls.joinToString("\n")) },
+            onImport = { urls -> viewModel.remoteUpload(urls) },
         )
         ActionDialog.EmptyTrash -> ConfirmDialog(
             title = "Esvaziar lixo?".tr(),
@@ -1505,6 +1521,8 @@ fun BrowseScreen(
             onConfirm = { shell.logout() },
         )
         ActionDialog.Details -> actionTarget?.let { target ->
+            // Como no menu: raiz de equipa alheia/can-view sem mover/apagar; partilhar só o dono.
+            val access = itemAccess(target, state, viewModel.currentUserId(), notOwnedActivityIds, foreignActivityIds)
             BrowseItemDetailsSheet(
                 item = target,
                 onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
@@ -1516,21 +1534,21 @@ fun BrowseScreen(
                 onDownload = if (state.mode == BrowseMode.Trash) null else {
                     { viewModel.downloadItem(target) }
                 },
-                onMove = if (state.readOnly || state.mode == BrowseMode.Trash) null else {
+                onMove = if (!access.canEdit || state.mode == BrowseMode.Trash) null else {
                     {
                         viewModel.loadNavigationTree()
                         actionTarget = target
                         activeDialog = ActionDialog.Move
                     }
                 },
-                onDelete = if (state.readOnly) null else {
+                onDelete = if (state.mode != BrowseMode.Trash && !access.canEdit) null else {
                     {
                         actionTarget = target
                         activeDialog = if (state.mode == BrowseMode.Trash) ActionDialog.PermanentDelete else ActionDialog.Delete
                     }
                 },
                 // Fora do lixo, como a ação "Partilhar" do menu.
-                onShare = if (state.mode == BrowseMode.Trash) null else {
+                onShare = if (state.mode == BrowseMode.Trash || !access.mine) null else {
                     {
                         actionTarget = target
                         viewModel.openShareDialog(target)
@@ -1692,6 +1710,37 @@ internal fun MonthHeader(
     }
 }
 
+private class ItemAccess(val mine: Boolean, val legacySharedTop: Boolean, val canEdit: Boolean)
+
+/** Menu e Detalhes: quem é o dono e se o item se pode editar/mover/apagar. */
+private fun itemAccess(
+    target: BrowseItem,
+    state: BrowseUiState,
+    me: String?,
+    notOwnedActivityIds: Set<String>,
+    foreignActivityIds: Set<String>,
+): ItemAccess {
+    val ownerId = when (target) {
+        is BrowseItem.Folder -> target.ownerId
+        is BrowseItem.File -> target.ownerId
+    }
+    // Dono: o servidor diz-o (owner_id); servidor antigo → pelo modo/Atividade.
+    val mine = ownerId?.let { it == me }
+        ?: (state.mode !is BrowseMode.SharedWithMe && target.id !in notOwnedActivityIds)
+    // Servidor antigo: topo do "Partilhado comigo" pelas crumbs; vindo da Atividade a
+    // crumbs[1] é a pasta aberta (pode ser subpasta), por isso não conta.
+    val legacySharedTop = (state.mode as? BrowseMode.SharedWithMe)?.let { m ->
+        m.id == null || (state.crumbs.firstOrNull()?.origin is BrowseMode.SharedWithMe && target.id == state.crumbs.getOrNull(1)?.id)
+    } == true
+    // Raiz de equipa de outro dono: só o dono a edita; os membros saem dela.
+    val sharedTop = (target as? BrowseItem.Folder)?.isTeamRoot?.let { it && !mine } ?: legacySharedTop
+    return ItemAccess(mine, legacySharedTop, !state.readOnly && !sharedTop && target.id !in foreignActivityIds)
+}
+
+/** Estrela só em pastas pessoais (como a web): o servidor tira as de equipa/partilhadas dos favoritos. */
+private fun canFavourite(item: BrowseItem?, mode: BrowseMode): Boolean =
+    item is BrowseItem.Folder && !item.isTeamFolder && mode !is BrowseMode.TeamFolder && mode !is BrowseMode.SharedWithMe
+
 // Vistas com o cabeçalho de pasta (como na web).
 private fun hasFolderHeader(state: BrowseUiState): Boolean = when (state.mode) {
     is BrowseMode.Folder, is BrowseMode.TeamFolder, is BrowseMode.SharedWithMe, BrowseMode.Shared, BrowseMode.Trash -> true
@@ -1742,7 +1791,7 @@ private fun folderBadge(state: BrowseUiState, root: BrowseItem.Folder?): co.goli
 private fun topBarTitle(state: BrowseUiState): String = when (val mode = state.mode) {
     is BrowseMode.Folder -> mode.name
     BrowseMode.Latest -> "Atividade".tr()
-    BrowseMode.Shared -> "Partilhado".tr()
+    BrowseMode.Shared -> "Links públicos".tr()
     BrowseMode.Favourites -> "Favoritos".tr()
     BrowseMode.Trash -> "Lixo".tr()
     is BrowseMode.SearchResults -> "Resultados: ${mode.query}"

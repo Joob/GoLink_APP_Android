@@ -48,11 +48,27 @@ class ResumableHttpInputStream(
             } catch (e: IOException) {
                 if (Thread.currentThread().isInterrupted || retries >= maxRetries) throw e
                 if (totalSize in 1..position) throw e
-                retries++
-                reopen()
+                reopenWithRetries()
             }
         }
     }
+
+    /** Volta a tentar enquanto a rede não volta (o próprio pedido também falha). */
+    private fun reopenWithRetries() {
+        while (true) {
+            retries++
+            try {
+                reopen()
+                return
+            } catch (e: ResumeRefused) {
+                throw e
+            } catch (e: IOException) {
+                if (Thread.currentThread().isInterrupted || retries >= maxRetries) throw e
+            }
+        }
+    }
+
+    private class ResumeRefused(message: String) : IOException(message)
 
     private fun reopen() {
         runCatching { response.close() }
@@ -66,7 +82,7 @@ class ResumableHttpInputStream(
         val start = next.header("Content-Range")?.let { Regex("""bytes (\d+)-""").find(it)?.groupValues?.get(1)?.toLongOrNull() }
         if (next.code != 206 || start != position) {
             next.close()
-            throw IOException("O servidor não permitiu retomar o download (HTTP ${next.code})")
+            throw ResumeRefused("O servidor não permitiu retomar o download (HTTP ${next.code})")
         }
         response = next
         input = next.body?.byteStream() ?: throw IOException("Resposta vazia")

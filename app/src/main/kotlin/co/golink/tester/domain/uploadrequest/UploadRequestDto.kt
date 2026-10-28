@@ -30,4 +30,5 @@ data class UploadRequestAttributes(
     val name: String? = null,
     val expires_at: String? = null,
     val no_expiry: Boolean = false,
+    val link: String? = null,
 )

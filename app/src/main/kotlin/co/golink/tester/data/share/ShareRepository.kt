@@ -119,5 +119,6 @@ class ShareRepository @Inject constructor(
         expiresAt = expires_at,
         passwordTipAllowed = protectedPasswordShow ?: false,
         passwordTip = showpassword_in,
+        active = active ?: true,
     )
 }

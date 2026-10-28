@@ -38,6 +38,7 @@ class OtpViewModel @Inject constructor(
     val state: StateFlow<OtpUiState> = _state.asStateFlow()
 
     private var countdownJob: Job? = null
+    private var cancelled = false
 
     init {
         sendCode(initial = true)
@@ -53,8 +54,20 @@ class OtpViewModel @Inject constructor(
 
     /** Sair do ecrã OTP: termina a sessão pendente (o gate volta ao início). */
     fun cancel() {
+        if (cancelled) return
+        cancelled = true
         countdownJob?.cancel()
         viewModelScope.launch { authRepository.logout() }
+    }
+
+    /** 401 sem sessão (token pendente expirado/revogado): sair em vez de ficar preso. */
+    private fun handleUnauthenticated(t: Throwable): Boolean {
+        if (t !is AuthError.InvalidCredentials) return false
+        _state.update {
+            it.copy(isLoading = false, sending = false, code = "", error = "Sessão expirada. Inicia sessão novamente.".tr())
+        }
+        cancel()
+        return true
     }
 
     fun sendCode(initial: Boolean = false) {
@@ -83,9 +96,10 @@ class OtpViewModel @Inject constructor(
                     startCountdown(remaining)
                 }
                 .onFailure { t ->
+                    if (handleUnauthenticated(t)) return@onFailure
                     if (t is AuthError.OtpCooldown) {
                         _state.update { it.copy(sending = false, codeSentOnce = true, code = "", info = null) }
-                        startCooldown(t.remainingSeconds)
+                        if (t.rateLimited) startWait(t.remainingSeconds, t.message) else startCooldown(t.remainingSeconds, t.message)
                         return@onFailure
                     }
                     // Erro do servidor (5xx): mensagem clara em vez de "Server Error (HTTP 500)".
@@ -119,8 +133,14 @@ class OtpViewModel @Inject constructor(
      * Cooldown imposto pelo servidor após 5 tentativas falhadas. Marca o código
      * como expirado (bloqueia a entrada) e só liberta o reenvio no fim.
      */
-    private fun startCooldown(seconds: Int) {
-        if (seconds <= 0) return
+    private fun startCooldown(seconds: Int, message: String?) {
+        if (seconds <= 0) {
+            // Throttle sem tempo conhecido: pelo menos mostrar o erro.
+            _state.update {
+                it.copy(error = co.golink.tester.ui.i18n.ServerMessages.localize(message) ?: "Demasiadas tentativas".tr())
+            }
+            return
+        }
         countdownJob?.cancel()
         _state.update { it.copy(remainingSeconds = seconds, expired = true, cooldown = true, error = null) }
         countdownJob = viewModelScope.launch {
@@ -131,6 +151,32 @@ class OtpViewModel @Inject constructor(
                 _state.update { it.copy(remainingSeconds = remaining) }
             }
             _state.update { it.copy(remainingSeconds = 0, cooldown = false) }
+        }
+    }
+
+    /**
+     * rate_limited no envio: não há código válido e ainda não se pode pedir
+     * outro. Mostra a mensagem do servidor e trava só o reenvio.
+     */
+    private fun startWait(seconds: Int, message: String?) {
+        countdownJob?.cancel()
+        _state.update {
+            it.copy(
+                remainingSeconds = seconds.coerceAtLeast(0),
+                expired = true,
+                cooldown = false,
+                error = co.golink.tester.ui.i18n.ServerMessages.localize(message) ?: "Aguarda antes de pedir outro código.".tr(),
+            )
+        }
+        if (seconds <= 0) return
+        countdownJob = viewModelScope.launch {
+            var remaining = seconds
+            while (remaining > 0) {
+                delay(1000)
+                remaining -= 1
+                _state.update { it.copy(remainingSeconds = remaining) }
+            }
+            _state.update { it.copy(remainingSeconds = 0, error = null) }
         }
     }
 
@@ -145,11 +191,12 @@ class OtpViewModel @Inject constructor(
                     _state.update { it.copy(isLoading = false, validated = true) }
                 }
                 .onFailure { t ->
+                    if (handleUnauthenticated(t)) return@onFailure
                     // Cooldown do servidor (5 tentativas falhadas): trava a
                     // entrada e faz a contagem decrescente até poder tentar de novo.
                     if (t is AuthError.OtpCooldown) {
                         _state.update { it.copy(isLoading = false, code = "") }
-                        startCooldown(t.remainingSeconds)
+                        startCooldown(t.remainingSeconds, t.message)
                         return@onFailure
                     }
 

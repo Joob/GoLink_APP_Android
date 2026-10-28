@@ -45,6 +45,14 @@ class FileViewerViewModel @Inject constructor(
 
     /** Aberto a partir do Lixo: só ver; restaurar ou eliminar de vez. */
     val fromTrash: Boolean = session.fromTrash
+    private val readOnlyIds: Set<String> = session.readOnlyIds
+    private val notOwnedIds: Set<String> = session.notOwnedIds
+
+    /** Pode editar/mover/apagar o ficheiro (não can-view nem de outro dono). */
+    fun canEdit(file: BrowseItem.File): Boolean = !fromTrash && file.id !in readOnlyIds
+
+    /** Partilhar: só o dono (o servidor recusa os outros com 403). */
+    fun canShare(file: BrowseItem.File): Boolean = !fromTrash && file.id !in notOwnedIds
 
     data class UiState(
         val files: List<BrowseItem.File> = emptyList(),
@@ -447,8 +455,8 @@ class FileViewerViewModel @Inject constructor(
      * O servidor volta a validar (can-edit, extensão, quota).
      */
     fun canEditText(): Boolean {
-        if (fromTrash) return false
         val file = current ?: return false
+        if (!canEdit(file)) return false
         if (!file.isEditableText()) return false
         if (file.encrypted && !e2eKeyManager.isUnlocked) return false
         return _state.value.textContent != null

@@ -11,6 +11,8 @@ import kotlinx.serialization.json.JsonElement
 @Serializable
 data class FeedBatchItemDto(
     val trashed: Boolean = false,
+    // Por ficheiro: o can_edit do lote é falso se um só não for editável.
+    val can_edit: Boolean? = null,
     val item: BrowseEntryEnvelope? = null,
 )
 
@@ -41,6 +43,8 @@ data class FeedEntryDto(
     val items: List<FeedBatchItemDto> = emptyList(),
     // "JSON · PDF" (lotes de transferências).
     val extensions: List<String> = emptyList(),
+    // Posso editar/mover/apagar (dono ou membro can-edit); null = servidor antigo.
+    val can_edit: Boolean? = null,
 )
 
 @Serializable
@@ -82,7 +86,12 @@ data class FeedEntry(
     val folder: BrowseItem.Folder? = null,
     val folderOwnerId: String? = null,
     val files: List<BrowseItem> = emptyList(),
+    /** Ficheiros do lote já no lixo (fora do deslizar do viewer). */
+    val trashedFileIds: Set<String> = emptySet(),
+    /** can_edit por ficheiro do lote (servidor antigo: vazio → vale o do lote). */
+    val fileCanEdit: Map<String, Boolean> = emptyMap(),
     val extensions: List<String> = emptyList(),
+    val canEdit: Boolean? = null,
 )
 
 @Immutable

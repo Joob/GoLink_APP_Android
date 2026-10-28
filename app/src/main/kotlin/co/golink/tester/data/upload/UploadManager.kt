@@ -76,44 +76,6 @@ class UploadManager @Inject constructor(
     private val resumeStore = UploadResumeStore(context)
     @Volatile private var restoredFor: String? = null
 
-    init {
-        // Sessão: ao entrar, retoma os uploads deixados a meio por este
-        // utilizador; ao sair, cancela tudo e apaga o que estava guardado.
-        scope.launch {
-            sessionManager.state.collect { s ->
-                when (s) {
-                    is co.golink.tester.data.auth.AuthState.Authenticated -> if (restoredFor != s.user.id) {
-                        restoredFor = s.user.id
-                        restore(s.user.id)
-                    }
-                    is co.golink.tester.data.auth.AuthState.Unauthenticated -> if (restoredFor != null) {
-                        restoredFor = null
-                        clearAll()
-                        resumeStore.clear()
-                    }
-                    else -> Unit
-                }
-            }
-        }
-        // Encriptação desbloqueada: repete o que falhou por estar trancada.
-        scope.launch {
-            e2eKeyManager.unlocked.collect { unlocked ->
-                if (unlocked) {
-                    _tasks.value.filter { it.state == UploadTask.State.Failed && it.e2eLocked }
-                        .forEach { retry(it.id) }
-                }
-            }
-        }
-        // A rede voltou: repete sozinho o que falhou por falta dela.
-        scope.launch {
-            connectivity.online.collect { online ->
-                if (online) {
-                    _tasks.value.filter { it.state == UploadTask.State.Failed && it.networkError }
-                        .forEach { retry(it.id) }
-                }
-            }
-        }
-    }
     private val resolver: ContentResolver get() = context.contentResolver
 
     private val _tasks = MutableStateFlow<List<UploadTask>>(emptyList())
@@ -138,8 +100,10 @@ class UploadManager @Inject constructor(
         val replacesId: String? = null,
         // Pasta SAF de origem (upload de pasta): a permissão persistente é dela.
         val treeUri: Uri? = null,
+        // "Substituir" escolhido: retry/retoma têm de o manter (E2E não dá 409).
+        val overwrite: Boolean = false,
     )
-    private val sources = mutableMapOf<String, Source>()
+    private val sources = java.util.concurrent.ConcurrentHashMap<String, Source>()
 
     // Ficheiro criado, só para os envios que o pediram (o editor de documentos
     // passa a gravar na cópia); os outros não ficam retidos.
@@ -155,7 +119,7 @@ class UploadManager @Inject constructor(
         createdWanted.remove(taskId)
         return createdEntries.remove(taskId)
     }
-    private val jobs = mutableMapOf<String, Job>()
+    private val jobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
 
     fun enqueue(uri: Uri, parentId: String?, existingFiles: Map<String, String> = emptyMap()): Job =
         enqueueWithId(uri, parentId, existingFiles = existingFiles).second
@@ -268,7 +232,7 @@ class UploadManager @Inject constructor(
                 r.e2e?.tempPath?.let { File(it).delete() }
                 resumeStore.update(r.taskId) { it.copy(size = metadata.size, chunks = null, e2e = null) }
             }
-            sources[r.taskId] = Source(uri, r.parentId, replacesId = r.replacesId, treeUri = r.treeUri?.let(Uri::parse))
+            sources[r.taskId] = Source(uri, r.parentId, replacesId = r.replacesId, treeUri = r.treeUri?.let(Uri::parse), overwrite = r.overwrite)
             update { list ->
                 list + UploadTask(
                     id = r.taskId,
@@ -289,10 +253,10 @@ class UploadManager @Inject constructor(
      * O conteúdo inicial nunca é vazio: 0 bytes cai no caminho por chunks e não
      * havia nada para enviar.
      */
-    fun createTextFile(name: String, content: String, parentId: String?): Pair<String, Job> {
+    fun createTextFile(name: String, content: String, parentId: String?, trackCreated: Boolean = false): Pair<String, Job> {
         val temp = File.createTempFile("newtext_", ".txt", context.cacheDir)
         temp.writeText(content.ifEmpty { "\n" })
-        return createFromTemp(temp, name, "txt", "text/plain", parentId)
+        return createFromTemp(temp, name, "txt", "text/plain", parentId, trackCreated)
     }
 
     /**
@@ -342,7 +306,7 @@ class UploadManager @Inject constructor(
     private class ConflictException : RuntimeException("conflict")
 
     private fun runTask(taskId: String, uri: Uri, metadata: FileMetadata, parentId: String?, overwrite: Boolean = false, mobileBackup: Boolean = false, backupFolder: String? = null, backupPath: String? = null, replacesId: String? = null): Job {
-        val job = scope.launch {
+        val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             // Uploads do utilizador: no máximo 3 ficheiros em simultâneo (antes
             // uma pasta de 100 ficheiros cifrava e enviava os 100 ao mesmo tempo).
             // O backup automático já tem o seu limite no worker.
@@ -428,10 +392,12 @@ class UploadManager @Inject constructor(
                 }
             } finally {
                 if (permit) userUploadPermits.release()
-                jobs.remove(taskId)
+                // Só a própria entrada: um retry já pode ter posto um job novo.
+                coroutineContext[Job]?.let { jobs.remove(taskId, it) }
             }
         }
         jobs[taskId] = job
+        job.start()
         return job
     }
 
@@ -442,8 +408,10 @@ class UploadManager @Inject constructor(
         runCatching { readMetadata(uri).let { it.displayName to it.size } }.getOrDefault("ficheiro" to 0L)
     }
 
+    @Synchronized
     fun overwriteConflict(taskId: String) {
-        val source = sources[taskId] ?: return
+        val source = sources[taskId]?.copy(overwrite = true) ?: return
+        sources[taskId] = source
         val current = _tasks.value.firstOrNull { it.id == taskId } ?: return
         if (current.state != UploadTask.State.Conflict) return
         val metadata = readMetadata(source.uri).copy(displayName = current.name)
@@ -468,14 +436,17 @@ class UploadManager @Inject constructor(
         update { list -> list.filter { it.id != taskId } }
     }
 
+    // Synchronized: rede a voltar + "Repetir todos" ao mesmo tempo lançavam
+    // dois uploads da mesma tarefa (check-then-act sem lock).
+    @Synchronized
     fun retry(taskId: String) {
         val source = sources[taskId] ?: return
         val current = _tasks.value.firstOrNull { it.id == taskId } ?: return
         if (current.state != UploadTask.State.Failed) return
         val metadata = readMetadata(source.uri).copy(displayName = current.name)
         update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Queued, progress = 0f, errorMessage = null, networkError = false, e2eLocked = false) else it } }
-        if (!source.mobileBackup) track(taskId, source.uri, metadata, source.parentId, replacesId = source.replacesId, treeUri = source.treeUri)
-        runTask(taskId, source.uri, metadata, source.parentId, mobileBackup = source.mobileBackup, backupFolder = source.backupFolder, backupPath = source.backupPath, replacesId = source.replacesId)
+        if (!source.mobileBackup) track(taskId, source.uri, metadata, source.parentId, overwrite = source.overwrite, replacesId = source.replacesId, treeUri = source.treeUri)
+        runTask(taskId, source.uri, metadata, source.parentId, overwrite = source.overwrite, mobileBackup = source.mobileBackup, backupFolder = source.backupFolder, backupPath = source.backupPath, replacesId = source.replacesId)
     }
 
     fun retryFailed() {
@@ -517,8 +488,7 @@ class UploadManager @Inject constructor(
 
     fun clearAll() {
         _tasks.value.filterNot { it.mobileBackup }.forEach { forgetTask(it.id) }
-        jobs.values.forEach { it.cancel() }
-        jobs.clear()
+        jobs.keys.toList().forEach { jobs.remove(it)?.cancel() }
         sources.clear()
         update { emptyList() }
     }
@@ -1371,5 +1341,46 @@ class UploadManager @Inject constructor(
         private const val CHUNK_PARALLEL = 3
         private const val CHUNK_MAX_ATTEMPTS = 8
         private const val CHUNK_THRESHOLD = 1024L * 1024 * 25
+    }
+
+    // No fim da classe: o init corre por ordem textual e as corrotinas (IO)
+    // liam _tasks/sources/jobs ainda por inicializar (NPE no arranque).
+    init {
+        // Sessão: ao entrar, retoma os uploads deixados a meio por este
+        // utilizador; ao sair, cancela tudo e apaga o que estava guardado.
+        scope.launch {
+            sessionManager.state.collect { s ->
+                when (s) {
+                    is co.golink.tester.data.auth.AuthState.Authenticated -> if (restoredFor != s.user.id) {
+                        restoredFor = s.user.id
+                        restore(s.user.id)
+                    }
+                    is co.golink.tester.data.auth.AuthState.Unauthenticated -> if (restoredFor != null) {
+                        restoredFor = null
+                        clearAll()
+                        resumeStore.clear()
+                    }
+                    else -> Unit
+                }
+            }
+        }
+        // Encriptação desbloqueada: repete o que falhou por estar trancada.
+        scope.launch {
+            e2eKeyManager.unlocked.collect { unlocked ->
+                if (unlocked) {
+                    _tasks.value.filter { it.state == UploadTask.State.Failed && it.e2eLocked }
+                        .forEach { retry(it.id) }
+                }
+            }
+        }
+        // A rede voltou: repete sozinho o que falhou por falta dela.
+        scope.launch {
+            connectivity.online.collect { online ->
+                if (online) {
+                    _tasks.value.filter { it.state == UploadTask.State.Failed && it.networkError }
+                        .forEach { retry(it.id) }
+                }
+            }
+        }
     }
 }

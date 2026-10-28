@@ -22,20 +22,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Groups
-import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.RestoreFromTrash
-import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -47,11 +43,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
 import co.golink.tester.domain.browse.BrowseItem
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -60,10 +54,12 @@ fun ItemActionsSheet(
     item: BrowseItem,
     isFavourite: Boolean,
     isShared: Boolean = false,
+    canFavourite: Boolean = true,
     inTrash: Boolean = false,
     onDismiss: () -> Unit,
     onDownload: () -> Unit,
-    onShare: () -> Unit,
+    /** null: não é o dono (a partilha exige-o). */
+    onShare: (() -> Unit)?,
     onToggleFavourite: () -> Unit,
     onRename: () -> Unit,
     onMove: () -> Unit,
@@ -75,7 +71,6 @@ fun ItemActionsSheet(
     onCopyLink: (() -> Unit)? = null,
     // false = só leitura (membro can-view): esconde editar/mover/eliminar.
     canEdit: Boolean = true,
-    onComingSoon: () -> Unit = {},
     onConvertToTeamFolder: () -> Unit = {},
     onFileRequest: () -> Unit = {},
     showFolderCollaboration: Boolean = true,
@@ -104,6 +99,8 @@ fun ItemActionsSheet(
 
             val folder = item as? BrowseItem.Folder
             val danger = MaterialTheme.colorScheme.error
+            // Partilhas sem link público (equipa/utilizador) ou expiradas/esgotadas não têm o que copiar.
+            val copyLink = onCopyLink?.takeIf { item.share?.let { s -> s.active && !s.link.isNullOrBlank() } == true }
 
             if (inTrash) {
                 // Lixo: restaurar, detalhes e eliminar de vez.
@@ -117,15 +114,17 @@ fun ItemActionsSheet(
             } else {
                 // Ações rápidas em quadrados (Partilhar em destaque), como no mockup.
                 val tiles = buildList {
-                    add(Tile(Icons.Outlined.Link, (if (isShared) "Partilha" else "Partilhar").tr(), primary = true) { onShare(); onDismiss() })
-                    add(Tile(Icons.Outlined.Download, "Transferir".tr()) { onDownload(); onDismiss() })
+                    onShare?.let { share -> add(Tile(Icons.Outlined.Link, (if (isShared) "Partilha" else "Partilhar").tr(), primary = true) { share(); onDismiss() }) }
+                    // Sem partilhar (não é o dono): Transferir fica em destaque.
+                    add(Tile(Icons.Outlined.Download, "Transferir".tr(), primary = onShare == null) { onDownload(); onDismiss() })
                     when {
-                        folder != null -> add(
+                        folder != null && canFavourite -> add(
                             Tile(if (isFavourite) Icons.Outlined.Star else Icons.Outlined.StarBorder, "Favorito".tr(), active = isFavourite) {
                                 onToggleFavourite(); onDismiss()
                             },
                         )
-                        isShared && onCopyLink != null -> add(Tile(Icons.Outlined.ContentCopy, "Copiar link".tr()) { onCopyLink(); onDismiss() })
+                        // Pastas têm "Copiar link" na lista abaixo.
+                        folder == null && copyLink != null -> add(Tile(Icons.Outlined.ContentCopy, "Copiar link".tr()) { copyLink(); onDismiss() })
                     }
                     add(Tile(Icons.Outlined.Info, "Detalhes".tr()) { onDetails(); onDismiss() })
                 }
@@ -137,8 +136,8 @@ fun ItemActionsSheet(
                         add { ActionRow(Icons.Outlined.Edit, (if (folder != null) "Editar nome e ícone" else "Editar nome").tr()) { onRename(); onDismiss() } }
                         add { ActionRow(Icons.AutoMirrored.Outlined.DriveFileMove, "Mover".tr()) { onMove(); onDismiss() } }
                     }
-                    if (folder != null && isShared && onCopyLink != null) {
-                        add { ActionRow(Icons.Outlined.ContentCopy, "Copiar link".tr()) { onCopyLink(); onDismiss() } }
+                    if (folder != null && copyLink != null) {
+                        add { ActionRow(Icons.Outlined.ContentCopy, "Copiar link".tr()) { copyLink(); onDismiss() } }
                     }
                     if (folder != null && showFolderCollaboration && canEdit) {
                         add { ActionRow(Icons.Outlined.Upload, "Pedir ficheiros".tr(), "Outros carregam para esta pasta".tr()) { onFileRequest(); onDismiss() } }
@@ -288,13 +287,9 @@ private fun SheetHeader(item: BrowseItem) {
                     }
                 }
                 is BrowseItem.File -> {
-                    if (!item.thumbnailUrl.isNullOrBlank() && item.type == "image") {
-                        AsyncImage(
-                            model = item.thumbnailUrl,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                    // Mesmo preview da linha (cifrados decifram em memória).
+                    if (item.type == "image" && (item.encrypted || !item.thumbnailUrl.isNullOrBlank())) {
+                        FilePreview(item, iconSize = 36.dp, modifier = Modifier.fillMaxSize())
                     } else {
                         FileTypeIcon(item, Modifier.height(36.dp))
                     }
@@ -335,48 +330,6 @@ private fun ActionGroup(content: @Composable () -> Unit) {
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
     ) {
         content()
-    }
-}
-
-@Composable
-private fun SheetDivider() {
-    HorizontalDivider(
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-        modifier = Modifier.padding(start = 60.dp, end = 16.dp),
-    )
-}
-
-@Composable
-private fun ActionItem(
-    icon: ImageVector,
-    label: String,
-    iconBg: Color,
-    iconTint: Color,
-    labelColor: Color = Color.Unspecified,
-    onClick: () -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 13.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(iconBg),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
-        }
-        Spacer(Modifier.width(14.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = if (labelColor == Color.Unspecified) MaterialTheme.colorScheme.onSurface else labelColor,
-        )
     }
 }
 

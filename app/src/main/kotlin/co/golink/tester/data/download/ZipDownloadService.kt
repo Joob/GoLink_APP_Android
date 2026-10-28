@@ -100,7 +100,9 @@ class ZipDownloadService : Service() {
             }
         }
 
-        jobs[jobId] = scope.launch {
+        // LAZY: o job tem de estar no mapa antes de correr — um download que
+        // falhava logo chamava finishJob antes da atribuição e ficava órfão.
+        val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 val outcome = when (kind) {
                     KIND_FILE -> downloader.runFileDownload(
@@ -124,12 +126,11 @@ class ZipDownloadService : Service() {
                         tracker.finish(jobId, DownloadPhase.Done, outcome.name)
                         postFinal(outcome.name, success = true, title = "Transferência concluída")
                     } else {
-                        postFinal(
-                            "${outcome.name} — ${outcome.failed.size} ficheiro(s) não incluídos: " +
-                                outcome.failed.take(5).joinToString(", "),
-                            success = false,
-                            title = "Transferência incompleta",
-                        )
+                        val detail = "${outcome.name} — ${outcome.failed.size} ficheiro(s) não incluídos: " +
+                            outcome.failed.take(5).joinToString(", ")
+                        // O zip existe (Done), mas o painel mostra o que ficou de fora.
+                        tracker.finish(jobId, DownloadPhase.Done, detail)
+                        postFinal(detail, success = false, title = "Transferência incompleta")
                     }
                     is FileDownloader.Outcome.Failed -> {
                         tracker.finish(jobId, DownloadPhase.Failed, outcome.message)
@@ -145,6 +146,8 @@ class ZipDownloadService : Service() {
                 finishJob(jobId)
             }
         }
+        jobs[jobId] = job
+        job.start()
         return START_NOT_STICKY
     }
 

@@ -1,12 +1,16 @@
 package co.golink.tester.domain.teams
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 
+// encodeDefaults está desligado no Json: sem @EncodeDefault o "type" (obrigatório no servidor) não seguia.
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class TeamInvitation(
     val email: String,
     val permission: String,
-    val type: String = "invitation",
+    @EncodeDefault val type: String = "invitation",
 )
 
 @Serializable

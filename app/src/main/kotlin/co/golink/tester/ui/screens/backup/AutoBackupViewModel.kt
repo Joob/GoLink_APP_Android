@@ -12,8 +12,6 @@ import co.golink.tester.data.backup.BackupRunProgress
 import co.golink.tester.data.backup.MediaScanner
 import co.golink.tester.data.upload.UploadManager
 import co.golink.tester.data.upload.UploadTask
-import co.golink.tester.domain.settings.MobileBackupSettingRequest
-import co.golink.tester.network.SettingsApi
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +31,6 @@ import kotlinx.coroutines.withContext
 class AutoBackupViewModel @Inject constructor(
     private val preferences: AutoBackupPreferences,
     private val manager: AutoBackupManager,
-    private val settingsApi: SettingsApi,
     private val uploadManager: UploadManager,
     private val mediaScanner: MediaScanner,
     private val e2eKeyManager: co.golink.tester.data.encryption.E2EKeyManager,
@@ -114,6 +111,7 @@ class AutoBackupViewModel @Inject constructor(
         // are normally safe, but on some OEM builds (Samsung restricted mode,
         // Xiaomi MIUI, custom Android 14 ROMs) they can throw synchronously —
         // and an uncaught exception here would tear down the activity.
+        preferences.pendingServerDisable = false
         runCatching {
             preferences.clearError()
             manager.enable()
@@ -123,21 +121,31 @@ class AutoBackupViewModel @Inject constructor(
         // Marca como activo no servidor (este aparelho, e levanta uma pausa da
         // conta). Se falhar, o worker repete antes de ler a flag
         // (pendingServerEnable) — não se desliga sozinho com o valor antigo.
-        viewModelScope.launch {
-            runCatching {
-                val response = settingsApi.setMobileBackupEnabled(MobileBackupSettingRequest(enabled = true, device = true))
-                if (response.isSuccessful) preferences.pendingServerEnable = false
-            }
-        }
+        viewModelScope.launch { manager.pushDeviceState() }
     }
 
     // Desligar no telemóvel pausa só ESTE aparelho no servidor. Antes mandava
     // a flag da conta a false e os outros telemóveis desligavam-se sozinhos.
+    // Se o POST falhar fica pendingServerDisable e a sincronização repete-o.
     fun disable() {
         runCatching { manager.disable() }
         preferences.pendingServerEnable = false
+        preferences.pendingServerDisable = true
+        viewModelScope.launch { manager.pushDeviceState() }
+    }
+
+    private val _resuming = MutableStateFlow(false)
+    val resuming: StateFlow<Boolean> = _resuming.asStateFlow()
+
+    /** Levanta a pausa deste aparelho feita na web. */
+    fun resumeDevice() {
+        if (_resuming.value) return
+        _resuming.value = true
         viewModelScope.launch {
-            runCatching { settingsApi.setMobileBackupEnabled(MobileBackupSettingRequest(enabled = false, device = true)) }
+            if (!manager.resumeDevice()) {
+                preferences.lastError = "Não foi possível retomar — verifica a ligação e tenta de novo.".tr()
+            }
+            _resuming.value = false
         }
     }
 
@@ -177,19 +185,10 @@ class AutoBackupViewModel @Inject constructor(
 
     // Sincroniza o estado com o servidor: se a Web carregou em "Pause backups"
     // (mobile_backup_enabled=false) desligamos localmente — o ecrã volta logo ao
-    // cartão "Activar backup". Chamado ao abrir/retomar o ecrã e em polling curto.
+    // cartão "Activar backup"; a pausa só deste telemóvel fica em devicePaused.
+    // Chamado ao abrir/retomar o ecrã e em polling curto.
     fun syncServerEnabledState() {
-        if (!preferences.enabled || preferences.pendingServerEnable) return
-        viewModelScope.launch {
-            runCatching {
-                val response = settingsApi.getMobileBackupSetting()
-                if (response.isSuccessful && response.body()?.mobile_backup_enabled == false &&
-                    !preferences.pendingServerEnable
-                ) {
-                    manager.disable()
-                }
-            }
-        }
+        viewModelScope.launch { manager.syncServerState() }
     }
 
     private var syncJob: kotlinx.coroutines.Job? = null
@@ -208,21 +207,6 @@ class AutoBackupViewModel @Inject constructor(
     fun stopServerStateSync() {
         syncJob?.cancel()
         syncJob = null
-    }
-
-    // Wi-Fi e dados móveis são independentes, mas pelo menos um tem de ficar
-    // activo — desligar o último é ignorado (o switch volta atrás sozinho
-    // porque o estado não muda).
-    fun setAllowWifi(value: Boolean) {
-        if (!value && !preferences.allowCellular) return
-        preferences.allowWifi = value
-        manager.reschedule()
-    }
-
-    fun setAllowCellular(value: Boolean) {
-        if (!value && !preferences.allowWifi) return
-        preferences.allowCellular = value
-        manager.reschedule()
     }
 
     /** Rádio "Quando fazer backup": só Wi-Fi, ou Wi-Fi e dados móveis. */

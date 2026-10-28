@@ -62,6 +62,12 @@ data class ApiEnvelope<T>(
 )
 
 @Serializable
+data class RegisterData(
+    /** null em servidores antigos: a app usa a config. */
+    val requires_verification: Boolean? = null,
+)
+
+@Serializable
 data class LoginData(
     val token: String,
 )

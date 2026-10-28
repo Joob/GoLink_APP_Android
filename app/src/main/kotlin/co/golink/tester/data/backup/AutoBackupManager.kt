@@ -1,6 +1,11 @@
 package co.golink.tester.data.backup
 
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.BatteryManager
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
@@ -9,14 +14,18 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import androidx.work.workDataOf
 import co.golink.tester.data.AppLogger
 import co.golink.tester.data.upload.UploadManager
 import co.golink.tester.data.upload.UploadTask
+import co.golink.tester.domain.settings.MobileBackupSettingRequest
+import co.golink.tester.network.SettingsApi
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -29,6 +38,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Progresso da execução actual do worker: itens processados / total e os bytes
@@ -47,6 +57,7 @@ class AutoBackupManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val preferences: AutoBackupPreferences,
     private val uploadManager: UploadManager,
+    private val settingsApi: SettingsApi,
     private val logger: AppLogger,
 ) {
     private val workManager: WorkManager get() = WorkManager.getInstance(context)
@@ -57,6 +68,15 @@ class AutoBackupManager @Inject constructor(
     // entre si. O segundo a chegar sai logo sem tocar nos cursores.
     private val runLock = Mutex()
 
+    // POSTs do estado deste aparelho em série: um "desligar" atrasado (repetição
+    // do pendingServerDisable) não chega ao servidor depois de um "ligar".
+    private val serverLock = Mutex()
+
+    // Uma sincronização de cada vez e no máximo uma por SYNC_MIN_INTERVAL_MS:
+    // Definições e o ecrã do backup chamam-na ao abrir, um a seguir ao outro.
+    private val syncLock = Mutex()
+    @Volatile private var lastSyncAt = 0L
+
     /** Há um worker a varrer/enviar neste momento. */
     val isRunning: Boolean get() = runLock.isLocked
 
@@ -65,6 +85,14 @@ class AutoBackupManager @Inject constructor(
     internal fun finishRun() {
         if (runLock.isLocked) runLock.unlock()
     }
+
+    // Há um "Fazer backup agora" à espera (ENQUEUED). O reschedule() de uma
+    // mudança de definições substituía-o (REPLACE) por um tick de 1 min com
+    // "só a carregar" — o backup pedido nunca corria. Volatile: é limpo pelo
+    // worker quando arranca.
+    @Volatile private var pendingUserRun = false
+
+    internal fun userRunStarted() { pendingUserRun = false }
 
     // O ecrã calculava "X de Y" a partir da lista de tarefas em memória, que o
     // worker poda a cada lote (pruneFinishedBackups) — a contagem encolhia e
@@ -150,6 +178,8 @@ class AutoBackupManager @Inject constructor(
         // duplicar e conflitos).
         uploadManager.cancelBackups()
         BackupNotifications.cancelProgress(context)
+        pendingUserRun = false
+        preferences.devicePaused = false
     }
 
     fun reschedule(armTick: Boolean = true) {
@@ -168,9 +198,14 @@ class AutoBackupManager @Inject constructor(
             request,
         )
         // Re-arma a cadeia de 1 min com as novas condições. Um tick pendente
-        // tem as condições antigas: substitui-o (a correr, o finally do worker
-        // agenda o seguinte já com as novas).
-        if (armTick && !isRunning) enqueueOneshot(buildConstraints(), delayMinutes = TICK_MINUTES)
+        // tem as condições antigas: substitui-o (a correr, o worker verifica as
+        // condições antes de cada ficheiro e o finally agenda o seguinte já com
+        // as novas). Um "Fazer backup agora" pendente continua a sê-lo, só com
+        // a nova regra de rede.
+        if (armTick && !isRunning) {
+            if (pendingUserRun) runNow(userInitiated = true)
+            else enqueueOneshot(buildConstraints(), delayMinutes = TICK_MINUTES)
+        }
     }
 
     /**
@@ -185,17 +220,14 @@ class AutoBackupManager @Inject constructor(
      */
     fun runNow(userInitiated: Boolean = false) {
         if (!preferences.enabled || isRunning) return
-        val constraints = if (userInitiated) {
-            Constraints.Builder()
-                .setRequiredNetworkType(if (preferences.allowCellular) NetworkType.CONNECTED else NetworkType.UNMETERED)
-                .build()
-        } else {
-            buildConstraints()
-        }
-        enqueueOneshot(constraints, delayMinutes = 0L)
+        // Um "Fazer backup agora" pendente não perde as suas condições por
+        // outro pedido (activar, "Tentar de novo") que o substitui.
+        val user = userInitiated || pendingUserRun
+        pendingUserRun = user
+        enqueueOneshot(buildConstraints(requireCharging = !user), delayMinutes = 0L, userInitiated = user)
     }
 
-    private fun enqueueOneshot(constraints: Constraints, delayMinutes: Long) {
+    private fun enqueueOneshot(constraints: Constraints, delayMinutes: Long, userInitiated: Boolean = false) {
         // The worker promotes itself to a foreground service inside doWork()
         // so it can keep uploading even when the app is backgrounded.
         //
@@ -209,6 +241,7 @@ class AutoBackupManager @Inject constructor(
         val request = OneTimeWorkRequestBuilder<AutoBackupWorker>()
             .setInitialDelay(delayMinutes, TimeUnit.MINUTES)
             .setConstraints(constraints)
+            .setInputData(workDataOf(AutoBackupWorker.KEY_USER_INITIATED to userInitiated))
             .build()
         workManager.enqueueUniqueWork(
             AutoBackupWorker.WORK_ONESHOT,
@@ -217,18 +250,112 @@ class AutoBackupManager @Inject constructor(
         )
     }
 
-    private fun buildConstraints(): Constraints {
-        // Wi-Fi e dados móveis são toggles independentes — ambos podem estar
-        // activos. UNMETERED ≈ Wi-Fi, METERED ≈ dados móveis, CONNECTED = ambos.
-        val networkType = when {
-            preferences.allowWifi && preferences.allowCellular -> NetworkType.CONNECTED
-            preferences.allowCellular -> NetworkType.METERED
-            else -> NetworkType.UNMETERED
-        }
-        return Constraints.Builder()
-            .setRequiredNetworkType(networkType)
-            .setRequiresCharging(preferences.chargingOnly)
+    // Wi-Fi e dados móveis são toggles independentes — ambos podem estar
+    // activos. UNMETERED ≈ Wi-Fi, METERED ≈ dados móveis, CONNECTED = ambos.
+    // Única fonte da regra de rede: constraints e verificação a meio da execução.
+    private fun networkType(): NetworkType = when {
+        preferences.allowWifi && preferences.allowCellular -> NetworkType.CONNECTED
+        preferences.allowCellular -> NetworkType.METERED
+        else -> NetworkType.UNMETERED
+    }
+
+    private fun buildConstraints(requireCharging: Boolean = true): Constraints =
+        Constraints.Builder()
+            .setRequiredNetworkType(networkType())
+            .setRequiresCharging(requireCharging && preferences.chargingOnly)
             .build()
+
+    /**
+     * As condições actuais ainda deixam enviar? As constraints do WorkManager
+     * só contam ao arrancar: mudar para "só Wi-Fi" ou "só a carregar" a meio
+     * deixava o worker a enviar a galeria por dados móveis/bateria. O worker
+     * chama isto antes de cada ficheiro. [userInitiated] ignora o carregamento,
+     * tal como as constraints do botão.
+     */
+    internal fun conditionsMet(userInitiated: Boolean): Boolean {
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+        val caps = cm?.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        val unmetered = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+        val networkOk = when (networkType()) {
+            NetworkType.METERED -> !unmetered
+            NetworkType.UNMETERED -> unmetered
+            else -> true
+        }
+        if (!networkOk) return false
+        if (userInitiated || !preferences.chargingOnly) return true
+        // EXTRA_PLUGGED como o WorkManager (isCharging é false com a bateria cheia).
+        val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        return (battery?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0) != 0
+    }
+
+    /**
+     * Acerta o estado local com o servidor: repete a pausa deste aparelho que
+     * ficou por confirmar, desliga se a web pausou a conta e guarda a pausa só
+     * deste telemóvel (device_paused) para o ecrã a mostrar.
+     */
+    suspend fun syncServerState() {
+        if (System.currentTimeMillis() - lastSyncAt < SYNC_MIN_INTERVAL_MS) return
+        if (!syncLock.tryLock()) return
+        try {
+            lastSyncAt = System.currentTimeMillis()
+            if (preferences.pendingServerDisable && !preferences.enabled) pushDeviceState()
+            if (!preferences.enabled || preferences.pendingServerEnable) return
+            val response = settingsApi.getMobileBackupSetting()
+            val body = response.body()
+            if (!response.isSuccessful || body == null || preferences.pendingServerEnable) return
+            if (!body.mobile_backup_enabled) {
+                preferences.lastError = ACCOUNT_PAUSED_ERROR
+                disable()
+                return
+            }
+            setDevicePaused(body.device_paused)
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            logger.log("AutoBackup", "Sincronizar estado falhou: ${t.message}")
+        } finally {
+            syncLock.unlock()
+        }
+    }
+
+    /**
+     * Envia ao servidor o estado local deste aparelho (ligado/desligado) lido
+     * já dentro do lock, e só limpa o pendente se o utilizador não mudou de
+     * ideias entretanto. Devolve se o POST foi aceite.
+     */
+    suspend fun pushDeviceState(): Boolean = serverLock.withLock {
+        val enabled = preferences.enabled
+        val ok = try {
+            settingsApi.setMobileBackupEnabled(MobileBackupSettingRequest(enabled = enabled, device = true)).isSuccessful
+        } catch (c: CancellationException) {
+            throw c
+        } catch (t: Throwable) {
+            logger.log("AutoBackup", "Enviar estado do aparelho falhou: ${t.message}")
+            false
+        }
+        if (ok && preferences.enabled == enabled) {
+            if (enabled) preferences.pendingServerEnable = false else preferences.pendingServerDisable = false
+        }
+        ok
+    }
+
+    internal fun setDevicePaused(paused: Boolean) {
+        val was = preferences.devicePaused
+        preferences.devicePaused = paused
+        // Retomado na web: o aviso de pausa deixado pelo worker já não se aplica.
+        if (was && !paused && preferences.lastError == DEVICE_PAUSED_ERROR) preferences.clearError()
+    }
+
+    /** "Retomar" no telemóvel: levanta a pausa deste aparelho e corre já. */
+    suspend fun resumeDevice(): Boolean {
+        if (!preferences.enabled) return false
+        val ok = pushDeviceState()
+        if (ok) {
+            setDevicePaused(false)
+            preferences.clearError()
+            runNow(userInitiated = true)
+        }
+        return ok
     }
 
     /**
@@ -264,8 +391,14 @@ class AutoBackupManager @Inject constructor(
 
     enum class RunState { Idle, Waiting, Running }
 
-    private companion object {
-        const val PERIOD_MINUTES = 30L
-        const val TICK_MINUTES = 1L
+    companion object {
+        private const val PERIOD_MINUTES = 30L
+        private const val TICK_MINUTES = 1L
+        private const val SYNC_MIN_INTERVAL_MS = 5_000L
+        internal const val DEVICE_PAUSED_ERROR = "Backup deste telemóvel em pausa na Web."
+        internal const val ACCOUNT_PAUSED_ERROR = "Backups automáticos pausados a partir da Web."
+        // Erros passageiros (o próximo tick resolve): não pedem atenção no cartão.
+        internal const val OFFLINE_ERROR = "Sem ligação ao servidor"
+        internal const val FAILED_FILES_ERROR = "ficheiro(s) falharam"
     }
 }

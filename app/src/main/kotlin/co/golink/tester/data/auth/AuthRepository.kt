@@ -49,7 +49,8 @@ class AuthRepository @Inject constructor(
         password: String,
         passwordConfirmation: String,
         invitationToken: String? = null,
-    ): Result<Unit> = runCatching {
+    /** Devolve se é preciso confirmar o email (null = servidor não indica). */
+    ): Result<Boolean?> = runCatching {
         val response = api.register(
             RegisterRequest(
                 name = name,
@@ -64,6 +65,7 @@ class AuthRepository @Inject constructor(
             if (response.code() == 401) throw AuthError.RegistrationDisabled(parsed.message ?: "Registo desactivado")
             throw parsed
         }
+        response.body()?.data?.requires_verification
     }.recoverCatching { throw errorParser.fromThrowable(it) }
 
     suspend fun recoverPassword(email: String): Result<Unit> = runCatching {
@@ -135,8 +137,13 @@ class AuthRepository @Inject constructor(
     }
 
     suspend fun logout(): Result<Unit> = runCatching {
-        runCatching { api.logout() }
+        // Melhor esforço com limite: sem rede, sair não pode ficar preso ao timeout do OkHttp.
+        runCatching { kotlinx.coroutines.withTimeoutOrNull(LOGOUT_TIMEOUT_MS) { api.logout() } }
         e2eKeyManager.lock() // limpar a chave privada E2E da memória
         tokenStore.clear()
+    }
+
+    private companion object {
+        const val LOGOUT_TIMEOUT_MS = 3_000L
     }
 }

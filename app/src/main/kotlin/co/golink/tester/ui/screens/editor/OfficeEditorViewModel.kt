@@ -79,9 +79,9 @@ class OfficeEditorViewModel @Inject constructor(
     var file: BrowseItem.File? = session.files.firstOrNull { it.id == session.startId } ?: session.files.firstOrNull()
         private set
 
-    /** Do Lixo ou com o E2E trancado: abre só para ler. */
+    /** Do Lixo, de outro dono/can-view ou com o E2E trancado: abre só para ler. */
     val canEdit: Boolean
-        get() = file.let { f -> f != null && !session.fromTrash && (!f.encrypted || e2eKeyManager.isUnlocked) }
+        get() = file.let { f -> f != null && !session.fromTrash && f.id !in session.readOnlyIds && (!f.encrypted || e2eKeyManager.isUnlocked) }
 
     val editorUrl: String get() = backendUrlHolder.current.trimEnd('/') + "/editor-embed"
 
@@ -111,7 +111,7 @@ class OfficeEditorViewModel @Inject constructor(
             put("file", fileJson(f))
             put("canEdit", canEdit)
             put("canComment", !session.fromTrash)
-            put("canShare", !session.fromTrash)
+            put("canShare", !session.fromTrash && f.id !in session.notOwnedIds)
             put("supportsVersions", true)
             put("supportsCollab", true)
             currentUser()?.let { user ->

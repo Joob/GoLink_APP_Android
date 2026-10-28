@@ -18,9 +18,6 @@ const val DEFAULT_TEXT_EXTENSION = "txt"
  */
 val VISIBLE_TEXT_EXTENSIONS = TEXT_EXTENSIONS.filter { it != "text" }
 
-/** ".txt, .md, .json, .csv, .log" — para a dica do diálogo de criação. */
-fun visibleTextExtensionsLabel(): String = VISIBLE_TEXT_EXTENSIONS.joinToString(", ") { ".$it" }
-
 fun hasTextExtension(name: String): Boolean {
     val lower = name.lowercase()
     return TEXT_EXTENSIONS.any { lower.endsWith(".$it") }
@@ -33,15 +30,16 @@ fun withTextExtension(name: String): String {
 }
 
 /**
- * Extensão escrita pelo utilizador que NÃO é de texto (ex.: "pdf"), ou null
- * quando o nome é aceitável. Sem extensão é aceitável — leva `.txt`.
- * O servidor recusa o resto com 422, por isso avisamos antes de criar.
+ * Primeiro nome livre na pasta: "notas.txt" → "notas (1).txt". Criar nunca
+ * deve cair no conflito "Substituir" do upload, que apagava o ficheiro existente.
  */
-fun unsupportedExtension(name: String): String? {
-    val trimmed = normalizeName(name)
-    val dot = trimmed.lastIndexOf('.')
-    if (dot <= 0 || hasTextExtension(trimmed)) return null
-    return trimmed.substring(dot + 1).lowercase()
+fun freeFileName(filename: String, takenNames: Collection<String>): String {
+    val taken = takenNames.mapTo(HashSet()) { it.lowercase() }
+    if (filename.lowercase() !in taken) return filename
+    val dot = filename.lastIndexOf('.')
+    val base = if (dot > 0) filename.substring(0, dot) else filename
+    val ext = if (dot > 0) filename.substring(dot) else ""
+    return generateSequence(1) { it + 1 }.map { "$base ($it)$ext" }.first { it.lowercase() !in taken }
 }
 
 // Pontos finais soltos ("notas.") não são extensão nenhuma.
