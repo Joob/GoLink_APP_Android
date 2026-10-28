@@ -86,6 +86,12 @@ class FileViewerViewModel @Inject constructor(
 
     init {
         maybeLoadText()
+        // "Recentes" da pesquisa (como o FilePreview da web); do Lixo não conta.
+        if (!session.fromTrash) {
+            session.files.firstOrNull { it.id == session.startId }?.let { file ->
+                viewModelScope.launch { browseRepository.recordRecentOpened(file) }
+            }
+        }
     }
 
     val current: BrowseItem.File? get() = _state.value.files.getOrNull(_state.value.currentIndex)

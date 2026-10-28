@@ -91,4 +91,15 @@ interface BrowseApi {
     suspend fun searchEncryptedIds(
         @Body body: co.golink.tester.domain.encryption.SearchByIdsBody,
     ): Response<BrowseListResponse>
+
+    // "Recentes" do ecrã de pesquisa (pastas/ficheiros abertos; igual à web).
+    @GET("api/recents/opened")
+    suspend fun recentOpened(
+        @Query("scope") scope: String? = null,
+    ): Response<BrowseListResponse>
+
+    @POST("api/recents/opened")
+    suspend fun recordRecentOpened(
+        @Body body: co.golink.tester.domain.browse.RecentOpenedBody,
+    ): Response<okhttp3.ResponseBody>
 }

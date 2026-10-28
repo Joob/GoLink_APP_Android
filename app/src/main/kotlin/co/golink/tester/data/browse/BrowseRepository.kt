@@ -192,7 +192,7 @@ class BrowseRepository @Inject constructor(
      * e cada parte é emitida assim que chega (lista acumulada, sem duplicados).
      * Falha só se o servidor falhar.
      */
-    fun searchProgressive(query: String): kotlinx.coroutines.flow.Flow<List<BrowseItem>> =
+    fun searchProgressive(query: String, filter: String? = null): kotlinx.coroutines.flow.Flow<List<BrowseItem>> =
         kotlinx.coroutines.flow.channelFlow {
             if (query.isBlank()) { send(emptyList()); return@channelFlow }
             val parsed = co.golink.tester.domain.search.SearchQueryParser.parse(query)
@@ -205,12 +205,21 @@ class BrowseRepository @Inject constructor(
                 val seen = s.map { it.id }.toSet()
                 send(encrypted.filter { it.id !in seen } + s)
             }
-            launch {
+            // Partilhas, equipas e backup têm nomes em claro: o índice cifrado é só do espaço privado.
+            if (filter !in setOf("shared", "team", "mobile_backup")) launch {
                 val found = runCatching { searchEncryptedNames(parsed.text, f) }.getOrDefault(emptyList())
+                    .filter { item ->
+                        when (filter) {
+                            "files" -> item is BrowseItem.File
+                            "folders" -> item is BrowseItem.Folder
+                            else -> true
+                        }
+                    }
                 if (found.isNotEmpty()) { lock.withLock { encrypted = found }; emitMerged() }
             }
             val response = api.search(
                 query = parsed.text.ifBlank { null },
+                filter = filter,
                 kind = f.kind,
                 types = f.types.ifEmpty { null },
                 extensions = f.extensions.ifEmpty { null },
@@ -226,6 +235,21 @@ class BrowseRepository @Inject constructor(
             lock.withLock { server = items }
             emitMerged()
         }
+
+    /** "Recentes" do ecrã de pesquisa; [scope] = separador (null = Tudo). */
+    suspend fun recentOpened(scope: String?): Result<List<BrowseItem>> = runCatching {
+        val response = api.recentOpened(scope)
+        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            response.body()?.data?.map { it.data.decItem() }.orEmpty()
+        }
+    }
+
+    /** Regista a abertura de um ficheiro (as pastas regista-as o servidor ao navegar). */
+    suspend fun recordRecentOpened(item: BrowseItem) {
+        val type = if (item is BrowseItem.Folder) "folder" else "file"
+        runCatching { api.recordRecentOpened(co.golink.tester.domain.browse.RecentOpenedBody(item.id, type)) }
+    }
 
     /** Aquece o índice de nomes cifrados (rede + decifrar) antes da 1.ª pesquisa. */
     suspend fun warmSearchIndex() {

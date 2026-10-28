@@ -143,6 +143,18 @@ data class ShareDialogUiState(
  */
 data class Crumb(val id: String?, val name: String, val origin: BrowseMode? = null)
 
+/** Ecrã de pesquisa: [tab] = filtro do servidor (null = Tudo; files|folders|shared|team|mobile_backup). */
+data class SearchSheetState(
+    val open: Boolean = false,
+    val query: String = "",
+    val tab: String? = null,
+    val chips: List<String> = emptyList(),
+    val results: List<BrowseItem> = emptyList(),
+    val recents: List<BrowseItem> = emptyList(),
+    val loading: Boolean = false,
+    val recentsLoading: Boolean = false,
+)
+
 /** Atividade recente (modo Latest): uma página por secção, pela ordem do ecrã. */
 /** Atividade recente (feed): separador all|my_uploads|shared_with_me|team. */
 data class ActivityFeedUiState(
@@ -424,6 +436,93 @@ class BrowseViewModel @Inject constructor(
     fun clearSearch() {
         searchJob?.cancel()
         openRoot()
+    }
+
+    // ── Ecrã de pesquisa (paridade com o popup da web): separadores + Recentes ──
+
+    private val _searchSheet = MutableStateFlow(SearchSheetState())
+    val searchSheet: StateFlow<SearchSheetState> = _searchSheet.asStateFlow()
+    private var sheetSearchJob: Job? = null
+    private var sheetRecentsJob: Job? = null
+
+    fun openSearchSheet() {
+        _searchSheet.value = SearchSheetState(open = true)
+        warmSearch()
+        loadSheetRecents()
+    }
+
+    fun closeSearchSheet() {
+        sheetSearchJob?.cancel()
+        sheetRecentsJob?.cancel()
+        _searchSheet.value = SearchSheetState()
+    }
+
+    fun setSheetQuery(query: String) {
+        val parsed = co.golink.tester.domain.search.SearchQueryParser.parse(query)
+        _searchSheet.update { it.copy(query = query, chips = parsed.chips) }
+        runSheetSearch()
+    }
+
+    fun setSheetTab(tab: String?) {
+        if (_searchSheet.value.tab == tab) return
+        _searchSheet.update { it.copy(tab = tab, results = emptyList()) }
+        loadSheetRecents()
+        runSheetSearch()
+    }
+
+    private fun runSheetSearch() {
+        sheetSearchJob?.cancel()
+        val st = _searchSheet.value
+        val query = st.query
+        val tab = st.tab
+        val parsed = co.golink.tester.domain.search.SearchQueryParser.parse(query)
+        // Mínimo 2 chars (ou filtros reconhecidos), como o Spotlight da web.
+        if (query.isBlank() || (!parsed.hasFilters && query.trim().length < 2)) {
+            _searchSheet.update { it.copy(results = emptyList(), loading = false) }
+            return
+        }
+        sheetSearchJob = viewModelScope.launch {
+            delay(250)
+            _searchSheet.update { it.copy(loading = true) }
+            val current = { _searchSheet.value.let { it.query == query && it.tab == tab } }
+            try {
+                repository.searchProgressive(query, tab).collect { items ->
+                    if (current()) _searchSheet.update { it.copy(results = items) }
+                }
+                if (current()) _searchSheet.update { it.copy(loading = false) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                if (current()) _searchSheet.update { it.copy(loading = false, results = emptyList()) }
+            }
+        }
+    }
+
+    private fun loadSheetRecents() {
+        sheetRecentsJob?.cancel()
+        val tab = _searchSheet.value.tab
+        sheetRecentsJob = viewModelScope.launch {
+            _searchSheet.update { it.copy(recentsLoading = true) }
+            val items = repository.recentOpened(tab).getOrDefault(emptyList())
+            if (_searchSheet.value.tab == tab) _searchSheet.update { it.copy(recents = items, recentsLoading = false) }
+        }
+    }
+
+    /** Pasta escolhida na pesquisa: abre no seu contexto (equipa minha / partilhada comigo / Drive). */
+    fun openSearchFolder(folder: BrowseItem.Folder) {
+        val ownedByMe = folder.ownerId == null || isOwnedByMe(folder.ownerId)
+        val (mode, root) = when {
+            !folder.isTeamFolder -> BrowseMode.Folder(id = folder.id, name = folder.name) to Crumb(null, "Ficheiros".tr())
+            ownedByMe -> BrowseMode.TeamFolder(id = folder.id, name = folder.name) to
+                Crumb(null, "Pastas de equipa".tr(), origin = BrowseMode.TeamFolder(id = null, name = "Pastas de equipa".tr()))
+            else -> BrowseMode.SharedWithMe(id = folder.id, name = folder.name) to
+                Crumb(null, "Partilhado comigo".tr(), origin = BrowseMode.SharedWithMe(id = null, name = "Partilhado comigo".tr()))
+        }
+        closeSearchSheet()
+        _state.update {
+            it.copy(mode = mode, crumbs = listOf(root, Crumb(folder.id, folder.name)), searchQuery = "", searchChips = emptyList())
+        }
+        loadCurrent()
     }
 
     fun refresh() {

@@ -8,6 +8,16 @@ object I18nRedesign {
     private fun r(pt: String, en: String, fr: String, es: String) = arrayOf(pt, en, fr, es)
 
     private val rows: List<Array<String>> = listOf(
+        // Ecrã de pesquisa (separadores + Recentes, paridade com a web)
+        r("Pesquisar", "Search", "Rechercher", "Buscar"),
+        r("Partilhados", "Shared", "Partagés", "Compartidos"),
+        r("Backup Mobile", "Mobile Backup", "Sauvegarde mobile", "Copia móvil"),
+        r("O Backup Mobile está desligado", "Mobile Backup is turned off", "La sauvegarde mobile est désactivée", "La copia de seguridad móvil está desactivada"),
+        r("Sem itens recentes", "No recent items", "Aucun élément récent", "Sin elementos recientes"),
+        r("Sem itens recentes em %s", "No recent items in %s", "Aucun élément récent dans %s", "Sin elementos recientes en %s"),
+        r("Sem resultados em %s", "No results in %s", "Aucun résultat dans %s", "Sin resultados en %s"),
+        r("Pesquisar em tudo", "Search all", "Tout rechercher", "Buscar en todo"),
+        r("Nada encontrado", "Nothing found", "Rien trouvé", "No se encontró nada"),
         // Backups por dispositivo
         // Editor de documentos: formatos ao criar
         r("Formato", "Format", "Format", "Formato"),

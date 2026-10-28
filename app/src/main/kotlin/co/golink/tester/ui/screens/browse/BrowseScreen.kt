@@ -398,7 +398,6 @@ fun BrowseScreen(
     var createInMoveFor by remember { mutableStateOf<Pair<Boolean, String?>?>(null) }
     var fabMenuOpen by remember { mutableStateOf(false) }
     // "Pesquisar ficheiros" na gaveta: incrementa → a SearchRow pede o foco.
-    var searchFocusRequest by remember { mutableStateOf(0) }
     var membersPopupFolder by remember { mutableStateOf<BrowseItem.Folder?>(null) }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -550,7 +549,7 @@ fun BrowseScreen(
                     viewModel.exitSelectMode()
                     fabMenuOpen = true
                 },
-                onSearch = go { searchFocusRequest++ },
+                onSearch = go { viewModel.openSearchSheet() },
                 lockedContent = if (e2eLocked) {
                     {
                         DrawerEncryptedIndicator(onUnlock = {
@@ -603,6 +602,36 @@ fun BrowseScreen(
                 }
             }
         }
+
+        // Pesquisa em ecrã próprio (separadores + Recentes), como o popup da web.
+        val searchSheet by viewModel.searchSheet.collectAsStateWithLifecycle()
+        if (searchSheet.open) SearchSheet(
+            state = searchSheet,
+            mobileBackupEnabled = autoBackupEnabled,
+            onQueryChange = viewModel::setSheetQuery,
+            onTabChange = viewModel::setSheetTab,
+            onOpenItem = { item, list ->
+                when (item) {
+                    is BrowseItem.Folder -> viewModel.openSearchFolder(item)
+                    is BrowseItem.File -> {
+                        viewModel.closeSearchSheet()
+                        when {
+                            item.isOfficeFile() -> {
+                                viewModel.prepareViewer(listOf(item), item.id, fromTrash = false, readOnlyIds = emptySet())
+                                onOpenFile(item.id)
+                            }
+                            item.isViewable() -> {
+                                val viewable = list.filterIsInstance<BrowseItem.File>().filter { it.isViewable() }
+                                viewModel.prepareViewer(viewable, item.id, fromTrash = false, readOnlyIds = emptySet())
+                                onOpenFile(item.id)
+                            }
+                            else -> sheetItem = item
+                        }
+                    }
+                }
+            },
+            onDismiss = viewModel::closeSearchSheet,
+        )
 
         Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
@@ -738,15 +767,12 @@ fun BrowseScreen(
                     )
                 }
                 SearchRow(
-                    query = state.searchQuery,
-                    onQueryChange = viewModel::setSearchQuery,
-                    onClear = viewModel::clearSearch,
+                    onOpenSearch = viewModel::openSearchSheet,
                     viewMode = state.viewMode,
                     sortMode = state.sortMode,
                     onSetViewMode = viewModel::setViewMode,
                     onSetSortMode = viewModel::setSortMode,
                     showViewControls = state.mode != BrowseMode.Latest,
-                    focusRequest = searchFocusRequest,
                 )
                 // Resultados vão aparecendo; a barra indica que ainda chegam mais.
                 if (state.mode is BrowseMode.SearchResults && state.isLoading && state.items.isNotEmpty()) {
@@ -767,7 +793,7 @@ fun BrowseScreen(
                     filesOnly = state.filesOnly,
                     inSelectionMode = state.selectMode,
                     viewMode = state.viewMode,
-                    onSearchFocus = { /* search field already visible */ },
+                    onSearchFocus = viewModel::openSearchSheet,
                     onToggleFilesOnly = viewModel::toggleFilesOnly,
                     onUpload = { filePicker.launch(arrayOf("*/*")) },
                     onSelectMode = { viewModel.enterSelectMode() },
@@ -1909,20 +1935,13 @@ private fun ActionChip(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SearchRow(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    onClear: () -> Unit,
+    onOpenSearch: () -> Unit,
     viewMode: ViewMode,
     sortMode: SortMode,
     onSetViewMode: (ViewMode) -> Unit,
     onSetSortMode: (SortMode) -> Unit,
     showViewControls: Boolean = true,
-    focusRequest: Int = 0,
 ) {
-    val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(focusRequest) {
-        if (focusRequest > 0) runCatching { focusRequester.requestFocus() }
-    }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -1930,38 +1949,30 @@ private fun SearchRow(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = onQueryChange,
-            placeholder = {
-                Text(
-                    "Pesquisar ficheiros e pastas".tr(),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            },
-            singleLine = true,
-            leadingIcon = {
-                Icon(
-                    Icons.Filled.Search,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            },
-            trailingIcon = if (query.isNotEmpty()) {
-                { IconButton(onClick = onClear) { Icon(Icons.Filled.Close, contentDescription = null) } }
-            } else null,
-            shape = RoundedCornerShape(14.dp),
-            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = MaterialTheme.colorScheme.surface,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                focusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-            ),
+        // Só abre o ecrã de pesquisa (separadores + Recentes), como a barra da web.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .weight(1f)
                 .height(50.dp)
-                .focusRequester(focusRequester),
-        )
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
+                .clickable(onClick = onOpenSearch)
+                .padding(horizontal = 14.dp),
+        ) {
+            Icon(
+                Icons.Filled.Search,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                "Pesquisar ficheiros e pastas".tr(),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+        }
         if (!showViewControls) return@Row
         var menuOpen by remember { mutableStateOf(false) }
         Box(

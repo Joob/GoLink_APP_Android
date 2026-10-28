@@ -205,3 +205,10 @@ data class BrowseQuery(
     val sort: String? = null,
     val direction: String? = null,
 )
+
+/** Abertura de um ficheiro/pasta para os "Recentes" da pesquisa. */
+@Serializable
+data class RecentOpenedBody(
+    val id: String,
+    val type: String,
+)
