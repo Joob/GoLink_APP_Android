@@ -201,12 +201,11 @@ fun <T> Segmented(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> 
     }
 }
 
-/** Badge do tipo de ficheiro (PDF, DOC, IMG…) com as cores da web (fileBadge em calendarForm.js). */
-@Composable
-fun FileBadge(name: String, mime: String?, size: Dp = 34.dp) {
+/** Rótulo e cor do tipo de ficheiro (fileBadge em calendarForm.js). */
+fun fileKind(name: String, mime: String?): Pair<String, Color> {
     val ext = name.substringAfterLast('.', "").lowercase()
     val m = mime.orEmpty()
-    val (label, color) = when {
+    return when {
         m.startsWith("image/") || ext in setOf("jpg", "jpeg", "png", "gif", "webp", "heic", "svg") -> "IMG" to Color(0xFF7C3AED)
         ext == "pdf" -> "PDF" to Color(0xFFDC2626)
         ext in setOf("doc", "docx", "odt", "rtf", "txt", "md") -> "DOC" to Color(0xFF2563EB)
@@ -215,6 +214,12 @@ fun FileBadge(name: String, mime: String?, size: Dp = 34.dp) {
         m.startsWith("video/") || ext in setOf("mp4", "mov", "mkv", "webm") -> "VID" to Color(0xFFDB2777)
         else -> ext.ifEmpty { "file" }.take(4).uppercase() to Color(0xFF4B5563)
     }
+}
+
+/** Badge do tipo de ficheiro (PDF, DOC, IMG…) com as cores da web (fileBadge em calendarForm.js). */
+@Composable
+fun FileBadge(name: String, mime: String?, size: Dp = 34.dp) {
+    val (label, color) = fileKind(name, mime)
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier.size(size).clip(RoundedCornerShape(9.dp)).background(color.copy(alpha = 0.12f)),

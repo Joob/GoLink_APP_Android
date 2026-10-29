@@ -123,6 +123,9 @@ sealed interface BrowseItem {
         val contentRevision: Int? = null,
         /** Dono do ficheiro; null = servidor antigo. */
         val ownerId: String? = null,
+        /** Dimensões (EXIF) das imagens, quando o servidor as envia. */
+        val imageWidth: Int? = null,
+        val imageHeight: Int? = null,
     ) : BrowseItem
 }
 
@@ -224,5 +227,10 @@ fun BrowseEntry.toItem(): BrowseItem = if (type == "folder") {
         scanStatus = attributes.scan_status,
         contentRevision = attributes.content_revision,
         ownerId = attributes.owner_id,
+        imageWidth = relationships?.exif?.data?.attributes?.width.asIntOrNull(),
+        imageHeight = relationships?.exif?.data?.attributes?.height.asIntOrNull(),
     )
 }
+
+private fun kotlinx.serialization.json.JsonElement?.asIntOrNull(): Int? =
+    (this as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()?.toInt()?.takeIf { it > 0 }

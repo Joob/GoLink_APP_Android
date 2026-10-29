@@ -70,6 +70,10 @@ class BrowseRepository @Inject constructor(
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { body.toPaged(page) }
     }
 
+    /** Itens já descarregados noutro endpoint (nomes E2E decifrados). */
+    suspend fun decodeItems(body: BrowseListResponse): List<BrowseItem> =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { body.data.map { it.data.decItem() } }
+
     suspend fun listLatest(page: Int, perPage: Int = PAGE_SIZE): Result<PagedItems> = runCatching {
         val response = api.latest(page = page.toString(), perPage = perPage)
         check(response.isSuccessful) { "HTTP ${response.code()}" }

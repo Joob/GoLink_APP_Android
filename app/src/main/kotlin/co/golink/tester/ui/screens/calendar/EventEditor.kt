@@ -125,6 +125,7 @@ private data class FormFields(
     val guests: List<String>,
     val guestsCanEdit: Boolean,
     val attachments: List<EventAttachment>,
+    val guestsSeeFiles: Boolean = true,
 ) {
     /** Início/fim finais; o fim nunca antes do início (formDates da web). */
     fun dates(zone: ZoneId = ZoneId.systemDefault()): Pair<Instant, Instant> {
@@ -173,6 +174,7 @@ private fun fieldsFrom(ev: CalEvent): FormFields {
         location = ev.data.location, notes = ev.data.notes,
         guests = ev.raw.guests.map { it.email }, guestsCanEdit = ev.raw.guests_can_edit,
         attachments = ev.data.attachments,
+        guestsSeeFiles = ev.raw.guests_see_files,
     )
 }
 
@@ -210,6 +212,10 @@ fun EventEditor(
     onAttach: (() -> Unit)? = null,
     pendingAttachments: List<EventAttachment> = emptyList(),
     onPendingConsumed: () -> Unit = {},
+    /** Itens do Drive dos anexos (miniatura, tamanho). */
+    attachmentFiles: Map<String, co.golink.tester.domain.browse.BrowseItem.File> = emptyMap(),
+    /** Abre no viewer (anexo, todos os anexos do formulário, título). */
+    onOpenAttachment: ((EventAttachment, List<EventAttachment>, String) -> Unit)? = null,
 ) {
     val editable = calendars.filter { it.canEdit }
     val defaultCal = editable.firstOrNull { !it.isBirthdays } ?: editable.firstOrNull()
@@ -244,6 +250,7 @@ fun EventEditor(
                 rule = if (f.repeat == "none") RepeatRule() else f.rule,
                 alerts = f.alerts.distinct().sorted(),
                 guestsCanEdit = f.guestsCanEdit && f.guests.isNotEmpty(),
+                guestsSeeFiles = f.guestsSeeFiles,
                 title = f.title.trim(), location = f.location.trim(), notes = f.notes,
                 attachments = f.attachments,
                 shareTokens = event?.raw?.files.orEmpty().mapNotNull { r -> r.share_token?.let { r.file_id to it } }.toMap(),
@@ -432,11 +439,23 @@ fun EventEditor(
                     // Anexos (como a secção "Ficheiros do Drive" da web)
                     if (f.attachments.isNotEmpty() || (manages && onAttach != null)) {
                         EditorDivider()
-                        AttachmentsBlock(
+                        EventAttachmentsSection(
                             attachments = f.attachments,
+                            files = attachmentFiles,
+                            // O viewer é outro ecrã: o formulário (remember) perdia-se — só sem alterações por gravar.
+                            onOpen = onOpenAttachment?.takeIf { !dirty }?.let { open -> { a -> open(a, f.attachments, f.title.trim()) } },
                             onRemove = if (manages) { a -> f = f.copy(attachments = f.attachments.filterNot { it.file_id == a.file_id }) } else null,
                             onAttach = if (manages) onAttach else null,
+                            guestsMode = f.guests.isNotEmpty() && f.guestsSeeFiles,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                         )
+                        if (manages && f.guests.isNotEmpty() && f.attachments.isNotEmpty()) {
+                            GuestsSeeFilesRow(
+                                checked = f.guestsSeeFiles,
+                                onChange = { f = f.copy(guestsSeeFiles = it) },
+                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                            )
+                        }
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
@@ -551,71 +570,6 @@ private fun PlainField(value: String, placeholder: String, modifier: Modifier, s
 }
 
 /** Ficheiros anexados (cartões com o tipo) + "Anexar do Drive" tracejado. */
-@Composable
-private fun AttachmentsBlock(attachments: List<EventAttachment>, onRemove: ((EventAttachment) -> Unit)?, onAttach: (() -> Unit)?) {
-    val primary = MaterialTheme.colorScheme.primary
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "Ficheiros do Drive".tr().uppercase(), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f),
-            )
-            if (attachments.isNotEmpty()) Text("${attachments.size}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        attachments.forEach { a ->
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
-                    .padding(start = 10.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
-            ) {
-                FileBadge(a.name, a.mime)
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(a.name, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        a.name.substringAfterLast('.', "").uppercase().ifEmpty { "Ficheiro".tr() },
-                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (onRemove != null) {
-                    IconButton(onClick = { onRemove(a) }, modifier = Modifier.size(36.dp)) {
-                        Icon(Icons.Filled.Close, contentDescription = "Remover".tr(), modifier = Modifier.size(16.dp))
-                    }
-                }
-            }
-        }
-        if (onAttach != null) {
-            Row(
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(46.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(primary.copy(alpha = 0.05f))
-                    .drawBehind {
-                        drawRoundRect(
-                            color = primary.copy(alpha = 0.45f),
-                            cornerRadius = CornerRadius(12.dp.toPx()),
-                            style = Stroke(width = 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))),
-                        )
-                    }
-                    .clickable(onClick = onAttach),
-            ) {
-                Icon(Icons.Outlined.AttachFile, contentDescription = null, modifier = Modifier.size(16.dp), tint = primary)
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    if (attachments.isEmpty()) "Anexar do Drive".tr() else "Anexar mais ficheiros".tr(),
-                    fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = primary,
-                )
-            }
-        }
-    }
-}
-
 /** Convidados por email: separa por espaços/vírgulas/; e ignora o próprio email (GuestsField.vue). */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable

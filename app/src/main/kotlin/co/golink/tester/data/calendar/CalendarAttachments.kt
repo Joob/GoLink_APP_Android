@@ -5,6 +5,7 @@ import co.golink.tester.data.encryption.E2EShareService
 import co.golink.tester.data.share.ShareRepository
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.calendar.EventAttachment
+import co.golink.tester.network.CalendarApi
 import co.golink.tester.network.UserEncryptionApi
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -21,9 +22,14 @@ class CalendarAttachments @Inject constructor(
     private val shares: ShareRepository,
     private val e2eShare: E2EShareService,
     private val encryptionApi: UserEncryptionApi,
+    private val calendarApi: CalendarApi,
 ) {
-    // Anexos cujo link falhou (sem acesso, não é dono…): não repetir a cada gravação.
-    private val shareFailed = ConcurrentHashMap.newKeySet<String>()
+    // Anexos cujo link falhou (sem acesso, não é dono…): não repetir a cada
+    // gravação. Expira (como na web), para uma falha de rede não deixar o
+    // anexo sem link até reiniciar a app.
+    private val shareFailedAt = ConcurrentHashMap<String, Long>()
+    private fun failedRecently(id: String) = System.currentTimeMillis() - (shareFailedAt[id] ?: 0L) < SHARE_RETRY_MS
+    private fun markFailed(id: String) { shareFailedAt[id] = System.currentTimeMillis() }
 
     /** Ficheiros escolhidos no seletor nesta sessão (evita voltar a listar a pasta). */
     private val picked = ConcurrentHashMap<String, BrowseItem.File>()
@@ -44,6 +50,22 @@ class CalendarAttachments @Inject constructor(
     private companion object {
         const val ROOT_KEY = "__root"
         const val LISTING_TTL_MS = 60_000L
+        const val SHARE_RETRY_MS = 2 * 60_000L
+    }
+
+    /** Ficheiro já conhecido (escolhido agora ou vindo de [eventFiles]). */
+    fun known(fileId: String): BrowseItem.File? = picked[fileId]
+
+    /**
+     * Ficheiros anexados a um evento gravado, por file_id (GET /events/{id}/files):
+     * tamanho, miniatura e dimensões para os cartões, e o item para o viewer.
+     */
+    suspend fun eventFiles(eventId: String): Map<String, BrowseItem.File> {
+        val res = calendarApi.eventFiles(eventId)
+        check(res.isSuccessful) { "HTTP ${res.code()}" }
+        val files = browse.decodeItems(res.body() ?: return emptyMap()).filterIsInstance<BrowseItem.File>()
+        files.forEach { picked[it.id] = it }
+        return files.associateBy { it.id }
     }
 
     fun toAttachment(file: BrowseItem.File) = EventAttachment(
@@ -77,10 +99,10 @@ class CalendarAttachments @Inject constructor(
     suspend fun ensureLinks(attachments: List<EventAttachment>): Pair<List<EventAttachment>, Map<String, String>> {
         val tokens = HashMap<String, String>()
         val out = attachments.map { a ->
-            if (!a.share_url.isNullOrBlank() || a.file_id in shareFailed) return@map a
+            if (!a.share_url.isNullOrBlank() || failedRecently(a.file_id)) return@map a
             val file = findFile(a)
             if (file == null) {
-                shareFailed += a.file_id
+                markFailed(a.file_id)
                 return@map a
             }
             runCatching {
@@ -99,7 +121,7 @@ class CalendarAttachments @Inject constructor(
                 if (created) tokens[a.file_id] = share.token
                 a.copy(share_url = base + fragment)
             }.getOrElse {
-                shareFailed += a.file_id
+                markFailed(a.file_id)
                 a
             }
         }

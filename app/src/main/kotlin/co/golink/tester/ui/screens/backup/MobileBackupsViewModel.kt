@@ -350,16 +350,16 @@ class MobileBackupsViewModel @Inject constructor(
         }
     }
 
-    fun convertToTeamFolder(folderId: String, invitations: List<TeamInvitation>) {
-        _state.update { it.copy(processing = "A converter…".tr()) }
+    fun convertToTeamFolder(folderId: String, invitations: List<TeamInvitation>, onDone: (String?) -> Unit = {}) {
         viewModelScope.launch {
             teamsRepository.convertToTeamFolder(folderId, invitations)
                 .onSuccess {
-                    _state.update { it.copy(processing = null, toast = "Pasta convertida".tr()) }
+                    onDone(null)
+                    _state.update { it.copy(toast = "Pasta convertida".tr()) }
                     load()
                     teamsRepository.clearEncryptedNames(folderId)
                 }
-                .onFailure { t -> _state.update { it.copy(processing = null, toast = "Falha: ${t.message}") } }
+                .onFailure { t -> onDone("Falha: ${t.message}") }
         }
     }
 

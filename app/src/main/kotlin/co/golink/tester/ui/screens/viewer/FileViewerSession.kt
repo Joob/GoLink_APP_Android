@@ -25,6 +25,9 @@ class FileViewerSession @Inject constructor() {
     /** Ficheiros de outro dono: sem partilhar/copiar link (a partilha exige ser o dono). */
     var notOwnedIds: Set<String> = emptySet()
 
+    /** Contexto no subtítulo (ex.: "Anexado a «Jantar»"); lido uma vez pelo viewer. */
+    var contextLabel: String? = null
+
     /**
      * Editor de documentos: última content_revision gravada por ficheiro. A
      * lista de onde se abre pode ainda ter a antiga — sem isto a gravação

@@ -96,6 +96,9 @@ class FileViewerViewModel @Inject constructor(
 
     val current: BrowseItem.File? get() = _state.value.files.getOrNull(_state.value.currentIndex)
 
+    /** Subtítulo de contexto (anexos do calendário); consumido para não passar a outras aberturas. */
+    val contextLabel: String? = session.contextLabel.also { session.contextLabel = null }
+
     /** Criado como ficheiro de texto (ex.: .csv): abre no editor de texto, não na folha de cálculo. */
     val opensAsText: Boolean = session.startInEditMode
 

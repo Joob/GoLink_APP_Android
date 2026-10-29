@@ -1,9 +1,11 @@
 package co.golink.tester.network
 
+import co.golink.tester.domain.browse.BrowseListResponse
 import co.golink.tester.domain.calendar.CalendarListResponse
 import co.golink.tester.domain.calendar.CreatedIdResponse
 import co.golink.tester.domain.calendar.EventListResponse
 import co.golink.tester.domain.calendar.EventResponse
+import co.golink.tester.domain.calendar.Holidays
 import co.golink.tester.domain.calendar.LookupKeysRequest
 import co.golink.tester.domain.calendar.LookupKeysResponse
 import kotlinx.serialization.json.JsonObject
@@ -41,11 +43,26 @@ interface CalendarApi {
     @POST("api/calendar/lookup-keys")
     suspend fun lookupKeys(@Body body: LookupKeysRequest): Response<LookupKeysResponse>
 
+    @GET("api/calendar/holidays")
+    suspend fun holidays(
+        @Query("country") country: String,
+        @Query("from") from: Int,
+        @Query("to") to: Int,
+        @Query("lang") lang: String,
+    ): Response<Holidays.HolidayListResponse>
+
+    @GET("api/calendar/holidays/countries")
+    suspend fun holidayCountries(): Response<Holidays.CountryListResponse>
+
     @GET("api/calendar/events")
     suspend fun events(@Query("from") from: String, @Query("to") to: String): Response<EventListResponse>
 
     @GET("api/calendar/events/{id}")
     suspend fun event(@Path("id") id: String): Response<EventResponse>
+
+    /** Ficheiros do Drive anexados (FileResource; só membros, só o que cada um vê). */
+    @GET("api/calendar/events/{id}/files")
+    suspend fun eventFiles(@Path("id") id: String): Response<BrowseListResponse>
 
     @POST("api/calendar/events")
     suspend fun createEvent(@Body body: JsonObject): Response<EventResponse>

@@ -103,6 +103,8 @@ fun CalendarScreen(
     val holidayCountry by viewModel.holidayCountry.collectAsStateWithLifecycle()
     val holidayChoice by viewModel.holidayCountryChoice.collectAsStateWithLifecycle()
     var holidaysSheet by remember { mutableStateOf(false) }
+    val holidayCountries by viewModel.holidayCountries.collectAsStateWithLifecycle()
+    LaunchedEffect(holidaysSheet) { if (holidaysSheet) viewModel.loadHolidayCountries() }
     val user by shell.user.collectAsStateWithLifecycle()
     val unread by shell.unreadNotifications.collectAsStateWithLifecycle()
     val storage by shell.storage.collectAsStateWithLifecycle()
@@ -188,7 +190,7 @@ fun CalendarScreen(
                         onToggle = viewModel::toggleCalendar,
                         onSettings = { id -> closeDrawer(); viewModel.openSettings(id) },
                         holidaysVisible = holidaysVisible,
-                        holidayCountry = holidayCountry ?: holidayChoice,
+                        holidayCountry = holidayCountry,
                         onToggleHolidays = viewModel::toggleHolidays,
                         onHolidaySettings = { closeDrawer(); holidaysSheet = true },
                     )
@@ -267,7 +269,8 @@ fun CalendarScreen(
             onEdit = { viewModel.editEvent(inst.event) },
             onDelete = { viewModel.deleteEvent(inst.event) },
             onRsvp = { status -> viewModel.rsvp(inst, status) },
-            onOpenAttachment = { a -> viewModel.openAttachment(a, user?.id) },
+            onOpenAttachment = { a, all -> viewModel.openAttachment(a, all, inst.event.data.title, user?.id) },
+            attachmentFiles = state.attachmentFiles,
         )
     }
 
@@ -284,6 +287,8 @@ fun CalendarScreen(
             onAttach = { viewModel.openPicker(true) },
             pendingAttachments = state.pendingAttachments,
             onPendingConsumed = viewModel::consumePendingAttachments,
+            attachmentFiles = state.attachmentFiles,
+            onOpenAttachment = { a, all, title -> viewModel.openAttachment(a, all, title, user?.id) },
         )
         if (state.picker) {
             DrivePickerDialog(
@@ -315,6 +320,7 @@ fun CalendarScreen(
     if (holidaysSheet) {
         HolidaysSheet(
             selected = holidayChoice,
+            countries = holidayCountries,
             busy = state.calBusy,
             onDismiss = { holidaysSheet = false },
             onPick = { code -> viewModel.setHolidayCountry(code); holidaysSheet = false },

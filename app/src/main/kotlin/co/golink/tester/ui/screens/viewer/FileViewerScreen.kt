@@ -219,7 +219,9 @@ fun FileViewerScreen(
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Text(
-                                text = listOfNotNull(current.filesize, "%d de %d".tr().format(state.currentIndex + 1, state.files.size)).joinToString(" · "),
+                                text = listOfNotNull("%d de %d".tr().format(state.currentIndex + 1, state.files.size), viewModel.contextLabel, current.imageWidth?.let { w -> "$w × ${current.imageHeight}" }, current.filesize).joinToString(" · "),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

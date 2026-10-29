@@ -65,17 +65,22 @@ private data class InviteEntry(val email: String, val permission: String)
 fun CreateTeamFolderDialog(
     isConvert: Boolean = false,
     onDismiss: () -> Unit,
-    onCreate: (name: String, invitations: List<TeamInvitation>) -> Unit,
-    onConvert: (invitations: List<TeamInvitation>) -> Unit,
+    // onDone(erro): null = sucesso (o chamador fecha); com erro o diálogo fica aberto.
+    onCreate: (name: String, invitations: List<TeamInvitation>, onDone: (String?) -> Unit) -> Unit,
+    onConvert: (invitations: List<TeamInvitation>, onDone: (String?) -> Unit) -> Unit,
     folderName: String = "",
     ownerName: String = "",
+    ownerEmail: String = "",
 ) {
     var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     val invitations = remember { mutableStateListOf<InviteEntry>() }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val emailValid = android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
+    // O próprio dono não se convida (o servidor também ignora).
+    val emailValid = android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches() &&
+        !email.trim().equals(ownerEmail, ignoreCase = true)
     var submitted by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
     // O servidor exige pelo menos um convite; conta o e-mail escrito e ainda não adicionado.
     val canSubmit = !submitted && (isConvert || name.isNotBlank()) && (invitations.isNotEmpty() || emailValid)
 
@@ -192,22 +197,34 @@ fun CreateTeamFolderDialog(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            error?.let {
+                Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+            }
+
             Spacer(Modifier.height(4.dp))
             Button(
                 onClick = {
                     if (submitted) return@Button
                     submitted = true
                     addInvite()
+                    error = null
                     val mapped = invitations.map { TeamInvitation(it.email, it.permission) }
-                    if (isConvert) onConvert(mapped) else onCreate(name.trim(), mapped)
-                    onDismiss()
+                    val onDone: (String?) -> Unit = { failure ->
+                        submitted = false
+                        error = failure
+                    }
+                    if (isConvert) onConvert(mapped, onDone) else onCreate(name.trim(), mapped, onDone)
                 },
                 enabled = canSubmit,
                 shape = RoundedCornerShape(14.dp),
                 contentPadding = PaddingValues(vertical = 15.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text((if (isConvert) "Transformar em pasta de equipa" else "Criar pasta de equipa").tr(), fontWeight = FontWeight.SemiBold)
+                if (submitted) {
+                    androidx.compose.material3.CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                } else {
+                    Text((if (isConvert) "Transformar em pasta de equipa" else "Criar pasta de equipa").tr(), fontWeight = FontWeight.SemiBold)
+                }
             }
             Text(
                 "Cancelar".tr(),

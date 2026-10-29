@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -56,6 +57,8 @@ data class CalendarUiState(
     val picker: Boolean = false,
     /** Escolhidos no seletor, à espera de entrar no formulário. */
     val pendingAttachments: List<co.golink.tester.domain.calendar.EventAttachment> = emptyList(),
+    /** Itens do Drive dos anexos (file_id → ficheiro): miniatura, tamanho, viewer. */
+    val attachmentFiles: Map<String, co.golink.tester.domain.browse.BrowseItem.File> = emptyMap(),
     /** Anexo pronto a abrir no viewer (consumido pelo ecrã). */
     val openFileId: String? = null,
     /** Anexo sem acesso ao Drive mas com link de partilha: abre no browser. */
@@ -92,8 +95,8 @@ class CalendarViewModel @Inject constructor(
     private val _holidaysVisible = MutableStateFlow(prefs.getBoolean("holidays_visible", true))
     val holidaysVisible: StateFlow<Boolean> = _holidaysVisible
 
-    /** null → país escolhido na web que o Android não conhece (sem feriados). */
-    val holidayCountry: StateFlow<String?> = userRepository.me
+    /** Mesma regra da web (perfil → faturação → aparelho → PT); país sem dados → sem feriados. */
+    val holidayCountry: StateFlow<String> = userRepository.me
         .map { u -> co.golink.tester.domain.calendar.Holidays.resolveCountry(u?.holidayCountry, u?.country, java.util.Locale.getDefault().country) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "PT")
 
@@ -107,13 +110,27 @@ class CalendarViewModel @Inject constructor(
     // e fora da main thread: a expansão das repetições pode dar milhares de ocorrências.
     private data class RangeKey(val events: List<CalEvent>, val from: LocalDate, val to: LocalDate)
 
+    private data class HolidayKey(val from: LocalDate, val to: LocalDate, val show: Boolean, val country: String, val lang: String)
+
+    // Feriados do intervalo, do servidor (nomes no idioma da app); muda com o intervalo, país ou idioma.
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val holidays: StateFlow<List<co.golink.tester.domain.calendar.Holidays.Holiday>> = combine(
+        _state.map { range(it) }.distinctUntilChanged(),
+        _holidaysVisible,
+        holidayCountry,
+        androidx.compose.runtime.snapshotFlow { co.golink.tester.ui.i18n.I18n.lang },
+    ) { r, show, country, lang -> HolidayKey(r.first, r.second, show, country, lang) }
+        .mapLatest { k -> if (k.show) repo.holidays(k.country, k.from, k.to, k.lang) else emptyList() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     val instances: StateFlow<List<CalInstance>> = combine(
         _state.map { s -> range(s).let { (f, t) -> RangeKey(s.events, f, t) } }
             .distinctUntilChanged { a, b -> a.events === b.events && a.from == b.from && a.to == b.to },
         repo.calendars,
         _holidaysVisible,
         holidayCountry,
-    ) { key, cals, showHolidays, country ->
+        holidays,
+    ) { key, cals, showHolidays, country, holidayList ->
         val visible = cals.filter { it.visible }.map { it.id }.toSet()
         val events = key.events.filter { e ->
             if (e.isGuest) e.raw.me?.status != "declined" else e.calendarId in visible
@@ -121,8 +138,8 @@ class CalendarViewModel @Inject constructor(
         val from = key.from
         val to = key.to
         val zone = ZoneId.systemDefault()
-        val holidays = if (showHolidays && country != null && keys.isUnlocked) {
-            co.golink.tester.domain.calendar.Holidays.between(country, from, to).map { holidayEvent(country, it, zone) }
+        val holidays = if (showHolidays && keys.isUnlocked) {
+            co.golink.tester.domain.calendar.Holidays.overlapping(holidayList, from, to).map { holidayEvent(country, it, zone) }
         } else emptyList()
         Recurrence.expand(events + holidays, CalendarDates.dayStart(from, zone), CalendarDates.dayStart(to, zone))
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -216,7 +233,19 @@ class CalendarViewModel @Inject constructor(
         reload()
     }
 
-    fun openInstance(instance: CalInstance?) = _state.update { it.copy(open = instance) }
+    fun openInstance(instance: CalInstance?) {
+        _state.update { it.copy(open = instance) }
+        instance?.event?.let(::loadAttachmentFiles)
+    }
+
+    /** Metadados dos anexos (só membros: o convidado não tem acesso ao Drive). */
+    private fun loadAttachmentFiles(event: CalEvent) {
+        if (event.isGuest || event.data.attachments.isEmpty()) return
+        viewModelScope.launch {
+            runCatching { attachments.eventFiles(event.id) }
+                .onSuccess { files -> _state.update { it.copy(attachmentFiles = it.attachmentFiles + files) } }
+        }
+    }
 
     /** Do sino / pesquisa: abre o evento pelo id e salta para o dia dele. */
     fun openEventById(id: String, date: LocalDate? = null) {
@@ -258,7 +287,10 @@ class CalendarViewModel @Inject constructor(
 
     fun newEvent(start: java.time.Instant? = null) = _state.update { it.copy(editor = EditorRequest(null, start)) }
 
-    fun editEvent(event: CalEvent) = _state.update { it.copy(editor = EditorRequest(event)) }
+    fun editEvent(event: CalEvent) {
+        _state.update { it.copy(editor = EditorRequest(event)) }
+        loadAttachmentFiles(event)
+    }
 
     fun closeEditor() = _state.update { it.copy(editor = null) }
 
@@ -270,7 +302,7 @@ class CalendarViewModel @Inject constructor(
         viewModelScope.launch {
             // Com convidados, quem gere o evento cria links "só ver" dos anexos (só o dono do ficheiro consegue).
             val manages = req.event == null || req.event.canManage
-            val ready = if (manages && form.guests.isNotEmpty() && form.attachments.isNotEmpty()) {
+            val ready = if (manages && form.guestsSeeFiles && form.guests.isNotEmpty() && form.attachments.isNotEmpty()) {
                 val (list, tokens) = attachments.ensureLinks(form.attachments)
                 form.copy(attachments = list, shareTokens = form.shareTokens + tokens)
             } else form
@@ -298,6 +330,14 @@ class CalendarViewModel @Inject constructor(
         val next = !_holidaysVisible.value
         _holidaysVisible.value = next
         prefs.edit().putBoolean("holidays_visible", next).apply()
+    }
+
+    private val _holidayCountries = MutableStateFlow<List<String>>(emptyList())
+    val holidayCountries: StateFlow<List<String>> = _holidayCountries
+
+    fun loadHolidayCountries() {
+        if (_holidayCountries.value.isNotEmpty()) return
+        viewModelScope.launch { repo.holidayCountries().onSuccess { _holidayCountries.value = it } }
     }
 
     fun setHolidayCountry(code: String?) = calendarOp(true) {
@@ -341,22 +381,44 @@ class CalendarViewModel @Inject constructor(
 
     fun attach(files: List<co.golink.tester.domain.browse.BrowseItem.File>) {
         attachments.remember(files)
-        _state.update { it.copy(picker = false, pendingAttachments = files.map(attachments::toAttachment)) }
+        _state.update {
+            it.copy(
+                picker = false,
+                pendingAttachments = files.map(attachments::toAttachment),
+                attachmentFiles = it.attachmentFiles + files.associateBy { f -> f.id },
+            )
+        }
     }
 
     fun consumePendingAttachments() = _state.update { it.copy(pendingAttachments = emptyList()) }
 
-    /** Abre no viewer pela pasta-mãe; sem acesso usa o link de partilha (convidados). */
-    fun openAttachment(a: co.golink.tester.domain.calendar.EventAttachment, myUserId: String?) = viewModelScope.launch {
-        val file = attachments.findFile(a)
+    /**
+     * Abre no viewer com todos os anexos do evento (navegação + tira, como o
+     * visualizador da web); sem acesso ao Drive usa o link de partilha.
+     */
+    fun openAttachment(
+        a: co.golink.tester.domain.calendar.EventAttachment,
+        all: List<co.golink.tester.domain.calendar.EventAttachment>,
+        eventTitle: String,
+        myUserId: String?,
+    ) = viewModelScope.launch {
+        val known = _state.value.attachmentFiles
+        suspend fun resolve(x: co.golink.tester.domain.calendar.EventAttachment) =
+            (known[x.file_id] ?: attachments.known(x.file_id) ?: attachments.findFile(x))
+                // Nome do payload: o do servidor pode vir cifrado.
+                ?.let { f -> if (x.name.isNotBlank()) f.copy(name = x.name) else f }
+        val file = resolve(a)
         when {
             file != null -> {
-                viewerSession.files = listOf(file)
+                val files = all.mapNotNull { x -> if (x.file_id == a.file_id) file else resolve(x) }
+                viewerSession.files = files
                 viewerSession.startId = file.id
                 viewerSession.fromTrash = false
-                val foreign = file.ownerId != null && file.ownerId != myUserId
-                viewerSession.readOnlyIds = if (foreign) setOf(file.id) else emptySet()
-                viewerSession.notOwnedIds = if (foreign) setOf(file.id) else emptySet()
+                viewerSession.contextLabel = eventTitle.takeIf { it.isNotBlank() }?.let { "Anexado a «%s»".tr().format(it) }
+                val foreign = files.filter { it.ownerId != null && it.ownerId != myUserId }.map { it.id }.toSet()
+                // Anexos abrem só para ver (como na web).
+                viewerSession.readOnlyIds = files.map { it.id }.toSet()
+                viewerSession.notOwnedIds = foreign
                 _state.update { it.copy(openFileId = file.id) }
             }
             !a.share_url.isNullOrBlank() -> _state.update { it.copy(openUrl = a.share_url) }
@@ -410,19 +472,19 @@ class CalendarViewModel @Inject constructor(
     fun toast(msg: String) = _state.update { it.copy(toast = msg) }
 }
 
-/** Feriado como evento de dia inteiro, só de leitura (roxo; não vem do servidor). */
+/** Feriado como evento de dia inteiro, só de leitura (roxo). */
 private fun holidayEvent(country: String, h: co.golink.tester.domain.calendar.Holidays.Holiday, zone: ZoneId): CalEvent {
     val raw = co.golink.tester.domain.calendar.EventDto(
-        id = "holiday-$country-${h.date}",
+        id = "holiday-$country-${h.date}-${h.name}",
         calendar_id = "holidays",
         starts_at = CalendarDates.allDayToIso(h.date),
-        ends_at = CalendarDates.allDayToIso(h.date.plusDays(1)),
+        ends_at = CalendarDates.allDayToIso(h.end),
         all_day = true,
     )
     return CalEvent(
         raw = raw,
         start = CalendarDates.dayStart(h.date, zone),
-        end = CalendarDates.dayStart(h.date.plusDays(1), zone),
+        end = CalendarDates.dayStart(h.end, zone),
         data = co.golink.tester.domain.calendar.EventPayload(title = h.name),
         locked = false,
         key = null,

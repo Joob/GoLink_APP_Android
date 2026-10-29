@@ -578,11 +578,12 @@ fun MobileBackupsScreen(
                 isConvert = true,
                 folderName = target.name,
                 onDismiss = { activeDialog = BackupItemDialog.None; dialogTarget = null },
-                onCreate = { _, _ -> },
-                onConvert = { invites ->
-                    viewModel.convertToTeamFolder(target.id, invites)
-                    activeDialog = BackupItemDialog.None
-                    dialogTarget = null
+                onCreate = { _, _, _ -> },
+                onConvert = { invites, onDone ->
+                    viewModel.convertToTeamFolder(target.id, invites) { error ->
+                        if (error == null) { activeDialog = BackupItemDialog.None; dialogTarget = null }
+                        onDone(error)
+                    }
                 },
             )
         }

@@ -328,13 +328,22 @@ private val HOUR: Dp = 52.dp
 
 private data class Block(val inst: CalInstance, val top: Float, val bottom: Float, var col: Int = 0, var cols: Int = 1)
 
+/**
+ * Hora de relógio (0–24) dentro do dia [from, to), como wallHours do
+ * TimeGridView.vue: pela hora local e não pelos ms desde a meia-noite, que nos
+ * dias de mudança de hora (23/25 h) desviava os blocos 1 h.
+ */
+private fun wallHours(t: Long, from: Instant, to: Instant): Float = when {
+    t <= from.toEpochMilli() -> 0f
+    t >= to.toEpochMilli() -> 24f
+    else -> Instant.ofEpochMilli(t).atZone(ZoneId.systemDefault()).toLocalTime().let { it.hour + it.minute / 60f + it.second / 3600f }
+}
+
 /** Colunas para eventos sobrepostos (clusters → largura repartida), como TimeGridView.vue. */
 private fun layout(list: List<CalInstance>, from: Instant, to: Instant): List<Block> {
-    val hourMs = 3_600_000f
     val items = list.map { inst ->
-        val s = maxOf(inst.start.toEpochMilli(), from.toEpochMilli())
-        val e = minOf(maxOf(inst.end.toEpochMilli(), inst.start.toEpochMilli() + 20 * 60_000), to.toEpochMilli())
-        Block(inst, (s - from.toEpochMilli()) / hourMs, (e - from.toEpochMilli()) / hourMs)
+        val e = maxOf(inst.end.toEpochMilli(), inst.start.toEpochMilli() + 20 * 60_000)
+        Block(inst, wallHours(inst.start.toEpochMilli(), from, to), wallHours(e, from, to))
     }.sortedWith(compareBy<Block> { it.top }.thenByDescending { it.bottom })
 
     val cluster = mutableListOf<Block>()

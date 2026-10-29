@@ -224,27 +224,42 @@ fun CalendarSettingsSheet(
 fun countryName(code: String): String =
     java.util.Locale("", code).getDisplayCountry(co.golink.tester.ui.common.appLocale()).ifBlank { code }
 
-/** País dos feriados (HolidaysPopup.vue). null = automático (país da conta). */
+/** País dos feriados (HolidaysPopup.vue): lista do servidor, a mesma da web. null = automático (país da conta). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HolidaysSheet(selected: String?, busy: Boolean, onDismiss: () -> Unit, onPick: (String?) -> Unit) {
+fun HolidaysSheet(selected: String?, countries: List<String>, busy: Boolean, onDismiss: () -> Unit, onPick: (String?) -> Unit) {
+    var query by remember { mutableStateOf("") }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 16.dp)) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(bottom = 16.dp)) {
             Text("País dos feriados".tr(), fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
-            val options = listOf<Pair<String?, String>>(null to "Automático (país da conta)".tr()) +
-                co.golink.tester.domain.calendar.Holidays.COUNTRIES.map { it to countryName(it) }
-            options.forEach { (code, label) ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().clickable(enabled = !busy) { onPick(code) }.padding(horizontal = 20.dp, vertical = 14.dp),
-                ) {
-                    Text(label, fontSize = 15.sp, modifier = Modifier.weight(1f))
-                    if (code == selected) Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                placeholder = { Text("Procurar país…".tr()) },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
+            )
+            val named = remember(countries, co.golink.tester.ui.i18n.I18n.lang) {
+                countries.map { it to countryName(it) }.sortedBy { it.second }
+            }
+            val q = query.trim()
+            val options = (if (q.isEmpty()) listOf<Pair<String?, String>>(null to "Automático (país da conta)".tr()) else emptyList()) +
+                named.filter { q.isEmpty() || it.second.contains(q, ignoreCase = true) || it.first.equals(q, ignoreCase = true) }
+            androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().height(420.dp)) {
+                items(options.size) { i ->
+                    val (code, label) = options[i]
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().clickable(enabled = !busy) { onPick(code) }.padding(horizontal = 20.dp, vertical = 14.dp),
+                    ) {
+                        Text(label, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        if (code == selected) Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                    }
                 }
             }
         }

@@ -1185,7 +1185,9 @@ fun BrowseScreen(
             is BrowseMode.SharedWithMe -> m.id != null && !state.readOnly
             else -> false
         }
-        if ((inFiles || inTeamFolder) && !e2eLocked && !state.selectMode) {
+        // Raiz de Pastas de equipa: o "+" só cria uma pasta de equipa (como na web).
+        val inTeamRoot = (state.mode as? BrowseMode.TeamFolder)?.id == null && state.mode is BrowseMode.TeamFolder
+        if ((inFiles || inTeamFolder || inTeamRoot) && !e2eLocked && !state.selectMode) {
             val primary = MaterialTheme.colorScheme.primary
             val secondary = MaterialTheme.colorScheme.secondary
             val tertiary = MaterialTheme.colorScheme.tertiary
@@ -1197,7 +1199,11 @@ fun BrowseScreen(
                 actions = run {
                     val up = "Carregar".tr()
                     val mk = "Criar".tr()
-                    listOfNotNull(
+                    if (inTeamRoot) listOf(
+                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.GroupAdd, "Pasta de equipa".tr(), primary, "Partilhada com membros".tr(), mk, accent = false) {
+                            activeDialog = ActionDialog.CreateTeamFolder
+                        },
+                    ) else listOfNotNull(
                         co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.FileUpload, "Carregar ficheiros".tr(), primary, "Do telemóvel".tr(), up) {
                             filePicker.launch(arrayOf("*/*"))
                         },
@@ -1601,18 +1607,30 @@ fun BrowseScreen(
         ActionDialog.CreateTeamFolder -> CreateTeamFolderDialog(
             isConvert = false,
             onDismiss = { activeDialog = ActionDialog.None },
-            onCreate = { name, invites -> viewModel.createTeamFolder(name, invites) },
-            onConvert = {},
+            onCreate = { name, invites, onDone ->
+                viewModel.createTeamFolder(name, invites) { error ->
+                    if (error == null) activeDialog = ActionDialog.None
+                    onDone(error)
+                }
+            },
+            onConvert = { _, _ -> },
             ownerName = user?.name.orEmpty(),
+            ownerEmail = user?.email.orEmpty(),
         )
         ActionDialog.ConvertToTeamFolder -> actionTarget?.let { target ->
             CreateTeamFolderDialog(
                 isConvert = true,
                 onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
-                onCreate = { _, _ -> },
-                onConvert = { invites -> viewModel.convertToTeamFolder(target.id, invites) },
+                onCreate = { _, _, _ -> },
+                onConvert = { invites, onDone ->
+                    viewModel.convertToTeamFolder(target.id, invites) { error ->
+                        if (error == null) { activeDialog = ActionDialog.None; actionTarget = null }
+                        onDone(error)
+                    }
+                },
                 folderName = target.name,
                 ownerName = user?.name.orEmpty(),
+                ownerEmail = user?.email.orEmpty(),
             )
         }
         ActionDialog.FileRequest -> CreateFileRequestDialog(

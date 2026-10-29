@@ -60,6 +60,8 @@ data class EventDto(
     val repeat_count: Int? = null,
     val alerts: List<Int>? = null,
     val guests_can_edit: Boolean = false,
+    /** "Convidados podem ver os anexos" (servidor antigo: ausente = sim). */
+    val guests_see_files: Boolean = true,
     val payload: String? = null,
     val key_cal: String? = null,
     val version: Int = 1,

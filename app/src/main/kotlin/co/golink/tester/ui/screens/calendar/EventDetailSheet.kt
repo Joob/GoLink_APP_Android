@@ -79,7 +79,8 @@ fun EventDetailSheet(
     onEdit: (() -> Unit)?,
     onDelete: () -> Unit,
     onRsvp: (String) -> Unit,
-    onOpenAttachment: ((EventAttachment) -> Unit)?,
+    onOpenAttachment: ((EventAttachment, List<EventAttachment>) -> Unit)?,
+    attachmentFiles: Map<String, co.golink.tester.domain.browse.BrowseItem.File> = emptyMap(),
 ) {
     val ev = instance.event
     val color = eventColor(ev, calendars)
@@ -192,8 +193,14 @@ fun EventDetailSheet(
             if (ev.data.notes.isNotBlank()) {
                 InfoRow(Icons.Outlined.Notes) { Text(ev.data.notes, fontSize = 13.sp) }
             }
-            ev.data.attachments.forEach { a ->
-                AttachmentCard(a, onOpen = onOpenAttachment?.let { open -> { open(a) } })
+            // Convidado com os anexos escondidos pelo organizador: não os vê (como na web).
+            if (ev.data.attachments.isNotEmpty() && (!ev.isGuest || ev.raw.guests_see_files)) {
+                EventAttachmentsSection(
+                    attachments = ev.data.attachments,
+                    files = attachmentFiles,
+                    onOpen = onOpenAttachment?.let { open -> { a -> open(a, ev.data.attachments) } },
+                    modifier = Modifier.padding(vertical = 8.dp),
+                )
             }
 
             // Convidado registado: Vais? Sim / Talvez / Não.
@@ -266,25 +273,3 @@ private fun InfoRow(icon: ImageVector?, dot: Color? = null, content: @Composable
     }
 }
 
-@Composable
-private fun AttachmentCard(a: EventAttachment, onOpen: (() -> Unit)?) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
-            .padding(10.dp),
-    ) {
-        FileBadge(a.name, a.mime, 32.dp)
-        Spacer(Modifier.width(10.dp))
-        Text(a.name, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        if (onOpen != null) {
-            Text(
-                "Abrir".tr(), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.clickable(onClick = onOpen).padding(start = 8.dp),
-            )
-        }
-    }
-}

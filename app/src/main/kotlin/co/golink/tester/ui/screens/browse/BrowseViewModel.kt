@@ -887,30 +887,32 @@ class BrowseViewModel @Inject constructor(
         }
     }
 
-    fun createTeamFolder(name: String, invitations: List<TeamInvitation>) {
+    fun createTeamFolder(name: String, invitations: List<TeamInvitation>, onDone: (String?) -> Unit = {}) {
         viewModelScope.launch {
             teamsRepository.createTeamFolder(name.trim(), invitations)
                 .onSuccess {
+                    onDone(null)
                     _state.update { it.copy(toast = "Pasta de equipa criada".tr()) }
                     uploadManager.invalidateMemberKeys()
                     // Fora de Pastas de equipa a nova pasta não aparece: ir para lá.
                     if ((_state.value.mode as? BrowseMode.TeamFolder)?.id == null && _state.value.mode is BrowseMode.TeamFolder) loadCurrent() else openTeamFolders()
                 }
-                .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
+                .onFailure { t -> onDone(failText(t)) }
         }
     }
 
-    fun convertToTeamFolder(folderId: String, invitations: List<TeamInvitation>) {
+    fun convertToTeamFolder(folderId: String, invitations: List<TeamInvitation>, onDone: (String?) -> Unit = {}) {
         viewModelScope.launch {
             teamsRepository.convertToTeamFolder(folderId, invitations)
                 .onSuccess {
+                    onDone(null)
                     _state.update { it.copy(toast = "Pasta convertida".tr()) }
                     uploadManager.invalidateMemberKeys()
                     loadCurrent()
                     // Como a web (clearTeamFolderNames): sem isto os membros veem "•".
                     teamsRepository.clearEncryptedNames(folderId)
                 }
-                .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
+                .onFailure { t -> onDone(failText(t)) }
         }
     }
 

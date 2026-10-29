@@ -10,6 +10,7 @@ import co.golink.tester.domain.calendar.EventAttachment
 import co.golink.tester.domain.calendar.EventDto
 import co.golink.tester.domain.calendar.EventPayload
 import co.golink.tester.domain.calendar.EventResponse
+import co.golink.tester.domain.calendar.Holidays
 import co.golink.tester.domain.calendar.LookupKey
 import co.golink.tester.domain.calendar.LookupKeysRequest
 import co.golink.tester.domain.calendar.RepeatRule
@@ -62,6 +63,8 @@ data class EventForm(
     val rule: RepeatRule = RepeatRule(),
     val alerts: List<Int>,
     val guestsCanEdit: Boolean,
+    /** "Convidados podem ver os anexos": desligado → sem links (o servidor revoga os que houver). */
+    val guestsSeeFiles: Boolean = true,
     val title: String,
     val location: String,
     val notes: String,
@@ -292,11 +295,13 @@ class CalendarRepository @Inject constructor(
 
             // Convidados e anexos são de quem gere o evento (o servidor ignora o resto).
             val manages = event == null || event.canManage
+            // Desligado: os links saem do payload (como na web).
+            val attachments = if (manages && !form.guestsSeeFiles) form.attachments.map { it.copy(share_url = null) } else form.attachments
 
             val payload = CalendarCrypto.encryptString(
                 payloadJson.encodeToString(
                     EventPayload.serializer(),
-                    EventPayload(form.title, form.location, form.notes, form.attachments),
+                    EventPayload(form.title, form.location, form.notes, attachments),
                 ),
                 key,
             )
@@ -328,6 +333,7 @@ class CalendarRepository @Inject constructor(
                         }
                     })
                     put("guests_can_edit", form.guestsCanEdit)
+                    put("guests_see_files", form.guestsSeeFiles)
                 }
 
                 // Criar ou mudar de calendário: K_ev embrulhada com o K_cal de destino.
@@ -387,6 +393,27 @@ class CalendarRepository @Inject constructor(
         val raw = api.rsvp(event.id, buildJsonObject { put("status", status) }).ok().data ?: error("Resposta vazia")
         _changes.tryEmit(Unit)
         decryptWithKey(raw, event.key)
+    }
+
+    // ---- feriados (servidor, mesma date-holidays da web) -------------------------
+
+    private val holidayCache = java.util.concurrent.ConcurrentHashMap<String, List<Holidays.Holiday>>()
+    private var holidayCountryList: List<String>? = null
+
+    /** Feriados que tocam [from, to); ano anterior incluído (feriados de vários dias). Falha → vazio, tenta de novo depois. */
+    suspend fun holidays(country: String, from: LocalDate, to: LocalDate, lang: String): List<Holidays.Holiday> =
+        withContext(Dispatchers.IO) {
+            val list = (from.year - 1..to.year).flatMap { y ->
+                val key = "$country|$lang|$y"
+                holidayCache[key] ?: runCatching {
+                    Holidays.parse(api.holidays(country, y, y, lang).ok().data).also { holidayCache[key] = it }
+                }.getOrDefault(emptyList())
+            }
+            Holidays.overlapping(list, from, to)
+        }
+
+    suspend fun holidayCountries(): Result<List<String>> = runCatching {
+        holidayCountryList ?: withContext(Dispatchers.IO) { api.holidayCountries().ok().data }.also { holidayCountryList = it }
     }
 
     /** País dos feriados no perfil (vale em todos os aparelhos); null = automático. */

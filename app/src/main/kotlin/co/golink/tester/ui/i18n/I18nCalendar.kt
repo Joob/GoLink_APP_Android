@@ -95,6 +95,12 @@ object I18nCalendar {
         r("Já está na lista de convidados.", "Already on the guest list.", "Déjà dans la liste des invités.", "Ya está en la lista de invitados."),
         r("Guardar e convidar", "Save and invite", "Enregistrer et inviter", "Guardar e invitar"),
         r("Anexar do Drive", "Attach from Drive", "Joindre depuis le Drive", "Adjuntar del Drive"),
+        r("Ver todos", "See all", "Tout voir", "Ver todos"),
+        r("Pré-visualizar", "Preview", "Aperçu", "Vista previa"),
+        r("Mais ações", "More actions", "Plus d'actions", "Más acciones"),
+        r("Convidados podem ver os anexos", "Guests can see attachments", "Les invités peuvent voir les pièces jointes", "Los invitados pueden ver los adjuntos"),
+        r("Recebem um link só de ver destes ficheiros, não da pasta inteira.", "They get a view-only link to these files, not to the whole folder.", "Ils reçoivent un lien en lecture seule vers ces fichiers, pas vers tout le dossier.", "Reciben un enlace de solo lectura a estos archivos, no a toda la carpeta."),
+        r("Anexado a «%s»", "Attached to “%s”", "Joint à « %s »", "Adjunto a «%s»"),
         r("Pasta vazia", "Empty folder", "Dossier vide", "Carpeta vacía"),
         r("O meu drive", "My drive", "Mon drive", "Mi drive"),
         r("Anexar (%d)", "Attach (%d)", "Joindre (%d)", "Adjuntar (%d)"),
@@ -127,6 +133,7 @@ object I18nCalendar {
         r("Feriados", "Holidays", "Jours fériés", "Festivos"),
         r("Feriados em %s", "Holidays in %s", "Jours fériés (%s)", "Festivos en %s"),
         r("País dos feriados", "Holidays country", "Pays des jours fériés", "País de los festivos"),
+        r("Procurar país…", "Search country…", "Rechercher un pays…", "Buscar país…"),
         r("Automático (país da conta)", "Automatic (account country)", "Automatique (pays du compte)", "Automático (país de la cuenta)"),
     )
 

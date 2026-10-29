@@ -31,7 +31,19 @@ data class BrowseRelationships(
     val invitations: TeamMembersRelationship? = null,
     // Pasta-mãe (id + nome, possivelmente cifrado). Usado pela Atividade recente.
     val parent: ParentRelationship? = null,
+    // EXIF (largura × altura das imagens) — cartões dos anexos do calendário.
+    val exif: ExifRelationship? = null,
 )
+
+@Serializable
+data class ExifRelationship(val data: ExifData? = null)
+
+@Serializable
+data class ExifData(val attributes: ExifAttributes? = null)
+
+/** Número ou texto conforme o servidor: lido como JsonElement. */
+@Serializable
+data class ExifAttributes(val width: JsonElement? = null, val height: JsonElement? = null)
 
 @Serializable
 data class ParentRelationship(
