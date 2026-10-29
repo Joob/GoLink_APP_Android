@@ -3,6 +3,7 @@ package co.golink.tester.ui.screens.calendar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -33,10 +34,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -74,6 +77,21 @@ fun instancesByDay(instances: List<CalInstance>): Map<LocalDate, List<CalInstanc
 private fun dayLabel(d: LocalDate): String =
     if (d == LocalDate.now()) "${"Hoje".tr()} · ${fmtLongDay(d)}" else fmtLongDay(d)
 
+/** Swipe horizontal: esquerda → seguinte (+1), direita → anterior (-1). */
+@Composable
+private fun Modifier.swipeStep(onStep: (Long) -> Unit): Modifier {
+    val step by rememberUpdatedState(onStep)
+    val threshold = with(LocalDensity.current) { 56.dp.toPx() }
+    return pointerInput(Unit) {
+        var total = 0f
+        detectHorizontalDragGestures(
+            onDragStart = { total = 0f },
+            onDragEnd = { if (total <= -threshold) step(1) else if (total >= threshold) step(-1) },
+            onHorizontalDrag = { change, dx -> change.consume(); total += dx },
+        )
+    }
+}
+
 // ---- Mês ---------------------------------------------------------------------
 
 @Composable
@@ -83,6 +101,7 @@ fun MonthView(
     calendars: List<CalInfo>,
     onSelect: (LocalDate) -> Unit,
     onOpen: (CalInstance) -> Unit,
+    onStep: (Long) -> Unit,
     contentPadding: PaddingValues,
 ) {
     val byDay = remember(instances) { instancesByDay(instances) }
@@ -92,7 +111,7 @@ fun MonthView(
 
     LazyColumn(contentPadding = contentPadding, modifier = Modifier.fillMaxSize()) {
         item {
-            Column(Modifier.padding(horizontal = 8.dp)) {
+            Column(Modifier.swipeStep(onStep).padding(horizontal = 8.dp)) {
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                     weekdayLetters().forEach {
                         Text(
@@ -377,6 +396,7 @@ fun DayView(
     onSelect: (LocalDate) -> Unit,
     onOpen: (CalInstance) -> Unit,
     onCreateAt: (Instant) -> Unit,
+    onStep: (Long) -> Unit,
     contentPadding: PaddingValues,
 ) {
     val zone = ZoneId.systemDefault()
@@ -393,7 +413,7 @@ fun DayView(
     Column(Modifier.fillMaxSize()) {
         // Tira da semana.
         val week = CalendarDates.startOfWeek(cursor).let { s -> List(7) { s.plusDays(it.toLong()) } }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+        Row(Modifier.fillMaxWidth().swipeStep(onStep).padding(horizontal = 8.dp, vertical = 4.dp)) {
             week.forEachIndexed { i, d ->
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,

@@ -252,9 +252,9 @@ fun CalendarScreen(
                     })
                     state.error != null && !state.loaded -> ErrorState(onRetry = { viewModel.reload(force = true) })
                     else -> when (state.view) {
-                        CalView.Month -> MonthView(state.cursor, instances, calendars, viewModel::select, viewModel::openInstance, bottom)
+                        CalView.Month -> MonthView(state.cursor, instances, calendars, viewModel::select, viewModel::openInstance, viewModel::step, bottom)
                         CalView.Agenda -> AgendaView(state.cursor, state.agendaDays, instances, calendars, state.loading, viewModel::openInstance, viewModel::loadMoreAgenda, bottom)
-                        CalView.Day -> DayView(state.cursor, instances, calendars, viewModel::select, viewModel::openInstance, onCreateAt = { at -> if (calendars.any { it.canEdit }) viewModel.newEvent(at) }, contentPadding = bottom)
+                        CalView.Day -> DayView(state.cursor, instances, calendars, viewModel::select, viewModel::openInstance, onCreateAt = { at -> if (calendars.any { it.canEdit }) viewModel.newEvent(at) }, onStep = { viewModel.step(it * 7) }, contentPadding = bottom)
                     }
                 }
             }
