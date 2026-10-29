@@ -59,8 +59,12 @@ fun MoveDestinationDialog(
     onDismiss: () -> Unit,
     onConfirm: (folderId: String?) -> Unit,
     onCreateFolder: ((parentId: String?) -> Unit)? = null,
+    title: String = "Mover para".tr(),
+    subtitle: String = "Escolhe a pasta de destino".tr(),
+    confirmText: String = "Mover".tr(),
+    initialId: String? = null,
 ) {
-    var selectedId by remember { mutableStateOf<String?>(null) }
+    var selectedId by remember { mutableStateOf(initialId) }
     val expanded = remember { mutableStateOf(emptySet<String>()) }
 
     Dialog(
@@ -100,12 +104,12 @@ fun MoveDestinationDialog(
                     Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "Mover para".tr(),
+                            title,
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                         )
                         Text(
-                            "Escolhe a pasta de destino".tr(),
+                            subtitle,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -183,7 +187,7 @@ fun MoveDestinationDialog(
                         contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     ) {
-                        Text("Mover".tr(), fontWeight = FontWeight.SemiBold)
+                        Text(confirmText, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }

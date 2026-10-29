@@ -789,9 +789,14 @@ class BrowseViewModel @Inject constructor(
 
     fun upload(uri: Uri) = uploadMany(listOf(uri))
 
-    fun uploadMany(uris: List<Uri>) {
-        val parentId = currentParentId()
-        val names = visibleFileNames()
+    fun uploadMany(uris: List<Uri>) = uploadTo(uris, currentParentId())
+
+    /** Pasta onde o "+" carrega agora (destino sugerido para a câmara). */
+    fun uploadTargetId(): String? = currentParentId()
+
+    /** Envia para [parentId]; os nomes visíveis só servem se for a pasta aberta. */
+    fun uploadTo(uris: List<Uri>, parentId: String?) {
+        val names = if (parentId == currentParentId()) visibleFileNames() else emptyMap()
         viewModelScope.launch {
             if (!canUpload(uris)) return@launch
             // Ler metadados (ContentResolver) de cada ficheiro fora da main thread.

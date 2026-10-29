@@ -1,5 +1,9 @@
 package co.golink.tester.ui.screens.browse
 
+import android.net.Uri
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.Article
 import androidx.compose.material.icons.outlined.TableChart
 import androidx.compose.material.icons.outlined.Flag
@@ -263,7 +267,7 @@ class BrowseShellViewModel @Inject constructor(
     init { refreshStorage() }
 }
 
-private enum class ActionDialog { None, CreateFolder, CreateTextFile, CreateDocument, CreateSheet, Rename, Move, Delete, Share, PermanentDelete, EmptyTrash, RemoteUpload, Details, CreateTeamFolder, ConvertToTeamFolder, FileRequest, Logout, DissolveTeam, LeaveTeam }
+private enum class ActionDialog { None, CreateFolder, CreateTextFile, CreateDocument, CreateSheet, Rename, Move, Delete, Share, PermanentDelete, EmptyTrash, RemoteUpload, Details, CreateTeamFolder, ConvertToTeamFolder, FileRequest, Logout, DissolveTeam, LeaveTeam, CameraMode, CameraDestination }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -409,6 +413,25 @@ fun BrowseScreen(
     }
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
         tree?.let { viewModel.uploadFolder(it) }
+    }
+    // Câmara: a app do sistema grava num ficheiro da cache (FileProvider) e,
+    // depois, pergunta-se a pasta de destino.
+    val cameraContext = LocalContext.current
+    var cameraUri by rememberSaveable { mutableStateOf<String?>(null) }
+    val onCaptured: (Boolean) -> Unit = { ok ->
+        if (ok && cameraUri != null) activeDialog = ActionDialog.CameraDestination else cameraUri = null
+    }
+    val photoCapture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture(), onCaptured)
+    val videoCapture = rememberLauncherForActivityResult(ActivityResultContracts.CaptureVideo(), onCaptured)
+    val launchCamera: (Boolean) -> Unit = { video ->
+        val uri = newCameraUri(cameraContext, video)
+        cameraUri = uri.toString()
+        try {
+            if (video) videoCapture.launch(uri) else photoCapture.launch(uri)
+        } catch (_: android.content.ActivityNotFoundException) {
+            cameraUri = null
+            android.widget.Toast.makeText(cameraContext, "Não foi possível carregar".tr(), android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     val mode = state.mode
@@ -1199,11 +1222,15 @@ fun BrowseScreen(
                 actions = run {
                     val up = "Carregar".tr()
                     val mk = "Criar".tr()
+                    val sh = "Partilhar".tr()
                     if (inTeamRoot) listOf(
-                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.GroupAdd, "Pasta de equipa".tr(), primary, "Partilhada com membros".tr(), mk, accent = false) {
+                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.GroupAdd, "Pasta de equipa".tr(), primary, "Partilhada com membros".tr(), sh, accent = false) {
                             activeDialog = ActionDialog.CreateTeamFolder
                         },
                     ) else listOfNotNull(
+                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.PhotoCamera, "Câmara".tr(), primary, "Foto ou vídeo".tr(), up) {
+                            if (viewModel.allowUpload()) activeDialog = ActionDialog.CameraMode
+                        },
                         co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.FileUpload, "Carregar ficheiros".tr(), primary, "Do telemóvel".tr(), up) {
                             filePicker.launch(arrayOf("*/*"))
                         },
@@ -1226,10 +1253,10 @@ fun BrowseScreen(
                             if (viewModel.allowUpload()) activeDialog = ActionDialog.CreateTextFile
                         },
                         // Pasta de equipa e pedidos de ficheiros só no espaço privado.
-                        if (inFiles) co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.GroupAdd, "Pasta de equipa".tr(), primary, "Partilhada com membros".tr(), mk, accent = false) {
+                        if (inFiles) co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.GroupAdd, "Pasta de equipa".tr(), primary, "Partilhada com membros".tr(), sh, accent = false) {
                             activeDialog = ActionDialog.CreateTeamFolder
                         } else null,
-                        if (inFiles) co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.NoteAdd, "Pedir ficheiros".tr(), primary, "Receba de outras pessoas".tr(), mk, accent = false) {
+                        if (inFiles) co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.NoteAdd, "Pedir ficheiros".tr(), primary, "Receba de outras pessoas".tr(), sh, accent = false) {
                             actionTarget = null; activeDialog = ActionDialog.FileRequest
                         } else null,
                     )
@@ -1447,6 +1474,59 @@ fun BrowseScreen(
                         else actionTarget?.let { viewModel.delete(it) }
                     },
                 )
+            }
+        }
+        ActionDialog.CameraMode -> {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { activeDialog = ActionDialog.None },
+                icon = { Icon(Icons.Outlined.PhotoCamera, contentDescription = null) },
+                title = { Text("Câmara".tr()) },
+                text = {
+                    Column {
+                        listOf(false to "Tirar foto".tr(), true to "Gravar vídeo".tr()).forEach { (video, label) ->
+                            androidx.compose.material3.ListItem(
+                                headlineContent = { Text(label) },
+                                leadingContent = {
+                                    Icon(if (video) Icons.Outlined.Videocam else Icons.Outlined.PhotoCamera, contentDescription = null)
+                                },
+                                colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
+                                modifier = Modifier.clickable {
+                                    activeDialog = ActionDialog.None
+                                    launchCamera(video)
+                                },
+                            )
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = { TextButton(onClick = { activeDialog = ActionDialog.None }) { Text("Cancelar".tr()) } },
+            )
+        }
+        ActionDialog.CameraDestination -> {
+            val uri = cameraUri
+            if (uri != null) {
+                MoveDestinationDialog(
+                    sections = state.navigationTree,
+                    title = "Carregar para".tr(),
+                    subtitle = "Escolhe a pasta onde guardar".tr(),
+                    confirmText = "Carregar".tr(),
+                    initialId = viewModel.uploadTargetId(),
+                    onDismiss = { activeDialog = ActionDialog.None; cameraUri = null },
+                    onConfirm = { destinationId -> viewModel.uploadTo(listOf(Uri.parse(uri)), destinationId) },
+                    onCreateFolder = { parentId -> createInMoveFor = true to parentId },
+                )
+                createInMoveFor?.let { (_, parentId) ->
+                    TextInputDialog(
+                        title = "Nova pasta".tr(),
+                        label = "Nome",
+                        confirmText = "Criar".tr(),
+                        onDismiss = { createInMoveFor = null },
+                        onConfirm = { name ->
+                            viewModel.createFolderIn(name, parentId)
+                            createInMoveFor = null
+                        },
+                    )
+                }
             }
         }
         ActionDialog.Move -> {
@@ -2610,4 +2690,17 @@ private fun TrashRetentionNotice(days: Int, onEmptyNow: () -> Unit) {
             }
         }
     }
+}
+
+/**
+ * Ficheiro novo na cache para a câmara gravar. Não se apaga depois do envio
+ * (a retoma de uploads volta a ler o Uri); limpa-se o que tiver mais de 3 dias.
+ */
+private fun newCameraUri(context: android.content.Context, video: Boolean): Uri {
+    val dir = java.io.File(context.cacheDir, "camera").apply { mkdirs() }
+    val cutoff = System.currentTimeMillis() - 3L * 24 * 60 * 60 * 1000
+    dir.listFiles()?.filter { it.lastModified() < cutoff }?.forEach { it.delete() }
+    val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+    val file = java.io.File(dir, if (video) "VID_$stamp.mp4" else "IMG_$stamp.jpg")
+    return androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 }
