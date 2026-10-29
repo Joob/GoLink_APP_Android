@@ -47,6 +47,7 @@ data class CalEvent(
     val allDay: Boolean get() = raw.all_day
     val repeat: String get() = raw.repeat
     val repeatUntil: String? get() = raw.repeat_until
+    val repeatRule: RepeatRule by lazy { Recurrence.rule(raw.repeat, raw.repeat_interval, raw.repeat_days, raw.repeat_count) }
     val canEdit: Boolean get() = !holiday && raw.can_edit && !locked
     val canManage: Boolean get() = !holiday && raw.can_manage && !locked
     val isGuest: Boolean get() = raw.role == "guest"

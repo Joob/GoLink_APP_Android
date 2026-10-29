@@ -21,7 +21,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Notes
 import androidx.compose.material.icons.outlined.NotificationsNone
@@ -155,7 +154,7 @@ fun EventDetailSheet(
                 }
             }
             if (!ev.holiday) {
-                InfoRow(Icons.Outlined.Repeat) { Text(repeatLabel(ev.repeat), fontSize = 13.sp) }
+                InfoRow(Icons.Outlined.Repeat) { Text(repeatLabel(ev.repeat, ev.repeatRule, ev.repeatUntil != null), fontSize = 13.sp) }
                 val alerts = ev.raw.alerts.orEmpty()
                 InfoRow(Icons.Outlined.NotificationsNone) {
                     Text(if (alerts.isEmpty()) "Sem alerta".tr() else alerts.joinToString(", ") { alertLabel(it, long = true) }, fontSize = 13.sp)
@@ -278,14 +277,7 @@ private fun AttachmentCard(a: EventAttachment, onOpen: (() -> Unit)?) {
             .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
             .padding(10.dp),
     ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.error.copy(alpha = 0.1f)),
-        ) {
-            val ext = a.name.substringAfterLast('.', "").uppercase().take(4)
-            if (ext.isNotEmpty()) Text(ext, fontSize = 8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
-            else Icon(Icons.Outlined.InsertDriveFile, contentDescription = null, modifier = Modifier.size(16.dp))
-        }
+        FileBadge(a.name, a.mime, 32.dp)
         Spacer(Modifier.width(10.dp))
         Text(a.name, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         if (onOpen != null) {

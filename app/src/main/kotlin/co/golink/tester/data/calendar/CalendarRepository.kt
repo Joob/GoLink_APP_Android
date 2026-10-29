@@ -12,6 +12,7 @@ import co.golink.tester.domain.calendar.EventPayload
 import co.golink.tester.domain.calendar.EventResponse
 import co.golink.tester.domain.calendar.LookupKey
 import co.golink.tester.domain.calendar.LookupKeysRequest
+import co.golink.tester.domain.calendar.RepeatRule
 import co.golink.tester.network.CalendarApi
 import co.golink.tester.ui.i18n.I18n
 import java.time.Instant
@@ -58,6 +59,7 @@ data class EventForm(
     val timezone: String,
     val repeat: String,
     val repeatUntil: String?,
+    val rule: RepeatRule = RepeatRule(),
     val alerts: List<Int>,
     val guestsCanEdit: Boolean,
     val title: String,
@@ -310,6 +312,9 @@ class CalendarRepository @Inject constructor(
                 put("timezone", form.timezone)
                 put("repeat", form.repeat)
                 put("repeat_until", form.repeatUntil?.let { JsonPrimitive(it) } ?: JsonNull)
+                put("repeat_interval", form.rule.interval)
+                put("repeat_days", if (form.repeat == "weekly" && form.rule.days.isNotEmpty()) JsonArray(form.rule.days.map { JsonPrimitive(it) }) else JsonNull)
+                put("repeat_count", form.rule.count?.let { JsonPrimitive(it) } ?: JsonNull)
                 put("alerts", JsonArray(form.alerts.map { JsonPrimitive(it) }))
                 put("payload", payload)
 

@@ -69,8 +69,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -86,6 +90,7 @@ import co.golink.tester.domain.calendar.CalEvent
 import co.golink.tester.domain.calendar.CalInfo
 import co.golink.tester.domain.calendar.CalendarConst
 import co.golink.tester.domain.calendar.EventAttachment
+import co.golink.tester.domain.calendar.RepeatRule
 import co.golink.tester.ui.common.appLocale
 import co.golink.tester.ui.components.dialogs.ConfirmDialog
 import co.golink.tester.ui.i18n.tr
@@ -112,6 +117,8 @@ private data class FormFields(
     val timezone: String,
     val repeat: String,
     val repeatUntil: LocalDate?,
+    /** Regra da web (a cada N, dias, vezes); mudar o tipo repõe a de omissão. */
+    val rule: RepeatRule = RepeatRule(),
     val alerts: List<Int>,
     val location: String,
     val notes: String,
@@ -161,6 +168,7 @@ private fun fieldsFrom(ev: CalEvent): FormFields {
         endDay = if (ev.allDay) e.toLocalDate().minusDays(1) else e.toLocalDate(), endTime = e.toLocalTime(),
         allDay = ev.allDay, timezone = ev.raw.timezone.ifBlank { zone.id },
         repeat = ev.repeat, repeatUntil = ev.repeatUntil?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() },
+        rule = ev.repeatRule,
         alerts = ev.raw.alerts.orEmpty(),
         location = ev.data.location, notes = ev.data.notes,
         guests = ev.raw.guests.map { it.email }, guestsCanEdit = ev.raw.guests_can_edit,
@@ -233,6 +241,7 @@ fun EventEditor(
                 calendarId = calId, start = s, end = e, allDay = f.allDay, timezone = f.timezone,
                 repeat = f.repeat,
                 repeatUntil = if (f.repeat == "none") null else f.repeatUntil?.toString(),
+                rule = if (f.repeat == "none") RepeatRule() else f.rule,
                 alerts = f.alerts.distinct().sorted(),
                 guestsCanEdit = f.guestsCanEdit && f.guests.isNotEmpty(),
                 title = f.title.trim(), location = f.location.trim(), notes = f.notes,
@@ -353,10 +362,14 @@ fun EventEditor(
                     var repeatMenu by remember { mutableStateOf(false) }
                     EditorRow(Icons.Outlined.Repeat, onClick = { repeatMenu = true }) {
                         Box(Modifier.weight(1f)) {
-                            Text(repeatLabel(f.repeat), fontSize = 14.sp)
+                            Text(repeatLabel(f.repeat, f.rule, f.repeatUntil != null), fontSize = 14.sp)
                             DropdownMenu(expanded = repeatMenu, onDismissRequest = { repeatMenu = false }) {
                                 CalendarConst.REPEATS.forEach { r ->
-                                    DropdownMenuItem(text = { Text(repeatLabel(r)) }, onClick = { f = f.copy(repeat = r); repeatMenu = false })
+                                    DropdownMenuItem(text = { Text(repeatLabel(r)) }, onClick = {
+                                        // Como os presets da web: outro tipo repõe a regra (mantém o "após N vezes").
+                                        if (r != f.repeat) f = f.copy(repeat = r, rule = RepeatRule(count = f.rule.count.takeIf { r != "none" }))
+                                        repeatMenu = false
+                                    })
                                 }
                             }
                         }
@@ -365,9 +378,9 @@ fun EventEditor(
                     if (f.repeat != "none") {
                         EditorRow(null) {
                             Text("Até".tr(), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                            PickerText(f.repeatUntil?.let(::fmtDate) ?: "Nunca".tr()) { pickDate = "until" }
-                            if (f.repeatUntil != null) {
-                                IconButton(onClick = { f = f.copy(repeatUntil = null) }, modifier = Modifier.size(28.dp)) {
+                            PickerText(f.repeatUntil?.let(::fmtDate) ?: f.rule.count?.let(::timesLabel) ?: "Nunca".tr()) { pickDate = "until" }
+                            if (f.repeatUntil != null || f.rule.count != null) {
+                                IconButton(onClick = { f = f.copy(repeatUntil = null, rule = f.rule.copy(count = null)) }, modifier = Modifier.size(28.dp)) {
                                     Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
                                 }
                             }
@@ -416,35 +429,14 @@ fun EventEditor(
                         PlainField(f.notes, "Adicionar notas".tr(), Modifier.weight(1f), singleLine = false) { f = f.copy(notes = it.take(20000)) }
                     }
 
-                    // Anexos
-                    if (f.attachments.isNotEmpty() || (manages && onAttach != null)) EditorDivider()
-                    f.attachments.forEach { a ->
-                        EditorRow(Icons.Outlined.AttachFile) {
-                            Text(a.name, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                            if (manages) {
-                                IconButton(onClick = { f = f.copy(attachments = f.attachments.filterNot { it.file_id == a.file_id }) }, modifier = Modifier.size(28.dp)) {
-                                    Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
-                                }
-                            }
-                        }
-                    }
-                    if (manages && onAttach != null) {
-                        Row(
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.06f))
-                                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                .clickable(onClick = onAttach)
-                                .padding(vertical = 12.dp),
-                        ) {
-                            Icon(Icons.Outlined.AttachFile, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Anexar do Drive".tr(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-                        }
+                    // Anexos (como a secção "Ficheiros do Drive" da web)
+                    if (f.attachments.isNotEmpty() || (manages && onAttach != null)) {
+                        EditorDivider()
+                        AttachmentsBlock(
+                            attachments = f.attachments,
+                            onRemove = if (manages) { a -> f = f.copy(attachments = f.attachments.filterNot { it.file_id == a.file_id }) } else null,
+                            onAttach = if (manages) onAttach else null,
+                        )
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
@@ -473,7 +465,8 @@ fun EventEditor(
                                     f.copy(startDay = d, endDay = f.endDay.plusDays(shift))
                                 }
                                 "end" -> f.copy(endDay = if (d.isBefore(f.startDay)) f.startDay else d)
-                                else -> f.copy(repeatUntil = d)
+                                // Data ou contagem, nunca as duas (como a web).
+                                else -> f.copy(repeatUntil = d, rule = f.rule.copy(count = null))
                             }
                             pickDate = null
                         }
@@ -557,27 +550,98 @@ private fun PlainField(value: String, placeholder: String, modifier: Modifier, s
     )
 }
 
+/** Ficheiros anexados (cartões com o tipo) + "Anexar do Drive" tracejado. */
+@Composable
+private fun AttachmentsBlock(attachments: List<EventAttachment>, onRemove: ((EventAttachment) -> Unit)?, onAttach: (() -> Unit)?) {
+    val primary = MaterialTheme.colorScheme.primary
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Ficheiros do Drive".tr().uppercase(), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f),
+            )
+            if (attachments.isNotEmpty()) Text("${attachments.size}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        attachments.forEach { a ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                    .padding(start = 10.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+            ) {
+                FileBadge(a.name, a.mime)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(a.name, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        a.name.substringAfterLast('.', "").uppercase().ifEmpty { "Ficheiro".tr() },
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (onRemove != null) {
+                    IconButton(onClick = { onRemove(a) }, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Filled.Close, contentDescription = "Remover".tr(), modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+        }
+        if (onAttach != null) {
+            Row(
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(46.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(primary.copy(alpha = 0.05f))
+                    .drawBehind {
+                        drawRoundRect(
+                            color = primary.copy(alpha = 0.45f),
+                            cornerRadius = CornerRadius(12.dp.toPx()),
+                            style = Stroke(width = 1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))),
+                        )
+                    }
+                    .clickable(onClick = onAttach),
+            ) {
+                Icon(Icons.Outlined.AttachFile, contentDescription = null, modifier = Modifier.size(16.dp), tint = primary)
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    if (attachments.isEmpty()) "Anexar do Drive".tr() else "Anexar mais ficheiros".tr(),
+                    fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = primary,
+                )
+            }
+        }
+    }
+}
+
 /** Convidados por email: separa por espaços/vírgulas/; e ignora o próprio email (GuestsField.vue). */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun GuestsBlock(guests: List<String>, statuses: Map<String, String>, ownEmail: String?, onChange: (List<String>) -> Unit) {
     var input by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
     fun add() {
         val emails = input.split(Regex("[\\s,;]+")).map { it.trim().lowercase() }.filter { it.isNotEmpty() }
         if (emails.isEmpty()) return
-        if (emails.any { !EMAIL.matches(it) }) { error = true; return }
+        if (emails.any { !EMAIL.matches(it) }) { error = "Email inválido".tr(); return }
         val known = guests.map { it.lowercase() }.toSet()
         val added = emails.filter { it !in known && !it.equals(ownEmail, ignoreCase = true) }.distinct()
         onChange(guests + added)
         input = ""
-        error = false
+        // O próprio email e os repetidos não entram: diz porquê em vez de não fazer nada.
+        error = when {
+            added.isNotEmpty() -> null
+            emails.any { it.equals(ownEmail, ignoreCase = true) } -> "Esse é o teu email — já és o organizador do evento.".tr()
+            else -> "Já está na lista de convidados.".tr()
+        }
     }
     EditorRow(Icons.Outlined.PersonAddAlt) {
         Column(Modifier.weight(1f)) {
             BasicTextField(
                 value = input,
-                onValueChange = { input = it; error = false },
+                onValueChange = { input = it; error = null },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { add() }),
@@ -590,7 +654,7 @@ private fun GuestsBlock(guests: List<String>, statuses: Map<String, String>, own
                     }
                 },
             )
-            if (error) Text("Email inválido".tr(), fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+            error?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.error) }
         }
         TextButton(onClick = ::add, enabled = input.isNotBlank()) { Text("Adicionar".tr(), fontWeight = FontWeight.SemiBold) }
     }
@@ -664,7 +728,8 @@ private fun AlertsDialog(current: List<Int>, onDismiss: () -> Unit, onDone: (Lis
         title = { Text("Alertas".tr()) },
         text = {
             Column {
-                CalendarConst.ALERTS.forEach { m ->
+                // Os personalizados da web também aparecem (para se poderem tirar).
+                (CalendarConst.ALERTS + current).distinct().sorted().forEach { m ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth().clickable { if (m in picked) picked.remove(m) else picked.add(m) },

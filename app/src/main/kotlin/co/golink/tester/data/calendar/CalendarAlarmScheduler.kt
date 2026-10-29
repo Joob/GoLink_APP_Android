@@ -73,15 +73,20 @@ class CalendarAlarmScheduler @Inject constructor(
         // Sem K_cal os eventos de membro ficavam "locked" e os alarmes bons eram cancelados.
         if (repo.calendars.value.isEmpty() && repo.loadCalendars().isFailure) return@withLock
         val now = Instant.now()
-        // Alertas até 26 h; um alerta de 1 dia antes pede eventos até 50 h.
+        // Alertas até 26 h; um alerta de 1 semana antes pede eventos até 26 h + 7 dias.
         val horizon = now.plusSeconds(WINDOW_S)
-        val fetched = repo.fetchEvents(now.minusSeconds(3600), horizon.plusSeconds(24 * 3600)).getOrElse { return@withLock }
+        val fetched = repo.fetchEvents(now.minusSeconds(3600), horizon.plusSeconds(MAX_LEAD_S)).getOrElse { return@withLock }
         // Ilegíveis agora (ex.: calendário que não abriu): mantêm os alarmes que já tinham.
         val lockedIds = fetched.filter { it.locked }.map { it.id }.toSet()
         // Convites recusados não tocam (como na web).
-        val events = fetched.filter { !(it.isGuest && it.raw.me?.status == "declined") && !it.locked }
+        val events = fetched.filter { !(it.isGuest && it.raw.me?.status == "declined") && !it.locked && !it.raw.alerts.isNullOrEmpty() }
         val zone = ZoneId.systemDefault()
-        val alarms = Recurrence.expand(events, now, horizon.plusSeconds(24 * 3600)).flatMap { inst ->
+        // Cada evento só até onde os seus alertas chegam (quase todos ≤ 1 dia).
+        val instances = events.flatMap { ev ->
+            val lead = (ev.raw.alerts.orEmpty().maxOrNull() ?: 0).coerceIn(0, (MAX_LEAD_S / 60).toInt())
+            Recurrence.expand(listOf(ev), now, horizon.plusSeconds(lead * 60L + 60))
+        }
+        val alarms = instances.flatMap { inst ->
             inst.event.raw.alerts.orEmpty().mapNotNull { minutes ->
                 val at = inst.start.minusSeconds(minutes * 60L)
                 if (!at.isAfter(now) || at.isAfter(horizon)) return@mapNotNull null
@@ -107,6 +112,9 @@ class CalendarAlarmScheduler @Inject constructor(
     companion object {
         private const val WORK = "calendar_alarms"
         private const val WINDOW_S = 26 * 3600L
+
+        /** Alerta mais antecipado que o servidor aceita (CalendarEvent::MAX_ALERT_MINUTES). */
+        private const val MAX_LEAD_S = 7 * 24 * 3600L
     }
 }
 

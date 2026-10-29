@@ -1,8 +1,8 @@
 package co.golink.tester.ui.screens.calendar
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,11 +21,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.InsertDriveFile
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -96,6 +94,16 @@ fun DrivePickerDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         )
                     }
+                    // No topo (como o Guardar do editor): em baixo ficava atrás da barra de navegação.
+                    Button(
+                        onClick = { onPick(selected.values.toList()) },
+                        enabled = selected.isNotEmpty(),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = Color.White),
+                        modifier = Modifier.padding(end = 8.dp),
+                    ) {
+                        Text(if (selected.isEmpty()) "Anexar".tr() else "Anexar (%d)".tr().format(selected.size), fontWeight = FontWeight.SemiBold)
+                    }
                 }
                 OutlinedTextField(
                     value = filter,
@@ -134,11 +142,12 @@ fun DrivePickerDialog(
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.fillMaxWidth()
+                                        .background(if (on) MaterialTheme.colorScheme.primary.copy(alpha = 0.07f) else Color.Transparent)
                                         .clickable { if (on) selected.remove(item.id) else selected[item.id] = item }
-                                        .padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                                        .padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
                                 ) {
-                                    Icon(Icons.Outlined.InsertDriveFile, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Spacer(Modifier.width(14.dp))
+                                    FileBadge(item.name, item.mimetype, 32.dp)
+                                    Spacer(Modifier.width(12.dp))
                                     Column(Modifier.weight(1f)) {
                                         Text(item.name, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         item.filesize?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -148,16 +157,6 @@ fun DrivePickerDialog(
                             }
                         }
                     }
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                Box(Modifier.fillMaxWidth().padding(16.dp)) {
-                    Button(
-                        onClick = { onPick(selected.values.toList()) },
-                        enabled = selected.isNotEmpty(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = Color.White),
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                    ) { Text("Anexar (%d)".tr().format(selected.size), fontWeight = FontWeight.SemiBold) }
                 }
             }
         }

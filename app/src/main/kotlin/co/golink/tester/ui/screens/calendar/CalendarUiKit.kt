@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -18,10 +19,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.golink.tester.domain.calendar.CalEvent
 import co.golink.tester.domain.calendar.CalInfo
+import co.golink.tester.domain.calendar.Recurrence
+import co.golink.tester.domain.calendar.RepeatRule
 import co.golink.tester.ui.common.appLocale
 import co.golink.tester.ui.i18n.tr
 import co.golink.tester.ui.theme.LocalDarkTheme
@@ -121,13 +125,46 @@ fun repeatLabel(repeat: String): String = when (repeat) {
 }.tr()
 
 fun alertLabel(minutes: Int, long: Boolean = false): String = when (minutes) {
-    0 -> if (long) "Na hora do evento" else "Na hora"
-    5 -> if (long) "5 minutos antes" else "5 min antes"
-    15 -> if (long) "15 minutos antes" else "15 min antes"
-    60 -> "1 hora antes"
-    1440 -> "1 dia antes"
-    else -> "$minutes min"
-}.tr()
+    0 -> (if (long) "Na hora do evento" else "Na hora").tr()
+    5 -> (if (long) "5 minutos antes" else "5 min antes").tr()
+    15 -> (if (long) "15 minutos antes" else "15 min antes").tr()
+    60 -> "1 hora antes".tr()
+    1440 -> "1 dia antes".tr()
+    // Alertas personalizados da web (até 1 semana).
+    else -> when {
+        minutes % 1440 == 0 -> "%d dias antes".tr().format(minutes / 1440)
+        minutes % 60 == 0 -> "%d h antes".tr().format(minutes / 60)
+        else -> "%d min antes".tr().format(minutes)
+    }
+}
+
+/**
+ * Repetição com a regra da web (como repeatSummary): "Dias úteis", "Semanal: seg., qua.",
+ * "A cada 2 semanas", "· 10 vezes" (a contagem só sem data de fim, como na web e no email).
+ */
+fun repeatLabel(repeat: String, rule: RepeatRule, hasUntil: Boolean = false): String {
+    if (repeat == "none") return repeatLabel(repeat)
+    val interval = Recurrence.interval(rule.interval)
+    val days = Recurrence.days(repeat, rule.days)
+    var base = when {
+        interval == 1 && days == listOf(1, 2, 3, 4, 5) -> "Dias úteis".tr()
+        interval > 1 -> when (repeat) {
+            "daily" -> "A cada %d dias"
+            "weekly" -> "A cada %d semanas"
+            "monthly" -> "A cada %d meses"
+            else -> "A cada %d anos"
+        }.tr().format(interval)
+        else -> repeatLabel(repeat)
+    }
+    if (days.isNotEmpty() && days != listOf(1, 2, 3, 4, 5)) {
+        base += ": " + days.joinToString(", ") { DayOfWeek.of(it).getDisplayName(TextStyle.SHORT, appLocale()) }
+    }
+    val count = Recurrence.count(rule.count)
+    return if (count != null && !hasUntil) "$base · ${timesLabel(count)}" else base
+}
+
+/** "1 vez" / "10 vezes". */
+fun timesLabel(n: Int): String = (if (n == 1) "%d vez" else "%d vezes").tr().format(n)
 
 /** Segmentado (Mês/Agenda/Dia), igual ao .ui-segmented da web. */
 @Composable
@@ -161,5 +198,27 @@ fun <T> Segmented(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> 
                 )
             }
         }
+    }
+}
+
+/** Badge do tipo de ficheiro (PDF, DOC, IMG…) com as cores da web (fileBadge em calendarForm.js). */
+@Composable
+fun FileBadge(name: String, mime: String?, size: Dp = 34.dp) {
+    val ext = name.substringAfterLast('.', "").lowercase()
+    val m = mime.orEmpty()
+    val (label, color) = when {
+        m.startsWith("image/") || ext in setOf("jpg", "jpeg", "png", "gif", "webp", "heic", "svg") -> "IMG" to Color(0xFF7C3AED)
+        ext == "pdf" -> "PDF" to Color(0xFFDC2626)
+        ext in setOf("doc", "docx", "odt", "rtf", "txt", "md") -> "DOC" to Color(0xFF2563EB)
+        ext in setOf("xls", "xlsx", "ods", "csv") -> "XLS" to Color(0xFF0F8A5F)
+        ext in setOf("ppt", "pptx", "odp") -> "PPT" to Color(0xFFC2410C)
+        m.startsWith("video/") || ext in setOf("mp4", "mov", "mkv", "webm") -> "VID" to Color(0xFFDB2777)
+        else -> ext.ifEmpty { "file" }.take(4).uppercase() to Color(0xFF4B5563)
+    }
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier.size(size).clip(RoundedCornerShape(9.dp)).background(color.copy(alpha = 0.12f)),
+    ) {
+        Text(label, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = color)
     }
 }

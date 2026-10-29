@@ -63,4 +63,44 @@ class RecurrenceTest {
         assertEquals(42, grid.size)
         assertEquals(LocalDate.of(2026, 9, 28), grid.first())
     }
+
+    private fun rule(start: String, end: String, repeat: String, rule: RepeatRule, from: String, to: String) =
+        Recurrence.occurrences(Instant.parse(start), Instant.parse(end), repeat, null, lisbon, Instant.parse(from), Instant.parse(to), rule)
+            .map { it.toString() }
+
+    // Os mesmos casos de tests/Domain/Calendar/RecurrenceTest.php.
+    @Test
+    fun `semanal nos dias escolhidos`() {
+        val list = rule("2026-10-28T09:00:00Z", "2026-10-28T10:00:00Z", "weekly", RepeatRule(days = listOf(5, 1, 3)), "2026-10-26T00:00:00Z", "2026-11-07T00:00:00Z")
+        assertEquals(listOf("2026-10-28T09:00:00Z", "2026-10-30T09:00:00Z", "2026-11-02T09:00:00Z", "2026-11-04T09:00:00Z", "2026-11-06T09:00:00Z"), list)
+    }
+
+    @Test
+    fun `inicio fora dos dias continua a ser o primeiro`() {
+        val list = rule("2026-10-27T09:00:00Z", "2026-10-27T10:00:00Z", "weekly", RepeatRule(days = listOf(1, 5)), "2026-10-26T00:00:00Z", "2026-11-04T00:00:00Z")
+        assertEquals(listOf("2026-10-27T09:00:00Z", "2026-10-30T09:00:00Z", "2026-11-02T09:00:00Z"), list)
+    }
+
+    @Test
+    fun `intervalo e numero de vezes`() {
+        val list = rule("2026-10-28T09:00:00Z", "2026-10-28T10:00:00Z", "daily", RepeatRule(interval = 2, count = 3), "2026-10-01T00:00:00Z", "2026-12-01T00:00:00Z")
+        assertEquals(listOf("2026-10-28T09:00:00Z", "2026-10-30T09:00:00Z", "2026-11-01T09:00:00Z"), list)
+    }
+
+    @Test
+    fun `semana sim semana nao salta para a frente`() {
+        val list = rule("2026-10-27T09:00:00Z", "2026-10-27T10:00:00Z", "weekly", RepeatRule(interval = 2, days = listOf(2, 4)), "2026-11-09T00:00:00Z", "2026-11-20T00:00:00Z")
+        assertEquals(listOf("2026-11-10T09:00:00Z", "2026-11-12T09:00:00Z"), list)
+    }
+
+    @Test
+    fun `salto de meses com intervalo, dias e contagem`() {
+        // 28/03/2027 muda para a hora de verão: 09:00 em Lisboa = 08:00Z.
+        val rr = RepeatRule(interval = 2, days = listOf(2, 4))
+        val list = rule("2026-10-27T09:00:00Z", "2026-10-27T10:00:00Z", "weekly", rr, "2027-03-01T00:00:00Z", "2027-04-10T00:00:00Z")
+        assertEquals(listOf("2027-03-02T09:00:00Z", "2027-03-04T09:00:00Z", "2027-03-16T09:00:00Z", "2027-03-18T09:00:00Z", "2027-03-30T08:00:00Z", "2027-04-01T08:00:00Z"), list)
+
+        val counted = rule("2026-10-27T09:00:00Z", "2026-10-27T10:00:00Z", "weekly", rr.copy(count = 20), "2027-02-10T00:00:00Z", "2027-06-01T00:00:00Z")
+        assertEquals(listOf("2027-02-16T09:00:00Z", "2027-02-18T09:00:00Z", "2027-03-02T09:00:00Z", "2027-03-04T09:00:00Z"), counted)
+    }
 }
