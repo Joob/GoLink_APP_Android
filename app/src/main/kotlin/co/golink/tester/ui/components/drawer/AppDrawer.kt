@@ -79,7 +79,14 @@ private const val PERMANENT_DRAWER_MIN_WIDTH_DP = 840
 private val DrawerWidth = 280.dp
 
 /** Áreas do toggle no topo da gaveta (igual à sidebar da web). */
-enum class DrawerArea { Drive, Admin, Support }
+enum class DrawerArea { Drive, Calendar, Admin, Support }
+
+fun DrawerArea.label(): String = when (this) {
+    DrawerArea.Drive -> "Drive"
+    DrawerArea.Calendar -> "Calendário".tr()
+    DrawerArea.Admin -> "Admin"
+    DrawerArea.Support -> "Suporte".tr()
+}
 
 data class DrawerItem(
     val label: String,
@@ -146,15 +153,16 @@ fun AdaptiveNavigationDrawer(
 
 /**
  * Conteúdo da gaveta (redesign 2026-10, igual à sidebar da web): cabeçalho com
- * logo e sino, toggle Drive | Admin, ações rápidas, secções, cartão de
- * armazenamento e rodapé com perfil e atalhos.
+ * logo e sino, toggle Drive | Calendário | Admin, ações rápidas, secções,
+ * cartão de armazenamento e rodapé com perfil e atalhos. A área Calendário
+ * desenha o seu próprio menu em [areaContent].
  */
 @Composable
 fun ColumnScope.AppDrawerContent(
     user: User?,
     area: DrawerArea,
     onAreaChange: (DrawerArea) -> Unit,
-    secondaryArea: DrawerArea?,
+    areas: List<DrawerArea>,
     sections: List<DrawerSection>,
     unreadNotifications: Int,
     onOpenNotifications: () -> Unit,
@@ -170,19 +178,21 @@ fun ColumnScope.AppDrawerContent(
     onNewUpload: (() -> Unit)? = null,
     onSearch: (() -> Unit)? = null,
     lockedContent: (@Composable () -> Unit)? = null,
+    onNewEvent: (() -> Unit)? = null,
+    areaContent: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
     DrawerHeader(
-        title = when (area) {
-            DrawerArea.Drive -> "Drive"
-            DrawerArea.Admin -> "Admin"
-            DrawerArea.Support -> "Suporte".tr()
-        },
+        title = area.label(),
         unread = unreadNotifications,
         onOpenNotifications = onOpenNotifications,
     )
 
-    if (secondaryArea != null) {
-        AreaToggle(area = area, secondary = secondaryArea, onChange = onAreaChange)
+    if (areas.size > 1) {
+        AreaToggle(area = area, areas = areas, onChange = onAreaChange)
+    }
+
+    if (area == DrawerArea.Calendar && onNewEvent != null) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) { NewUploadButton(onNewEvent, label = "Novo evento".tr()) }
     }
 
     if (area == DrawerArea.Drive && lockedContent == null) {
@@ -200,12 +210,14 @@ fun ColumnScope.AppDrawerContent(
             .padding(horizontal = 14.dp)
             .padding(bottom = 8.dp),
     ) {
-        if (lockedContent != null && area == DrawerArea.Drive) {
+        if (lockedContent != null && (area == DrawerArea.Drive || area == DrawerArea.Calendar)) {
             lockedContent()
+        } else if (areaContent != null) {
+            areaContent()
         } else {
             sections.forEachIndexed { si, section ->
                 // Admin/Suporte: secções separadas por uma linha (como na web).
-                if (area != DrawerArea.Drive && si > 0) {
+                if (area != DrawerArea.Drive && area != DrawerArea.Calendar && si > 0) {
                     HorizontalDivider(
                         color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
                         modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 10.dp),
@@ -288,7 +300,7 @@ private fun DrawerHeader(title: String, unread: Int, onOpenNotifications: () -> 
 }
 
 @Composable
-private fun AreaToggle(area: DrawerArea, secondary: DrawerArea, onChange: (DrawerArea) -> Unit) {
+private fun AreaToggle(area: DrawerArea, areas: List<DrawerArea>, onChange: (DrawerArea) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -297,7 +309,7 @@ private fun AreaToggle(area: DrawerArea, secondary: DrawerArea, onChange: (Drawe
             .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
             .padding(4.dp),
     ) {
-        listOf(DrawerArea.Drive, secondary).forEach { option ->
+        areas.forEach { option ->
             val active = option == area
             Box(
                 contentAlignment = Alignment.Center,
@@ -309,11 +321,9 @@ private fun AreaToggle(area: DrawerArea, secondary: DrawerArea, onChange: (Drawe
                     .clickable { onChange(option) },
             ) {
                 Text(
-                    when (option) {
-                        DrawerArea.Drive -> "Drive"
-                        DrawerArea.Admin -> "Admin"
-                        DrawerArea.Support -> "Suporte".tr()
-                    },
+                    option.label(),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.labelLarge,
                     fontSize = 13.sp,
                     fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
@@ -325,7 +335,7 @@ private fun AreaToggle(area: DrawerArea, secondary: DrawerArea, onChange: (Drawe
 }
 
 @Composable
-private fun NewUploadButton(onClick: () -> Unit) {
+private fun NewUploadButton(onClick: () -> Unit, label: String = "Novo / Carregar".tr()) {
     Row(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
@@ -338,7 +348,7 @@ private fun NewUploadButton(onClick: () -> Unit) {
     ) {
         Icon(Icons.Filled.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
-        Text("Novo / Carregar".tr(), color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+        Text(label, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
     }
 }
 

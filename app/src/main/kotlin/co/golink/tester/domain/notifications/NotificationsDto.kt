@@ -54,6 +54,8 @@ data class Notification(
     val actionId: String? = null,
     /** Texto do botão principal (vem traduzido do servidor). */
     val actionButton: String? = null,
+    /** URL web do action (ex.: /calendar?event=…&date=…). */
+    val actionUrl: String? = null,
     val createdAt: String?,
     val createdAtIso: String? = null,
     val isRead: Boolean,
@@ -73,6 +75,7 @@ data class Notification(
                 actionRoute = actionParam(attrs.action, "route"),
                 actionId = actionParam(attrs.action, "id"),
                 actionButton = actionParam(attrs.action, "button"),
+                actionUrl = actionParam(attrs.action, "url"),
                 createdAt = attrs.created_at,
                 createdAtIso = attrs.created_at_iso,
                 isRead = attrs.read_at != null,

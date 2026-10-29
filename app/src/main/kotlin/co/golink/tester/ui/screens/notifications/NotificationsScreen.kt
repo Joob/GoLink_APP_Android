@@ -85,6 +85,7 @@ fun NotificationsScreen(
     onBack: () -> Unit,
     onOpenSecurityActivity: () -> Unit = {},
     onOpenSupportTicket: (id: String, admin: Boolean) -> Unit = { _, _ -> },
+    onOpenCalendar: (event: String?, date: String?) -> Unit = { _, _ -> },
     viewModel: NotificationsViewModel = hiltViewModel(),
 ) {
     val items by viewModel.items.collectAsStateWithLifecycle()
@@ -141,7 +142,7 @@ fun NotificationsScreen(
 
                     // Popup de detalhe (como na web): abrir já não marca como lida, o ✓ é que marca.
                     items.firstOrNull { it.id == openId }?.let { n ->
-                        val target = actionFor(n, onOpenSecurityActivity, onOpenSupportTicket)
+                        val target = actionFor(n, onOpenSecurityActivity, onOpenSupportTicket, onOpenCalendar)
                         NotificationDetailDialog(
                             notification = n,
                             isSystem = n.category in SYSTEM_CATEGORIES,
@@ -261,8 +262,16 @@ private fun actionFor(
     n: Notification,
     openSecurity: () -> Unit,
     openTicket: (String, Boolean) -> Unit,
+    openCalendar: (String?, String?) -> Unit,
 ): (() -> Unit)? {
     if (n.category == "security-alert") return openSecurity
+    // Calendário: o action traz /calendar?event=…&date=… (o título é genérico, o
+    // verdadeiro está cifrado e só se vê ao abrir o evento). Cancelamentos não têm action.
+    if (n.category == "calendar") {
+        val url = n.actionUrl ?: return null
+        val query = android.net.Uri.parse(url)
+        return { openCalendar(query.getQueryParameter("event"), query.getQueryParameter("date")) }
+    }
     val id = n.actionId ?: return null
     return when (n.actionRoute) {
         "AdminSupportTicketDetail" -> { { openTicket(id, true) } }

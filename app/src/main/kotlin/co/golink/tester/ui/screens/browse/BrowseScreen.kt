@@ -277,6 +277,10 @@ fun BrowseScreen(
     onOpenSupport: (admin: Boolean) -> Unit = {},
     onOpenSupportDashboard: () -> Unit = {},
     onOpenAdmin: (pane: String) -> Unit = {},
+    onOpenCalendar: () -> Unit = {},
+    /** Vindo do Calendário: abrir a gaveta já nesta área (Admin/Suporte). */
+    areaRequest: DrawerArea? = null,
+    onAreaRequestHandled: () -> Unit = {},
     openTrashRequest: Boolean = false,
     onTrashRequestHandled: () -> Unit = {},
     viewModel: BrowseViewModel = hiltViewModel(),
@@ -430,6 +434,16 @@ fun BrowseScreen(
     }
     var drawerArea by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(DrawerArea.Drive) }
     if (secondaryArea == null && drawerArea != DrawerArea.Drive) drawerArea = DrawerArea.Drive
+    // Toggle igual à sidebar da web: Drive | Calendário | Admin ou Suporte.
+    val drawerAreas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, secondaryArea)
+    LaunchedEffect(areaRequest) {
+        val req = areaRequest ?: return@LaunchedEffect
+        if (req == secondaryArea) {
+            drawerArea = req
+            drawerState.open()
+        }
+        onAreaRequestHandled()
+    }
     val closeDrawer: () -> Unit = { scope.launch { drawerState.close() } }
     val go: (() -> Unit) -> () -> Unit = { action -> { closeDrawer(); action() } }
     val supportSection = DrawerSection(
@@ -509,6 +523,7 @@ fun BrowseScreen(
             supportSection,
         )
         DrawerArea.Support -> listOf(supportSection)
+        DrawerArea.Calendar -> emptyList()
     }
 
     AdaptiveNavigationDrawer(
@@ -518,8 +533,8 @@ fun BrowseScreen(
             AppDrawerContent(
                 user = user,
                 area = drawerArea,
-                onAreaChange = { drawerArea = it },
-                secondaryArea = secondaryArea,
+                onAreaChange = { if (it == DrawerArea.Calendar) go(onOpenCalendar)() else drawerArea = it },
+                areas = drawerAreas,
                 sections = drawerSections,
                 unreadNotifications = unread,
                 onOpenNotifications = go(onOpenNotifications),

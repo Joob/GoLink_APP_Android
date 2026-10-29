@@ -100,6 +100,8 @@ data class SettingsAttributes(
     val postal_code: String? = null,
     val country: String? = null,
     val state: String? = null,
+    /** País dos feriados do calendário (ISO-2), escolhido no Calendário. */
+    val holiday_country: String? = null,
 )
 
 @Serializable
@@ -183,6 +185,7 @@ data class User(
     val deletionScheduledFor: String? = null,
     val canUpload: Boolean = true,
     val canCreateFolder: Boolean = true,
+    val holidayCountry: String? = null,
 ) {
     companion object {
         fun fromResponse(response: UserResponse): User {
@@ -218,6 +221,7 @@ data class User(
                 city = settings?.city,
                 postalCode = settings?.postal_code,
                 country = settings?.country,
+            holidayCountry = settings?.holiday_country,
                 state = settings?.state,
                 isPastDue = subscription?.attributes?.is_past_due == true,
                 isPaymentSuspended = subscription?.attributes?.is_suspended == true,

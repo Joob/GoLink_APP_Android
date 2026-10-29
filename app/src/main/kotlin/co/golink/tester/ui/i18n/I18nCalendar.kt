@@ -1,0 +1,122 @@
+package co.golink.tester.ui.i18n
+
+/**
+ * Strings do calendário (paridade com cal2.* da web). Cada linha é
+ * (PT, EN, FR, ES); consultado pelo [I18n.t] depois do [I18nAdmin].
+ */
+object I18nCalendar {
+    private fun r(pt: String, en: String, fr: String, es: String) = arrayOf(pt, en, fr, es)
+
+    private val rows: List<Array<String>> = listOf(
+        // Navegação e vistas
+        r("Calendário", "Calendar", "Agenda", "Calendario"),
+        r("Mês", "Month", "Mois", "Mes"),
+        r("Agenda", "Agenda", "Planning", "Agenda"),
+        r("Dia", "Day", "Jour", "Día"),
+        r("Evento", "Event", "Événement", "Evento"),
+        r("Novo evento", "New event", "Nouvel événement", "Nuevo evento"),
+        r("Editar evento", "Edit event", "Modifier l’événement", "Editar evento"),
+        r("Pesquisar eventos", "Search events", "Rechercher des événements", "Buscar eventos"),
+        r("Sem resultados", "No results", "Aucun résultat", "Sin resultados"),
+        r("Sem eventos", "No events", "Aucun événement", "Sin eventos"),
+        r("Os meus calendários", "My calendars", "Mes agendas", "Mis calendarios"),
+        r("Partilhados", "Shared", "Partagés", "Compartidos"),
+        r("Outros", "Other", "Autres", "Otros"),
+        r("%d membro", "%d member", "%d membre", "%d miembro"),
+        r("%d membros", "%d members", "%d membres", "%d miembros"),
+        r("Eventos encriptados ponta a ponta", "End-to-end encrypted events", "Événements chiffrés de bout en bout", "Eventos cifrados de extremo a extremo"),
+        r("Pessoal", "Personal", "Personnel", "Personal"),
+        r("Trabalho", "Work", "Travail", "Trabajo"),
+        r("Família", "Family", "Famille", "Familia"),
+        r("Aniversários", "Birthdays", "Anniversaires", "Cumpleaños"),
+        r("Feriado", "Holiday", "Jour férié", "Festivo"),
+        r("Convite", "Invitation", "Invitation", "Invitación"),
+        r("(sem título)", "(no title)", "(sans titre)", "(sin título)"),
+        r("Evento encriptado (sem chave)", "Encrypted event (no key)", "Événement chiffré (sans clé)", "Evento cifrado (sin clave)"),
+        r("Calendário bloqueado", "Calendar locked", "Agenda verrouillé", "Calendario bloqueado"),
+        r("Desbloqueia a encriptação ponta a ponta para veres os teus eventos.", "Unlock end-to-end encryption to see your events.", "Déverrouillez le chiffrement de bout en bout pour voir vos événements.", "Desbloquea el cifrado de extremo a extremo para ver tus eventos."),
+        r("Não foi possível concluir. Tenta de novo.", "Could not finish. Please try again.", "Impossible de terminer. Réessayez.", "No se pudo completar. Inténtalo de nuevo."),
+
+        // Detalhe
+        r("Todo o dia", "All day", "Toute la journée", "Todo el día"),
+        r("Não se repete", "Does not repeat", "Ne se répète pas", "No se repite"),
+        r("Diário", "Daily", "Quotidien", "Diario"),
+        r("Semanal", "Weekly", "Hebdomadaire", "Semanal"),
+        r("Mensal", "Monthly", "Mensuel", "Mensual"),
+        r("Anual", "Yearly", "Annuel", "Anual"),
+        r("Na hora", "At time", "À l’heure", "A la hora"),
+        r("Na hora do evento", "At time of event", "À l’heure de l’événement", "A la hora del evento"),
+        r("5 min antes", "5 min before", "5 min avant", "5 min antes"),
+        r("15 min antes", "15 min before", "15 min avant", "15 min antes"),
+        r("5 minutos antes", "5 minutes before", "5 minutes avant", "5 minutos antes"),
+        r("15 minutos antes", "15 minutes before", "15 minutes avant", "15 minutos antes"),
+        r("1 hora antes", "1 hour before", "1 heure avant", "1 hora antes"),
+        r("1 dia antes", "1 day before", "1 jour avant", "1 día antes"),
+        r("Sem alerta", "No alert", "Aucun rappel", "Sin aviso"),
+        r("%d convidados", "%d guests", "%d invités", "%d invitados"),
+        r("Pendente", "Pending", "En attente", "Pendiente"),
+        r("Aceitou", "Accepted", "Accepté", "Aceptó"),
+        r("Talvez", "Maybe", "Peut-être", "Quizás"),
+        r("Recusou", "Declined", "Refusé", "Rechazó"),
+        r("Vais?", "Going?", "Vous venez ?", "¿Vas?"),
+        r("Apagar este evento?", "Delete this event?", "Supprimer cet événement ?", "¿Eliminar este evento?"),
+        r("O evento é apagado para todos e os convidados recebem um aviso de cancelamento.", "The event is deleted for everyone and guests get a cancellation notice.", "L’événement est supprimé pour tout le monde et les invités reçoivent un avis d’annulation.", "El evento se elimina para todos y los invitados reciben un aviso de cancelación."),
+        r("Evento apagado", "Event deleted", "Événement supprimé", "Evento eliminado"),
+        r("Evento guardado", "Event saved", "Événement enregistré", "Evento guardado"),
+        r("O evento foi alterado noutro lado — mostramos a versão mais recente.", "The event was changed elsewhere — showing the latest version.", "L’événement a été modifié ailleurs — voici la version la plus récente.", "El evento se cambió en otro sitio: mostramos la versión más reciente."),
+        r("Sem link para convidados", "No link for guests", "Pas de lien pour les invités", "Sin enlace para invitados"),
+        r("Só leitura", "Read only", "Lecture seule", "Solo lectura"),
+
+        // Editor
+        r("Adicionar título", "Add title", "Ajouter un titre", "Añadir título"),
+        r("Duração %s", "Duration %s", "Durée %s", "Duración %s"),
+        r("até", "until", "jusqu’à", "hasta"),
+        r("Até", "Until", "Jusqu’au", "Hasta"),
+        r("Repetir", "Repeat", "Répéter", "Repetir"),
+        r("Nunca", "Never", "Jamais", "Nunca"),
+        r("tocar para mudar", "tap to change", "touchez pour changer", "toca para cambiar"),
+        r("Alertas", "Alerts", "Rappels", "Avisos"),
+        r("Local ou ligação", "Place or link", "Lieu ou lien", "Lugar o enlace"),
+        r("Adicionar convidados (email)", "Add guests (email)", "Ajouter des invités (e-mail)", "Añadir invitados (correo)"),
+        r("Os convidados podem editar o evento", "Guests can edit the event", "Les invités peuvent modifier l’événement", "Los invitados pueden editar el evento"),
+        r("Adicionar notas", "Add notes", "Ajouter des notes", "Añadir notas"),
+        r("Email inválido", "Invalid email", "E-mail invalide", "Correo no válido"),
+        r("Guardar e convidar", "Save and invite", "Enregistrer et inviter", "Guardar e invitar"),
+        r("Anexar do Drive", "Attach from Drive", "Joindre depuis le Drive", "Adjuntar del Drive"),
+        r("Pasta vazia", "Empty folder", "Dossier vide", "Carpeta vacía"),
+        r("O meu drive", "My drive", "Mon drive", "Mi drive"),
+        r("Anexar (%d)", "Attach (%d)", "Joindre (%d)", "Adjuntar (%d)"),
+        r("Encriptado ponta a ponta — só tu e os convidados conseguem ler este evento.", "End-to-end encrypted — only you and the guests can read this event.", "Chiffré de bout en bout — seuls vous et les invités pouvez lire cet événement.", "Cifrado de extremo a extremo: solo tú y los invitados podéis leer este evento."),
+        r("Encriptado ponta a ponta — só tu consegues ler este evento.", "End-to-end encrypted — only you can read this event.", "Chiffré de bout en bout — vous seul pouvez lire cet événement.", "Cifrado de extremo a extremo: solo tú puedes leer este evento."),
+        r("Descartar alterações?", "Discard changes?", "Abandonner les modifications ?", "¿Descartar cambios?"),
+        r("As alterações a este evento não foram guardadas.", "Changes to this event were not saved.", "Les modifications de cet événement n’ont pas été enregistrées.", "Los cambios de este evento no se guardaron."),
+        r("Descartar", "Discard", "Abandonner", "Descartar"),
+        r("Sem acesso a este ficheiro.", "No access to this file.", "Pas d’accès à ce fichier.", "Sin acceso a este archivo."),
+
+        // Definições dos calendários
+        r("Definições do calendário", "Calendar settings", "Paramètres de l’agenda", "Ajustes del calendario"),
+        r("Novo calendário", "New calendar", "Nouvel agenda", "Nuevo calendario"),
+        r("Partilhar calendário", "Share calendar", "Partager l’agenda", "Compartir calendario"),
+        r("Só utilizadores registados com encriptação ativa.", "Only registered users with encryption enabled.", "Uniquement les utilisateurs inscrits avec le chiffrement activé.", "Solo usuarios registrados con cifrado activo."),
+        r("Pode ver", "Can view", "Peut voir", "Puede ver"),
+        r("Pode editar", "Can edit", "Peut modifier", "Puede editar"),
+        r("Esse email não tem conta com encriptação ativa.", "That email has no account with encryption enabled.", "Cet e-mail n’a pas de compte avec le chiffrement activé.", "Ese correo no tiene cuenta con cifrado activo."),
+        r("Sair do calendário", "Leave calendar", "Quitter l’agenda", "Salir del calendario"),
+        r("Apagar calendário", "Delete calendar", "Supprimer l’agenda", "Eliminar calendario"),
+        r("Apagar o calendário e todos os seus eventos?", "Delete the calendar and all its events?", "Supprimer l’agenda et tous ses événements ?", "¿Eliminar el calendario y todos sus eventos?"),
+        r("Dono", "Owner", "Propriétaire", "Propietario"),
+
+        // Alertas e feriados
+        r("Lembretes do calendário", "Calendar reminders", "Rappels de l’agenda", "Recordatorios del calendario"),
+        r("a começar agora (%s)", "starting now (%s)", "commence maintenant (%s)", "empieza ahora (%s)"),
+        r("começa às %s", "starts at %s", "commence à %s", "empieza a las %s"),
+        r("Feriados", "Holidays", "Jours fériés", "Festivos"),
+        r("Feriados em %s", "Holidays in %s", "Jours fériés (%s)", "Festivos en %s"),
+        r("País dos feriados", "Holidays country", "Pays des jours fériés", "País de los festivos"),
+        r("Automático (país da conta)", "Automatic (account country)", "Automatique (pays du compte)", "Automático (país de la cuenta)"),
+    )
+
+    val en: Map<String, String> = rows.associate { it[0] to it[1] }
+    val fr: Map<String, String> = rows.associate { it[0] to it[2] }
+    val es: Map<String, String> = rows.associate { it[0] to it[3] }
+}

@@ -5,6 +5,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Lembretes do calendário: alarme exato quando o utilizador o permite (Android 14+
+         vem negado por omissão); sem ele ficam aproximados. USE_EXACT_ALARM é só para
+         apps cuja função principal é calendário/despertador (política do Google Play). -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <!-- Auto-backup media access -->
@@ -96,6 +101,16 @@
             android:name="co.golink.tester.data.download.ZipDownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <!-- Lembretes do calendário: dispara e reagenda depois de reiniciar/atualizar. -->
+        <receiver
+            android:name="co.golink.tester.data.calendar.CalendarAlarmReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

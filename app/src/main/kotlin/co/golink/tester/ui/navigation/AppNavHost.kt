@@ -94,6 +94,8 @@ object Routes {
     fun admin(pane: String) = "admin/$pane"
     const val ADMIN_USER = "admin_user/{id}"
     fun adminUser(id: String) = "admin_user/$id"
+    const val CALENDAR = "calendar?event={event}&date={date}"
+    fun calendar(event: String? = null, date: String? = null) = "calendar?event=${event.orEmpty()}&date=${date.orEmpty()}"
 }
 
 enum class TopState { Loading, NeedsAuth, NeedsOtp, Authenticated, BootstrapFailed }
@@ -192,6 +194,7 @@ fun AppNavHost(
             current == Routes.HOME ||
                 current.startsWith("settings") ||
                 current.startsWith("admin") ||
+                current.startsWith("calendar") ||
                 current == Routes.NOTIFICATIONS ||
                 current.startsWith("viewer/")
         )
@@ -208,6 +211,19 @@ fun AppNavHost(
                 launchSingleTop = true
             }
         }
+    }
+
+    // Lembrete do calendário tocado: abre o evento quando já estamos dentro da app.
+    val calendarLink by CalendarDeepLink.pending.collectAsState()
+    val currentRoute = currentEntry?.destination?.route
+    LaunchedEffect(calendarLink, top, currentRoute) {
+        val link = calendarLink ?: return@LaunchedEffect
+        if (top != TopState.Authenticated) return@LaunchedEffect
+        val route = currentRoute ?: return@LaunchedEffect
+        if (route != Routes.HOME && !route.startsWith("calendar") && route != Routes.NOTIFICATIONS && !route.startsWith("settings")) return@LaunchedEffect
+        CalendarDeepLink.consume()
+        // Nova entrada (os argumentos mudam); a anterior do calendário sai.
+        navController.navigate(Routes.calendar(link.event, link.date)) { popUpTo(Routes.HOME) }
     }
 
     androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
@@ -308,6 +324,8 @@ fun AppNavHost(
         composable(Routes.HOME) { entry ->
             // Pedido vindo das Definições ("Libertar espaço"): abrir o Lixo.
             val openTrash by entry.savedStateHandle.getStateFlow("open_trash", false).collectAsState()
+            // Vindo do Calendário (toggle Admin/Suporte): abre a gaveta nessa área.
+            val areaRequest by entry.savedStateHandle.getStateFlow<String?>("drawer_area", null).collectAsState()
             androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
                 BrowseScreen(
                     openTrashRequest = openTrash,
@@ -321,6 +339,9 @@ fun AppNavHost(
                     onOpenSupport = { admin -> navController.navigate(Routes.support(admin)) },
                     onOpenSupportDashboard = { navController.navigate(Routes.SUPPORT_DASHBOARD) },
                     onOpenAdmin = { pane -> navController.navigate(Routes.admin(pane)) },
+                    onOpenCalendar = { navController.navigate(Routes.calendar()) { launchSingleTop = true } },
+                    areaRequest = areaRequest?.let { name -> runCatching { co.golink.tester.ui.components.drawer.DrawerArea.valueOf(name) }.getOrNull() },
+                    onAreaRequestHandled = { entry.savedStateHandle["drawer_area"] = null },
                 )
                 // Gate E2E: pede unlock/setup quando autenticado mas sem privada em memória.
                 co.golink.tester.ui.screens.encryption.E2EGate()
@@ -348,11 +369,41 @@ fun AppNavHost(
         ) {
             co.golink.tester.ui.screens.admin.AdminUserScreen(onBack = { navController.popBackStack() })
         }
+        composable(
+            route = Routes.CALENDAR,
+            arguments = listOf(
+                navArgument("event") { type = NavType.StringType; defaultValue = "" },
+                navArgument("date") { type = NavType.StringType; defaultValue = "" },
+            ),
+        ) { entry ->
+            val backToHome: (String?) -> Unit = { area ->
+                if (area != null) runCatching { navController.getBackStackEntry(Routes.HOME).savedStateHandle["drawer_area"] = area }
+                if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
+                    navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
+                }
+            }
+            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+                co.golink.tester.ui.screens.calendar.CalendarScreen(
+                    openEventId = entry.arguments?.getString("event")?.takeIf { it.isNotBlank() },
+                    openDate = entry.arguments?.getString("date")?.takeIf { it.isNotBlank() },
+                    onOpenDrive = { backToHome(null) },
+                    onOpenArea = { area -> backToHome(area.name) },
+                    onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
+                    onOpenSettings = { navController.navigate(Routes.settings()) },
+                    onOpenProfile = { navController.navigate(Routes.settings("profile")) },
+                    onOpenBilling = { navController.navigate(Routes.settings("billing")) },
+                    onOpenHelp = { staff -> navController.navigate(if (staff) Routes.SUPPORT_DASHBOARD else Routes.support(false)) },
+                    onOpenFile = { id -> navController.navigate(Routes.viewer(id)) },
+                )
+                co.golink.tester.ui.screens.encryption.E2EGate()
+            }
+        }
         composable(Routes.NOTIFICATIONS) {
             NotificationsScreen(
                 onBack = { navController.popBackStack() },
                 onOpenSecurityActivity = { navController.navigate(Routes.SECURITY_ACTIVITY) },
                 onOpenSupportTicket = { id, admin -> navController.navigate(Routes.supportTicket(id, admin)) },
+                onOpenCalendar = { event, date -> navController.navigate(Routes.calendar(event, date)) },
             )
         }
         composable(Routes.SECURITY_ACTIVITY) {

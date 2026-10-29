@@ -110,4 +110,9 @@ object ApiModule {
     @Singleton
     fun provideSupportApi(retrofit: Retrofit): co.golink.tester.network.SupportApi =
         retrofit.create(co.golink.tester.network.SupportApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideCalendarApi(retrofit: Retrofit): co.golink.tester.network.CalendarApi =
+        retrofit.create(co.golink.tester.network.CalendarApi::class.java)
 }

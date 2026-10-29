@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.MarkEmailUnread
 import androidx.compose.material.icons.outlined.CardGiftcard
+import androidx.compose.material.icons.outlined.Event
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Notifications
@@ -89,6 +90,7 @@ private fun iconFor(category: String?): IconStyle = when (category) {
     "team-invitation" -> IconStyle(Icons.Outlined.PersonAdd, null)
     "file-request", "remote-upload-done", "mobile-backup" -> IconStyle(Icons.Outlined.CloudUpload, null)
     "support-ticket" -> IconStyle(Icons.Outlined.SupportAgent, null)
+    "calendar" -> IconStyle(Icons.Outlined.Event, MaterialTheme.colorScheme.primary)
     else -> IconStyle(Icons.Outlined.Notifications, null)
 }
 
