@@ -336,6 +336,7 @@ fun AppNavHost(
             val openTrash by entry.savedStateHandle.getStateFlow("open_trash", false).collectAsState()
             // Vindo do Calendário (toggle Admin/Suporte): abre a gaveta nessa área.
             val areaRequest by entry.savedStateHandle.getStateFlow<String?>("drawer_area", null).collectAsState()
+            val drawerRequest by entry.savedStateHandle.getStateFlow("open_drawer", false).collectAsState()
             androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
                 BrowseScreen(
                     openTrashRequest = openTrash,
@@ -352,6 +353,8 @@ fun AppNavHost(
                     onOpenCalendar = { navController.navigate(Routes.calendar()) { launchSingleTop = true } },
                     areaRequest = areaRequest?.let { name -> runCatching { co.golink.tester.ui.components.drawer.DrawerArea.valueOf(name) }.getOrNull() },
                     onAreaRequestHandled = { entry.savedStateHandle["drawer_area"] = null },
+                    openDrawerRequest = drawerRequest,
+                    onDrawerRequestHandled = { entry.savedStateHandle["open_drawer"] = false },
                 )
                 // Gate E2E: pede unlock/setup quando autenticado mas sem privada em memória.
                 co.golink.tester.ui.screens.encryption.E2EGate()
@@ -392,6 +395,7 @@ fun AppNavHost(
                     navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
                 }
             }
+            val drawerRequest by entry.savedStateHandle.getStateFlow("open_drawer", false).collectAsState()
             androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
                 co.golink.tester.ui.screens.calendar.CalendarScreen(
                     openEventId = entry.arguments?.getString("event")?.takeIf { it.isNotBlank() },
@@ -404,6 +408,8 @@ fun AppNavHost(
                     onOpenBilling = { navController.navigate(Routes.settings("billing")) },
                     onOpenHelp = { staff -> navController.navigate(if (staff) Routes.SUPPORT_DASHBOARD else Routes.support(false)) },
                     onOpenFile = { id -> navController.navigate(Routes.viewer(id)) },
+                    openDrawerRequest = drawerRequest,
+                    onDrawerRequestHandled = { entry.savedStateHandle["open_drawer"] = false },
                 )
                 co.golink.tester.ui.screens.encryption.E2EGate()
             }
@@ -411,6 +417,19 @@ fun AppNavHost(
         composable(Routes.NOTIFICATIONS) {
             NotificationsScreen(
                 onBack = { navController.popBackStack() },
+                // A gaveta (com as secções da área) vive no Drive e no Calendário: volta
+                // ao que estava por baixo; vindo das Definições, abre a do Drive.
+                onOpenMenu = {
+                    val previous = navController.previousBackStackEntry
+                    val hasDrawer = previous?.destination?.route.let { it == Routes.HOME || it == Routes.CALENDAR }
+                    val target = if (hasDrawer) previous else runCatching { navController.getBackStackEntry(Routes.HOME) }.getOrNull()
+                    if (target != null) {
+                        target.savedStateHandle["open_drawer"] = true
+                        navController.popBackStack(target.destination.id, inclusive = false)
+                    } else {
+                        navController.popBackStack()
+                    }
+                },
                 onOpenSecurityActivity = { navController.navigate(Routes.SECURITY_ACTIVITY) },
                 onOpenSupportTicket = { id, admin -> navController.navigate(Routes.supportTicket(id, admin)) },
                 onOpenCalendar = { event, date -> navController.navigate(Routes.calendar(event, date)) },

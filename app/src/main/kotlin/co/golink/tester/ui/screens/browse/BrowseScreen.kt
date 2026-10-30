@@ -287,6 +287,9 @@ fun BrowseScreen(
     /** Vindo do Calendário: abrir a gaveta já nesta área (Admin/Suporte). */
     areaRequest: DrawerArea? = null,
     onAreaRequestHandled: () -> Unit = {},
+    /** Hambúrguer das Notificações: abrir a gaveta ao voltar. */
+    openDrawerRequest: Boolean = false,
+    onDrawerRequestHandled: () -> Unit = {},
     openTrashRequest: Boolean = false,
     onTrashRequestHandled: () -> Unit = {},
     viewModel: BrowseViewModel = hiltViewModel(),
@@ -468,6 +471,13 @@ fun BrowseScreen(
             drawerState.open()
         }
         onAreaRequestHandled()
+    }
+    LaunchedEffect(openDrawerRequest) {
+        if (openDrawerRequest) {
+            // No scope do ecrã: limpar o pedido cancela este efeito.
+            scope.launch { drawerState.open() }
+            onDrawerRequestHandled()
+        }
     }
     val closeDrawer: () -> Unit = { scope.launch { drawerState.close() } }
     val go: (() -> Unit) -> () -> Unit = { action -> { closeDrawer(); action() } }

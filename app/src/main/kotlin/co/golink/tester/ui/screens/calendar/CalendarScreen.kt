@@ -92,6 +92,9 @@ fun CalendarScreen(
     onOpenBilling: () -> Unit,
     onOpenHelp: (supportStaff: Boolean) -> Unit,
     onOpenFile: (String) -> Unit,
+    /** Hambúrguer das Notificações: abrir a gaveta ao voltar. */
+    openDrawerRequest: Boolean = false,
+    onDrawerRequestHandled: () -> Unit = {},
     viewModel: CalendarViewModel = hiltViewModel(),
     shell: BrowseShellViewModel = hiltViewModel(),
     gateVm: E2EGateViewModel = hiltViewModel(),
@@ -117,6 +120,14 @@ fun CalendarScreen(
     val snackbar = remember { SnackbarHostState() }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var confirmLogout by remember { mutableStateOf(false) }
+
+    LaunchedEffect(openDrawerRequest) {
+        if (openDrawerRequest) {
+            // No scope do ecrã: limpar o pedido cancela este efeito.
+            scope.launch { drawerState.open() }
+            onDrawerRequestHandled()
+        }
+    }
 
     // Do sino (?event=&date=): abre o evento uma vez.
     var deepLinkDone by rememberSaveable { mutableStateOf(false) }

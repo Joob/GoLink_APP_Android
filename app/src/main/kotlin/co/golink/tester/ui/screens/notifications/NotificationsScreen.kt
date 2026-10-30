@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.notifications
 
+import co.golink.tester.ui.components.drawer.isPermanentDrawer
 import co.golink.tester.ui.i18n.I18n
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Done
@@ -157,6 +159,7 @@ private fun rememberLocalClock(): LocalClock {
 @Composable
 fun NotificationsScreen(
     onBack: () -> Unit,
+    onOpenMenu: () -> Unit,
     onOpenSecurityActivity: () -> Unit = {},
     onOpenSupportTicket: (id: String, admin: Boolean) -> Unit = { _, _ -> },
     onOpenCalendar: (event: String?, date: String?) -> Unit = { _, _ -> },
@@ -251,8 +254,15 @@ fun NotificationsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 8.dp),
                 ) {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar".tr())
+                    // Telemóvel: hambúrguer para a gaveta, como no Drive/Calendário; o X fecha.
+                    if (isPermanentDrawer()) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar".tr())
+                        }
+                    } else {
+                        IconButton(onClick = onOpenMenu) {
+                            Icon(Icons.Filled.Menu, contentDescription = "Menu".tr())
+                        }
                     }
                     Text(
                         "Notificações".tr(),
