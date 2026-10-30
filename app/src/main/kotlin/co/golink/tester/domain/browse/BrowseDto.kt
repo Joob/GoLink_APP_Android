@@ -13,6 +13,8 @@ data class BrowseListResponse(
 @Serializable
 data class BrowseEntryEnvelope(
     val data: BrowseEntry,
+    // Backup: o servidor já tinha este ficheiro (upload_key) e devolveu-o.
+    val deduplicated: Boolean = false,
 )
 
 @Serializable

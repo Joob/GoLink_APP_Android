@@ -59,6 +59,9 @@ object BackupNotifications {
         indeterminate: Boolean,
         progress: Int = 0,
         max: Int = 0,
+        // Só em foreground service: sem FGS, se o processo morrer a meio a
+        // notificação ongoing ficava presa na barra.
+        ongoing: Boolean = true,
     ): Notification {
         ensureChannels(context)
         val builder = NotificationCompat.Builder(context, CHANNEL_PROGRESS)
@@ -66,7 +69,7 @@ object BackupNotifications {
             .setContentTitle(title)
             .setContentText(text)
             .setOnlyAlertOnce(true)
-            .setOngoing(true)
+            .setOngoing(ongoing)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
@@ -106,8 +109,12 @@ object BackupNotifications {
         context: Context,
         title: String,
         text: String,
+        // Aviso de estado que se repete a cada tick (sem espaço, falhas): com
+        // chave só alerta uma vez por [REPEAT_AFTER_MS]. null = mostra sempre.
+        alertKey: String? = null,
     ) {
         if (!canPostNotifications(context)) return
+        if (alertKey != null && alreadyAlerted(context, RESULT_NOTIFICATION_ID, alertKey)) return
         ensureChannels(context)
         val notification = NotificationCompat.Builder(context, CHANNEL_RESULT)
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
@@ -115,10 +122,20 @@ object BackupNotifications {
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(openAppIntent(context))
             .build()
         NotificationManagerCompat.from(context).notify(RESULT_NOTIFICATION_ID, notification)
+        rememberAlert(context, RESULT_NOTIFICATION_ID, alertKey)
+    }
+
+    /** O estado de [alertKey] resolveu-se: retira o aviso e volta a poder alertar. */
+    fun clearAlert(context: Context, alertKey: String) {
+        val prefs = alertPrefs(context)
+        if (prefs.getString(keyOf(RESULT_NOTIFICATION_ID), null) != alertKey) return
+        prefs.edit().remove(keyOf(RESULT_NOTIFICATION_ID)).remove(atOf(RESULT_NOTIFICATION_ID)).apply()
+        NotificationManagerCompat.from(context).cancel(RESULT_NOTIFICATION_ID)
     }
 
     fun cancelProgress(context: Context) {
@@ -133,6 +150,7 @@ object BackupNotifications {
     @SuppressLint("MissingPermission") // ver nota em showResult()
     fun showE2ELocked(context: Context) {
         if (!canPostNotifications(context)) return
+        if (alreadyAlerted(context, LOCKED_NOTIFICATION_ID, ALERT_E2E_LOCKED)) return
         ensureChannels(context)
         val title = "Backup automático em pausa".tr()
         val text = "Desbloqueia a passphrase de encriptação para o backup automático continuar.".tr()
@@ -142,15 +160,18 @@ object BackupNotifications {
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(openAppIntent(context))
             .build()
         NotificationManagerCompat.from(context).notify(LOCKED_NOTIFICATION_ID, notification)
+        rememberAlert(context, LOCKED_NOTIFICATION_ID, ALERT_E2E_LOCKED)
     }
 
     /** Conta sem encriptação configurada: o backup não envia nada em claro. */
     fun showE2ENotConfigured(context: Context) {
         if (!canPostNotifications(context)) return
+        if (alreadyAlerted(context, LOCKED_NOTIFICATION_ID, ALERT_E2E_NOT_CONFIGURED)) return
         ensureChannels(context)
         val title = "Backup automático em pausa".tr()
         val text = "Cria a tua passphrase de encriptação para o backup automático começar.".tr()
@@ -160,17 +181,48 @@ object BackupNotifications {
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(openAppIntent(context))
             .build()
         // Mesmo id do aviso "trancada": o cancelE2ELocked limpa os dois.
         NotificationManagerCompat.from(context).notify(LOCKED_NOTIFICATION_ID, notification)
+        rememberAlert(context, LOCKED_NOTIFICATION_ID, ALERT_E2E_NOT_CONFIGURED)
     }
 
     /** Chamada após o unlock: o aviso deixou de fazer sentido. */
     fun cancelE2ELocked(context: Context) {
         NotificationManagerCompat.from(context).cancel(LOCKED_NOTIFICATION_ID)
+        rememberAlert(context, LOCKED_NOTIFICATION_ID, null)
     }
+
+    // O worker corre a cada ~1 min (e em retry): sem isto o mesmo aviso voltava
+    // a tocar em cada execução, mesmo depois de dispensado. Persistido porque
+    // cada execução pode ser um processo novo.
+    private fun alreadyAlerted(context: Context, id: Int, alertKey: String): Boolean {
+        val prefs = alertPrefs(context)
+        return prefs.getString(keyOf(id), null) == alertKey &&
+            System.currentTimeMillis() - prefs.getLong(atOf(id), 0L) < REPEAT_AFTER_MS
+    }
+
+    private fun rememberAlert(context: Context, id: Int, alertKey: String?) {
+        val edit = alertPrefs(context).edit()
+        if (alertKey == null) edit.remove(keyOf(id)).remove(atOf(id))
+        else edit.putString(keyOf(id), alertKey).putLong(atOf(id), System.currentTimeMillis())
+        edit.apply()
+    }
+
+    private fun alertPrefs(context: Context) =
+        context.getSharedPreferences("backup_notifications", Context.MODE_PRIVATE)
+
+    private fun keyOf(id: Int) = "alert_key_$id"
+    private fun atOf(id: Int) = "alert_at_$id"
+
+    const val ALERT_QUOTA = "quota"
+    const val ALERT_FAILED = "failed"
+    private const val ALERT_E2E_LOCKED = "e2e_locked"
+    private const val ALERT_E2E_NOT_CONFIGURED = "e2e_not_configured"
+    private const val REPEAT_AFTER_MS = 24L * 60 * 60 * 1000
 
     private fun canPostNotifications(context: Context): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true

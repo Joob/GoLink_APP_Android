@@ -62,8 +62,8 @@ class NotificationsViewModel @Inject constructor(
         repository.delete(id).onFailure { t -> _state.update { it.copy(toast = t.message) } }
     }
 
-    fun flushAll() = viewModelScope.launch {
-        repository.flushAll().onFailure { t -> _state.update { it.copy(toast = t.message) } }
+    fun clearRead() = viewModelScope.launch {
+        repository.deleteRead().onFailure { t -> _state.update { it.copy(toast = t.message) } }
     }
 
     fun consumeToast() = _state.update { it.copy(toast = null) }

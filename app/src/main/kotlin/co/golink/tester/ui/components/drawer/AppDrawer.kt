@@ -1,5 +1,6 @@
 package co.golink.tester.ui.components.drawer
 
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,9 +14,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,16 +27,21 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.KeyboardDoubleArrowLeft
+import androidx.compose.material.icons.filled.KeyboardDoubleArrowRight
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsNone
-import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.outlined.AdminPanelSettings
+import androidx.compose.material.icons.outlined.CalendarToday
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.LightMode
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
+import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.SupportAgent
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -76,9 +84,13 @@ import co.golink.tester.ui.theme.LocalDarkTheme
 /** Largura a partir da qual a gaveta fica fixa à esquerda (tablets / paisagem larga). */
 private const val PERMANENT_DRAWER_MIN_WIDTH_DP = 840
 
-private val DrawerWidth = 280.dp
+private val RailWidth = 76.dp
+private val PanelWidth = 248.dp
 
-/** Áreas do toggle no topo da gaveta (igual à sidebar da web). */
+/** Barra + linha divisória + painel. */
+private val DrawerFullWidth = RailWidth + 1.dp + PanelWidth
+
+/** Áreas da barra de ícones (igual à sidebar da web). */
 enum class DrawerArea { Drive, Calendar, Admin, Support }
 
 fun DrawerArea.label(): String = when (this) {
@@ -105,12 +117,35 @@ data class DrawerItem(
 
 data class DrawerSection(val title: String?, val items: List<DrawerItem>)
 
+/**
+ * Painel da área encolhido (só fica a barra de ícones), como o « da web. Só
+ * se aplica à gaveta fixa; mesmo padrão do [AppThemeMode] (snapshot state + prefs).
+ */
+object DrawerPanel {
+    var collapsed by mutableStateOf(false)
+        private set
+
+    fun init(context: Context) {
+        collapsed = prefs(context).getBoolean(KEY, false)
+    }
+
+    fun toggle(context: Context) {
+        collapsed = !collapsed
+        prefs(context).edit().putBoolean(KEY, collapsed).apply()
+    }
+
+    private fun prefs(context: Context) =
+        context.getSharedPreferences("app_drawer", Context.MODE_PRIVATE)
+
+    private const val KEY = "panel_collapsed"
+}
+
 @Composable
 fun isPermanentDrawer(): Boolean = LocalConfiguration.current.screenWidthDp >= PERMANENT_DRAWER_MIN_WIDTH_DP
 
 /**
- * Telemóvel: gaveta modal. Ecrã largo: gaveta permanente à esquerda (como a
- * sidebar da web). O conteúdo da gaveta é o mesmo nos dois casos.
+ * Telemóvel: gaveta modal (barra + painel, sempre aberta). Ecrã largo: gaveta
+ * permanente à esquerda, com o painel encolhível. O conteúdo é o mesmo.
  */
 @Composable
 fun AdaptiveNavigationDrawer(
@@ -121,10 +156,11 @@ fun AdaptiveNavigationDrawer(
 ) {
     val container = MaterialTheme.colorScheme.surfaceVariant
     if (permanent) {
+        // Sem animar: animar a largura fazia relayout da grelha/calendário ao lado a cada frame.
         PermanentNavigationDrawer(
             drawerContent = {
                 PermanentDrawerSheet(
-                    modifier = Modifier.width(DrawerWidth),
+                    modifier = Modifier.width(if (DrawerPanel.collapsed) RailWidth else DrawerFullWidth),
                     drawerContainerColor = container,
                     content = drawerContent,
                 )
@@ -139,8 +175,10 @@ fun AdaptiveNavigationDrawer(
         ModalNavigationDrawer(
             drawerState = drawerState,
             drawerContent = {
+                // Telemóveis estreitos: deixa sempre uma faixa de scrim para fechar.
+                val maxWidth = LocalConfiguration.current.screenWidthDp.dp - 56.dp
                 ModalDrawerSheet(
-                    modifier = Modifier.width(DrawerWidth),
+                    modifier = Modifier.width(minOf(DrawerFullWidth, maxWidth)),
                     drawerContainerColor = container,
                     drawerShape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp),
                     content = drawerContent,
@@ -152,10 +190,10 @@ fun AdaptiveNavigationDrawer(
 }
 
 /**
- * Conteúdo da gaveta (redesign 2026-10, igual à sidebar da web): cabeçalho com
- * logo e sino, toggle Drive | Calendário | Admin, ações rápidas, secções,
- * cartão de armazenamento e rodapé com perfil e atalhos. A área Calendário
- * desenha o seu próprio menu em [areaContent].
+ * Conteúdo da gaveta (redesign 2026-10-29, igual à sidebar da web): barra de
+ * ícones (logo, sino, Drive, Calendário, Admin/Suporte, ajuda, tema, avatar) e
+ * painel da área com título, ações rápidas, secções e armazenamento. A área
+ * Calendário desenha o seu próprio menu em [areaContent].
  */
 @Composable
 fun ColumnScope.AppDrawerContent(
@@ -166,12 +204,15 @@ fun ColumnScope.AppDrawerContent(
     sections: List<DrawerSection>,
     unreadNotifications: Int,
     onOpenNotifications: () -> Unit,
+    /** Logo da barra: início da área (como o homeRoute da web). */
+    onHome: () -> Unit,
     storage: StorageUsage?,
     onUpgrade: () -> Unit,
     canUpgrade: Boolean = false,
     appVersion: String,
     onProfile: () -> Unit,
-    onAvatarClick: () -> Unit,
+    /** Trocar a imagem de perfil; null = sem a opção no menu do avatar. */
+    onAvatarClick: (() -> Unit)?,
     onHelp: () -> Unit,
     onSettings: () -> Unit,
     onLogout: () -> Unit,
@@ -181,156 +222,108 @@ fun ColumnScope.AppDrawerContent(
     onNewEvent: (() -> Unit)? = null,
     areaContent: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
-    DrawerHeader(
-        title = area.label(),
-        unread = unreadNotifications,
-        onOpenNotifications = onOpenNotifications,
-    )
+    val context = LocalContext.current
+    val canCollapse = isPermanentDrawer()
+    val collapsed = canCollapse && DrawerPanel.collapsed
 
-    if (areas.size > 1) {
-        AreaToggle(area = area, areas = areas, onChange = onAreaChange)
-    }
+    Row(Modifier.fillMaxSize()) {
+        DrawerRail(
+            user = user,
+            area = area,
+            areas = areas,
+            onAreaChange = onAreaChange,
+            unread = unreadNotifications,
+            onOpenNotifications = onOpenNotifications,
+            onHome = onHome,
+            onExpand = if (collapsed) ({ DrawerPanel.toggle(context) }) else null,
+            appVersion = appVersion,
+            onProfile = onProfile,
+            onAvatarClick = onAvatarClick,
+            onHelp = onHelp,
+            onSettings = onSettings,
+            onLogout = onLogout,
+        )
+        if (!collapsed) {
+            Row(Modifier.fillMaxHeight()) {
+            Box(Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outline))
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                PanelHeader(
+                    title = area.label(),
+                    onCollapse = if (canCollapse) ({ DrawerPanel.toggle(context) }) else null,
+                )
 
-    if (area == DrawerArea.Calendar && onNewEvent != null) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) { NewUploadButton(onNewEvent, label = "Novo evento".tr()) }
-    }
-
-    if (area == DrawerArea.Drive && lockedContent == null) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            onNewUpload?.let { NewUploadButton(it) }
-            onSearch?.let { SearchButton(it) }
-        }
-    }
-
-    Column(
-        modifier = Modifier
-            .weight(1f)
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 14.dp)
-            .padding(bottom = 8.dp),
-    ) {
-        if (lockedContent != null && (area == DrawerArea.Drive || area == DrawerArea.Calendar)) {
-            lockedContent()
-        } else if (areaContent != null) {
-            areaContent()
-        } else {
-            sections.forEachIndexed { si, section ->
-                // Admin/Suporte: secções separadas por uma linha (como na web).
-                if (area != DrawerArea.Drive && area != DrawerArea.Calendar && si > 0) {
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
-                        modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 10.dp),
-                    )
+                if (area == DrawerArea.Calendar && onNewEvent != null) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) { NewUploadButton(onNewEvent, label = "Novo evento".tr()) }
                 }
-                if (section.title != null) SectionLabel(section.title, compactTop = area != DrawerArea.Drive && si > 0)
-                else Spacer(Modifier.height(10.dp))
-                section.items.forEach { item ->
-                    DrawerRow(item = item, dot = false)
-                item.children.forEach { child ->
-                    Box(Modifier.padding(start = 22.dp)) { DrawerRow(item = child, dot = false) }
+
+                if (area == DrawerArea.Drive && lockedContent == null) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        onNewUpload?.let { NewUploadButton(it) }
+                        onSearch?.let { SearchButton(it) }
+                    }
                 }
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 14.dp)
+                        .padding(bottom = 8.dp),
+                ) {
+                    if (lockedContent != null && (area == DrawerArea.Drive || area == DrawerArea.Calendar)) {
+                        lockedContent()
+                    } else if (areaContent != null) {
+                        areaContent()
+                    } else {
+                        sections.forEachIndexed { si, section ->
+                            // Admin/Suporte: secções separadas por uma linha (como na web).
+                            if (area != DrawerArea.Drive && area != DrawerArea.Calendar && si > 0) {
+                                HorizontalDivider(
+                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
+                                    modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 10.dp),
+                                )
+                            }
+                            if (section.title != null) SectionLabel(section.title, compactTop = area != DrawerArea.Drive && si > 0)
+                            else Spacer(Modifier.height(10.dp))
+                            section.items.forEach { item ->
+                                DrawerRow(item = item, dot = false)
+                                item.children.forEach { child ->
+                                    Box(Modifier.padding(start = 22.dp)) { DrawerRow(item = child, dot = false) }
+                                }
+                            }
+                        }
+                    }
                 }
+
+                if (area == DrawerArea.Drive && storage != null && lockedContent == null) {
+                    StorageCard(storage = storage, canUpgrade = canUpgrade, onUpgrade = onUpgrade)
+                }
+            }
             }
         }
     }
-
-    if (area == DrawerArea.Drive && storage != null && lockedContent == null) {
-        StorageCard(storage = storage, canUpgrade = canUpgrade, onUpgrade = onUpgrade)
-    }
-
-    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-    DrawerFooter(
-        user = user,
-        appVersion = appVersion,
-        onProfile = onProfile,
-        onAvatarClick = onAvatarClick,
-        onHelp = onHelp,
-        onSettings = onSettings,
-        onLogout = onLogout,
-    )
 }
 
 @Composable
-private fun DrawerHeader(title: String, unread: Int, onOpenNotifications: () -> Unit) {
+private fun PanelHeader(title: String, onCollapse: (() -> Unit)?) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 10.dp),
+            .height(64.dp)
+            .padding(start = 16.dp, end = 8.dp),
     ) {
-        val dark = LocalDarkTheme.current
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(32.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(if (dark) Color.White else Color(0xFF111827)),
-        ) {
-            Text(
-                "go",
-                color = if (dark) Color(0xFF111827) else Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
-            )
-        }
-        Spacer(Modifier.width(10.dp))
         Text(
             title,
-            style = MaterialTheme.typography.titleMedium,
+            fontSize = 18.sp,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        IconButton(onClick = onOpenNotifications) {
-            BadgedBox(badge = {
-                if (unread > 0) Badge(containerColor = MaterialTheme.colorScheme.primary) {
-                    Text(if (unread > 99) "99+" else unread.toString())
-                }
-            }) {
-                Icon(
-                    if (unread > 0) Icons.Filled.Notifications else Icons.Filled.NotificationsNone,
-                    contentDescription = "Notificações".tr(),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun AreaToggle(area: DrawerArea, areas: List<DrawerArea>, onChange: (DrawerArea) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
-            .padding(4.dp),
-    ) {
-        areas.forEach { option ->
-            val active = option == area
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(32.dp)
-                    .clip(RoundedCornerShape(9.dp))
-                    .background(if (active) MaterialTheme.colorScheme.surface else Color.Transparent)
-                    .clickable { onChange(option) },
-            ) {
-                Text(
-                    option.label(),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontSize = 13.sp,
-                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                    color = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
+        if (onCollapse != null) RailIcon(Icons.Filled.KeyboardDoubleArrowLeft, "Recolher menu".tr(), onCollapse)
     }
 }
 
@@ -501,39 +494,198 @@ private fun StorageCard(storage: StorageUsage, canUpgrade: Boolean, onUpgrade: (
         }
     }
 }
-
 @Composable
-private fun DrawerFooter(
+private fun DrawerRail(
     user: User?,
+    area: DrawerArea,
+    areas: List<DrawerArea>,
+    onAreaChange: (DrawerArea) -> Unit,
+    unread: Int,
+    onOpenNotifications: () -> Unit,
+    onHome: () -> Unit,
+    onExpand: (() -> Unit)?,
     appVersion: String,
     onProfile: () -> Unit,
-    onAvatarClick: () -> Unit,
+    onAvatarClick: (() -> Unit)?,
     onHelp: () -> Unit,
     onSettings: () -> Unit,
     onLogout: () -> Unit,
 ) {
     val context = LocalContext.current
     val dark = LocalDarkTheme.current
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    val secondary = areas.firstOrNull { it == DrawerArea.Admin || it == DrawerArea.Support }
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 14.dp, end = 6.dp, top = 10.dp, bottom = 12.dp),
+            .width(RailWidth)
+            .fillMaxHeight()
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.025f))
+            .padding(vertical = 12.dp),
     ) {
-        // Avatar: tocar troca a imagem (como antes); nome → perfil.
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(36.dp)
+                .size(40.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.primary)
+                .clickable(onClick = onHome),
+        ) {
+            Text("go", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        }
+        // Só o meio faz scroll: em ecrãs baixos (landscape, split-screen) o
+        // rodapé com o avatar continua acessível.
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+        ) {
+        Spacer(Modifier.height(8.dp))
+        // Inbox (como na web): notificações de tudo, calendário incluído.
+        RailItem(
+            if (unread > 0) Icons.Filled.Notifications else Icons.Filled.NotificationsNone,
+            "Inbox".tr(),
+            selected = false,
+            badge = unread,
+            onClick = onOpenNotifications,
+        )
+        Box(
+            Modifier
+                .padding(vertical = 8.dp)
+                .width(32.dp)
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.outline),
+        )
+        if (DrawerArea.Drive in areas) {
+            RailItem(Icons.Outlined.Storage, DrawerArea.Drive.label(), area == DrawerArea.Drive) { onAreaChange(DrawerArea.Drive) }
+        }
+        if (DrawerArea.Calendar in areas) {
+            RailItem(Icons.Outlined.CalendarToday, DrawerArea.Calendar.label(), area == DrawerArea.Calendar) {
+                onAreaChange(DrawerArea.Calendar)
+            }
+        }
+        if (onExpand != null) {
+            Spacer(Modifier.height(4.dp))
+            RailIcon(Icons.Filled.KeyboardDoubleArrowRight, "Expandir menu".tr(), onExpand)
+        }
+        Spacer(Modifier.height(8.dp))
+        }
+
+        if (secondary != null) {
+            RailItem(
+                if (secondary == DrawerArea.Admin) Icons.Outlined.AdminPanelSettings else Icons.Outlined.SupportAgent,
+                secondary.label(),
+                area == secondary,
+            ) { onAreaChange(secondary) }
+        }
+        Box(
+            Modifier
+                .padding(vertical = 8.dp)
+                .width(32.dp)
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.outline),
+        )
+        RailIcon(Icons.Outlined.HelpOutline, "Ajuda".tr(), onHelp)
+        RailIcon(
+            if (dark) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
+            if (dark) "Tema claro".tr() else "Tema escuro".tr(),
+        ) {
+            AppThemeMode.set(context, if (dark) AppThemeMode.Mode.LIGHT else AppThemeMode.Mode.DARK)
+        }
+        Spacer(Modifier.height(6.dp))
+        UserMenu(
+            user = user,
+            appVersion = appVersion,
+            onProfile = onProfile,
+            onAvatarClick = onAvatarClick,
+            onSettings = onSettings,
+            onLogout = onLogout,
+        )
+    }
+}
+
+/** Item de área da barra: ícone numa "pill" e legenda por baixo (como na web). */
+@Composable
+private fun RailItem(icon: ImageVector, label: String, selected: Boolean, badge: Int = 0, onClick: () -> Unit) {
+    val primary = MaterialTheme.colorScheme.primary
+    val fg = if (selected) primary else MaterialTheme.colorScheme.onSurfaceVariant
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .width(68.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp),
+    ) {
+        Box {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .width(48.dp)
+                    .height(32.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(if (selected) primary.copy(alpha = 0.15f) else Color.Transparent),
+            ) {
+                Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(20.dp))
+            }
+            if (badge > 0) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 2.dp, y = (-4).dp)
+                        .widthIn(min = 18.dp)
+                        .height(18.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(2.dp)
+                        .clip(CircleShape)
+                        .background(primary)
+                        .padding(horizontal = 4.dp),
+                ) {
+                    Text(if (badge > 99) "99+" else badge.toString(), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, lineHeight = 10.sp)
+                }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            label,
+            fontSize = 11.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            color = fg,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** Avatar no fundo da barra: abre o menu com perfil, definições, idioma e sair. */
+@Composable
+private fun UserMenu(
+    user: User?,
+    appVersion: String,
+    onProfile: () -> Unit,
+    onAvatarClick: (() -> Unit)?,
+    onSettings: () -> Unit,
+    onLogout: () -> Unit,
+) {
+    val context = LocalContext.current
+    var menuOpen by remember { mutableStateOf(false) }
+    Box {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(38.dp)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
-                .clickable(onClick = onAvatarClick),
+                .clickable { menuOpen = true },
         ) {
             val avatar = user?.avatar
             if (!avatar.isNullOrBlank()) {
                 AsyncImage(
                     model = avatar,
-                    contentDescription = "Alterar imagem".tr(),
+                    contentDescription = "Perfil".tr(),
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize().clip(CircleShape),
                 )
@@ -544,92 +696,80 @@ private fun DrawerFooter(
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .size(14.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
-            ) {
-                Icon(Icons.Filled.PhotoCamera, contentDescription = null, tint = Color.White, modifier = Modifier.size(8.dp))
-            }
         }
-        Spacer(Modifier.width(10.dp))
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .clickable(onClick = onProfile),
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            containerColor = MaterialTheme.colorScheme.surface,
         ) {
-            Text(
-                user?.name ?: "—",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                "Perfil".tr() + " · v" + appVersion,
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-
-        FooterIcon(Icons.Outlined.HelpOutline, "Suporte".tr(), onHelp)
-        FooterIcon(
-            if (dark) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
-            if (dark) "Tema claro".tr() else "Tema escuro".tr(),
-        ) {
-            AppThemeMode.set(context, if (dark) AppThemeMode.Mode.LIGHT else AppThemeMode.Mode.DARK)
-        }
-
-        // ⚙: definições e idioma.
-        var menuOpen by remember { mutableStateOf(false) }
-        Box {
-            FooterIcon(Icons.Outlined.Settings, "Definições".tr()) { menuOpen = true }
-            DropdownMenu(
-                expanded = menuOpen,
-                onDismissRequest = { menuOpen = false },
-                containerColor = MaterialTheme.colorScheme.surface,
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Definições".tr(), fontSize = 14.sp) },
-                    leadingIcon = { Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                    onClick = { menuOpen = false; onSettings() },
-                )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).widthIn(max = 240.dp)) {
                 Text(
-                    "IDIOMA".tr(),
-                    fontSize = 10.sp,
+                    user?.name ?: "—",
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 0.8.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 4.dp),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                val current = I18n.current()
-                I18n.languages.forEach { lang ->
-                    val selected = lang.code == current.code
-                    DropdownMenuItem(
-                        text = { Text(lang.label, fontSize = 14.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
-                        leadingIcon = { Text(lang.flag, fontSize = 16.sp) },
-                        trailingIcon = if (selected) {
-                            { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp)) }
-                        } else null,
-                        onClick = { menuOpen = false; I18n.set(context, lang.code) },
-                    )
-                }
+                Text(
+                    listOfNotNull(user?.email, "v$appVersion").joinToString(" · "),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            DropdownMenuItem(
+                text = { Text("Perfil".tr(), fontSize = 14.sp) },
+                leadingIcon = { Icon(Icons.Outlined.Person, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                onClick = { menuOpen = false; onProfile() },
+            )
+            if (onAvatarClick != null) DropdownMenuItem(
+                text = { Text("Alterar imagem".tr(), fontSize = 14.sp) },
+                leadingIcon = { Icon(Icons.Outlined.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                onClick = { menuOpen = false; onAvatarClick() },
+            )
+            DropdownMenuItem(
+                text = { Text("Definições".tr(), fontSize = 14.sp) },
+                leadingIcon = { Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                onClick = { menuOpen = false; onSettings() },
+            )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            Text(
+                "IDIOMA".tr(),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.8.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 4.dp),
+            )
+            val current = I18n.current()
+            I18n.languages.forEach { lang ->
+                val selected = lang.code == current.code
+                DropdownMenuItem(
+                    text = { Text(lang.label, fontSize = 14.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
+                    leadingIcon = { Text(lang.flag, fontSize = 16.sp) },
+                    trailingIcon = if (selected) {
+                        { Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp)) }
+                    } else null,
+                    onClick = { menuOpen = false; I18n.set(context, lang.code) },
+                )
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            val danger = if (LocalDarkTheme.current) Color(0xFFF87171) else Color(0xFFDC2626)
+            DropdownMenuItem(
+                text = { Text("Sair da Conta".tr(), fontSize = 14.sp, color = danger) },
+                leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Logout, contentDescription = null, tint = danger, modifier = Modifier.size(18.dp)) },
+                onClick = { menuOpen = false; onLogout() },
+            )
         }
-        FooterIcon(Icons.AutoMirrored.Outlined.Logout, "Sair da Conta".tr(), onLogout)
     }
 }
 
 @Composable
-private fun FooterIcon(icon: ImageVector, description: String, onClick: () -> Unit) {
-    IconButton(onClick = onClick, modifier = Modifier.size(34.dp)) {
-        Icon(icon, contentDescription = description, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+private fun RailIcon(icon: ImageVector, description: String, onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = Modifier.size(40.dp)) {
+        Icon(icon, contentDescription = description, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
     }
 }

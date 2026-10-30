@@ -25,6 +25,7 @@ class App : Application(), Configuration.Provider, ImageLoaderFactory {
         co.golink.tester.ui.i18n.I18n.init(this)
         // E o tema escolhido no botão Lua/Sol (por omissão segue o sistema).
         co.golink.tester.ui.theme.AppThemeMode.init(this)
+        co.golink.tester.ui.components.drawer.DrawerPanel.init(this)
         calendarAlarms.start()
         // Ficheiros desencriptados deixados por uma sessão que terminou mal.
         val startedAt = System.currentTimeMillis()

@@ -69,6 +69,7 @@ class UploadManager @Inject constructor(
     private val e2eShareService: co.golink.tester.data.encryption.E2EShareService,
     private val connectivity: co.golink.tester.data.network.ConnectivityMonitor,
     private val sessionManager: co.golink.tester.data.auth.SessionManager,
+    private val deviceIdentity: co.golink.tester.data.device.DeviceIdentity,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -580,6 +581,7 @@ class UploadManager @Inject constructor(
                 wrappedDataKey = textPart(wrapped),
                 mediaType = textPart(mediaType),
                 nameEncrypted = nameEncrypted?.let { textPart(it) },
+                uploadKey = textPart(backupUploadKey(uri, metadata)),
             ) else api.upload(
                 overwriteFileId = replacesId?.takeIf { overwrite }?.let { textPart(it) },
                 name = textPart(if (nameEncrypted != null) "•" else metadata.baseName),
@@ -595,8 +597,10 @@ class UploadManager @Inject constructor(
             if (response.code() == 409) throw ConflictException()
             if (!response.isSuccessful) error(httpErrorMessage(response.code(), response.errorBody()?.string()))
 
-            val fileId = response.body()?.data?.id
             rememberCreated(taskId, response.body()?.data)
+            // Já existia (reenvio): o ficheiro tem a data key do 1.º envio, por isso
+            // thumbnail e chaves seladas com a nova ficavam ilegíveis — salta-os.
+            val fileId = response.body()?.takeUnless { it.deduplicated }?.data?.id
 
             // Partilhar a data key com os membros da team folder (share-key) para
             // eles decifrarem o ficheiro acabado de enviar. Best-effort por membro.
@@ -856,16 +860,19 @@ class UploadManager @Inject constructor(
                         wrappedDataKey = textPart(wrapped),
                         mediaType = textPart(mediaType),
                         nameEncrypted = nameEncrypted?.let { textPart(it) },
+                        uploadKey = if (mobileBackup && isLast) textPart(backupUploadKey(uri, metadata)) else null,
                     )
                 }
             }
 
             // 3) id do ficheiro criado (resposta do último chunk)
-            val createdEntry = lastBody?.let {
-                runCatching { json.decodeFromString<co.golink.tester.domain.browse.BrowseEntryEnvelope>(it).data }.getOrNull()
+            val createdEnvelope = lastBody?.let {
+                runCatching { json.decodeFromString<co.golink.tester.domain.browse.BrowseEntryEnvelope>(it) }.getOrNull()
             }
+            val createdEntry = createdEnvelope?.data
             rememberCreated(taskId, createdEntry)
-            val fileId = createdEntry?.id
+            // Já existia (reenvio): ver uploadEncryptedSingle.
+            val fileId = createdEntry?.id?.takeUnless { createdEnvelope.deduplicated }
 
             // 4) partilhar a data key com os membros da team folder (best-effort)
             if (fileId != null && recipients.isNotEmpty()) {
@@ -1326,6 +1333,17 @@ class UploadManager @Inject constructor(
         val extension = if (dot in 0 until displayName.lastIndex) displayName.substring(dot + 1) else ""
         val mimeType = resolver.getType(uri) ?: "application/octet-stream"
         return FileMetadata(displayName, baseName, extension, mimeType, size)
+    }
+
+    /**
+     * Chave de idempotência do backup: fixa por ficheiro deste aparelho (o uri
+     * do MediaStore traz colecção e id; tamanho e nome mudam se for editado),
+     * por isso um reenvio — no retry ou num tick seguinte — é reconhecido.
+     */
+    private fun backupUploadKey(uri: Uri, metadata: FileMetadata): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest("${deviceIdentity.id}|$uri|${metadata.size}|${metadata.displayName}".toByteArray())
+        return digest.take(24).joinToString("") { "%02x".format(it) }
     }
 
     private data class FileMetadata(

@@ -404,6 +404,7 @@ fun AppNavHost(
                 onOpenSecurityActivity = { navController.navigate(Routes.SECURITY_ACTIVITY) },
                 onOpenSupportTicket = { id, admin -> navController.navigate(Routes.supportTicket(id, admin)) },
                 onOpenCalendar = { event, date -> navController.navigate(Routes.calendar(event, date)) },
+                onOpenSettings = { navController.navigate(Routes.settings()) },
             )
         }
         composable(Routes.SECURITY_ACTIVITY) {

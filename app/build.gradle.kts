@@ -23,8 +23,8 @@ android {
         applicationId = "co.golink.tester"
         minSdk = 26
         targetSdk = 36
-        versionCode = 137
-        versionName = "3.61.0"
+        versionCode = 138
+        versionName = "3.62.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }

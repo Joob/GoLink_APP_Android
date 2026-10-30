@@ -8,6 +8,10 @@ object I18nRedesign {
     private fun r(pt: String, en: String, fr: String, es: String) = arrayOf(pt, en, fr, es)
 
     private val rows: List<Array<String>> = listOf(
+        // Barra de ícones da gaveta (2026-10-29)
+        r("Ajuda", "Help", "Aide", "Ayuda"),
+        r("Recolher menu", "Collapse menu", "Réduire le menu", "Contraer menú"),
+        r("Expandir menu", "Expand menu", "Développer le menu", "Expandir menú"),
         // Ecrã de pesquisa (separadores + Recentes, paridade com a web)
         r("Pesquisar", "Search", "Rechercher", "Buscar"),
         r("Partilhados", "Shared", "Partagés", "Compartidos"),
@@ -499,6 +503,15 @@ object I18nRedesign {
         r("Avançado", "Advanced", "Avancé", "Avanzado"),
         r("Procurar de novo na galeria", "Rescan the gallery", "Analyser à nouveau la galerie", "Volver a buscar en la galería"),
         r("Tenta outra vez os ficheiros que falharam. Os que já estão guardados não são enviados de novo.", "Tries the files that failed again. Items already saved aren't uploaded again.", "Réessaie les fichiers qui ont échoué. Ceux déjà enregistrés ne sont pas renvoyés.", "Vuelve a intentar los archivos que fallaron. Los ya guardados no se envían de nuevo."),
+
+        // Inbox (notificações com o design da web, 2026-10-29)
+        r("Inbox", "Inbox", "Boîte", "Bandeja"),
+        r("Não lidas", "Unread", "Non lues", "No leídas"),
+        r("Anteriores", "Earlier", "Plus tôt", "Anteriores"),
+        r("Partilhas", "Sharing", "Partages", "Compartidos"),
+        r("Novidades", "News", "Actualités", "Novedades"),
+        r("Limpar lidas", "Clear read", "Effacer les lues", "Borrar leídas"),
+        r("Ainda não há nada aqui.", "Nothing here yet.", "Rien pour l'instant.", "Aún no hay nada aquí."),
     )
 
     val en: Map<String, String> = rows.associate { it[0] to it[1] }

@@ -58,6 +58,8 @@ data class Notification(
     val actionUrl: String? = null,
     val createdAt: String?,
     val createdAtIso: String? = null,
+    /** [createdAtIso] já lido (uma vez, aqui); null sem ISO ou se não for válido. */
+    val createdAtInstant: java.time.Instant? = null,
     val isRead: Boolean,
     val details: List<NotificationDetail> = emptyList(),
     val sender: String? = null,
@@ -78,6 +80,7 @@ data class Notification(
                 actionUrl = actionParam(attrs.action, "url"),
                 createdAt = attrs.created_at,
                 createdAtIso = attrs.created_at_iso,
+                createdAtInstant = attrs.created_at_iso?.let { runCatching { java.time.OffsetDateTime.parse(it).toInstant() }.getOrNull() },
                 isRead = attrs.read_at != null,
                 details = attrs.details,
                 sender = attrs.sender,

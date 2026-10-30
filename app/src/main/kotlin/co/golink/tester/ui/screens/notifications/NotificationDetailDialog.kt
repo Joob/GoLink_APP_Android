@@ -18,21 +18,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.outlined.TrendingUp
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.MarkEmailUnread
-import androidx.compose.material.icons.outlined.CardGiftcard
-import androidx.compose.material.icons.outlined.Event
-import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.Notifications
-import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.outlined.Schedule
-import androidx.compose.material.icons.outlined.Shield
-import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.material.icons.outlined.SupportAgent
-import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -61,7 +51,6 @@ import co.golink.tester.domain.notifications.Notification
 import co.golink.tester.ui.i18n.I18n
 import co.golink.tester.ui.i18n.tr
 import java.time.Duration
-import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
@@ -78,30 +67,14 @@ private fun detailLabel(key: String): String = when (key) {
     else -> key
 }
 
-private data class IconStyle(val icon: ImageVector, val tone: Color?)
-
-@Composable
-private fun iconFor(category: String?): IconStyle = when (category) {
-    "security-alert" -> IconStyle(Icons.Outlined.Shield, MaterialTheme.colorScheme.primary)
-    "subscription-created" -> IconStyle(Icons.AutoMirrored.Outlined.TrendingUp, MaterialTheme.colorScheme.primary)
-    "storage-full" -> IconStyle(Icons.Outlined.Storage, DANGER)
-    "billing-alert", "payment-alert", "insufficient-balance" -> IconStyle(Icons.Outlined.WarningAmber, Color(0xFFD97706))
-    "gift" -> IconStyle(Icons.Outlined.CardGiftcard, null)
-    "team-invitation" -> IconStyle(Icons.Outlined.PersonAdd, null)
-    "file-request", "remote-upload-done", "mobile-backup" -> IconStyle(Icons.Outlined.CloudUpload, null)
-    "support-ticket" -> IconStyle(Icons.Outlined.SupportAgent, null)
-    "calendar" -> IconStyle(Icons.Outlined.Event, MaterialTheme.colorScheme.primary)
-    else -> IconStyle(Icons.Outlined.Notifications, null)
-}
-
 /** "20 out. 2026, 02:51 · há 3 dias" na língua da app; sem ISO usa o texto do servidor. */
 private fun formatWhen(n: Notification): String? {
     val iso = n.createdAtIso ?: return n.createdAt
-    val date = runCatching { OffsetDateTime.parse(iso) }.getOrNull() ?: return n.createdAt
-    val absolute = date.atZoneSameInstant(java.time.ZoneId.systemDefault())
+    val date = n.createdAtInstant ?: return n.createdAt
+    val absolute = date.atZone(java.time.ZoneId.systemDefault())
         .format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).withLocale(Locale.forLanguageTag(I18n.lang)))
     // Mais de uma semana: o relativeAgo devolve só o dia, que já está no absoluto.
-    val week = Duration.between(date.toInstant(), java.time.Instant.now()).toDays() >= 7
+    val week = Duration.between(date, java.time.Instant.now()).toDays() >= 7
     return if (week) absolute else "$absolute · " + relativeAgo(iso)
 }
 
@@ -127,7 +100,7 @@ private fun Chip(text: String, fg: Color, bg: Color) {
 @Composable
 fun NotificationDetailDialog(
     notification: Notification,
-    isSystem: Boolean,
+    groupLabel: String,
     onDismiss: () -> Unit,
     onToggleRead: () -> Unit,
     onDelete: () -> Unit,
@@ -139,7 +112,7 @@ fun NotificationDetailDialog(
     val soft = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val primary = MaterialTheme.colorScheme.primary
-    val style = iconFor(notification.category)
+    val style = notificationIcon(notification.category)
     val body = notification.message?.takeIf { it.isNotBlank() } ?: notification.description
 
     Dialog(onDismissRequest = onDismiss) {
@@ -164,14 +137,14 @@ fun NotificationDetailDialog(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
                             .size(48.dp)
-                            .background(style.tone?.copy(alpha = 0.12f) ?: soft, RoundedCornerShape(14.dp)),
+                            .background(style.bg, RoundedCornerShape(14.dp)),
                     ) {
-                        Icon(style.icon, contentDescription = null, tint = style.tone ?: muted, modifier = Modifier.size(22.dp))
+                        Icon(style.icon, contentDescription = null, tint = style.fg, modifier = Modifier.size(22.dp))
                     }
 
                     Spacer(Modifier.height(16.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Chip(if (isSystem) "Sistema".tr() else "Outros".tr(), muted, soft)
+                        Chip(groupLabel, muted, soft)
                         if (wasUnread) Chip("Por ler".tr(), primary, primary.copy(alpha = 0.12f))
                     }
 

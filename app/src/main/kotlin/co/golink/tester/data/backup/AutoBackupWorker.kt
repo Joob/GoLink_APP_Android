@@ -99,8 +99,6 @@ class AutoBackupWorker @AssistedInject constructor(
     private suspend fun runBackup(): Result {
         if (!preferences.enabled) return Result.success()
 
-        maybeSetForeground()
-
         // Auth check: we go straight to the token store. SessionManager is
         // async-initialised and on a freshly-restarted process (which is
         // exactly when WorkManager wakes us up) its state can still be Loading
@@ -206,7 +204,7 @@ class AutoBackupWorker @AssistedInject constructor(
         val failedScan: Map<SourceSpec, List<BackupItem>?> = sources.associateWith { src ->
             val failed = src.failed()
             if (failed.isEmpty()) emptyList()
-            else safeList { scanner.scanIds(src.collection, failed.keys, setOf(src.folder)) }
+            else safeList { scanner.scanIds(src.collection, failed.keys, setOf(src.folder), src.excludeMedia()) }
         }
         val retryItems: Map<SourceSpec, List<BackupItem>?> = sources.associateWith { src ->
             val failed = src.failed()
@@ -214,19 +212,20 @@ class AutoBackupWorker @AssistedInject constructor(
         }
         val totalPending = sources.sumOf { src ->
             retryItems.getValue(src).orEmpty().size +
-                safeCount { scanner.countNew(src.collection, src.cursor(), setOf(src.folder)) }
+                safeCount { scanner.countNew(src.collection, src.cursor(), setOf(src.folder), src.excludeMedia()) }
         }
         // Total de bytes por enviar nesta execução — denominador fixo do
         // "X MB de Y MB" na barra de progresso.
         val totalBytesPending = sources.sumOf { src ->
             retryItems.getValue(src).orEmpty().sumOf { it.sizeBytes.coerceAtLeast(0L) } +
-                safeLong { scanner.sumNewBytes(src.collection, src.cursor(), setOf(src.folder)) }
+                safeLong { scanner.sumNewBytes(src.collection, src.cursor(), setOf(src.folder), src.excludeMedia()) }
         }
 
         if (totalPending == 0) {
             preferences.lastError = null
             preferences.lastBackupAt = System.currentTimeMillis()
             BackupNotifications.cancelProgress(applicationContext)
+            BackupNotifications.clearAlert(applicationContext, BackupNotifications.ALERT_FAILED)
             return Result.success()
         }
 
@@ -274,11 +273,18 @@ class AutoBackupWorker @AssistedInject constructor(
                     title = "Sem espaço para o backup",
                     text = "Faltam $shortfallLabel para enviar ${humanBytes(totalBytesPending)}. " +
                         "O backup fica em pausa até libertares espaço na conta.",
+                    alertKey = alertKey(BackupNotifications.ALERT_QUOTA),
                 )
                 return Result.success()
             }
-            QuotaResult.Ok, QuotaResult.Unknown -> Unit
+            QuotaResult.Ok -> BackupNotifications.clearAlert(applicationContext, BackupNotifications.ALERT_QUOTA)
+            QuotaResult.Unknown -> Unit
         }
+
+        // Só agora, com ficheiros por enviar e os gates passados: antes corria
+        // em cada tick e a notificação "A preparar backup…" piscava a cada
+        // minuto mesmo sem nada para enviar.
+        maybeSetForeground()
 
         logger.log("AutoBackup", "$totalPending ficheiro(s) por enviar")
         manager.startRun(totalPending, totalBytesPending)
@@ -286,6 +292,10 @@ class AutoBackupWorker @AssistedInject constructor(
         var uploadedTotal = 0
         var conflictTotal = 0
         var failedTotal = 0
+        // Falhas do próprio ficheiro (não rede/servidor/sessão).
+        var permanentFailedTotal = 0
+        // O run parou antes do fim (lote inteiro a falhar por rede/servidor).
+        var interrupted = false
         // Sinalizado quando o servidor recusa por falta de espaço (HTTP 507) a
         // meio do envio — ex.: outra sessão encheu a conta depois do pre-flight.
         var quotaExceeded = false
@@ -379,6 +389,7 @@ class AutoBackupWorker @AssistedInject constructor(
                 uploadedTotal += results.count { it.success && !it.conflict }
                 conflictTotal += results.count { it.conflict }
                 failedTotal += batchFailed
+                permanentFailedTotal += results.count { !it.success && !it.transient }
                 // Servidor recusou por falta de espaço (HTTP 507) — pára já o
                 // resto do run: não adianta continuar a enviar.
                 if (results.any { !it.success && isQuotaError(it.error) }) quotaExceeded = true
@@ -396,7 +407,7 @@ class AutoBackupWorker @AssistedInject constructor(
             for (chunk in retry.chunked(BATCH_SIZE)) {
                 if (isStopped || quotaExceeded || !mayUpload()) break
                 val results = runBatch(chunk, advanceCursorTo = null)
-                if (tally(results, chunk.size)) { retryAllFailed = true; break }
+                if (tally(results, chunk.size)) { retryAllFailed = true; interrupted = true; break }
             }
             if (retry.isEmpty()) source.setFailed(failed)
             // Tudo a falhar outra vez por rede/servidor: não adianta ir aos novos.
@@ -405,7 +416,7 @@ class AutoBackupWorker @AssistedInject constructor(
             // 2) Novos acima do cursor.
             var scanId = source.cursor()
             while (!isStopped && !quotaExceeded && mayUpload()) {
-                val batch = scanner.scanNew(source.collection, scanId, BATCH_SIZE, setOf(source.folder))
+                val batch = scanner.scanNew(source.collection, scanId, BATCH_SIZE, setOf(source.folder), source.excludeMedia())
                 if (batch.isEmpty()) break
                 scanId = batch.maxOf { it.mediaStoreId }
 
@@ -423,7 +434,7 @@ class AutoBackupWorker @AssistedInject constructor(
                 updateProgressNotification(manager.runProgress.value.done, totalPending, source.collection)
 
                 // Whole batch failed (network/server) — back off instead of hammering the API.
-                if (systemic) break
+                if (systemic) { interrupted = true; break }
             }
         }
 
@@ -441,23 +452,35 @@ class AutoBackupWorker @AssistedInject constructor(
                 applicationContext,
                 title = "Sem espaço para o backup",
                 text = "A conta está cheia. O backup fica em pausa até libertares espaço ou fazeres upgrade.",
+                alertKey = alertKey(BackupNotifications.ALERT_QUOTA),
             )
             return Result.success()
         }
 
+        val completed = !interrupted && !conditionsChanged.get() && !isStopped
         return if (failedTotal > 0) {
             preferences.lastError = "$failedTotal ${AutoBackupManager.FAILED_FILES_ERROR}"
-            BackupNotifications.showResult(
-                applicationContext,
-                title = "Backup terminou com erros",
-                text = "$uploadedTotal enviados, $failedTotal falharam.",
-            )
+            // Em background, falhas só de rede/servidor são retomadas sozinhas
+            // no tick seguinte: avisar em cada minuto era ruído.
+            if (userInitiated || permanentFailedTotal > 0) {
+                BackupNotifications.showResult(
+                    applicationContext,
+                    title = "Backup terminou com erros",
+                    text = "$uploadedTotal enviados, $failedTotal falharam.",
+                    alertKey = alertKey(BackupNotifications.ALERT_FAILED),
+                )
+            }
             // As falhas ficam guardadas e são retomadas no próximo tick; retry()
             // só somava um backoff exponencial ao tick.
             Result.success()
         } else {
             preferences.lastError = null
-            if (uploadedTotal > 0) {
+            BackupNotifications.clearAlert(applicationContext, BackupNotifications.ALERT_FAILED)
+            // Só no backup pedido pelo utilizador e terminado: o tick de 1 min
+            // envia cada foto nova à medida que aparece, e avisar "Backup
+            // completo" por cada uma era a notificação repetida. Em background
+            // basta a barra de progresso enquanto envia.
+            if (userInitiated && completed && uploadedTotal > 0) {
                 BackupNotifications.showResult(
                     applicationContext,
                     title = "Backup completo",
@@ -476,6 +499,13 @@ class AutoBackupWorker @AssistedInject constructor(
     // (o WorkManager retoma o trabalho pendente mal o processo nasce, ainda
     // em background). Sem FGS o worker continua como job normal e o
     // WorkManager volta a tentar se for morto.
+    // Backup pedido no botão: o utilizador quer ver o desfecho, por isso
+    // mostra sempre; em background cada aviso de estado só toca uma vez.
+    private fun alertKey(key: String): String? = if (userInitiated) null else key
+
+    // Só com FGS a notificação de progresso pode ser ongoing — ver buildProgress.
+    @Volatile private var isForegroundService = false
+
     private suspend fun maybeSetForeground() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !isProcessForeground()) {
             logger.log("AutoBackup", "Processo em background — a correr sem foreground service")
@@ -483,6 +513,7 @@ class AutoBackupWorker @AssistedInject constructor(
         }
         try {
             setForeground(getForegroundInfo())
+            isForegroundService = true
         } catch (c: CancellationException) {
             throw c
         } catch (t: Throwable) {
@@ -570,6 +601,7 @@ class AutoBackupWorker @AssistedInject constructor(
                 indeterminate = false,
                 progress = done,
                 max = total,
+                ongoing = isForegroundService,
             )
             NotificationManagerCompat.from(applicationContext)
                 .notify(BackupNotifications.PROGRESS_NOTIFICATION_ID, notification)
@@ -588,6 +620,9 @@ class AutoBackupWorker @AssistedInject constructor(
         val setFailed: (Map<Long, Int>) -> Unit,
         // A colecção continua ligada e a pasta escolhida (lido a cada ficheiro).
         val wanted: () -> Boolean,
+        // Documentos/Downloads: tipos de média cuja colecção já envia esta
+        // mesma pasta (BUCKET_DISPLAY_NAME igual) — senão subiam duas vezes.
+        val excludeMedia: () -> Set<BackupCollection> = { emptySet() },
     )
 
     // Expande cada colecção ligada nas suas pastas seleccionadas. Opt-in: sem
@@ -605,6 +640,12 @@ class AutoBackupWorker @AssistedInject constructor(
                         failed = { preferences.failedIds(collection, folder) },
                         setFailed = { preferences.setFailedIds(collection, folder, it) },
                         wanted = { preferences.isIncluded(collection) && folder in preferences.selectedFolders(collection) },
+                        excludeMedia = {
+                            if (collection != BackupCollection.DOCUMENTS && collection != BackupCollection.DOWNLOADS) emptySet()
+                            else MEDIA_COLLECTIONS.filterTo(HashSet()) {
+                                preferences.isIncluded(it) && folder in preferences.selectedFolders(it)
+                            }
+                        },
                     ),
                 )
             }
@@ -736,5 +777,6 @@ class AutoBackupWorker @AssistedInject constructor(
         // Falhas do próprio ficheiro (ilegível, 413, rejeitado pelo antivírus)
         // antes de desistir; "Procurar de novo" volta a pô-las na fila.
         private const val MAX_ATTEMPTS = 5
+        private val MEDIA_COLLECTIONS = listOf(BackupCollection.IMAGES, BackupCollection.VIDEOS, BackupCollection.AUDIOS)
     }
 }

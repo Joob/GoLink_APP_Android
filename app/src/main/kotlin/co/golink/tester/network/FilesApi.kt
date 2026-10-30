@@ -214,6 +214,8 @@ interface FilesApi {
         @Part("wrapped_data_key") wrappedDataKey: RequestBody? = null,
         @Part("media_type") mediaType: RequestBody? = null,
         @Part("name_encrypted") nameEncrypted: RequestBody? = null,
+        // Idempotência: um reenvio depois de timeout devolve o ficheiro já gravado.
+        @Part("upload_key") uploadKey: RequestBody? = null,
     ): Response<BrowseEntryEnvelope>
 
     @Multipart
@@ -242,6 +244,7 @@ interface FilesApi {
         @Part("media_type") mediaType: RequestBody? = null,
         // E2E Fase 2: nome cifrado (espaço privado) — `name` fica placeholder.
         @Part("name_encrypted") nameEncrypted: RequestBody? = null,
+        @Part("upload_key") uploadKey: RequestBody? = null,
     ): Response<okhttp3.ResponseBody>
 
     @POST("api/upload/remote")

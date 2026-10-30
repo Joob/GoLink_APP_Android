@@ -47,16 +47,27 @@ class MediaScanner @Inject constructor(
         sinceId: Long,
         limit: Int,
         folders: Set<String>? = null,
-    ): List<BackupItem> = query(collection, sinceId, limit, folders)
+        excludeMedia: Set<BackupCollection> = emptySet(),
+    ): List<BackupItem> = query(collection, sinceId, limit, folders, excludeMedia = excludeMedia)
 
     /** Itens com estes ids que ainda existem (e continuam na pasta) — retoma de falhas. */
-    fun scanIds(collection: BackupCollection, ids: Collection<Long>, folders: Set<String>? = null): List<BackupItem> =
+    fun scanIds(
+        collection: BackupCollection,
+        ids: Collection<Long>,
+        folders: Set<String>? = null,
+        excludeMedia: Set<BackupCollection> = emptySet(),
+    ): List<BackupItem> =
         if (ids.isEmpty()) emptyList()
-        else ids.chunked(MAX_IN_ARGS).flatMap { query(collection, 0L, it.size, folders, ids = it) }
+        else ids.chunked(MAX_IN_ARGS).flatMap { query(collection, 0L, it.size, folders, ids = it, excludeMedia = excludeMedia) }
 
-    fun countNew(collection: BackupCollection, sinceId: Long, folders: Set<String>? = null): Int {
+    fun countNew(
+        collection: BackupCollection,
+        sinceId: Long,
+        folders: Set<String>? = null,
+        excludeMedia: Set<BackupCollection> = emptySet(),
+    ): Int {
         val projection = arrayOf(MediaStore.MediaColumns._ID)
-        val (selection, args) = selectionFor(collection, sinceId, folders)
+        val (selection, args) = selectionFor(collection, sinceId, folders, excludeMedia = excludeMedia)
         return runCatching {
             context.contentResolver.query(contentUri(collection), projection, selection, args, null)
                 ?.use { it.count }
@@ -65,9 +76,14 @@ class MediaScanner @Inject constructor(
     }
 
     /** Soma o tamanho (bytes) de tudo o que falta enviar — para o "X MB de Y MB". */
-    fun sumNewBytes(collection: BackupCollection, sinceId: Long, folders: Set<String>? = null): Long {
+    fun sumNewBytes(
+        collection: BackupCollection,
+        sinceId: Long,
+        folders: Set<String>? = null,
+        excludeMedia: Set<BackupCollection> = emptySet(),
+    ): Long {
         val projection = arrayOf(MediaStore.MediaColumns.SIZE)
-        val (selection, args) = selectionFor(collection, sinceId, folders)
+        val (selection, args) = selectionFor(collection, sinceId, folders, excludeMedia = excludeMedia)
         return runCatching {
             context.contentResolver.query(contentUri(collection), projection, selection, args, null)?.use { c ->
                 val idx = c.getColumnIndex(MediaStore.MediaColumns.SIZE)
@@ -128,6 +144,9 @@ class MediaScanner @Inject constructor(
         sinceId: Long,
         folders: Set<String>?,
         ids: Collection<Long>? = null,
+        // Documentos/Downloads vêm de Files, que também tem as fotos/vídeos/
+        // áudios: os tipos aqui indicados já são enviados pela sua colecção.
+        excludeMedia: Set<BackupCollection> = emptySet(),
     ): Pair<String, Array<String>> {
         val args = mutableListOf<String>()
         val base = if (ids != null) {
@@ -149,8 +168,18 @@ class MediaScanner @Inject constructor(
                     pattern = if (collection == BackupCollection.DOCUMENTS) "%/Documents/%" else "%/Download/%"
                 }
                 args += pattern
+                val mediaTypes = excludeMedia.mapNotNull {
+                    when (it) {
+                        BackupCollection.IMAGES -> MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE
+                        BackupCollection.VIDEOS -> MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO
+                        BackupCollection.AUDIOS -> MediaStore.Files.FileColumns.MEDIA_TYPE_AUDIO
+                        else -> null
+                    }
+                }
+                val mediaFilter = if (mediaTypes.isEmpty()) ""
+                else " AND ${MediaStore.Files.FileColumns.MEDIA_TYPE} NOT IN (${mediaTypes.joinToString(",")})"
                 // MIME_TYPE IS NOT NULL exclui directórios.
-                " AND $pathColumn LIKE ? AND ${MediaStore.MediaColumns.MIME_TYPE} IS NOT NULL"
+                " AND $pathColumn LIKE ? AND ${MediaStore.MediaColumns.MIME_TYPE} IS NOT NULL$mediaFilter"
             }
             else -> ""
         }
@@ -211,6 +240,7 @@ class MediaScanner @Inject constructor(
         limit: Int,
         folders: Set<String>?,
         ids: Collection<Long>? = null,
+        excludeMedia: Set<BackupCollection> = emptySet(),
     ): List<BackupItem> {
         val out = mutableListOf<BackupItem>()
         // BUCKET_DISPLAY_NAME só existe na colecção Files a partir do Android 10;
@@ -225,7 +255,7 @@ class MediaScanner @Inject constructor(
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) add(MediaStore.MediaColumns.DATA)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(MediaStore.MediaColumns.RELATIVE_PATH)
         }.toTypedArray()
-        val (selection, selectionArgs) = selectionFor(collection, sinceId, folders, ids)
+        val (selection, selectionArgs) = selectionFor(collection, sinceId, folders, ids, excludeMedia)
         val sortOrder = "${MediaStore.MediaColumns._ID} ASC"
         val contentUri = contentUri(collection)
 

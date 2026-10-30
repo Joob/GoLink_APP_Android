@@ -264,7 +264,9 @@ class BrowseShellViewModel @Inject constructor(
     fun refreshStorage() = viewModelScope.launch {
         settingsRepository.storage().onSuccess { _storage.value = it }
     }
-    init { refreshStorage() }
+    init {
+        refreshStorage()
+    }
 }
 
 private enum class ActionDialog { None, CreateFolder, CreateTextFile, CreateDocument, CreateSheet, Rename, Move, Delete, Share, PermanentDelete, EmptyTrash, RemoteUpload, Details, CreateTeamFolder, ConvertToTeamFolder, FileRequest, Logout, DissolveTeam, LeaveTeam, CameraMode, CameraDestination }
@@ -561,6 +563,7 @@ fun BrowseScreen(
                 sections = drawerSections,
                 unreadNotifications = unread,
                 onOpenNotifications = go(onOpenNotifications),
+                onHome = go { drawerArea = DrawerArea.Drive; viewModel.openRoot() },
                 storage = storage,
                 onUpgrade = go(onOpenBilling),
                 canUpgrade = subscriptionType == "fixed",
