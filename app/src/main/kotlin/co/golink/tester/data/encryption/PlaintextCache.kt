@@ -5,7 +5,7 @@ import java.io.File
 
 /**
  * Ficheiros em claro (desencriptados) que o viewer precisa de pôr em disco:
- * vídeo/áudio E2E para o ExoPlayer e PDFs para o PdfRenderer. Ficam em
+ * PDFs para o PdfRenderer. Ficam em
  * cacheDir (fora de backups) e têm de ser apagados assim que deixam de ser
  * precisos — e varridos no arranque, para o caso de a app ter morrido antes.
  */

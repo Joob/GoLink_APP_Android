@@ -226,6 +226,16 @@ fun AppNavHost(
         navController.navigate(Routes.calendar(link.event, link.date)) { popUpTo(Routes.HOME) }
     }
 
+    // Notificação do contador tocada: abre o Inbox nas mesmas condições.
+    val inboxLink by InboxDeepLink.pending.collectAsState()
+    LaunchedEffect(inboxLink, top, currentRoute) {
+        if (!inboxLink || top != TopState.Authenticated) return@LaunchedEffect
+        val route = currentRoute ?: return@LaunchedEffect
+        if (route != Routes.HOME && !route.startsWith("calendar") && route != Routes.NOTIFICATIONS && !route.startsWith("settings")) return@LaunchedEffect
+        InboxDeepLink.consume()
+        if (route != Routes.NOTIFICATIONS) navController.navigate(Routes.NOTIFICATIONS)
+    }
+
     androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
     NavHost(navController = navController, startDestination = Routes.SPLASH) {
         composable(Routes.SPLASH) { SplashScreen() }

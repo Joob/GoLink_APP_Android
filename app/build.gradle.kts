@@ -23,8 +23,8 @@ android {
         applicationId = "co.golink.tester"
         minSdk = 26
         targetSdk = 36
-        versionCode = 138
-        versionName = "3.62.0"
+        versionCode = 139
+        versionName = "3.63.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -90,6 +90,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.activity.compose)
     implementation(libs.material)
 
@@ -125,6 +126,7 @@ dependencies {
 
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
+    implementation(libs.media3.datasource.okhttp)
 
     implementation(libs.zxing.core)
 

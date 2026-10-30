@@ -50,8 +50,8 @@ class AutoBackupWorker @AssistedInject constructor(
         applicationContext,
         BackupNotifications.buildProgress(
             context = applicationContext,
-            title = "A preparar backup…",
-            text = "A analisar a galeria",
+            title = "A preparar backup…".tr(),
+            text = "A analisar a galeria".tr(),
             indeterminate = true,
         ),
     )
@@ -226,6 +226,7 @@ class AutoBackupWorker @AssistedInject constructor(
             preferences.lastBackupAt = System.currentTimeMillis()
             BackupNotifications.cancelProgress(applicationContext)
             BackupNotifications.clearAlert(applicationContext, BackupNotifications.ALERT_FAILED)
+            BackupNotifications.clearAlert(applicationContext, BackupNotifications.ALERT_QUOTA)
             return Result.success()
         }
 
@@ -270,9 +271,9 @@ class AutoBackupWorker @AssistedInject constructor(
                 BackupNotifications.cancelProgress(applicationContext)
                 BackupNotifications.showResult(
                     applicationContext,
-                    title = "Sem espaço para o backup",
-                    text = "Faltam $shortfallLabel para enviar ${humanBytes(totalBytesPending)}. " +
-                        "O backup fica em pausa até libertares espaço na conta.",
+                    title = "Sem espaço para o backup".tr(),
+                    text = "Faltam %s para enviar %s. O backup fica em pausa até libertares espaço na conta.".tr()
+                        .format(shortfallLabel, humanBytes(totalBytesPending)),
                     alertKey = alertKey(BackupNotifications.ALERT_QUOTA),
                 )
                 return Result.success()
@@ -450,8 +451,8 @@ class AutoBackupWorker @AssistedInject constructor(
             preferences.lastError = "Sem espaço na conta — backup em pausa até libertares espaço."
             BackupNotifications.showResult(
                 applicationContext,
-                title = "Sem espaço para o backup",
-                text = "A conta está cheia. O backup fica em pausa até libertares espaço ou fazeres upgrade.",
+                title = "Sem espaço para o backup".tr(),
+                text = "A conta está cheia. O backup fica em pausa até libertares espaço ou fazeres upgrade.".tr(),
                 alertKey = alertKey(BackupNotifications.ALERT_QUOTA),
             )
             return Result.success()
@@ -465,8 +466,8 @@ class AutoBackupWorker @AssistedInject constructor(
             if (userInitiated || permanentFailedTotal > 0) {
                 BackupNotifications.showResult(
                     applicationContext,
-                    title = "Backup terminou com erros",
-                    text = "$uploadedTotal enviados, $failedTotal falharam.",
+                    title = "Backup terminou com erros".tr(),
+                    text = "%d enviados, %d falharam.".tr().format(uploadedTotal, failedTotal),
                     alertKey = alertKey(BackupNotifications.ALERT_FAILED),
                 )
             }
@@ -483,8 +484,8 @@ class AutoBackupWorker @AssistedInject constructor(
             if (userInitiated && completed && uploadedTotal > 0) {
                 BackupNotifications.showResult(
                     applicationContext,
-                    title = "Backup completo",
-                    text = "$uploadedTotal ficheiro(s) carregados em segurança.",
+                    title = "Backup completo".tr(),
+                    text = "%d ficheiro(s) carregados em segurança.".tr().format(uploadedTotal),
                 )
             }
             Result.success()
@@ -596,8 +597,8 @@ class AutoBackupWorker @AssistedInject constructor(
                 context = applicationContext,
                 // Título reflecte o que está mesmo a ser enviado — antes dizia
                 // sempre "das fotos" mesmo a enviar vídeos/áudios.
-                title = "A fazer backup de ${collectionLabel(collection)}",
-                text = "$done de $total carregados",
+                title = "A fazer backup de %s".tr().format(collectionLabel(collection).tr()),
+                text = "%d de %d carregados".tr().format(done, total),
                 indeterminate = false,
                 progress = done,
                 max = total,

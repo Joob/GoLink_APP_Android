@@ -150,7 +150,7 @@ class FilesRepository @Inject constructor(
         val response = api.remove(payload)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         // O servidor esconde as notificações de ficheiros no lixo (ex.: comentários).
-        notifications.refresh()
+        notifications.refreshInBackground()
     }
 
     suspend fun move(items: List<BrowseItem>, toFolderId: String?): Result<Unit> = runCatching {

@@ -118,7 +118,7 @@ import co.golink.tester.ui.components.dialogs.ShareDialogState
 import co.golink.tester.ui.components.dialogs.TextInputDialog
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
-import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
@@ -404,22 +404,20 @@ fun FileViewerScreen(
                         // página ativa (senão o vídeo ao lado começava a descarregar).
                         (file.isAudioLike() || file.isVideoLike()) && page != state.currentIndex -> MediaLoadingBox(showSpinner = false)
                         file.isAudioLike() -> {
-                            val src = rememberPlayableUrl(file, viewModel)
-                            if (src == null) MediaLoadingBox()
+                            val media = rememberPlayableMedia(file, viewModel)
+                            if (media == null) MediaLoadingBox()
                             else AudioViewer(
                                 file = file,
-                                url = src,
-                                token = viewModel.authToken(),
+                                media = media,
                                 fileKey = file.id,
                                 isActive = page == state.currentIndex,
                             )
                         }
                         file.isVideoLike() -> {
-                            val src = rememberPlayableUrl(file, viewModel)
-                            if (src == null) MediaLoadingBox()
+                            val media = rememberPlayableMedia(file, viewModel)
+                            if (media == null) MediaLoadingBox()
                             else VideoViewer(
-                                url = src,
-                                token = viewModel.authToken(),
+                                media = media,
                                 fileKey = file.id,
                                 isActive = page == state.currentIndex,
                             )
@@ -719,15 +717,44 @@ private fun applyExifOrientation(bmp: android.graphics.Bitmap, orientation: Int)
     }.getOrDefault(bmp)
 }
 
-// E2E: para media cifrado devolve um file:// local já decifrado (seek nativo);
-// senão o URL HTTP normal. null enquanto decifra (mostra loading).
+// null enquanto a data key do media E2E abre (mostra loading).
 @Composable
-private fun rememberPlayableUrl(file: BrowseItem.File, viewModel: FileViewerViewModel): String? {
-    if (!file.encrypted) return viewModel.authedUrlFor(file)
-    val state = androidx.compose.runtime.produceState<String?>(null, file.id) {
-        value = viewModel.decryptedMediaFile(file)?.let { android.net.Uri.fromFile(it).toString() }
+private fun rememberPlayableMedia(file: BrowseItem.File, viewModel: FileViewerViewModel): PlayableMedia? {
+    val state = androidx.compose.runtime.produceState<PlayableMedia?>(null, file.id) {
+        value = viewModel.playableMedia(file)
     }
     return state.value
+}
+
+/** Player de vídeo/áudio, libertado ao sair da composição. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
+private fun rememberMediaPlayer(media: PlayableMedia, fileKey: String, playWhenReady: Boolean): ExoPlayer {
+    val context = LocalContext.current
+    val player = remember(fileKey) {
+        // Arranca com 1 s em buffer (2,5 s por omissão): o loading nota-se mais
+        // do que uma eventual pausa em redes más, que pede sempre mais.
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
+                DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
+                1_000,
+                DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
+            )
+            .build()
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(media.dataSourceFactory))
+            .setLoadControl(loadControl)
+            .build().apply {
+                setMediaItem(MediaItem.fromUri(media.url))
+                this.playWhenReady = playWhenReady
+                prepare()
+            }
+    }
+    DisposableEffect(fileKey) {
+        onDispose { player.release() }
+    }
+    return player
 }
 
 @Composable
@@ -779,28 +806,9 @@ private fun TextViewer(
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
-private fun VideoViewer(url: String, token: String?, fileKey: String, isActive: Boolean) {
-    val context = LocalContext.current
+private fun VideoViewer(media: PlayableMedia, fileKey: String, isActive: Boolean) {
     var isBuffering by remember(fileKey) { mutableStateOf(true) }
-
-    val player = remember(fileKey) {
-        val headers = if (!token.isNullOrBlank()) mapOf("Authorization" to "Bearer $token") else emptyMap()
-        val httpFactory = DefaultHttpDataSource.Factory()
-            .setDefaultRequestProperties(headers)
-            .setConnectTimeoutMs(20_000)
-            .setReadTimeoutMs(60_000)
-        // Envolve o factory HTTP num DefaultDataSource para também abrir file://:
-        // vídeos/áudio E2E são decifrados para um ficheiro local antes de tocar e
-        // um factory só-HTTP não abre file://, por isso a reprodução falhava.
-        val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(context, httpFactory)
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
-            .build().apply {
-                setMediaItem(MediaItem.fromUri(url))
-                playWhenReady = isActive
-                prepare()
-            }
-    }
+    val player = rememberMediaPlayer(media, fileKey, playWhenReady = isActive)
 
     DisposableEffect(fileKey) {
         val listener = object : Player.Listener {
@@ -809,10 +817,7 @@ private fun VideoViewer(url: String, token: String?, fileKey: String, isActive: 
             }
         }
         player.addListener(listener)
-        onDispose {
-            player.removeListener(listener)
-            player.release()
-        }
+        onDispose { player.removeListener(listener) }
     }
 
     LaunchedEffect(isActive) {
@@ -837,35 +842,11 @@ private fun VideoViewer(url: String, token: String?, fileKey: String, isActive: 
 @Composable
 private fun AudioViewer(
     file: BrowseItem.File,
-    url: String,
-    token: String?,
+    media: PlayableMedia,
     fileKey: String,
     isActive: Boolean,
 ) {
-    val context = LocalContext.current
-
-    val player = remember(fileKey) {
-        val headers = if (!token.isNullOrBlank()) mapOf("Authorization" to "Bearer $token") else emptyMap()
-        val httpFactory = DefaultHttpDataSource.Factory()
-            .setDefaultRequestProperties(headers)
-            .setConnectTimeoutMs(20_000)
-            .setReadTimeoutMs(60_000)
-        // Envolve o factory HTTP num DefaultDataSource para também abrir file://:
-        // vídeos/áudio E2E são decifrados para um ficheiro local antes de tocar e
-        // um factory só-HTTP não abre file://, por isso a reprodução falhava.
-        val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(context, httpFactory)
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
-            .build().apply {
-                setMediaItem(MediaItem.fromUri(url))
-                playWhenReady = false
-                prepare()
-            }
-    }
-
-    DisposableEffect(fileKey) {
-        onDispose { player.release() }
-    }
+    val player = rememberMediaPlayer(media, fileKey, playWhenReady = false)
 
     LaunchedEffect(isActive) {
         if (isActive) player.play() else player.pause()

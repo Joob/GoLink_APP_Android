@@ -56,4 +56,42 @@ class EncryptedFileCodecTest {
         obj[EncryptedFileCodec.HEADER_LEN + 3] = (obj[EncryptedFileCodec.HEADER_LEN + 3].toInt() xor 1).toByte()
         EncryptedFileCodec.decryptFull(obj, key)
     }
+
+    @Test
+    fun blockLayoutOpensAnyBlock() {
+        val plain = ByteArray(250) { it.toByte() }
+        val obj = EncryptedFileCodec.encrypt(plain, key, 100, prefix)
+        val layout = EncryptedFileCodec.blockLayout(obj.copyOf(36), obj.size.toLong(), key)
+
+        assertEquals(250L, layout.plainLength)
+        assertEquals(2, layout.lastIndex)
+        val block = (0..2).map { i ->
+            val off = layout.offsetOf(i).toInt()
+            layout.open(obj.copyOfRange(off, off + layout.lengthOf(i)), i)
+        }
+        assertArrayEquals(plain, block[0] + block[1] + block[2])
+    }
+
+    @Test
+    fun blockLayoutReadsDuplicatedHeader() {
+        val plain = ByteArray(120) { it.toByte() }
+        val obj = EncryptedFileCodec.encrypt(plain, key, 100, prefix)
+        val dup = obj.copyOf(EncryptedFileCodec.HEADER_LEN) + obj
+        val layout = EncryptedFileCodec.blockLayout(dup.copyOf(36), dup.size.toLong(), key)
+
+        assertEquals(120L, layout.plainLength)
+        val off = layout.offsetOf(1).toInt()
+        assertArrayEquals(plain.copyOfRange(100, 120), layout.open(dup.copyOfRange(off, off + layout.lengthOf(1)), 1))
+    }
+
+    @Test
+    fun blockLayoutHandlesObjectsOver2Gb() {
+        val head = EncryptedFileCodec.encrypt(ByteArray(10), key, 65536, prefix).copyOf(36)
+        val blocks = 80_000L
+        val size = EncryptedFileCodec.HEADER_LEN + blocks * (65536 + EncryptedFileCodec.TAG_LEN)
+        val layout = EncryptedFileCodec.blockLayout(head, size, key)
+
+        assertEquals(blocks * 65536, layout.plainLength)
+        assertEquals(EncryptedFileCodec.HEADER_LEN + 79_999L * 65552, layout.offsetOf(79_999))
+    }
 }

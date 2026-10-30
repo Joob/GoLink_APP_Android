@@ -82,14 +82,21 @@ import java.util.Locale
 private fun Notification.localTime(zone: ZoneId): ZonedDateTime? =
     createdAtInstant?.atZone(zone)
 
+private val HOUR_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+
+/** Formatos com o mês no idioma da app; criar um formatter por linha pesa. */
+private class DayFormats(locale: Locale) {
+    val sameYear: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM", locale)
+    val otherYear: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yyyy", locale)
+}
+
 /** Hoje/ontem: HH:mm; antes: "27 out." (com o ano se não for o atual) — como na web. */
-private fun timeLabel(n: Notification, t: ZonedDateTime?, today: LocalDate): String {
+private fun timeLabel(n: Notification, t: ZonedDateTime?, today: LocalDate, days: DayFormats): String {
     if (t == null) return n.createdAt.orEmpty()
-    val locale = Locale.forLanguageTag(I18n.lang)
     return when {
-        !t.toLocalDate().isBefore(today.minusDays(1)) -> t.format(DateTimeFormatter.ofPattern("HH:mm"))
-        t.year == today.year -> t.format(DateTimeFormatter.ofPattern("d MMM", locale))
-        else -> t.format(DateTimeFormatter.ofPattern("d MMM yyyy", locale))
+        !t.toLocalDate().isBefore(today.minusDays(1)) -> t.format(HOUR_FORMAT)
+        t.year == today.year -> t.format(days.sameYear)
+        else -> t.format(days.otherYear)
     }
 }
 
@@ -165,6 +172,7 @@ fun NotificationsScreen(
 
     val clock = rememberLocalClock()
     val today = clock.today
+    val dayFormats = remember(I18n.lang) { DayFormats(Locale.forLanguageTag(I18n.lang)) }
     val sorted = remember(items, clock.zone) {
         items.map { Entry(it, it.localTime(clock.zone)) }.sortedByDescending { it.time?.toInstant() }
     }
@@ -218,7 +226,6 @@ fun NotificationsScreen(
                 }
             }
             .toSortedMap()
-            .mapValues { (_, list) -> list.map { Triple(it.n, timeLabel(it.n, it.time, today), actionOf(it.n)) } }
     }
 
     var openId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -342,7 +349,11 @@ fun NotificationsScreen(
                                 modifier = Modifier.padding(start = 12.dp, top = 16.dp, bottom = 8.dp),
                             )
                         }
-                        items(list, key = { it.first.id }) { (n, time, target) ->
+                        items(list, key = { it.n.id }) { entry ->
+                            val n = entry.n
+                            // Por linha e não por lista: só as visíveis pagam isto.
+                            val time = remember(n, today, dayFormats) { timeLabel(n, entry.time, today, dayFormats) }
+                            val target = remember(n) { actionOf(n) }
                             NotificationRow(
                                 notification = n,
                                 time = time,

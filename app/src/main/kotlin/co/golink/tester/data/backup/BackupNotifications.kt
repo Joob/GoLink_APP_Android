@@ -29,24 +29,28 @@ object BackupNotifications {
     fun ensureChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        if (manager.getNotificationChannel(CHANNEL_PROGRESS) == null) {
+        // Pelo nome e não por existir: quem já tem o canal fica com o idioma atual
+        // (recriar só muda nome e descrição, não o que o utilizador configurou).
+        val progressName = "Backup automático".tr()
+        if (manager.getNotificationChannel(CHANNEL_PROGRESS)?.name?.toString() != progressName) {
             val progress = NotificationChannel(
                 CHANNEL_PROGRESS,
-                "Backup automático",
+                progressName,
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = "Mostra o progresso do backup automático em curso."
+                description = "Mostra o progresso do backup automático em curso.".tr()
                 setShowBadge(false)
             }
             manager.createNotificationChannel(progress)
         }
-        if (manager.getNotificationChannel(CHANNEL_RESULT) == null) {
+        val resultName = "Resultado do backup".tr()
+        if (manager.getNotificationChannel(CHANNEL_RESULT)?.name?.toString() != resultName) {
             val result = NotificationChannel(
                 CHANNEL_RESULT,
-                "Resultado do backup",
+                resultName,
                 NotificationManager.IMPORTANCE_DEFAULT,
             ).apply {
-                description = "Avisa quando o backup terminou ou falhou."
+                description = "Avisa quando o backup terminou ou falhou.".tr()
             }
             manager.createNotificationChannel(result)
         }

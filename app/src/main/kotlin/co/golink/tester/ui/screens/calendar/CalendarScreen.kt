@@ -589,12 +589,29 @@ private fun MiniMonth(cursor: LocalDate, onSelect: (LocalDate) -> Unit) {
             IconButton(onClick = { month = month.plusMonths(1) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Filled.ChevronRight, null, Modifier.size(18.dp)) }
         }
         Row(Modifier.fillMaxWidth()) {
+            Spacer(Modifier.width(26.dp))
             weekdayLetters().forEach {
                 Text(it, fontSize = 10.sp, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
             }
         }
         CalendarDates.monthGrid(month).chunked(7).forEach { week ->
-            Row(Modifier.fillMaxWidth()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().then(
+                    if (today in week) Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f)) else Modifier,
+                ),
+            ) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.width(26.dp)) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.size(20.dp).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)),
+                    ) {
+                        Text(
+                            CalendarDates.isoWeek(week.first()).toString(), fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 week.forEach { d ->
                     Box(contentAlignment = Alignment.Center, modifier = Modifier.weight(1f).height(30.dp).clickable { onSelect(d) }) {
                         Box(

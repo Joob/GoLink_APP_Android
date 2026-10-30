@@ -7,21 +7,27 @@ import co.golink.tester.data.auth.AuthState
 import co.golink.tester.data.auth.SessionManager
 import co.golink.tester.domain.notifications.Notification
 import android.content.Context
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import co.golink.tester.network.NotificationsApi
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 @Singleton
@@ -44,7 +50,11 @@ class NotificationsRepository @Inject constructor(
             }
         }
 
-    private var pollJob: Job? = null
+    private val authenticated = MutableStateFlow(false)
+
+    // Até ao primeiro refresh da sessão a lista vazia não quer dizer "0 por ler":
+    // o badge do arranque anterior fica (offline pode ficar assim muito tempo).
+    private val loaded = MutableStateFlow(false)
 
     // As ações são otimistas (a lista muda já) e os pedidos correm em fila
     // (marcar todas → limpar lidas chega ao servidor por essa ordem), no scope
@@ -65,7 +75,9 @@ class NotificationsRepository @Inject constructor(
         val gen = generation.incrementAndGet()
         pending.incrementAndGet()
         _items.update(local)
-        scope.async {
+        // UNDISPATCHED: entra na fila do Mutex (justa) ainda aqui, pela ordem dos
+        // toques. Num dispatcher, duas ações seguidas podiam trocar de lugar.
+        scope.async(start = CoroutineStart.UNDISPATCHED) {
             try {
                 mutations.withLock {
                     val response = call()
@@ -99,14 +111,15 @@ class NotificationsRepository @Inject constructor(
     init {
         scope.launch {
             sessionManager.state.collect { s ->
-                if (s is AuthState.Authenticated) {
-                    if (pollJob == null || pollJob?.isActive != true) startPolling()
-                } else {
-                    pollJob?.cancel()
-                    pollJob = null
+                authenticated.value = s is AuthState.Authenticated
+                // Só o fim de sessão limpa: Loading e BootstrapFailed (ex. arrancar
+                // offline) não dizem nada sobre as notificações da conta.
+                if (s is AuthState.Unauthenticated) {
+                    // Um refresh a caminho não pode repor a lista desta conta.
+                    generation.incrementAndGet()
+                    loaded.value = false
                     _items.value = emptyList()
-                    // Sessão terminada: o contador de outra conta não pode ficar
-                    // no ícone.
+                    // O contador de outra conta não pode ficar no ícone.
                     NotificationBadge.clear(context)
                 }
             }
@@ -114,17 +127,50 @@ class NotificationsRepository @Inject constructor(
         // O badge segue o contador — cobre refresh, markRead, delete e flush sem
         // ter de tocar em cada um deles.
         scope.launch {
-            unreadCount.collect { count -> NotificationBadge.update(context, count) }
+            combine(_items, loaded) { list, ready -> if (ready) list.count { !it.isRead } else null }
+                .filterNotNull()
+                .distinctUntilChanged()
+                .collect { count -> NotificationBadge.update(context, count) }
+        }
+        scope.launch {
+            val visible = ProcessLifecycleOwner.get().lifecycle.currentStateFlow
+                .map { it.isAtLeast(Lifecycle.State.STARTED) }
+            combine(authenticated, visible) { signedIn, shown -> if (signedIn) shown else null }
+                .distinctUntilChanged()
+                .collectLatest { shown -> if (shown != null) poll(shown) }
         }
     }
 
-    private fun startPolling() {
-        pollJob = scope.launch {
-            while (isActive) {
-                refresh()
-                delay(60_000)
+    /**
+     * Com a app à vista, de minuto a minuto (recua se falhar) e já ao voltar.
+     * Em segundo plano não há ecrã a atualizar, mas sem push só isto mantém o
+     * badge: um pedido de vez em quando, sem repetir o que acabou de ser pedido.
+     */
+    private suspend fun poll(shown: Boolean) {
+        if (!shown) delay(BACKGROUND_POLL_MS)
+        var failures = 0
+        while (true) {
+            val ok = refresh().isSuccess
+            failures = if (ok) 0 else failures + 1
+            if (shown) {
+                if (ok) restoreBadge()
+                delay(FOREGROUND_POLL_MS shl failures.coerceAtMost(3))
+            } else {
+                delay(BACKGROUND_POLL_MS)
             }
         }
+    }
+
+    // O contador não muda quando o badge some sem passar por aqui: notificação
+    // dispensada na barra, ou permissão concedida depois do primeiro refresh.
+    private fun restoreBadge() {
+        val count = _items.value.count { !it.isRead }
+        if (count > 0 && !NotificationBadge.isShowing(context)) NotificationBadge.update(context, count)
+    }
+
+    /** Para quem só precisa de avisar que a lista mudou: não atrasa a operação. */
+    fun refreshInBackground() {
+        scope.launch { refresh() }
     }
 
     suspend fun refresh(): Result<Unit> = runCatching {
@@ -132,7 +178,9 @@ class NotificationsRepository @Inject constructor(
         val response = api.list()
         if (!response.isSuccessful) error("HTTP ${response.code()}")
         val body = response.body() ?: error("Resposta vazia")
-        val list = body.data.map { Notification.fromEnvelope(it) }
+        // O servidor junta duas queries (não lidas + lidas): uma lida entre as
+        // duas vem repetida, e vale a segunda. O LazyColumn não aceita ids iguais.
+        val list = body.data.map { Notification.fromEnvelope(it) }.associateBy { it.id }.values.toList()
         // Houve uma ação entretanto (ou está a decorrer): esta resposta está velha.
         // Verificar e escrever no mesmo update: uma ação a meio não é pisada.
         var applied = false
@@ -140,7 +188,10 @@ class NotificationsRepository @Inject constructor(
             applied = gen == generation.get() && pending.get() == 0
             if (applied) list else current
         }
-        if (applied) needsResync = false
+        if (applied) {
+            needsResync = false
+            loaded.value = true
+        }
     }
 
     suspend fun markAllRead(): Result<Unit> = runCatching {
@@ -164,5 +215,10 @@ class NotificationsRepository @Inject constructor(
     suspend fun deleteRead(): Result<Unit> = runCatching {
         val (before, ids) = latestSeen() ?: return@runCatching
         mutate({ list -> list.filterNot { it.isRead } }) { api.deleteRead(before, ids) }
+    }
+
+    private companion object {
+        const val FOREGROUND_POLL_MS = 60_000L
+        const val BACKGROUND_POLL_MS = 15 * 60_000L
     }
 }

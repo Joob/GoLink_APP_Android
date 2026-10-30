@@ -10,6 +10,7 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.time.temporal.TemporalAdjusters
+import java.time.temporal.WeekFields
 
 /**
  * Datas do calendário (espelho de services/calendarDates.js). Semanas a começar
@@ -31,6 +32,9 @@ object CalendarDates {
         tz?.takeIf { it.isNotBlank() }?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: ZoneId.systemDefault()
 
     fun startOfWeek(d: LocalDate): LocalDate = d.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+
+    /** Número da semana ISO 8601. */
+    fun isoWeek(d: LocalDate): Int = d.get(WeekFields.ISO.weekOfWeekBasedYear())
 
     /** 42 dias (6 semanas) da grelha mensal. */
     fun monthGrid(d: LocalDate): List<LocalDate> {

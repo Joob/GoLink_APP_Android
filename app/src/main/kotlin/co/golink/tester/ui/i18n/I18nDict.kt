@@ -672,6 +672,27 @@ object I18nDict {
         r("Desbloqueia a passphrase de encriptação para o backup automático continuar.", "Unlock your encryption passphrase for automatic backup to continue.", "Déverrouillez votre phrase secrète de chiffrement pour que la sauvegarde automatique continue.", "Desbloquea tu frase de acceso de cifrado para que la copia de seguridad automática continúe."),
         r("Encriptação trancada — abre a app e introduz a passphrase.", "Encryption locked — open the app and enter your passphrase.", "Chiffrement verrouillé — ouvrez l'application et saisissez votre phrase secrète.", "Cifrado bloqueado — abre la app e introduce tu frase de acceso."),
 
+        // Notificações do backup automático
+        r("A preparar backup…", "Preparing backup…", "Préparation de la sauvegarde…", "Preparando la copia…"),
+        r("A analisar a galeria", "Scanning your gallery", "Analyse de la galerie", "Analizando la galería"),
+        r("Sem espaço para o backup", "Not enough space for backup", "Espace insuffisant pour la sauvegarde", "Sin espacio para la copia"),
+        r("Faltam %s para enviar %s. O backup fica em pausa até libertares espaço na conta.", "%s short of the %s to upload. Backup is paused until you free up space in your account.", "Il manque %s pour envoyer %s. La sauvegarde est en pause jusqu’à ce que vous libériez de l’espace.", "Faltan %s para subir %s. La copia queda en pausa hasta que liberes espacio en la cuenta."),
+        r("A conta está cheia. O backup fica em pausa até libertares espaço ou fazeres upgrade.", "Your account is full. Backup is paused until you free up space or upgrade.", "Votre compte est plein. La sauvegarde est en pause jusqu’à ce que vous libériez de l’espace ou changiez d’offre.", "Tu cuenta está llena. La copia queda en pausa hasta que liberes espacio o mejores tu plan."),
+        r("Backup terminou com erros", "Backup finished with errors", "Sauvegarde terminée avec des erreurs", "La copia terminó con errores"),
+        r("%d enviados, %d falharam.", "%d uploaded, %d failed.", "%d envoyés, %d en échec.", "%d subidos, %d fallaron."),
+        r("Backup completo", "Backup complete", "Sauvegarde terminée", "Copia completada"),
+        r("%d ficheiro(s) carregados em segurança.", "%d file(s) uploaded safely.", "%d fichier(s) envoyé(s) en toute sécurité.", "%d archivo(s) subidos de forma segura."),
+        r("A fazer backup de %s", "Backing up %s", "Sauvegarde : %s", "Copiando %s"),
+        r("%d de %d carregados", "%d of %d uploaded", "%d sur %d envoyés", "%d de %d subidos"),
+        r("imagens", "images", "images", "imágenes"),
+        r("vídeos", "videos", "vidéos", "vídeos"),
+        r("áudios", "audio", "audios", "audios"),
+        r("documentos", "documents", "documents", "documentos"),
+        r("downloads", "downloads", "téléchargements", "descargas"),
+        r("Resultado do backup", "Backup result", "Résultat de la sauvegarde", "Resultado de la copia"),
+        r("Mostra o progresso do backup automático em curso.", "Shows the progress of the running automatic backup.", "Affiche la progression de la sauvegarde automatique en cours.", "Muestra el progreso de la copia automática en curso."),
+        r("Avisa quando o backup terminou ou falhou.", "Lets you know when a backup finished or failed.", "Vous prévient quand une sauvegarde est terminée ou a échoué.", "Avisa cuando la copia terminó o falló."),
+
         // Badge de notificações por ler
         r("Notificações por ler", "Unread notifications", "Notifications non lues", "Notificaciones sin leer"),
         r("Mostra o número de notificações por ler no ícone da app.", "Shows the number of unread notifications on the app icon.", "Affiche le nombre de notifications non lues sur l'icône de l'application.", "Muestra el número de notificaciones sin leer en el icono de la app."),

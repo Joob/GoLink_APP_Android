@@ -28,6 +28,7 @@ import co.golink.tester.ui.i18n.tr
 object NotificationBadge {
     const val CHANNEL_BADGE = "notifications_badge"
     const val BADGE_NOTIFICATION_ID = 7100
+    const val EXTRA_OPEN_INBOX = "open_inbox"
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -65,7 +66,6 @@ object NotificationBadge {
             .setContentTitle("GoLink")
             .setContentText(text)
             .setNumber(count) // é isto que o launcher lê para o badge
-            .setAutoCancel(true)
             .setSilent(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -79,6 +79,11 @@ object NotificationBadge {
         NotificationManagerCompat.from(context).cancel(BADGE_NOTIFICATION_ID)
     }
 
+    fun isShowing(context: Context): Boolean =
+        context.getSystemService(NotificationManager::class.java)
+            ?.activeNotifications.orEmpty()
+            .any { it.id == BADGE_NOTIFICATION_ID }
+
     private fun canPostNotifications(context: Context): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
         return ContextCompat.checkSelfPermission(
@@ -91,6 +96,7 @@ object NotificationBadge {
         val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
             ?: return null
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        launchIntent.putExtra(EXTRA_OPEN_INBOX, true)
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or
             (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
         return PendingIntent.getActivity(context, 0, launchIntent, flags)

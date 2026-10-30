@@ -27,6 +27,12 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
+/** O que o ExoPlayer precisa para tocar um ficheiro: cifrado ou não, sai da mesma forma. */
+data class PlayableMedia(
+    val url: String,
+    val dataSourceFactory: androidx.media3.datasource.DataSource.Factory,
+)
+
 @HiltViewModel
 class FileViewerViewModel @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
@@ -166,18 +172,11 @@ class FileViewerViewModel @Inject constructor(
     /** Data keys já abertas nesta sessão do viewer (evita 1 pedido à API por página). */
     private val dataKeys = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
 
-    /** Ficheiros desencriptados escritos por este viewer — apagados ao fechar. */
-    private val plaintextFiles = mutableSetOf<java.io.File>()
-
     override fun onCleared() {
         super.onCleared()
         bitmapCache.evictAll()
         dataKeys.values.forEach { it.fill(0) }
         dataKeys.clear()
-        val files = synchronized(plaintextFiles) { plaintextFiles.toList().also { plaintextFiles.clear() } }
-        if (files.isNotEmpty()) {
-            Thread { files.forEach(co.golink.tester.data.encryption.PlaintextCache::wipe) }.start()
-        }
     }
 
     /** Data key do ficheiro (null se não cifrado ou E2E bloqueado). */
@@ -203,37 +202,24 @@ class FileViewerViewModel @Inject constructor(
         runCatching { co.golink.tester.data.encryption.EncryptedFileCodec.decryptFull(cipher, key) }.getOrNull()
     }
 
-    /**
-     * Descarrega + decifra um media cifrado para um ficheiro local (seek nativo).
-     * Devolve null se não cifrado. v1: decifra o ficheiro todo antes de tocar.
-     */
-    suspend fun decryptedMediaFile(file: BrowseItem.File): java.io.File? = withContext(Dispatchers.IO) {
-        val key = dataKeyFor(file) ?: return@withContext null
-        val url = authedUrlForDownload(file)
-        val out = java.io.File(appContext.cacheDir, "e2e_view_${file.id}.tmp")
-        synchronized(plaintextFiles) { plaintextFiles.add(out) }
-        runCatching {
-            // Authorization no HEADER: o ?token= da query não é aceite pelo
-            // backend → 401 → a decifra falhava e o viewer ficava "a decifrar"
-            // para sempre.
-            val req = Request.Builder().url(url).apply {
-                tokenStore.token?.takeIf { it.isNotBlank() }?.let { addHeader("Authorization", "Bearer $it") }
-            }.build()
-            httpClient.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) error("HTTP ${resp.code}")
-                val body = resp.body ?: error("vazio")
-                body.byteStream().use { input ->
-                    out.outputStream().use { o ->
-                        co.golink.tester.data.encryption.EncryptedFileCodec.decryptStream(input, o, key)
-                    }
-                }
-            }
-            out
-        }.getOrElse { t ->
-            co.golink.tester.data.encryption.PlaintextCache.wipe(out)
-            _state.update { it.copy(toast = "Falha a decifrar o media: ${t.message}") }
-            null
+    /** URL + origem de dados para o ExoPlayer. null se a data key não abrir (E2E bloqueado). */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    suspend fun playableMedia(file: BrowseItem.File): PlayableMedia? {
+        val token = tokenStore.token
+        if (!file.encrypted) {
+            val headers = if (!token.isNullOrBlank()) mapOf("Authorization" to "Bearer $token") else emptyMap()
+            return PlayableMedia(
+                url = authedUrlFor(file),
+                dataSourceFactory = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(httpClient)
+                    .setDefaultRequestProperties(headers),
+            )
         }
+        val key = withContext(Dispatchers.IO) { dataKeyFor(file) } ?: return null
+        val url = authedUrlForDownload(file)
+        return PlayableMedia(
+            url = url,
+            dataSourceFactory = co.golink.tester.data.encryption.EncryptedMediaDataSource.Factory(httpClient, url, token, key),
+        )
     }
 
     private fun authedUrlForDownload(file: BrowseItem.File): String {

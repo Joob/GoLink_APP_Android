@@ -196,6 +196,50 @@ object EncryptedFileCodec {
         return all.copyOfRange(skip, minOf(skip + plainLen, all.size))
     }
 
+    /** Disposição dos blocos de um objeto, para decifrar por Range (offsets em Long: vídeos > 2 GB). */
+    class BlockLayout internal constructor(
+        private val header: ByteArray,
+        private val prefix: ByteArray,
+        private val key: SecretKeySpec,
+        private val start: Int,
+        val chunkSize: Int,
+        objectSize: Long,
+    ) {
+        val ctFull: Int = chunkSize + TAG_LEN
+        val lastIndex: Int
+        private val lastLen: Int
+
+        init {
+            val dataLen = objectSize - start
+            require(dataLen >= TAG_LEN) { "objeto cifrado demasiado pequeno" }
+            val rem = (dataLen % ctFull).toInt()
+            lastIndex = (if (rem == 0) dataLen / ctFull - 1 else dataLen / ctFull).toInt()
+            lastLen = if (rem == 0) ctFull else rem
+        }
+
+        val plainLength: Long = lastIndex.toLong() * chunkSize + lastLen - TAG_LEN
+
+        fun offsetOf(i: Int): Long = start + i.toLong() * ctFull
+
+        fun lengthOf(i: Int): Int = if (i == lastIndex) lastLen else ctFull
+
+        fun open(ct: ByteArray, i: Int): ByteArray = openChunk(key, ct, i, i == lastIndex, prefix, header)
+    }
+
+    /**
+     * [head]: primeiros bytes do objeto (até 2 headers). Ficheiros antigos podem ter
+     * o header duplicado e os blocos foram selados com o segundo (como no JS).
+     */
+    fun blockLayout(head: ByteArray, objectSize: Long, dataKey: ByteArray): BlockLayout {
+        val duplicated = head.size >= HEADER_LEN * 2 &&
+            head.copyOfRange(HEADER_LEN, HEADER_LEN + 4).contentEquals(MAGIC)
+        val start = if (duplicated) HEADER_LEN * 2 else HEADER_LEN
+        require(head.size >= start) { "header inválido" }
+        val header = head.copyOfRange(start - HEADER_LEN, start)
+        val (chunkSize, prefix) = parseHeader(header)
+        return BlockLayout(header, prefix, keyOf(dataKey), start, chunkSize, objectSize)
+    }
+
     /** Comprimento do plaintext dado o tamanho do objeto e o chunkSize. */
     fun plaintextLength(objectSize: Int, chunkSize: Int): Int {
         val ctFull = chunkSize + TAG_LEN

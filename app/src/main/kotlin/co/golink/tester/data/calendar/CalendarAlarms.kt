@@ -50,13 +50,17 @@ class CalendarAlarmStore(private val context: Context) {
         runCatching { prefs.edit().putString(KEY, json.encodeToString(serializer, list)).apply() }
     }
 
-    /** Substitui o índice: cancela os que saíram, agenda os novos/alterados. */
+    /**
+     * Substitui o índice: cancela os que saíram e agenda todos os que ficam. O
+     * índice não prova que o alarme continua no sistema (forçar paragem ou a
+     * limpeza de alguns fabricantes apagam-nos) e reagendar o mesmo não duplica.
+     */
     @Synchronized
     fun replace(next: List<CalendarAlarm>) {
         val old = all().associateBy { it.id }
         val nextById = next.associateBy { it.id }
         old.values.filter { nextById[it.id] != it }.forEach(::cancel)
-        next.filter { old[it.id] != it }.forEach(::schedule)
+        next.forEach(::schedule)
         save(next)
     }
 
@@ -73,6 +77,13 @@ class CalendarAlarmStore(private val context: Context) {
     fun clear() {
         all().forEach(::cancel)
         runCatching { prefs.edit().clear().apply() }
+        // Os já publicados têm o título decifrado: não ficam na barra depois do logout.
+        runCatching {
+            val manager = context.getSystemService(NotificationManager::class.java)
+            manager?.activeNotifications.orEmpty()
+                .filter { it.tag?.startsWith("cal-") == true }
+                .forEach { manager?.cancel(it.tag, it.id) }
+        }
     }
 
     @Synchronized
@@ -110,11 +121,7 @@ class CalendarAlarmStore(private val context: Context) {
 
     fun notify(alarm: CalendarAlarm) {
         ensureChannel()
-        val zone = java.time.ZoneId.systemDefault()
-        val whenText = if (alarm.allDay) I18n.t("Todo o dia")
-        else java.time.Instant.ofEpochMilli(alarm.startAt).atZone(zone).toLocalTime()
-            .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
-        val body = if (alarm.minutes == 0) I18n.t("a começar agora (%s)").format(whenText) else I18n.t("começa às %s").format(whenText)
+        val body = reminderBody(alarm)
         val open = PendingIntent.getActivity(
             context,
             alarm.id.hashCode(),
@@ -134,6 +141,26 @@ class CalendarAlarmStore(private val context: Context) {
             .setContentIntent(open)
             .build()
         runCatching { NotificationManagerCompat.from(context).notify("cal-${alarm.id}", 0, n) }
+    }
+
+    /** O dia só aparece se não for hoje: um alerta pode tocar dias antes do evento. */
+    private fun reminderBody(alarm: CalendarAlarm): String {
+        val zone = java.time.ZoneId.systemDefault()
+        val start = java.time.Instant.ofEpochMilli(alarm.startAt).atZone(zone)
+        val day = runCatching { java.time.LocalDate.parse(alarm.date) }.getOrDefault(start.toLocalDate())
+        val today = java.time.LocalDate.now(zone)
+        val dayText = when (day) {
+            today -> I18n.t("Hoje")
+            today.plusDays(1) -> I18n.t("Amanhã")
+            else -> day.format(java.time.format.DateTimeFormatter.ofPattern("d MMM", java.util.Locale.forLanguageTag(I18n.lang)))
+        }
+        if (alarm.allDay) return "$dayText · ${I18n.t("Todo o dia")}"
+        val time = start.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+        return when {
+            alarm.minutes == 0 -> I18n.t("a começar agora (%s)").format(time)
+            day == today -> I18n.t("começa às %s").format(time)
+            else -> "$dayText, ${I18n.t("começa às %s").format(time)}"
+        }
     }
 
     private fun ensureChannel() {

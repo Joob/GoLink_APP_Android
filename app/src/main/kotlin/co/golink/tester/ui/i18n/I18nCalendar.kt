@@ -130,6 +130,7 @@ object I18nCalendar {
         r("Lembretes do calendário", "Calendar reminders", "Rappels de l’agenda", "Recordatorios del calendario"),
         r("a começar agora (%s)", "starting now (%s)", "commence maintenant (%s)", "empieza ahora (%s)"),
         r("começa às %s", "starts at %s", "commence à %s", "empieza a las %s"),
+        r("Amanhã", "Tomorrow", "Demain", "Mañana"),
         r("Feriados", "Holidays", "Jours fériés", "Festivos"),
         r("Feriados em %s", "Holidays in %s", "Jours fériés (%s)", "Festivos en %s"),
         r("País dos feriados", "Holidays country", "Pays des jours fériés", "País de los festivos"),

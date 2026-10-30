@@ -61,7 +61,7 @@ class TrashRepository @Inject constructor(
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         notifyChanged()
         // Notificações dos ficheiros restaurados voltam a aparecer.
-        notifications.refresh()
+        notifications.refreshInBackground()
     }
 
     // Apaga até `limit` itens do lixo e devolve deleted/remaining para o progresso.

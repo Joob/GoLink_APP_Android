@@ -52,7 +52,10 @@ class MainActivity : ComponentActivity() {
         // Só no arranque "a sério": ao recriar ou ao voltar pelos recentes o
         // sistema reentrega o Intent original do lembrete.
         val fromHistory = (intent.flags and android.content.Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
-        if (savedInstanceState == null && !fromHistory) co.golink.tester.ui.navigation.CalendarDeepLink.from(intent)
+        if (savedInstanceState == null && !fromHistory) {
+            co.golink.tester.ui.navigation.CalendarDeepLink.from(intent)
+            co.golink.tester.ui.navigation.InboxDeepLink.from(intent)
+        }
         lifecycle.addObserver(LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> {
@@ -84,5 +87,6 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         co.golink.tester.ui.navigation.CalendarDeepLink.from(intent)
+        co.golink.tester.ui.navigation.InboxDeepLink.from(intent)
     }
 }
