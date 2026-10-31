@@ -734,9 +734,9 @@ private fun EmptyDivisionState(tab: MobileBackupTab) {
     }
 }
 
-// Ordena a lista plana consoante o modo escolhido (usado na grelha e na lista
-// alfabética). DATE_DESC = mais recente primeiro.
-private fun sortBackupItems(items: List<BrowseItem>, sort: SortMode): List<BrowseItem> = when (sort) {
+// Ordena a lista plana consoante o modo escolhido (usado na grelha, na lista
+// alfabética e no viewer). DATE_DESC = mais recente primeiro.
+internal fun sortBackupItems(items: List<BrowseItem>, sort: SortMode): List<BrowseItem> = when (sort) {
     SortMode.ALPHA_ASC -> items.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
     SortMode.ALPHA_DESC -> items.sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.name })
     SortMode.DATE_DESC -> items.sortedByDescending { sortStamp(it) }

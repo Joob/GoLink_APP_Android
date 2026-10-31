@@ -24,6 +24,7 @@ val NOTIFICATION_GROUPS: List<Pair<String, Set<String>>> = listOf(
     "security" to setOf("security-alert", "file-quarantined", "share-blocked", "abuse-report"),
     "sharing" to setOf("team-invitation", "file-comment"),
     "calendar" to setOf("calendar"),
+    "legacy" to setOf("legacy"),
     "files" to setOf("file-request", "remote-upload-done"),
     "billing" to setOf("billing-alert", "payment-alert", "insufficient-balance", "storage-full", "subscription-created", "gift"),
     "support" to setOf("support-ticket"),
@@ -36,6 +37,7 @@ fun groupLabel(group: String?): String = when (group) {
     "security" -> "Segurança".tr()
     "sharing" -> "Partilhas".tr()
     "calendar" -> "Calendário".tr()
+    "legacy" -> "Legacy".tr()
     "files" -> "Ficheiros".tr()
     "billing" -> "Faturação".tr()
     "support" -> "Suporte".tr()
@@ -63,6 +65,7 @@ fun notificationIcon(category: String?): NotificationIcon {
         "share-blocked", "abuse-report" -> rose(Icons.Outlined.WarningAmber)
         "storage-full" -> rose(Icons.Outlined.Storage)
         "calendar" -> rose(Icons.Outlined.Event)
+        "legacy" -> tone(Icons.Outlined.Shield, 0xFF7C3AED, 0xFFEDE9FE, 0xFFA78BFA, 0xFF4C1D95)
         "team-invitation" -> tone(Icons.Outlined.PersonAdd, 0xFF4F46E5, 0xFFE0E7FF, 0xFF818CF8, 0xFF312E81)
         "file-request", "remote-upload-done" ->
             tone(Icons.Outlined.CloudUpload, 0xFF7C3AED, 0xFFEDE9FE, 0xFFA78BFA, 0xFF4C1D95)

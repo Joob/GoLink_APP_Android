@@ -27,6 +27,8 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var lockManager: AppLockManager
     @Inject lateinit var logger: AppLogger
+    @Inject lateinit var legacyCheckin: co.golink.tester.data.legacy.LegacyCheckin
+    @Inject lateinit var sessionManager: co.golink.tester.data.auth.SessionManager
 
     // Sem esta permissão (Android 13+) o NotificationManager.notify() é ignorado
     // em silêncio → downloads (single, zip e foreground service) não mostram
@@ -60,6 +62,8 @@ class MainActivity : ComponentActivity() {
             when (event) {
                 Lifecycle.Event.ON_START -> {
                     lockManager.onForeground()
+                    legacyCheckin.onForeground()
+                    sessionManager.resyncIfNeeded()
                     logger.log("App", "App em primeiro plano")
                 }
                 Lifecycle.Event.ON_STOP -> {

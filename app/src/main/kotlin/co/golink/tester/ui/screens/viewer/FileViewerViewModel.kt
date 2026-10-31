@@ -13,6 +13,7 @@ import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.NavigationSection
 import co.golink.tester.domain.browse.ShareInfo
 import co.golink.tester.domain.files.isEditableText
+import co.golink.tester.domain.files.isOfficeFile
 import co.golink.tester.ui.screens.browse.ShareDialogUiState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -79,10 +80,16 @@ class FileViewerViewModel @Inject constructor(
         val dirty: Boolean get() = editing && draft != (textContent ?: "")
     }
 
+    // Documentos abrem-se sozinhos no editor: um csv na lista de um txt, ao deslizar,
+    // punha o editor a abrir o ficheiro inicial (o editor lê o startId).
+    private val browsable = session.files.filterNot {
+        it.id != session.startId && it.isOfficeFile()
+    }
+
     private val _state = MutableStateFlow(
         UiState(
-            files = session.files,
-            currentIndex = session.files.indexOfFirst { it.id == session.startId }.coerceAtLeast(0),
+            files = browsable,
+            currentIndex = browsable.indexOfFirst { it.id == session.startId }.coerceAtLeast(0),
         )
     )
     val state: StateFlow<UiState> = _state.asStateFlow()

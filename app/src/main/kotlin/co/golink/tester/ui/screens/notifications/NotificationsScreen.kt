@@ -208,8 +208,17 @@ fun NotificationsScreen(
     val openSecurity by rememberUpdatedState(onOpenSecurityActivity)
     val openTicket by rememberUpdatedState(onOpenSupportTicket)
     val openCalendar by rememberUpdatedState(onOpenCalendar)
-    val actionOf = remember {
-        { n: Notification -> actionFor(n, { openSecurity() }, { id, admin -> openTicket(id, admin) }, { e, d -> openCalendar(e, d) }) }
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    val actionOf = remember(uriHandler) {
+        { n: Notification ->
+            actionFor(
+                n,
+                { openSecurity() },
+                { id, admin -> openTicket(id, admin) },
+                { e, d -> openCalendar(e, d) },
+                { url -> runCatching { uriHandler.openUri(url) } },
+            )
+        }
     }
 
     val sections = remember(sorted, filter, today) {
@@ -549,8 +558,14 @@ private fun actionFor(
     openSecurity: () -> Unit,
     openTicket: (String, Boolean) -> Unit,
     openCalendar: (String?, String?) -> Unit,
+    openUrl: (String) -> Unit,
 ): (() -> Unit)? {
     if (n.category == "security-alert") return openSecurity
+    // Legacy: a app só tem o check-in; convites, chaves e abertura fazem-se na web.
+    if (n.category == "legacy") {
+        val url = n.actionUrl ?: return null
+        return { openUrl(url) }
+    }
     // Calendário: o action traz /calendar?event=…&date=… (o título é genérico, o
     // verdadeiro está cifrado e só se vê ao abrir o evento). Cancelamentos não têm action.
     if (n.category == "calendar") {

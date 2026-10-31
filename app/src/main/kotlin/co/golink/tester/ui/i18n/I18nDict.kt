@@ -189,6 +189,7 @@ object I18nDict {
         r("Falha ao preparar a encriptação neste dispositivo (%s).", "Failed to set up encryption on this device (%s).", "Échec de la configuration du chiffrement sur cet appareil (%s).", "Error al preparar el cifrado en este dispositivo (%s)."),
         r("Configuração do servidor inválida", "Invalid server configuration", "Configuration du serveur invalide", "Configuración del servidor no válida"),
         r("Indica o URL da tua instância VueFileManager", "Enter your VueFileManager instance URL", "Saisissez l'URL de votre instance VueFileManager", "Introduce la URL de tu instancia de VueFileManager"),
+        r("O editor parou inesperadamente. Tenta abrir de novo.", "The editor stopped unexpectedly. Try opening it again.", "L'éditeur s'est arrêté de manière inattendue. Essayez de le rouvrir.", "El editor se detuvo inesperadamente. Intenta abrirlo de nuevo."),
         r("Não conseguimos contactar o servidor.\\nVerifica a tua ligação e tenta novamente.", "We couldn't reach the server.\\nCheck your connection and try again.", "Impossible de contacter le serveur.\\nVérifiez votre connexion et réessayez.", "No pudimos contactar con el servidor.\\nComprueba tu conexión e inténtalo de nuevo."),
         r("Falha de rede", "Network failure", "Échec réseau", "Fallo de red"),
 

@@ -12,7 +12,8 @@ import retrofit2.http.HTTP
 import retrofit2.http.POST
 
 interface UserApi {
-    @GET("api/user")
+    // compact: sem notificações nem cartões, que a app não usa (e pesam no arranque).
+    @GET("api/user?compact=1")
     suspend fun me(): Response<UserResponse>
 
     // ── Eliminação de conta (mesmo fluxo da web) ─────────────────────────

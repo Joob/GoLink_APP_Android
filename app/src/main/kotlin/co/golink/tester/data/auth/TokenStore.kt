@@ -28,8 +28,16 @@ class TokenStore @Inject constructor(
 
     val token: String? get() = state.value.token
 
+    /** Último /api/user da sessão: permite abrir a app sem esperar pela rede. */
+    val cachedUser: String? get() = prefs.getString(KEY_USER, null)
+
+    /** Ignorado se a sessão mudou entretanto: um pedido atrasado não repõe dados de outra conta. */
+    fun saveCachedUser(forToken: String, user: String) {
+        if (token == forToken) prefs.edit().putString(KEY_USER, user).apply()
+    }
+
     fun setPendingToken(token: String) {
-        prefs.edit().putString(KEY_TOKEN, token).putBoolean(KEY_OTP_VALIDATED, false).apply()
+        prefs.edit().putString(KEY_TOKEN, token).putBoolean(KEY_OTP_VALIDATED, false).remove(KEY_USER).apply()
         _state.value = StoredToken(token, otpValidated = false)
     }
 
@@ -59,6 +67,7 @@ class TokenStore @Inject constructor(
         private const val FILE_NAME = "auth_prefs"
         private const val KEY_TOKEN = "token"
         private const val KEY_OTP_VALIDATED = "otp_validated"
+        private const val KEY_USER = "cached_user"
     }
 }
 

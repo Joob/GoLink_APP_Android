@@ -300,7 +300,8 @@ class MobileBackupsViewModel @Inject constructor(
     // navegar). Sem isto, abrir um ficheiro daqui mostrava a sessão antiga do
     // browser — ou nada.
     fun prepareViewer(start: BrowseItem.File) {
-        fileViewerSession.files = _state.value.items
+        // Pela ordem do ecrã: _state.items vem como o servidor o devolveu.
+        fileViewerSession.files = sortBackupItems(_state.value.items, _state.value.sortMode)
             .filterIsInstance<BrowseItem.File>()
             .filter { it.isViewable() }
         fileViewerSession.startId = start.id

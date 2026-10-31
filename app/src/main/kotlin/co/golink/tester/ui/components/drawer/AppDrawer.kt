@@ -561,7 +561,12 @@ private fun DrawerRail(
             RailItem(Icons.Outlined.Storage, DrawerArea.Drive.label(), area == DrawerArea.Drive) { onAreaChange(DrawerArea.Drive) }
         }
         if (DrawerArea.Calendar in areas) {
-            RailItem(Icons.Outlined.CalendarToday, DrawerArea.Calendar.label(), area == DrawerArea.Calendar) {
+            RailItem(
+                Icons.Outlined.CalendarToday,
+                DrawerArea.Calendar.label(),
+                area == DrawerArea.Calendar,
+                accent = Color(if (dark) 0xFFFB7185 else 0xFFE11D48),
+            ) {
                 onAreaChange(DrawerArea.Calendar)
             }
         }
@@ -607,9 +612,16 @@ private fun DrawerRail(
 
 /** Item de área da barra: ícone numa "pill" e legenda por baixo (como na web). */
 @Composable
-private fun RailItem(icon: ImageVector, label: String, selected: Boolean, badge: Int = 0, onClick: () -> Unit) {
+private fun RailItem(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    badge: Int = 0,
+    accent: Color = MaterialTheme.colorScheme.primary,
+    onClick: () -> Unit,
+) {
     val primary = MaterialTheme.colorScheme.primary
-    val fg = if (selected) primary else MaterialTheme.colorScheme.onSurfaceVariant
+    val fg = if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
@@ -625,7 +637,7 @@ private fun RailItem(icon: ImageVector, label: String, selected: Boolean, badge:
                     .width(48.dp)
                     .height(32.dp)
                     .clip(RoundedCornerShape(16.dp))
-                    .background(if (selected) primary.copy(alpha = 0.15f) else Color.Transparent),
+                    .background(if (selected) accent.copy(alpha = 0.15f) else Color.Transparent),
             ) {
                 Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(20.dp))
             }

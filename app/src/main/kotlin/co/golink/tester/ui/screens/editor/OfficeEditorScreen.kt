@@ -5,10 +5,12 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
 import android.webkit.JavascriptInterface
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -67,6 +69,8 @@ fun OfficeEditorScreen(
     var webView by remember { mutableStateOf<WebView?>(null) }
     var loading by remember { mutableStateOf(true) }
     var failed by remember { mutableStateOf(false) }
+    // A WebView morta não recupera: sai da composição e nasce outra ao tentar de novo.
+    var rendererGone by remember { mutableStateOf(false) }
     var fileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
 
     LaunchedEffect(closeRequested) { if (closeRequested) onClose() }
@@ -96,8 +100,15 @@ fun OfficeEditorScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {
-                webView?.evaluateJavascript("window.GoLinkEmbed && window.GoLinkEmbed.flush()", null)
+            when (event) {
+                Lifecycle.Event.ON_STOP -> {
+                    webView?.evaluateJavascript("window.GoLinkEmbed && window.GoLinkEmbed.flush()", null)
+                    // Página "hidden": param os polls (comentários, membros) e o desenho.
+                    // A gravação acima não pára: os temporizadores continuam ativos.
+                    webView?.onPause()
+                }
+                Lifecycle.Event.ON_START -> webView?.onResume()
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -118,7 +129,7 @@ fun OfficeEditorScreen(
             return@Box
         }
 
-        AndroidView(
+        if (!rendererGone) AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 WebView(ctx).apply {
@@ -127,6 +138,8 @@ fun OfficeEditorScreen(
                     settings.allowFileAccess = false
                     settings.allowContentAccess = false
                     settings.setSupportZoom(false)
+                    // Deslizar um documento longo sem zonas em branco.
+                    settings.offscreenPreRaster = true
                     setBackgroundColor(if (dark) 0xFF151515.toInt() else 0xFFFFFFFF.toInt())
 
                     addJavascriptInterface(EditorBridge(viewModel, dark) { webView }, "GoLinkEditor")
@@ -150,6 +163,22 @@ fun OfficeEditorScreen(
                                 failed = true
                                 loading = false
                             }
+                        }
+
+                        override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
+                            if (request.isForMainFrame) {
+                                failed = true
+                                loading = false
+                            }
+                        }
+
+                        // Sem isto, quando o renderer morre (memória, folhas grandes) cai a app toda.
+                        override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                            webView = null
+                            rendererGone = true
+                            failed = true
+                            loading = false
+                            return true
                         }
                     }
 
@@ -184,11 +213,12 @@ fun OfficeEditorScreen(
 
         if (failed) {
             EditorMessage(
-                "Não foi possível abrir o editor. Verifica a ligação.".tr(),
+                if (rendererGone) "O editor parou inesperadamente. Tenta abrir de novo.".tr()
+                else "Não foi possível abrir o editor. Verifica a ligação.".tr(),
                 onRetry = {
                     failed = false
                     loading = true
-                    webView?.loadUrl(viewModel.editorUrl)
+                    if (rendererGone) rendererGone = false else webView?.loadUrl(viewModel.editorUrl)
                 },
                 onClose = onClose,
             )

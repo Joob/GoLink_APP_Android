@@ -178,7 +178,8 @@ fun AppNavHost(
     }
 
     LaunchedEffect(top, splashElapsed) {
-        if (!splashElapsed) return@LaunchedEffect
+        // Com sessão não há nada a esperar: o splash mínimo é só para quem vai ao Landing.
+        if (!splashElapsed && top != TopState.Authenticated) return@LaunchedEffect
         val target = gateTarget() ?: return@LaunchedEffect
         val current = navController.currentDestination?.route
         val inAuthStack = current != null && (

@@ -151,17 +151,27 @@ class OfficeEditorViewModel @Inject constructor(
     fun request(id: Int, method: String, args: String, onDone: (Int) -> Unit) {
         viewModelScope.launch {
             results[id] = try {
-                val a = runCatching { Json.parseToJsonElement(args).jsonObject }.getOrElse { JsonObject(emptyMap()) }
-                buildJsonObject {
-                    put("ok", true)
-                    put("data", handle(method, a))
-                }.toString()
+                // Corre na thread principal; `load` e `save` trazem megabytes de
+                // base64, por isso o que pesa (JSON, base64, cifra) sai dela.
+                val a = withContext(Dispatchers.Default) {
+                    runCatching { Json.parseToJsonElement(args).jsonObject }.getOrElse { JsonObject(emptyMap()) }
+                }
+                val data = handle(method, a)
+                withContext(Dispatchers.Default) {
+                    buildJsonObject {
+                        put("ok", true)
+                        put("data", data)
+                    }.toString()
+                }
             } catch (e: BridgeError) {
                 errorJson(e)
             } catch (e: java.io.IOException) {
                 errorJson(BridgeError(0, "network"))
             } catch (e: Exception) {
                 errorJson(BridgeError(500, e.message))
+            } catch (e: OutOfMemoryError) {
+                // Ficheiro enorme: o base64 multiplica-o na memória. Falha só o pedido.
+                errorJson(BridgeError(413, "file_too_large"))
             }
             onDone(id)
         }
@@ -196,7 +206,10 @@ class OfficeEditorViewModel @Inject constructor(
                 val response = filesApi.downloadFileVersion(f.id, args.string("id"))
                 if (!response.isSuccessful) throw httpError(response.code(), response.errorBody()?.string())
                 var bytes = withContext(Dispatchers.IO) { response.body()?.bytes() ?: ByteArray(0) }
-                if (args["encrypted"]?.jsonPrimitive?.booleanOrNull == true) bytes = EncryptedFileCodec.decryptFull(bytes, key(f))
+                if (args["encrypted"]?.jsonPrimitive?.booleanOrNull == true) {
+                    val dataKey = key(f)
+                    bytes = withContext(Dispatchers.Default) { EncryptedFileCodec.decryptFull(bytes, dataKey) }
+                }
                 JsonPrimitive(b64(bytes))
             }
             "version_restore" -> {
@@ -335,7 +348,10 @@ class OfficeEditorViewModel @Inject constructor(
 
     private suspend fun save(f: BrowseItem.File, plain: ByteArray, baseRevision: Int?, collabSession: String?, collabUpto: Long?): JsonElement {
         if (!canEdit) throw BridgeError(403)
-        val bytes = if (f.encrypted) EncryptedFileCodec.encrypt(plain, key(f)) else plain
+        val bytes = if (f.encrypted) {
+            val dataKey = key(f)
+            withContext(Dispatchers.Default) { EncryptedFileCodec.encrypt(plain, dataKey) }
+        } else plain
         val text = "text/plain".toMediaTypeOrNull()
         val part = MultipartBody.Part.createFormData(
             "content",
@@ -401,7 +417,7 @@ class OfficeEditorViewModel @Inject constructor(
 
     private fun JsonObject.string(key: String): String = this[key]?.jsonPrimitive?.contentOrNull ?: throw BridgeError(400, "missing_$key")
 
-    private fun b64(bytes: ByteArray): String = Base64.getEncoder().encodeToString(bytes)
+    private suspend fun b64(bytes: ByteArray): String = withContext(Dispatchers.Default) { Base64.getEncoder().encodeToString(bytes) }
 
-    private fun unb64(value: String): ByteArray = Base64.getDecoder().decode(value)
+    private suspend fun unb64(value: String): ByteArray = withContext(Dispatchers.Default) { Base64.getDecoder().decode(value) }
 }
