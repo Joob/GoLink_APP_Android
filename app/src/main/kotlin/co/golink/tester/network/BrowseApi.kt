@@ -22,6 +22,10 @@ interface BrowseApi {
         @Query("direction") direction: String? = null,
     ): Response<BrowseListResponse>
 
+    /** Backup Mobile (todos os aparelhos): muda com cada ficheiro enviado/apagado e com os aparelhos. */
+    @GET("api/browse/mobile-backup/fingerprint")
+    suspend fun mobileBackupFingerprint(): Response<FolderFingerprint>
+
     @GET("api/browse/folders/{id}/fingerprint")
     suspend fun folderFingerprint(
         @Path("id") id: String,

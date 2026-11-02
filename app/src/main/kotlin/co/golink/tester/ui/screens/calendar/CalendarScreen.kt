@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import co.golink.tester.domain.calendar.CalInfo
 import co.golink.tester.domain.calendar.CalInstance
 import co.golink.tester.domain.calendar.CalendarDates
@@ -102,10 +103,17 @@ fun CalendarScreen(
     gateVm: E2EGateViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+
+    // Alterações feitas na web / noutro aparelho: só enquanto o ecrã está à frente.
+    val syncLifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(syncLifecycle) {
+        syncLifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) { viewModel.syncLoop() }
+    }
     val calendars by viewModel.calendars.collectAsStateWithLifecycle()
     val instances by viewModel.instances.collectAsStateWithLifecycle()
     val holidaysVisible by viewModel.holidaysVisible.collectAsStateWithLifecycle()
     val holidayCountry by viewModel.holidayCountry.collectAsStateWithLifecycle()
+    val holidaysCount by viewModel.holidaysYearCount.collectAsStateWithLifecycle()
     val holidayChoice by viewModel.holidayCountryChoice.collectAsStateWithLifecycle()
     var holidaysSheet by remember { mutableStateOf(false) }
     val holidayCountries by viewModel.holidayCountries.collectAsStateWithLifecycle()
@@ -208,6 +216,7 @@ fun CalendarScreen(
                         onSettings = { id -> closeDrawer(); viewModel.openSettings(id) },
                         holidaysVisible = holidaysVisible,
                         holidayCountry = holidayCountry,
+                holidaysCount = holidaysCount,
                         onToggleHolidays = viewModel::toggleHolidays,
                         onHolidaySettings = { closeDrawer(); holidaysSheet = true },
                     )
@@ -523,6 +532,7 @@ private fun ColumnScope.CalendarDrawerMenu(
     onSettings: (String) -> Unit,
     holidaysVisible: Boolean,
     holidayCountry: String?,
+    holidaysCount: Int?,
     onToggleHolidays: () -> Unit,
     onHolidaySettings: () -> Unit,
 ) {
@@ -534,7 +544,7 @@ private fun ColumnScope.CalendarDrawerMenu(
     val shared = calendars.filter { !it.isOwner || it.members.size > 1 }.filterNot { it.isOwner && it.isBirthdays && it.members.size <= 1 }
     val others = calendars.filter { it.isOwner && it.isBirthdays && it.members.size <= 1 }
 
-    DrawerLabel("Os meus calendários".tr(), mine.size)
+    DrawerLabel("Os meus calendários".tr())
     mine.forEach { CalendarToggleRow(it, onToggle, onSettings) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -545,10 +555,10 @@ private fun ColumnScope.CalendarDrawerMenu(
         Text("Novo calendário".tr(), fontSize = 13.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
     }
     if (shared.isNotEmpty()) {
-        DrawerLabel("Partilhados".tr(), shared.size)
+        DrawerLabel("Partilhados".tr())
         shared.forEach { CalendarToggleRow(it, onToggle, onSettings, members = it.members.size) }
     }
-    DrawerLabel("Outros".tr(), others.size + 1)
+    DrawerLabel("Outros".tr())
     // Feriados (calculados no aparelho, só leitura), como na web.
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -563,6 +573,7 @@ private fun ColumnScope.CalendarDrawerMenu(
             holidayCountry?.let { "Feriados em %s".tr().format(countryName(it)) } ?: "Feriados".tr(),
             fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
         )
+        if (holidaysCount != null) EventCount(holidaysCount)
         IconButton(onClick = onHolidaySettings, modifier = Modifier.size(32.dp)) {
             Icon(Icons.Outlined.Settings, contentDescription = "País dos feriados".tr(), modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -594,6 +605,11 @@ private fun DrawerLabel(text: String, count: Int? = null) {
 }
 
 @Composable
+private fun EventCount(n: Int) {
+    Text(n.toString(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp))
+}
+
+@Composable
 private fun CalendarToggleRow(cal: CalInfo, onToggle: (CalInfo) -> Unit, onSettings: (String) -> Unit, members: Int? = null) {
     val color = calendarColor(cal.color)
     Row(
@@ -610,8 +626,10 @@ private fun CalendarToggleRow(cal: CalInfo, onToggle: (CalInfo) -> Unit, onSetti
             Text(
                 (if (members == 1) "%d membro" else "%d membros").tr().format(members),
                 fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 8.dp),
             )
         }
+        EventCount(cal.eventsCount)
         IconButton(onClick = { onSettings(cal.id) }, modifier = Modifier.size(32.dp)) {
             Icon(Icons.Outlined.Settings, contentDescription = "Definições do calendário".tr(), modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }

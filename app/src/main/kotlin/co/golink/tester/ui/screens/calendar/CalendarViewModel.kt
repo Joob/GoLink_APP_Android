@@ -130,6 +130,18 @@ class CalendarViewModel @Inject constructor(
         .mapLatest { k -> if (k.show) repo.holidays(k.country, k.from, k.to, k.lang) else emptyList() }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** Feriados do ano corrente (contagem no menu); null se escondidos. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val holidaysYearCount: StateFlow<Int?> = combine(
+        _holidaysVisible,
+        holidayCountry,
+        androidx.compose.runtime.snapshotFlow { co.golink.tester.ui.i18n.I18n.lang },
+    ) { show, country, lang -> Triple(show, country, lang) }
+        .mapLatest { (show, country, lang) ->
+            if (!show) null else LocalDate.now().withDayOfYear(1).let { y -> repo.holidays(country, y, y.plusYears(1), lang).size }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     val instances: StateFlow<List<CalInstance>> = combine(
         _state.map { s -> range(s).let { (f, t) -> RangeKey(s.events, f, t) } }
             .distinctUntilChanged { a, b -> a.events === b.events && a.from == b.from && a.to == b.to },
@@ -162,6 +174,7 @@ class CalendarViewModel @Inject constructor(
                     reload(force = true)
                 } else {
                     loadedRange = null
+                    syncStamp = null
                     _state.update { it.copy(events = emptyList(), open = null, loaded = false) }
                 }
             }
@@ -170,6 +183,7 @@ class CalendarViewModel @Inject constructor(
             repo.changes.collect {
                 searchPool = null
                 reload(force = true)
+                loadCalendars() // contagens de eventos por calendário
             }
         }
     }
@@ -184,7 +198,31 @@ class CalendarViewModel @Inject constructor(
         CalView.Agenda -> s.cursor to s.cursor.plusDays(s.agendaDays)
     }
 
-    fun reload(force: Boolean = false) {
+    /**
+     * Enquanto o ecrã está visível: carimbo a cada 5 s; se mudou (web, outro aparelho,
+     * partilhas), recarrega calendários e o intervalo atual sem indicador.
+     */
+    // No ViewModel (não no ciclo): ao voltar ao ecrã, o que mudou entretanto é detetado logo.
+    private var syncStamp: String? = null
+
+    suspend fun syncLoop() {
+        while (true) {
+            if (keys.isUnlocked) {
+                repo.syncStamp().onSuccess { v ->
+                    val stamp = syncStamp
+                    if (stamp != null && v != stamp) {
+                        searchPool = null
+                        loadCalendars()
+                        reload(force = true, silent = true)
+                    }
+                    syncStamp = v
+                }
+            }
+            kotlinx.coroutines.delay(5_000)
+        }
+    }
+
+    fun reload(force: Boolean = false, silent: Boolean = false) {
         if (!keys.isUnlocked) return
         val s = _state.value
         val (from, to) = range(s)
@@ -198,7 +236,7 @@ class CalendarViewModel @Inject constructor(
         loadedRange = r
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
-            _state.update { it.copy(loading = true) }
+            if (!silent) _state.update { it.copy(loading = true) }
             val zone = ZoneId.systemDefault()
             if (repo.calendars.value.isEmpty()) loadCalendars()
             repo.fetchEvents(CalendarDates.dayStart(fetchFrom, zone), CalendarDates.dayStart(to, zone))
@@ -210,7 +248,7 @@ class CalendarViewModel @Inject constructor(
                 }
                 .onFailure { e ->
                     loadedRange = null
-                    _state.update { it.copy(loading = false, error = e.message) }
+                    _state.update { if (silent) it.copy(loading = false) else it.copy(loading = false, error = e.message) }
                 }
         }
     }

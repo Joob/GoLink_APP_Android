@@ -21,6 +21,7 @@ data class CalendarDto(
     val wrapped_key: String? = null,
     val visible: Boolean = true,
     val members: List<CalendarMemberDto> = emptyList(),
+    val events_count: Int = 0,
 )
 
 @Serializable

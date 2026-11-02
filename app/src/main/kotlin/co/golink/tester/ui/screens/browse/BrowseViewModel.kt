@@ -1627,6 +1627,8 @@ class BrowseViewModel @Inject constructor(
                 is BrowseMode.SearchResults -> handleSimple(repository.search(mode.query), mode)
                 else -> loadPaged(mode, pagesToReload, silent)
             }
+            // Baseline do polling logo a seguir à lista (não 5 s depois): nada se perde entretanto.
+            if (!silent && pollJob?.isActive == true) pollFolderOnce()
         }
     }
 
@@ -1734,9 +1736,10 @@ class BrowseViewModel @Inject constructor(
     fun startRealtimeSync() {
         if (pollJob?.isActive == true) return
         pollJob = viewModelScope.launch {
+            // Primeiro sonda (ao voltar ao ecrã, o que mudou entretanto aparece já), depois espera.
             while (isActive) {
-                delay(POLL_INTERVAL_MS)
                 pollFolderOnce()
+                delay(POLL_INTERVAL_MS)
             }
         }
     }
@@ -1759,6 +1762,8 @@ class BrowseViewModel @Inject constructor(
             is BrowseMode.Folder -> repository.folderFingerprint(mode.id)
             // Edições/uploads de outros membros aparecem logo (modified, tamanho…).
             is BrowseMode.SharedWithMe -> teamsRepository.sharedWithMeFingerprint(mode.id)
+            // Team Folders próprias: uploads de membros / da web aparecem logo.
+            is BrowseMode.TeamFolder -> teamsRepository.teamFolderFingerprint(mode.id)
             // Sem endpoint de fingerprint: assinatura da 1.ª página (links criados/revogados/expirados).
             BrowseMode.Shared -> repository.listShared(page = 1, query = browseQuery()).map { p ->
                 "${p.total}|" + p.items.joinToString(",") { "${it.id}:${it.share?.token}:${it.share?.active}" }

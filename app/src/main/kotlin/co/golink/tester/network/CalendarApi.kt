@@ -54,6 +54,10 @@ interface CalendarApi {
     @GET("api/calendar/holidays/countries")
     suspend fun holidayCountries(): Response<Holidays.CountryListResponse>
 
+    /** Carimbo do estado do calendário; muda com qualquer alteração (web, outro aparelho, partilhas). */
+    @GET("api/calendar/sync")
+    suspend fun sync(): Response<JsonObject>
+
     @GET("api/calendar/events")
     suspend fun events(@Query("from") from: String, @Query("to") to: String): Response<EventListResponse>
 

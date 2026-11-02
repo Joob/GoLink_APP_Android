@@ -174,6 +174,7 @@ class CalendarRepository @Inject constructor(
             members = raw.members,
             locked = name == null,
             key = if (name == null) null else key,
+            eventsCount = raw.events_count,
         )
     }
 
@@ -247,6 +248,12 @@ class CalendarRepository @Inject constructor(
     suspend fun fetchEvents(from: Instant, to: Instant): Result<List<CalEvent>> = runCatching {
         withContext(Dispatchers.IO) {
             api.events(from.toString(), to.toString()).ok().data.map(::decryptEvent)
+        }
+    }
+
+    suspend fun syncStamp(): Result<String> = runCatching {
+        withContext(Dispatchers.IO) {
+            (api.sync().ok()["v"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: error("Resposta vazia")
         }
     }
 

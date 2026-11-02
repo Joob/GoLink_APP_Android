@@ -151,6 +151,12 @@ class BrowseRepository @Inject constructor(
         body.data.map { it.data.decItem() }
     }
 
+    suspend fun mobileBackupFingerprint(): Result<String> = runCatching {
+        val response = api.mobileBackupFingerprint()
+        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        (response.body() ?: error("Resposta vazia")).signature
+    }
+
     suspend fun folderFingerprint(id: String?): Result<String> = runCatching {
         val targetId = id ?: ROOT
         val response = api.folderFingerprint(targetId)

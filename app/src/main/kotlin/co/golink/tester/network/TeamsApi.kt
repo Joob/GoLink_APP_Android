@@ -52,6 +52,10 @@ interface TeamsApi {
     ): Response<okhttp3.ResponseBody>
 
     // Assinatura leve (contagem + última modificação) para o polling.
+    /** Team Folders do dono: raiz = árvore toda; pasta = conteúdo direto. */
+    @GET("api/teams/folders/{id}/fingerprint")
+    suspend fun teamFolderFingerprint(@Path("id") id: String): Response<co.golink.tester.domain.browse.FolderFingerprint>
+
     @GET("api/teams/shared-with-me/{id}/fingerprint")
     suspend fun sharedWithMeFingerprint(@Path("id") id: String): Response<co.golink.tester.domain.browse.FolderFingerprint>
 

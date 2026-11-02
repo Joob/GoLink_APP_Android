@@ -544,6 +544,24 @@ class MobileBackupsViewModel @Inject constructor(
         }
     }
 
+    // Assinatura do backup (todos os aparelhos). No ViewModel: ao voltar ao ecrã compara com a anterior.
+    private var syncStamp: String? = null
+
+    /**
+     * Enquanto o ecrã está visível: assinatura a cada 5 s; se mudou (backup de outro
+     * aparelho, apagado na web, aparelho renomeado/pausado), recarrega em silêncio.
+     */
+    suspend fun syncLoop() {
+        while (true) {
+            repository.mobileBackupFingerprint().onSuccess { v ->
+                val prev = syncStamp
+                syncStamp = v
+                if (prev != null && prev != v) refresh()
+            }
+            kotlinx.coroutines.delay(5_000)
+        }
+    }
+
     /** Puxar para baixo em cada aba: recarrega lista + contagens dessa aba. */
     fun pullRefresh() {
         _state.update { it.copy(isRefreshing = true) }

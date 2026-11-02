@@ -17,6 +17,7 @@ data class CalInfo(
     val members: List<CalendarMemberDto>,
     val locked: Boolean,
     val key: ByteArray?,
+    val eventsCount: Int = 0,
 ) {
     val isOwner: Boolean get() = permission == "owner"
     val canEdit: Boolean get() = !locked && (permission == "owner" || permission == "can-edit")
@@ -26,7 +27,7 @@ data class CalInfo(
     override fun equals(other: Any?): Boolean =
         other is CalInfo && other.id == id && other.color == color && other.name == name &&
             other.visible == visible && other.permission == permission && other.members == members &&
-            other.locked == locked && other.position == position
+            other.locked == locked && other.position == position && other.eventsCount == eventsCount
 
     override fun hashCode(): Int = id.hashCode()
 }

@@ -52,6 +52,12 @@ class TeamsRepository @Inject constructor(
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { body.toPaged(page) }
     }
 
+    suspend fun teamFolderFingerprint(id: String?): Result<String> = runCatching {
+        val response = api.teamFolderFingerprint(id ?: ROOT)
+        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        (response.body() ?: error("Resposta vazia")).signature
+    }
+
     suspend fun sharedWithMeFingerprint(id: String?): Result<String> = runCatching {
         val response = api.sharedWithMeFingerprint(id ?: ROOT)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
