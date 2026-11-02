@@ -245,6 +245,7 @@ class BrowseShellViewModel @Inject constructor(
     autoBackupPreferences: co.golink.tester.data.backup.AutoBackupPreferences,
     private val authRepository: AuthRepository,
     private val settingsRepository: SettingsRepository,
+    private val configRepository: co.golink.tester.data.config.ConfigRepository,
 ) : ViewModel() {
     val user: StateFlow<User?> = userRepository.me
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -264,8 +265,13 @@ class BrowseShellViewModel @Inject constructor(
     fun refreshStorage() = viewModelScope.launch {
         settingsRepository.storage().onSuccess { _storage.value = it }
     }
+    /** Legacy na barra só se o admin não o desligou (sem config: ligado, como o servidor). */
+    val legacyEnabled: StateFlow<Boolean> = configRepository.config
+        .map { it?.legacy?.enabled ?: true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     init {
         refreshStorage()
+        viewModelScope.launch { configRepository.load() }
     }
 }
 
@@ -284,6 +290,7 @@ fun BrowseScreen(
     onOpenSupportDashboard: () -> Unit = {},
     onOpenAdmin: (pane: String) -> Unit = {},
     onOpenCalendar: () -> Unit = {},
+    onOpenLegacy: () -> Unit = {},
     /** Vindo do Calendário: abrir a gaveta já nesta área (Admin/Suporte). */
     areaRequest: DrawerArea? = null,
     onAreaRequestHandled: () -> Unit = {},
@@ -334,6 +341,7 @@ fun BrowseScreen(
     val unread by shell.unreadNotifications.collectAsStateWithLifecycle()
     val storage by shell.storage.collectAsStateWithLifecycle()
     val autoBackupEnabled by shell.autoBackupEnabled.collectAsStateWithLifecycle()
+    val legacyEnabled by shell.legacyEnabled.collectAsStateWithLifecycle()
     val favourites by viewModel.favouriteFolders.collectAsStateWithLifecycle()
     val subscriptionType by viewModel.subscriptionType.collectAsStateWithLifecycle()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -463,7 +471,7 @@ fun BrowseScreen(
     var drawerArea by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(DrawerArea.Drive) }
     if (secondaryArea == null && drawerArea != DrawerArea.Drive) drawerArea = DrawerArea.Drive
     // Toggle igual à sidebar da web: Drive | Calendário | Admin ou Suporte.
-    val drawerAreas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, secondaryArea)
+    val drawerAreas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea)
     LaunchedEffect(areaRequest) {
         val req = areaRequest ?: return@LaunchedEffect
         if (req == secondaryArea) {
@@ -558,7 +566,7 @@ fun BrowseScreen(
             supportSection,
         )
         DrawerArea.Support -> listOf(supportSection)
-        DrawerArea.Calendar -> emptyList()
+        DrawerArea.Calendar, DrawerArea.Legacy -> emptyList()
     }
 
     AdaptiveNavigationDrawer(
@@ -568,7 +576,13 @@ fun BrowseScreen(
             AppDrawerContent(
                 user = user,
                 area = drawerArea,
-                onAreaChange = { if (it == DrawerArea.Calendar) go(onOpenCalendar)() else drawerArea = it },
+                onAreaChange = {
+                    when (it) {
+                        DrawerArea.Calendar -> go(onOpenCalendar)()
+                        DrawerArea.Legacy -> go(onOpenLegacy)()
+                        else -> drawerArea = it
+                    }
+                },
                 areas = drawerAreas,
                 sections = drawerSections,
                 unreadNotifications = unread,

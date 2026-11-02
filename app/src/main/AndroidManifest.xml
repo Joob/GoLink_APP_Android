@@ -91,6 +91,10 @@
                 <data android:host="tester.golink.co" />
                 <data android:pathPrefix="/create-new-password" />
                 <data android:pathPrefix="/register/" />
+                <!-- Legacy: abrir cofre (recipient), convite de guardião, check-in do email. -->
+                <data android:pathPrefix="/legacy-open/" />
+                <data android:pathPrefix="/legacy-invite/" />
+                <data android:pathPrefix="/legacy-checkin/" />
             </intent-filter>
         </activity>
 

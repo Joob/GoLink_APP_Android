@@ -401,6 +401,10 @@ class FileDownloader @Inject constructor(
             withDownloadsOutput(name, mime) { it.write(bytes) }
         }
 
+    /** Grava em Downloads em streaming (ex.: ficheiros do Legacy decifrados no aparelho). */
+    suspend fun writeToDownloads(name: String, mime: String, block: suspend (java.io.OutputStream) -> Unit) =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { withDownloadsOutput(name, mime, block) }
+
     /**
      * Abre o destino em Downloads e corre [block]. Em erro (ou cancelamento)
      * apaga a entrada — antes ficava presa em IS_PENDING, invisível mas a ocupar

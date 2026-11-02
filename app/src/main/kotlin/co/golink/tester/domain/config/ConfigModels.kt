@@ -12,7 +12,12 @@ data class AppConfigResponse(
     val trash: TrashConfig? = null,
     val payments: PaymentsConfig? = null,
     val gateways: GatewaysConfig? = null,
+    val legacy: LegacyConfig? = null,
 )
+
+/** Legacy ligado pelo admin (`legacy_enabled`); null = servidor antigo, assume ligado. */
+@Serializable
+data class LegacyConfig(val enabled: Boolean = true)
 
 /** Faturação: [type] none | fixed | metered (settings.subscription_type). */
 @Serializable

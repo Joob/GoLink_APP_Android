@@ -51,22 +51,47 @@ import androidx.compose.ui.window.DialogProperties
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.ui.i18n.tr
 
-/** Anexar do Drive (DrivePickerPopup.vue): navega pastas, escolhe vários ficheiros. */
+/**
+ * Anexar do Drive (DrivePickerPopup.vue): navega pastas, escolhe vários ficheiros.
+ * Com [onPickItems] (Legacy) também se escolhem pastas inteiras e é esse callback que recebe.
+ */
 @Composable
 fun DrivePickerDialog(
     exclude: Set<String>,
     load: suspend (String?) -> Result<List<BrowseItem>>,
     onDismiss: () -> Unit,
-    onPick: (List<BrowseItem.File>) -> Unit,
+    onPick: (List<BrowseItem.File>) -> Unit = {},
+    title: String = "Anexar do Drive".tr(),
+    confirmLabel: (Int) -> String = { n -> if (n == 0) "Anexar".tr() else "Anexar (%d)".tr().format(n) },
+    onPickItems: ((List<BrowseItem>) -> Unit)? = null,
 ) {
+    val pickFolders = onPickItems != null
     // Caminho: (id, nome); null = raiz.
     val path = remember { mutableStateListOf<Pair<String?, String>>(null to "O meu drive".tr()) }
-    val selected = remember { mutableStateMapOf<String, BrowseItem.File>() }
+    val selected = remember { mutableStateMapOf<String, BrowseItem>() }
+    // Pastas acima de cada escolha: escolher uma pasta absorve o que já se tinha escolhido lá dentro.
+    val ancestors = remember { mutableMapOf<String, List<String>>() }
     var items by remember { mutableStateOf<List<BrowseItem>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
     var filter by remember { mutableStateOf("") }
     val current = path.last()
+    // Dentro de uma pasta já escolhida tudo vai com ela: escolher à parte duplicava itens.
+    val covered = pickFolders && path.any { it.first != null && it.first in selected }
+
+    fun toggle(item: BrowseItem, on: Boolean) {
+        if (covered) return
+        if (!on) {
+            selected.remove(item.id)
+            ancestors.remove(item.id)
+            return
+        }
+        if (item is BrowseItem.Folder) {
+            ancestors.filterValues { item.id in it }.keys.forEach { selected.remove(it); ancestors.remove(it) }
+        }
+        selected[item.id] = item
+        ancestors[item.id] = path.mapNotNull { it.first }
+    }
 
     LaunchedEffect(current.first) {
         loading = true
@@ -88,7 +113,7 @@ fun DrivePickerDialog(
                         Icon(if (path.size > 1) Icons.AutoMirrored.Filled.ArrowBack else Icons.Filled.Close, contentDescription = null)
                     }
                     Column(Modifier.weight(1f)) {
-                        Text("Anexar do Drive".tr(), fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                        Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                         Text(
                             path.joinToString(" / ") { it.second }, fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -96,13 +121,16 @@ fun DrivePickerDialog(
                     }
                     // No topo (como o Guardar do editor): em baixo ficava atrás da barra de navegação.
                     Button(
-                        onClick = { onPick(selected.values.toList()) },
+                        onClick = {
+                            val picked = selected.values.toList()
+                            if (onPickItems != null) onPickItems(picked) else onPick(picked.filterIsInstance<BrowseItem.File>())
+                        },
                         enabled = selected.isNotEmpty(),
                         shape = RoundedCornerShape(20.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = Color.White),
                         modifier = Modifier.padding(end = 8.dp),
                     ) {
-                        Text(if (selected.isEmpty()) "Anexar".tr() else "Anexar (%d)".tr().format(selected.size), fontWeight = FontWeight.SemiBold)
+                        Text(confirmLabel(selected.size), fontWeight = FontWeight.SemiBold)
                     }
                 }
                 OutlinedTextField(
@@ -135,15 +163,18 @@ fun DrivePickerDialog(
                             ) {
                                 Icon(Icons.Outlined.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                                 Spacer(Modifier.width(14.dp))
-                                Text(item.name, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(item.name, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                if (pickFolders) {
+                                    Checkbox(checked = covered || item.id in selected, enabled = !covered, onCheckedChange = { toggle(item, it) })
+                                }
                             }
                             is BrowseItem.File -> {
-                                val on = item.id in selected
+                                val on = covered || item.id in selected
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.fillMaxWidth()
                                         .background(if (on) MaterialTheme.colorScheme.primary.copy(alpha = 0.07f) else Color.Transparent)
-                                        .clickable { if (on) selected.remove(item.id) else selected[item.id] = item }
+                                        .clickable(enabled = !covered) { toggle(item, !on) }
                                         .padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
                                 ) {
                                     FileBadge(item.name, item.mimetype, 32.dp)
@@ -152,7 +183,7 @@ fun DrivePickerDialog(
                                         Text(item.name, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         item.filesize?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                                     }
-                                    Checkbox(checked = on, onCheckedChange = { if (it) selected[item.id] = item else selected.remove(item.id) })
+                                    Checkbox(checked = on, enabled = !covered, onCheckedChange = { toggle(item, it) })
                                 }
                             }
                         }

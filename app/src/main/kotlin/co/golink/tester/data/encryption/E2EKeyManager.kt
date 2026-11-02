@@ -46,6 +46,9 @@ class E2EKeyManager @Inject constructor(
     @Volatile private var secretKey: ByteArray? = null
 
     val isUnlocked: Boolean get() = secretKey != null
+
+    /** A própria chave pública (desbloqueada), em base64. */
+    fun ownPublicKeyB64(): String? = publicKey?.let(Envelope::b64)
     /** Sempre cifrado: basta a chave estar desbloqueada. */
     val shouldEncrypt: Boolean get() = isUnlocked
 

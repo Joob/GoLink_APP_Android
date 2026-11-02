@@ -114,6 +114,7 @@ fun CalendarScreen(
     val e2eUnlocked by gateVm.unlocked.collectAsStateWithLifecycle()
     val e2eConfigured by gateVm.configuredFlow.collectAsStateWithLifecycle()
     val e2eLocked = e2eConfigured && !e2eUnlocked
+    val legacyEnabled by shell.legacyEnabled.collectAsStateWithLifecycle()
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -177,7 +178,7 @@ fun CalendarScreen(
                         else -> go { onOpenArea(area) }()
                     }
                 },
-                areas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, secondaryArea),
+                areas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea),
                 sections = emptyList(),
                 unreadNotifications = unread,
                 onOpenNotifications = go(onOpenNotifications),
@@ -199,6 +200,7 @@ fun CalendarScreen(
                         cursor = state.cursor,
                         calendars = calendars,
                         onSelectDay = { viewModel.select(it); closeDrawer() },
+                        onSelectWeek = { day -> viewModel.select(day); viewModel.setView(CalView.Day); closeDrawer() },
                         onToggle = viewModel::toggleCalendar,
                         onSettings = { id -> closeDrawer(); viewModel.openSettings(id) },
                         holidaysVisible = holidaysVisible,
@@ -494,6 +496,7 @@ private fun ColumnScope.CalendarDrawerMenu(
     cursor: LocalDate,
     calendars: List<CalInfo>,
     onSelectDay: (LocalDate) -> Unit,
+    onSelectWeek: (LocalDate) -> Unit,
     onToggle: (CalInfo) -> Unit,
     onSettings: (String) -> Unit,
     holidaysVisible: Boolean,
@@ -501,7 +504,7 @@ private fun ColumnScope.CalendarDrawerMenu(
     onToggleHolidays: () -> Unit,
     onHolidaySettings: () -> Unit,
 ) {
-    MiniMonth(cursor = cursor, onSelect = onSelectDay)
+    MiniMonth(cursor = cursor, onSelect = onSelectDay, onWeek = onSelectWeek)
 
     // Como na web: meus = do próprio, com ≤1 membro e sem aniversários;
     // partilhados = de outro dono ou com mais membros; outros = aniversários.
@@ -509,7 +512,7 @@ private fun ColumnScope.CalendarDrawerMenu(
     val shared = calendars.filter { !it.isOwner || it.members.size > 1 }.filterNot { it.isOwner && it.isBirthdays && it.members.size <= 1 }
     val others = calendars.filter { it.isOwner && it.isBirthdays && it.members.size <= 1 }
 
-    DrawerLabel("Os meus calendários".tr())
+    DrawerLabel("Os meus calendários".tr(), mine.size)
     mine.forEach { CalendarToggleRow(it, onToggle, onSettings) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -520,10 +523,10 @@ private fun ColumnScope.CalendarDrawerMenu(
         Text("Novo calendário".tr(), fontSize = 13.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
     }
     if (shared.isNotEmpty()) {
-        DrawerLabel("Partilhados".tr())
+        DrawerLabel("Partilhados".tr(), shared.size)
         shared.forEach { CalendarToggleRow(it, onToggle, onSettings, members = it.members.size) }
     }
-    DrawerLabel("Outros".tr())
+    DrawerLabel("Outros".tr(), others.size + 1)
     // Feriados (calculados no aparelho, só leitura), como na web.
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -552,12 +555,20 @@ private fun ColumnScope.CalendarDrawerMenu(
 }
 
 @Composable
-private fun DrawerLabel(text: String) {
-    Text(
-        text.uppercase(co.golink.tester.ui.common.appLocale()), fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 0.4.sp,
-        modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 4.dp),
-    )
+private fun DrawerLabel(text: String, count: Int? = null) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 4.dp)) {
+        Text(
+            text.uppercase(co.golink.tester.ui.common.appLocale()), fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 0.4.sp,
+        )
+        if (count != null) {
+            Text(
+                count.toString(), fontSize = 11.sp, fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.padding(start = 6.dp),
+            )
+        }
+    }
 }
 
 @Composable
@@ -586,7 +597,7 @@ private fun CalendarToggleRow(cal: CalInfo, onToggle: (CalInfo) -> Unit, onSetti
 }
 
 @Composable
-private fun MiniMonth(cursor: LocalDate, onSelect: (LocalDate) -> Unit) {
+private fun MiniMonth(cursor: LocalDate, onSelect: (LocalDate) -> Unit, onWeek: (LocalDate) -> Unit) {
     var month by remember(cursor.year, cursor.monthValue) { mutableStateOf(cursor.withDayOfMonth(1)) }
     val today = LocalDate.now()
     val primary = MaterialTheme.colorScheme.primary
@@ -615,7 +626,9 @@ private fun MiniMonth(cursor: LocalDate, onSelect: (LocalDate) -> Unit) {
                 Box(contentAlignment = Alignment.Center, modifier = Modifier.width(26.dp)) {
                     Box(
                         contentAlignment = Alignment.Center,
-                        modifier = Modifier.size(20.dp).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)),
+                        // Número da semana: abre a vista Dia nessa semana (hoje, se lá estiver).
+                        modifier = Modifier.size(20.dp).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+                            .clickable { onWeek(if (today in week) today else week.first()) },
                     ) {
                         Text(
                             CalendarDates.isoWeek(week.first()).toString(), fontSize = 10.sp, fontWeight = FontWeight.SemiBold,

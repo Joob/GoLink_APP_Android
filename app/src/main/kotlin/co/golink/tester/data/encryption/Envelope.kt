@@ -52,6 +52,15 @@ object Envelope {
         return out
     }
 
+    /** crypto_generichash (BLAKE2b) sem chave, como o `s.crypto_generichash(len, input, null)` da web. */
+    fun genericHash(input: ByteArray, outLen: Int = KEY_BYTES): ByteArray {
+        val out = ByteArray(outLen)
+        check(ls.cryptoGenericHash(out, outLen, input, input.size.toLong(), null, 0)) { "generichash falhou" }
+        return out
+    }
+
+    fun randomBytes(size: Int): ByteArray = ByteArray(size).also(rng::nextBytes)
+
     // ---- nomes cifrados (Fase 2) — mesmo primitivo, sobre os bytes UTF-8 ----
     fun sealName(name: String, publicKey: ByteArray): ByteArray =
         sealDataKey(name.toByteArray(Charsets.UTF_8), publicKey)

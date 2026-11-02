@@ -163,6 +163,7 @@ fun NotificationsScreen(
     onOpenSecurityActivity: () -> Unit = {},
     onOpenSupportTicket: (id: String, admin: Boolean) -> Unit = { _, _ -> },
     onOpenCalendar: (event: String?, date: String?) -> Unit = { _, _ -> },
+    onOpenLegacy: (pane: String) -> Unit = {},
     onOpenSettings: () -> Unit = {},
     viewModel: NotificationsViewModel = hiltViewModel(),
 ) {
@@ -208,6 +209,7 @@ fun NotificationsScreen(
     val openSecurity by rememberUpdatedState(onOpenSecurityActivity)
     val openTicket by rememberUpdatedState(onOpenSupportTicket)
     val openCalendar by rememberUpdatedState(onOpenCalendar)
+    val openLegacy by rememberUpdatedState(onOpenLegacy)
     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     val actionOf = remember(uriHandler) {
         { n: Notification ->
@@ -216,6 +218,7 @@ fun NotificationsScreen(
                 { openSecurity() },
                 { id, admin -> openTicket(id, admin) },
                 { e, d -> openCalendar(e, d) },
+                { pane -> openLegacy(pane) },
                 { url -> runCatching { uriHandler.openUri(url) } },
             )
         }
@@ -558,12 +561,20 @@ private fun actionFor(
     openSecurity: () -> Unit,
     openTicket: (String, Boolean) -> Unit,
     openCalendar: (String?, String?) -> Unit,
+    openLegacy: (String) -> Unit,
     openUrl: (String) -> Unit,
 ): (() -> Unit)? {
     if (n.category == "security-alert") return openSecurity
-    // Legacy: a app só tem o check-in; convites, chaves e abertura fazem-se na web.
+    // Legacy: /legacy e /legacy/<pane> abrem na app; o convite de guardião vai ao
+    // Guarding (já há sessão). /legacy-open segue o link (App Link → ecrã público).
     if (n.category == "legacy") {
         val url = n.actionUrl ?: return null
+        val segments = android.net.Uri.parse(url).pathSegments
+        if (segments.firstOrNull() == "legacy") {
+            val pane = segments.getOrNull(1)?.takeIf { it in co.golink.tester.ui.screens.legacy.LEGACY_PANES } ?: "overview"
+            return { openLegacy(pane) }
+        }
+        if (segments.firstOrNull() == "legacy-invite") return { openLegacy("guarding") }
         return { openUrl(url) }
     }
     // Calendário: o action traz /calendar?event=…&date=… (o título é genérico, o

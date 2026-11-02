@@ -96,6 +96,12 @@ object Routes {
     fun adminUser(id: String) = "admin_user/$id"
     const val CALENDAR = "calendar?event={event}&date={date}"
     fun calendar(event: String? = null, date: String? = null) = "calendar?event=${event.orEmpty()}&date=${date.orEmpty()}"
+    const val LEGACY = "legacy?pane={pane}"
+    fun legacy(pane: String = "overview") = "legacy?pane=$pane"
+    // Páginas públicas do Legacy (App Links, sem sessão). "legacy_" ≠ "legacy?".
+    const val LEGACY_OPEN = "legacy_open/{token}"
+    const val LEGACY_INVITE = "legacy_invite/{id}"
+    const val LEGACY_CHECKIN = "legacy_checkin/{token}"
 }
 
 enum class TopState { Loading, NeedsAuth, NeedsOtp, Authenticated, BootstrapFailed }
@@ -196,12 +202,15 @@ fun AppNavHost(
                 current.startsWith("settings") ||
                 current.startsWith("admin") ||
                 current.startsWith("calendar") ||
+                current.startsWith("legacy") ||
                 current == Routes.NOTIFICATIONS ||
                 current.startsWith("viewer/")
         )
         val shouldNavigate = when {
             current == null -> true
             current == target -> false
+            // Páginas públicas do Legacy: abrem com ou sem sessão, o gate não as tira.
+            current.startsWith("legacy_") -> false
             target == Routes.HOME && inAuthenticated -> false
             target == Routes.LANDING && inAuthStack -> false
             else -> true
@@ -236,6 +245,26 @@ fun AppNavHost(
         InboxDeepLink.consume()
         if (route != Routes.NOTIFICATIONS) navController.navigate(Routes.NOTIFICATIONS)
     }
+
+    // Convite de guardião aberto antes do login: Guarding assim que houver sessão.
+    val legacyGuardingLink by LegacyDeepLink.guarding.collectAsState()
+    LaunchedEffect(legacyGuardingLink, top, currentRoute) {
+        if (!legacyGuardingLink || top != TopState.Authenticated || currentRoute != Routes.HOME) return@LaunchedEffect
+        if (LegacyDeepLink.consume()) navController.navigate(Routes.legacy("guarding"))
+    }
+
+    fun openGuarding() {
+        navController.navigate(Routes.HOME) {
+            popUpTo(0) { inclusive = true }
+            launchSingleTop = true
+        }
+        navController.navigate(Routes.legacy("guarding"))
+    }
+
+    fun legacyLinks(path: String) = listOf(
+        navDeepLink { uriPattern = "https://golink.co/$path" },
+        navDeepLink { uriPattern = "https://tester.golink.co/$path" },
+    )
 
     androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
     NavHost(navController = navController, startDestination = Routes.SPLASH) {
@@ -272,6 +301,49 @@ fun AppNavHost(
                     navController.currentBackStackEntry?.savedStateHandle?.set("registered", requiresVerification)
                 },
                 onBack = { navController.popBackStack() },
+            )
+        }
+        composable(
+            route = Routes.LEGACY_OPEN,
+            arguments = listOf(navArgument("token") { type = NavType.StringType }),
+            deepLinks = legacyLinks("legacy-open/{token}"),
+        ) { entry ->
+            androidx.activity.compose.BackHandler { backOrRestart() }
+            co.golink.tester.ui.screens.legacy.LegacyOpenScreen(
+                token = entry.arguments?.getString("token").orEmpty(),
+                onBack = { backOrRestart() },
+            )
+        }
+        composable(
+            route = Routes.LEGACY_INVITE,
+            arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            deepLinks = legacyLinks("legacy-invite/{id}"),
+        ) { entry ->
+            androidx.activity.compose.BackHandler { backOrRestart() }
+            co.golink.tester.ui.screens.legacy.LegacyInviteScreen(
+                id = entry.arguments?.getString("id").orEmpty(),
+                authenticated = top == TopState.Authenticated,
+                onOpenGuarding = { openGuarding() },
+                onSignIn = {
+                    LegacyDeepLink.requestGuarding()
+                    freshSignIn()
+                },
+                onSignUp = {
+                    LegacyDeepLink.requestGuarding()
+                    navController.navigate(Routes.REGISTER)
+                },
+                onBack = { backOrRestart() },
+            )
+        }
+        composable(
+            route = Routes.LEGACY_CHECKIN,
+            arguments = listOf(navArgument("token") { type = NavType.StringType }),
+            deepLinks = legacyLinks("legacy-checkin/{token}"),
+        ) { entry ->
+            androidx.activity.compose.BackHandler { backOrRestart() }
+            co.golink.tester.ui.screens.legacy.LegacyCheckinScreen(
+                token = entry.arguments?.getString("token").orEmpty(),
+                onBack = { backOrRestart() },
             )
         }
         composable(Routes.FORGOT) {
@@ -352,6 +424,7 @@ fun AppNavHost(
                     onOpenSupportDashboard = { navController.navigate(Routes.SUPPORT_DASHBOARD) },
                     onOpenAdmin = { pane -> navController.navigate(Routes.admin(pane)) },
                     onOpenCalendar = { navController.navigate(Routes.calendar()) { launchSingleTop = true } },
+                    onOpenLegacy = { navController.navigate(Routes.legacy()) { launchSingleTop = true } },
                     areaRequest = areaRequest?.let { name -> runCatching { co.golink.tester.ui.components.drawer.DrawerArea.valueOf(name) }.getOrNull() },
                     onAreaRequestHandled = { entry.savedStateHandle["drawer_area"] = null },
                     openDrawerRequest = drawerRequest,
@@ -398,17 +471,51 @@ fun AppNavHost(
             }
             val drawerRequest by entry.savedStateHandle.getStateFlow("open_drawer", false).collectAsState()
             androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
-                co.golink.tester.ui.screens.calendar.CalendarScreen(
+                co.golink.tester.ui.screens.calendar.CalendarTheme { co.golink.tester.ui.screens.calendar.CalendarScreen(
                     openEventId = entry.arguments?.getString("event")?.takeIf { it.isNotBlank() },
                     openDate = entry.arguments?.getString("date")?.takeIf { it.isNotBlank() },
                     onOpenDrive = { backToHome(null) },
-                    onOpenArea = { area -> backToHome(area.name) },
+                    onOpenArea = { area ->
+                        if (area == co.golink.tester.ui.components.drawer.DrawerArea.Legacy) {
+                            navController.navigate(Routes.legacy()) { popUpTo(Routes.HOME) }
+                        } else {
+                            backToHome(area.name)
+                        }
+                    },
                     onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
                     onOpenSettings = { navController.navigate(Routes.settings()) },
                     onOpenProfile = { navController.navigate(Routes.settings("profile")) },
                     onOpenBilling = { navController.navigate(Routes.settings("billing")) },
                     onOpenHelp = { staff -> navController.navigate(if (staff) Routes.SUPPORT_DASHBOARD else Routes.support(false)) },
                     onOpenFile = { id -> navController.navigate(Routes.viewer(id)) },
+                    openDrawerRequest = drawerRequest,
+                    onDrawerRequestHandled = { entry.savedStateHandle["open_drawer"] = false },
+                ) }
+                co.golink.tester.ui.screens.encryption.E2EGate()
+            }
+        }
+        composable(
+            route = Routes.LEGACY,
+            arguments = listOf(navArgument("pane") { type = NavType.StringType; defaultValue = "overview" }),
+        ) { entry ->
+            val backToHome: (String?) -> Unit = { area ->
+                if (area != null) runCatching { navController.getBackStackEntry(Routes.HOME).savedStateHandle["drawer_area"] = area }
+                if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
+                    navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
+                }
+            }
+            val drawerRequest by entry.savedStateHandle.getStateFlow("open_drawer", false).collectAsState()
+            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+                co.golink.tester.ui.screens.legacy.LegacyScreen(
+                    initialPane = entry.arguments?.getString("pane").orEmpty(),
+                    onOpenDrive = { backToHome(null) },
+                    onOpenCalendar = { navController.navigate(Routes.calendar()) { popUpTo(Routes.HOME) } },
+                    onOpenArea = { area -> backToHome(area.name) },
+                    onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
+                    onOpenSettings = { navController.navigate(Routes.settings()) },
+                    onOpenProfile = { navController.navigate(Routes.settings("profile")) },
+                    onOpenBilling = { navController.navigate(Routes.settings("billing")) },
+                    onOpenHelp = { staff -> navController.navigate(if (staff) Routes.SUPPORT_DASHBOARD else Routes.support(false)) },
                     openDrawerRequest = drawerRequest,
                     onDrawerRequestHandled = { entry.savedStateHandle["open_drawer"] = false },
                 )
@@ -422,7 +529,7 @@ fun AppNavHost(
                 // ao que estava por baixo; vindo das Definições, abre a do Drive.
                 onOpenMenu = {
                     val previous = navController.previousBackStackEntry
-                    val hasDrawer = previous?.destination?.route.let { it == Routes.HOME || it == Routes.CALENDAR }
+                    val hasDrawer = previous?.destination?.route.let { it == Routes.HOME || it == Routes.CALENDAR || it == Routes.LEGACY }
                     val target = if (hasDrawer) previous else runCatching { navController.getBackStackEntry(Routes.HOME) }.getOrNull()
                     if (target != null) {
                         target.savedStateHandle["open_drawer"] = true
@@ -434,6 +541,7 @@ fun AppNavHost(
                 onOpenSecurityActivity = { navController.navigate(Routes.SECURITY_ACTIVITY) },
                 onOpenSupportTicket = { id, admin -> navController.navigate(Routes.supportTicket(id, admin)) },
                 onOpenCalendar = { event, date -> navController.navigate(Routes.calendar(event, date)) },
+                onOpenLegacy = { pane -> navController.navigate(Routes.legacy(pane)) { popUpTo(Routes.HOME) } },
                 onOpenSettings = { navController.navigate(Routes.settings()) },
             )
         }

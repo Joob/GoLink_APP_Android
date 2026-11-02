@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.KeyboardDoubleArrowLeft
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowRight
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsNone
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.CalendarToday
 import androidx.compose.material.icons.outlined.DarkMode
@@ -91,11 +92,12 @@ private val PanelWidth = 248.dp
 private val DrawerFullWidth = RailWidth + 1.dp + PanelWidth
 
 /** Áreas da barra de ícones (igual à sidebar da web). */
-enum class DrawerArea { Drive, Calendar, Admin, Support }
+enum class DrawerArea { Drive, Calendar, Legacy, Admin, Support }
 
 fun DrawerArea.label(): String = when (this) {
     DrawerArea.Drive -> "Drive"
     DrawerArea.Calendar -> "Calendário".tr()
+    DrawerArea.Legacy -> "Legacy"
     DrawerArea.Admin -> "Admin"
     DrawerArea.Support -> "Suporte".tr()
 }
@@ -221,6 +223,10 @@ fun ColumnScope.AppDrawerContent(
     lockedContent: (@Composable () -> Unit)? = null,
     onNewEvent: (() -> Unit)? = null,
     areaContent: (@Composable ColumnScope.() -> Unit)? = null,
+    /** Legacy: "Adicionar ao cofre" no topo do painel. */
+    onAddToVault: (() -> Unit)? = null,
+    /** Fundo do painel (ex.: o cartão de estado do Legacy). */
+    footerContent: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val canCollapse = isPermanentDrawer()
@@ -256,6 +262,10 @@ fun ColumnScope.AppDrawerContent(
                     Column(Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) { NewUploadButton(onNewEvent, label = "Novo evento".tr()) }
                 }
 
+                if (area == DrawerArea.Legacy && onAddToVault != null && lockedContent == null) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) { NewUploadButton(onAddToVault, label = co.golink.tester.ui.i18n.lt("add_to_vault")) }
+                }
+
                 if (area == DrawerArea.Drive && lockedContent == null) {
                     Column(Modifier.padding(horizontal = 14.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         onNewUpload?.let { NewUploadButton(it) }
@@ -271,7 +281,7 @@ fun ColumnScope.AppDrawerContent(
                         .padding(horizontal = 14.dp)
                         .padding(bottom = 8.dp),
                 ) {
-                    if (lockedContent != null && (area == DrawerArea.Drive || area == DrawerArea.Calendar)) {
+                    if (lockedContent != null && (area == DrawerArea.Drive || area == DrawerArea.Calendar || area == DrawerArea.Legacy)) {
                         lockedContent()
                     } else if (areaContent != null) {
                         areaContent()
@@ -299,6 +309,7 @@ fun ColumnScope.AppDrawerContent(
                 if (area == DrawerArea.Drive && storage != null && lockedContent == null) {
                     StorageCard(storage = storage, canUpgrade = canUpgrade, onUpgrade = onUpgrade)
                 }
+                if (footerContent != null && lockedContent == null) footerContent()
             }
             }
         }
@@ -568,6 +579,16 @@ private fun DrawerRail(
                 accent = Color(if (dark) 0xFFFB7185 else 0xFFE11D48),
             ) {
                 onAreaChange(DrawerArea.Calendar)
+            }
+        }
+        if (DrawerArea.Legacy in areas) {
+            RailItem(
+                Icons.Outlined.Shield,
+                DrawerArea.Legacy.label(),
+                area == DrawerArea.Legacy,
+                accent = Color(if (dark) 0xFFA78BFA else 0xFF7C3AED),
+            ) {
+                onAreaChange(DrawerArea.Legacy)
             }
         }
         if (onExpand != null) {

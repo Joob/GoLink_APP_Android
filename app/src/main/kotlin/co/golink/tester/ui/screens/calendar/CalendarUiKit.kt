@@ -227,3 +227,16 @@ fun FileBadge(name: String, mime: String?, size: Dp = 34.dp) {
         Text(label, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = color)
     }
 }
+
+/** Rosa do botão do Calendário na rail: destaque de toda a área (como a web, .calendar-scope). */
+@Composable
+fun CalendarTheme(content: @Composable () -> Unit) {
+    val dark = co.golink.tester.ui.theme.LocalDarkTheme.current
+    val accent = Color(if (dark) 0xFFFB7185 else 0xFFE11D48)
+    val scheme = MaterialTheme.colorScheme.copy(
+        primary = accent,
+        primaryContainer = Color(if (dark) 0xFF881337 else 0xFFFFE4E6),
+        onPrimaryContainer = Color(if (dark) 0xFFFFFFFF else 0xFF9F1239),
+    )
+    MaterialTheme(colorScheme = scheme, typography = MaterialTheme.typography, shapes = MaterialTheme.shapes, content = content)
+}
