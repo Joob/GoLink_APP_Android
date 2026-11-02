@@ -66,9 +66,16 @@ data class CalendarUiState(
     /** Definições abertas: "new" ou o id do calendário. */
     val settings: String? = null,
     val calBusy: Boolean = false,
+    /** Folha do Evento Rápido aberta. */
+    val quickOpen: Boolean = false,
 )
 
-data class EditorRequest(val event: CalEvent?, val start: java.time.Instant? = null)
+data class EditorRequest(
+    val event: CalEvent?,
+    val start: java.time.Instant? = null,
+    /** Vindo do Evento Rápido ("Mais opções"): o editor arranca já preenchido. */
+    val draft: co.golink.tester.domain.calendar.QuickParse? = null,
+)
 
 const val AGENDA_STEP = 60L
 private const val AGENDA_MAX = 360L
@@ -286,6 +293,47 @@ class CalendarViewModel @Inject constructor(
     }
 
     fun newEvent(start: java.time.Instant? = null) = _state.update { it.copy(editor = EditorRequest(null, start)) }
+
+    // ---- Evento Rápido (interpretado no aparelho; grava cifrado como o editor) --------
+
+    val quickParser = co.golink.tester.domain.calendar.QuickEventParser(co.golink.tester.data.calendar.AndroidQuickLocaleSource)
+    private val _quickReady = MutableStateFlow(false)
+    val quickReady: StateFlow<Boolean> = _quickReady
+
+    /** Língua da app primeiro, depois as do aparelho. */
+    fun quickLocales(): List<String> {
+        val device = android.os.LocaleList.getDefault()
+        return listOf(co.golink.tester.ui.i18n.I18n.lang) + (0 until device.size()).map { device[it].toLanguageTag() }
+    }
+
+    fun openQuick() {
+        _state.update { it.copy(quickOpen = true) }
+        if (_quickReady.value) return
+        // Dicionários CLDR (dezenas de línguas) fora da thread principal.
+        viewModelScope.launch(Dispatchers.Default) {
+            runCatching { quickParser.warmUp(quickLocales()) }
+            _quickReady.value = true
+        }
+    }
+
+    fun closeQuick() = _state.update { it.copy(quickOpen = false) }
+
+    /** "Mais opções": abre o editor completo com o que se percebeu. */
+    fun quickMoreOptions(draft: co.golink.tester.domain.calendar.QuickParse?) =
+        _state.update { it.copy(quickOpen = false, editor = EditorRequest(null, null, draft)) }
+
+    fun quickSave(form: EventForm) {
+        if (_state.value.saving) return
+        _state.update { it.copy(saving = true) }
+        viewModelScope.launch {
+            repo.saveEvent(null, form)
+                .onSuccess { saved ->
+                    _state.update { it.copy(saving = false, quickOpen = false, toast = "Evento guardado".tr()) }
+                    select(saved.start.atZone(ZoneId.systemDefault()).toLocalDate())
+                }
+                .onFailure { _state.update { it.copy(saving = false, toast = "Não foi possível concluir. Tenta de novo.".tr()) } }
+        }
+    }
 
     fun editEvent(event: CalEvent) {
         _state.update { it.copy(editor = EditorRequest(event)) }

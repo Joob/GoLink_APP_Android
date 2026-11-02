@@ -26,6 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowLeft
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowRight
@@ -222,6 +223,8 @@ fun ColumnScope.AppDrawerContent(
     onSearch: (() -> Unit)? = null,
     lockedContent: (@Composable () -> Unit)? = null,
     onNewEvent: (() -> Unit)? = null,
+    /** Calendário: ⚡ Evento Rápido ao lado de "Novo evento". */
+    onQuickEvent: (() -> Unit)? = null,
     areaContent: (@Composable ColumnScope.() -> Unit)? = null,
     /** Legacy: "Adicionar ao cofre" no topo do painel. */
     onAddToVault: (() -> Unit)? = null,
@@ -259,7 +262,10 @@ fun ColumnScope.AppDrawerContent(
                 )
 
                 if (area == DrawerArea.Calendar && onNewEvent != null) {
-                    Column(Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) { NewUploadButton(onNewEvent, label = "Novo evento".tr()) }
+                    Row(Modifier.padding(horizontal = 14.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Box(Modifier.weight(1f)) { NewUploadButton(onNewEvent, label = "Novo evento".tr()) }
+                        if (onQuickEvent != null) QuickEventButton(onQuickEvent)
+                    }
                 }
 
                 if (area == DrawerArea.Legacy && onAddToVault != null && lockedContent == null) {
@@ -353,6 +359,22 @@ private fun NewUploadButton(onClick: () -> Unit, label: String = "Novo / Carrega
         Icon(Icons.Filled.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
         Text(label, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+    }
+}
+
+/** Quadrado escuro com o raio (como a web). */
+@Composable
+private fun QuickEventButton(onClick: () -> Unit) {
+    val dark = co.golink.tester.ui.theme.LocalDarkTheme.current
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(44.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (dark) Color.White.copy(alpha = 0.1f) else Color(0xFF111827))
+            .clickable(onClick = onClick),
+    ) {
+        Icon(Icons.Filled.Bolt, contentDescription = "Evento rápido".tr(), tint = Color(0xFFFBBF24), modifier = Modifier.size(20.dp))
     }
 }
 

@@ -159,6 +159,21 @@ private fun defaultFields(calendarId: String?, start: Instant?, day: LocalDate):
     )
 }
 
+/** Evento Rápido → formulário (o que não se percebeu fica como no "Novo evento"). */
+private fun fieldsFromDraft(d: co.golink.tester.domain.calendar.QuickParse, calendarId: String?, day: LocalDate): FormFields {
+    val base = defaultFields(d.calendarId ?: calendarId, null, d.startDay ?: day)
+    val sd = d.startDay ?: return base.copy(title = d.title, location = d.location)
+    return base.copy(
+        title = d.title,
+        location = d.location,
+        allDay = d.allDay,
+        startDay = sd,
+        endDay = d.endDay ?: sd,
+        startTime = d.startTime ?: base.startTime,
+        endTime = d.endTime ?: base.endTime,
+    )
+}
+
 private fun fieldsFrom(ev: CalEvent): FormFields {
     val zone = ZoneId.systemDefault()
     val s = ev.start.atZone(zone).toLocalDateTime()
@@ -204,6 +219,7 @@ fun EventEditor(
     event: CalEvent?,
     start: Instant?,
     day: LocalDate,
+    draft: co.golink.tester.domain.calendar.QuickParse? = null,
     calendars: List<CalInfo>,
     ownEmail: String?,
     saving: Boolean,
@@ -219,7 +235,9 @@ fun EventEditor(
 ) {
     val editable = calendars.filter { it.canEdit }
     val defaultCal = editable.firstOrNull { !it.isBirthdays } ?: editable.firstOrNull()
-    val initial = remember(event?.raw?.version, event?.id) { event?.let(::fieldsFrom) ?: defaultFields(defaultCal?.id, start, day) }
+    val initial = remember(event?.raw?.version, event?.id, draft) {
+        event?.let(::fieldsFrom) ?: draft?.let { fieldsFromDraft(it, defaultCal?.id, day) } ?: defaultFields(defaultCal?.id, start, day)
+    }
     var f by remember(initial) { mutableStateOf(initial) }
     val manages = event == null || event.canManage
 

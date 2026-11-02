@@ -1,5 +1,7 @@
 package co.golink.tester.ui.screens.calendar
 
+import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material.icons.filled.Bolt
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -195,6 +197,7 @@ fun CalendarScreen(
                     { LockedDrawerNote(onUnlock = { closeDrawer(); gateVm.reopen() }) }
                 } else null,
                 onNewEvent = if (!e2eLocked && calendars.any { it.canEdit }) go { viewModel.newEvent() } else null,
+                onQuickEvent = if (!e2eLocked && calendars.any { it.canEdit }) go { viewModel.openQuick() } else null,
                 areaContent = {
                     CalendarDrawerMenu(
                         cursor = state.cursor,
@@ -217,14 +220,23 @@ fun CalendarScreen(
             containerColor = MaterialTheme.colorScheme.background,
             floatingActionButton = {
                 if (!e2eLocked && !searchOpen && calendars.any { it.canEdit }) {
-                    ExtendedFloatingActionButton(
-                        onClick = { viewModel.newEvent() },
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = Color.White,
-                        shape = RoundedCornerShape(18.dp),
-                        icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                        text = { Text("Evento".tr(), fontWeight = FontWeight.SemiBold) },
-                    )
+                    // Manual (pequeno, por cima) e ⚡ Rápido (principal).
+                    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        SmallFloatingActionButton(
+                            onClick = { viewModel.newEvent() },
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            contentColor = MaterialTheme.colorScheme.primary,
+                            shape = RoundedCornerShape(14.dp),
+                        ) { Icon(Icons.Filled.Add, contentDescription = "Evento manual".tr()) }
+                        ExtendedFloatingActionButton(
+                            onClick = { viewModel.openQuick() },
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = Color.White,
+                            shape = RoundedCornerShape(18.dp),
+                            icon = { Icon(Icons.Filled.Bolt, contentDescription = null) },
+                            text = { Text("Rápido".tr(), fontWeight = FontWeight.SemiBold) },
+                        )
+                    }
                 }
             },
         ) { padding ->
@@ -288,10 +300,20 @@ fun CalendarScreen(
         )
     }
 
+    if (state.quickOpen) {
+        QuickEventSheet(
+            viewModel = viewModel,
+            calendars = calendars,
+            saving = state.saving,
+            onDismiss = viewModel::closeQuick,
+        )
+    }
+
     state.editor?.let { req ->
         EventEditor(
             event = req.event,
             start = req.start,
+            draft = req.draft,
             day = state.cursor,
             calendars = calendars,
             ownEmail = user?.email,
