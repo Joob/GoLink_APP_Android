@@ -313,8 +313,12 @@ fun CalendarScreen(
         QuickEventSheet(
             viewModel = viewModel,
             calendars = calendars,
+            ownEmail = user?.email,
             saving = state.saving,
             onDismiss = viewModel::closeQuick,
+            onAttach = { viewModel.openPicker(true) },
+            pendingAttachments = state.pendingAttachments,
+            onPendingConsumed = viewModel::consumePendingAttachments,
         )
     }
 
@@ -323,6 +327,7 @@ fun CalendarScreen(
             event = req.event,
             start = req.start,
             draft = req.draft,
+            draftExtras = req.extras,
             day = state.cursor,
             calendars = calendars,
             ownEmail = user?.email,
@@ -335,14 +340,15 @@ fun CalendarScreen(
             attachmentFiles = state.attachmentFiles,
             onOpenAttachment = { a, all, title -> viewModel.openAttachment(a, all, title, user?.id) },
         )
-        if (state.picker) {
-            DrivePickerDialog(
-                exclude = emptySet(),
-                load = viewModel::listDriveFolder,
-                onDismiss = { viewModel.openPicker(false) },
-                onPick = viewModel::attach,
-            )
-        }
+    }
+    // Anexar do Drive: no editor e no Evento Rápido.
+    if (state.picker && (state.editor != null || state.quickOpen)) {
+        DrivePickerDialog(
+            exclude = emptySet(),
+            load = viewModel::listDriveFolder,
+            onDismiss = { viewModel.openPicker(false) },
+            onPick = viewModel::attach,
+        )
     }
 
     state.settings?.let { id ->

@@ -41,6 +41,9 @@ class QuickLocaleRaw(
     val yearAffix: List<String> = emptyList(),
     val minuteUnits: List<String> = emptyList(),
     val hourUnits: List<String> = emptyList(),
+    /** Para os alertas ("2 dias antes", "1 semana antes"). */
+    val dayUnits: List<String> = emptyList(),
+    val weekUnits: List<String> = emptyList(),
 )
 
 interface QuickLocaleSource {
@@ -48,6 +51,9 @@ interface QuickLocaleSource {
 }
 
 data class QuickCalendar(val id: String, val name: String)
+
+/** Repetição percebida na frase: daily/weekly/monthly/yearly, a cada [interval], dias ISO (1 = segunda). */
+data class QuickRepeat(val repeat: String, val interval: Int = 1, val days: List<Int> = emptyList())
 
 data class QuickParse(
     val ok: Boolean = false,
@@ -63,6 +69,13 @@ data class QuickParse(
     val endDay: LocalDate? = null,
     val endTime: LocalTime? = null,
     val relative: Int? = null,
+    val repeat: QuickRepeat? = null,
+    /** Fim da repetição ("até 30 de junho" ou a 2.ª ponta de um intervalo). */
+    val repeatUntil: LocalDate? = null,
+    /** Minutos antes; null = não se disse nada (fica o alerta por omissão). */
+    val alerts: List<Int>? = null,
+    val guests: List<String> = emptyList(),
+    val notes: String = "",
 )
 
 class QuickEventParser(private val source: QuickLocaleSource) {
@@ -76,6 +89,8 @@ class QuickEventParser(private val source: QuickLocaleSource) {
         val hourSuffix: List<String>,
         val minuteUnits: List<String>,
         val hourUnits: List<String>,
+        val dayUnits: List<String>,
+        val weekUnits: List<String>,
         val dayAffix: List<String>,
         val yearAffix: List<String>,
     )
@@ -87,9 +102,12 @@ class QuickEventParser(private val source: QuickLocaleSource) {
         val hourSuffix: Set<String>,
         val minuteUnits: Set<String>,
         val hourUnits: Set<String>,
+        val dayUnits: Set<String>,
+        val weekUnits: Set<String>,
         val dayAffix: Set<String>,
         val yearAffix: Set<String>,
     ) {
+        val lookup: Map<String, Entry> = words.toMap()
         // Só dependem do índice: compiladas uma vez, não a cada tecla.
         private val suffix = alt(hourSuffix)
         private val periods = alt(am + pm)
@@ -106,6 +124,16 @@ class QuickEventParser(private val source: QuickLocaleSource) {
         val dayAfter = Regex("""^([\s\S]{0,8}?)(?<![\d:])(\d{1,2})(?![\d:])(?:$dayAff)?""")
         val yearAfter = Regex("""^([\s\S]{0,6}?)(?<!\d)((?:19|20|21)\d{2})(?!\d)(?:$yearAff)?""")
         val yearBefore = Regex("""(?<!\d)((?:19|20|21)\d{2})(?:$yearAff)?\s?$""")
+        // "10 min antes", "lembrar 1 h antes", "remind me 2 days before"
+        val alert = Regex(
+            """(?:(?:$ALERT_PREFIX)\s+(?:(?:de|com|me|mich|moi|mi)\s+)?)?(?<![\d:.])(\d{1,3})\s?""" +
+                """(?:(${alt(minuteUnits + listOf("m", "min"))})|(${alt(hourUnits + "h")})|(${alt(dayUnits).ifEmpty { "(?!)" }})|(${alt(weekUnits).ifEmpty { "(?!)" }}))""" +
+                """\s+(?:$ALERT_BEFORE)(?![\p{L}\d])""",
+        )
+        // "1 a 7 de fevereiro": a ponta inicial antes do dia que pega no mês.
+        val rangeBefore = Regex("""(?<![\d:.])(\d{1,2})(?:$dayAff)?(?:st|nd|rd|th|er|º|ª|\.)?(?:\s*[-–—~]\s*|\s+(?:$RANGE_ALT)\s+)$DAY_PREFIX${'$'}""")
+        // "February 1-7": a ponta final depois do dia.
+        val rangeAfter = Regex("""^(?:\s*[-–—~]\s*|\s+(?:$RANGE_ALT)\s+)$DAY_PREFIX(\d{1,2})(?![\d:])(?:$dayAff)?(?:st|nd|rd|th)?(?!\p{L})""")
         private val pmBare = pm.map(::bare).toSet()
         fun isPm(p: String) = bare(p) in pmBare
 
@@ -117,7 +145,7 @@ class QuickEventParser(private val source: QuickLocaleSource) {
     private data class Found(val a: Int, val b: Int, val type: String, val v: Int, val prio: Boolean)
     private data class Dur(val pos: Int, val n: Int, val mult: Int)
     private data class Time(val pos: Int, val h: Int, val m: Int)
-    private data class Ymd(val y: Int?, val m: Int, val d: Int)
+    private data class Ymd(val y: Int?, val m: Int, val d: Int, val a: Int = 0, val b: Int = 0)
     private data class Best(val a: Int, val b: Int, val d: Int, val gap: Int)
 
     private val localeCache = HashMap<String, Data>()
@@ -144,6 +172,8 @@ class QuickEventParser(private val source: QuickLocaleSource) {
             hourSuffix = raw.hourSuffix.map(::norm).filter { s -> s.isNotEmpty() && s.none { it in '0'..'9' } }.distinct(),
             minuteUnits = raw.minuteUnits.map(::norm).filter { it.length > 1 }.distinct(),
             hourUnits = raw.hourUnits.map(::norm).filter { it.length > 1 }.distinct(),
+            dayUnits = raw.dayUnits.map(::norm).filter { it.length > 1 }.distinct(),
+            weekUnits = raw.weekUnits.map(::norm).filter { it.length > 1 }.distinct(),
             dayAffix = raw.dayAffix.mapNotNull(::affix).distinct(),
             yearAffix = raw.yearAffix.mapNotNull(::affix).distinct(),
         )
@@ -173,6 +203,8 @@ class QuickEventParser(private val source: QuickLocaleSource) {
         val hourSuffix = hashSetOf("h", "点", "點")
         val minuteUnits = HashSet<String>()
         val hourUnits = HashSet<String>()
+        val dayUnits = HashSet<String>()
+        val weekUnits = HashSet<String>()
         val dayAffix = HashSet<String>()
         val yearAffix = HashSet<String>()
         fun distinct(w: String) = w.length >= 4 || (NOSPACE.containsMatchIn(w) && w.length >= 2) || w.any { it in '0'..'9' }
@@ -191,6 +223,8 @@ class QuickEventParser(private val source: QuickLocaleSource) {
             d.hourSuffix.filter(ok).forEach { hourSuffix += it }
             d.minuteUnits.filter(ok).forEach { minuteUnits += it }
             d.hourUnits.filter(ok).forEach { hourUnits += it }
+            d.dayUnits.filter(ok).forEach { dayUnits += it }
+            d.weekUnits.filter(ok).forEach { weekUnits += it }
             dayAffix += d.dayAffix
             yearAffix += d.yearAffix
         }
@@ -198,10 +232,12 @@ class QuickEventParser(private val source: QuickLocaleSource) {
         hourUnits.removeAll(hourSuffix)
         hourUnits.remove("h")
         minuteUnits.remove("m")
+        // Sufixos de ordinal ("1st", "2nd") não são unidades ("st" = hora noutras línguas).
+        for (set in listOf(minuteUnits, hourUnits, dayUnits, weekUnits)) set.removeAll(ORDINAL_SUFFIXES)
         Index(
             words = words.entries.map { it.key to it.value }.sortedByDescending { it.first.length },
             am = am, pm = pm, hourSuffix = hourSuffix, minuteUnits = minuteUnits, hourUnits = hourUnits,
-            dayAffix = dayAffix, yearAffix = yearAffix,
+            dayUnits = dayUnits, weekUnits = weekUnits, dayAffix = dayAffix, yearAffix = yearAffix,
         )
     }
 
@@ -213,14 +249,32 @@ class QuickEventParser(private val source: QuickLocaleSource) {
         dayFirst: Boolean = true,
         calendars: List<QuickCalendar> = emptyList(),
         defaultCalendarId: String? = null,
+        /** O próprio email não entra nos convidados. */
+        selfEmail: String? = null,
     ): QuickParse {
+        // Notas: tudo depois de "//". Emails → convidados, tirados antes do
+        // "@local" para o "@" do email não passar por local.
+        var raw = text
+        var notes = ""
+        NOTES_CUT.find(raw)?.let { m ->
+            notes = raw.substring(m.range.first).trim().removePrefix("//").trim()
+            raw = raw.substring(0, m.range.first)
+        }
+        val guests = mutableListOf<String>()
+        val self = selfEmail.orEmpty().trim().lowercase()
+        raw = EMAIL.replace(raw) { m ->
+            val e = m.value.lowercase()
+            if (e != self && e !in guests) guests += e
+            MARK.toString()
+        }
+        fun extra(r: QuickParse) = r.copy(notes = notes, guests = guests.toList())
         // Com data antes do @, o local fica inteiro ("@Avenida 5 de Outubro");
         // sem data assim, o local acaba no 1.º token de data ("@Cais amanhã 13h").
-        if ('@' in text) {
-            val masked = parseCore(text, now, locales, dayFirst, calendars, defaultCalendarId, maskPlace = true)
-            if (masked.ok || masked.error !in setOf("no_date", "no_day")) return masked
+        if ('@' in raw) {
+            val masked = parseCore(raw, now, locales, dayFirst, calendars, defaultCalendarId, maskPlace = true)
+            if (masked.ok || masked.error !in setOf("no_date", "no_day")) return extra(masked)
         }
-        return parseCore(text, now, locales, dayFirst, calendars, defaultCalendarId, maskPlace = false)
+        return extra(parseCore(raw, now, locales, dayFirst, calendars, defaultCalendarId, maskPlace = false))
     }
 
     private fun parseCore(
@@ -260,15 +314,85 @@ class QuickEventParser(private val source: QuickLocaleSource) {
         }
         fun g(m: MatchResult, i: Int): String? = m.groups[i]?.value?.takeIf { it.isNotEmpty() }
 
-        // 1) Datas numéricas: 2027-02-02 · 2/2/2027 · 2.2. · 2.2.2027
-        var date: Ymd? = null
-        each(ISO_DATE) { m ->
-            if (date != null) return@each
-            date = Ymd(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt())
+        // 0) Alertas ("10 min antes", "lembrar 1 h antes") — antes das horas, senão "1 h" era 01:00.
+        val alerts = mutableListOf<Int>()
+        each(index.alert) { m ->
+            // "20h antes do cinema" é a hora 20:00; só "1 h antes" (com espaço) ou "lembrar 1h antes" é alerta.
+            if (g(m, 3) != null && COMPACT_H.containsMatchIn(m.value)) return@each
+            val mult = when {
+                g(m, 2) != null -> 1
+                g(m, 3) != null -> 60
+                g(m, 4) != null -> 1440
+                else -> 10080
+            }
+            val minutes = m.groupValues[1].toInt() * mult
+            if (minutes > MAX_ALERT_MINUTES || alerts.size >= 5) return@each
+            if (minutes !in alerts) alerts += minutes
             take(m.range.first, m.range.last + 1)
         }
+
+        // 0b) Repetição: "todas as semanas", "a cada 2 meses", "todas as segundas e quartas", "dias úteis"
+        var repeat: QuickRepeat? = null
+        each(REPEAT_RE) { m ->
+            if (repeat != null) return@each
+            val kind = REPEAT_KIND[m.groupValues[1].replace(WS, " ")] ?: return@each
+            repeat = if (kind == "weekdays") QuickRepeat("weekly", 1, listOf(1, 2, 3, 4, 5)) else QuickRepeat(kind)
+            take(m.range.first, m.range.last + 1)
+        }
+        if (repeat == null) each(EVERY_N_RE) { m ->
+            val n = m.groupValues[1].toInt()
+            val kind = UNIT_KIND[m.groupValues[2]]
+            if (repeat != null || n !in 1..99 || kind == null) return@each
+            repeat = QuickRepeat(kind, n)
+            take(m.range.first, m.range.last + 1)
+        }
+        if (repeat == null) each(EVERY_WD_RE) { m ->
+            if (repeat != null) return@each
+            val weak = m.groupValues[1].replace(WS, " ") in WEAK_EVERY
+            val days = mutableListOf<Int>()
+            var pos = m.range.last + 1
+            var end = pos
+            while (true) {
+                val t = TOKEN.matchAt(w, pos) ?: break
+                val v = weekdayOf(index, t.value, weak) ?: break
+                if (!free(pos, pos + t.value.length)) break
+                if (v !in days) days += v
+                pos += t.value.length
+                end = pos
+                val sep = LIST_SEP.matchAt(w, pos) ?: break
+                pos += sep.value.length
+            }
+            if (days.isEmpty()) return@each
+            repeat = QuickRepeat("weekly", 1, days.sorted())
+            take(m.range.first, end)
+        }
+
+        // 1) Datas numéricas: 2027-02-02 · 2/2/2027 · 2.2. · 2.2.2027 (até duas: "1/2 a 7/2")
+        val dates = mutableListOf<Ymd>()
+        // Entre as duas pontas de um intervalo tem de haver uma ligação ("a", "to", "–", "bis"…).
+        fun rangeGap(a: Int, b: Int): Boolean {
+            // As horas já tiradas não contam ("1 fev 10h a 3 fev 18h").
+            val gap = String(CharArray(b - a) { i -> if (used[a + i]) ' ' else w[a + i] })
+            val words = gap.split(RANGE_SPLIT).filter { it.isNotEmpty() }
+            if (!RANGE_DASH.containsMatchIn(gap) && words.none { it in RANGE_WORDS }) return false
+            return words.all { it in RANGE_WORDS || it in RANGE_FILLER || it in CONNECTORS }
+        }
+        fun addDate(dt: Ymd): Boolean {
+            if (dates.isEmpty()) {
+                dates += dt
+                return true
+            }
+            val prev = dates.last()
+            if (dates.size >= 2 || dt.a < prev.b || !rangeGap(prev.b, dt.a)) return false
+            take(prev.b, dt.a)
+            dates += dt
+            return true
+        }
+        each(ISO_DATE) { m ->
+            val end = m.range.last + 1
+            if (addDate(Ymd(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt(), m.range.first, end))) take(m.range.first, end)
+        }
         each(NUM_DATE) { m ->
-            if (date != null) return@each
             val sep = m.groupValues[2]
             val year = g(m, 4)
             if (sep == "." && year == null && g(m, 5) == null) return@each // "13.30" é hora
@@ -282,8 +406,8 @@ class QuickEventParser(private val source: QuickLocaleSource) {
             if (sep != "." && mon > 12 && day <= 12) day = mon.also { mon = day }
             if (mon !in 1..12 || day !in 1..31) return@each
             val y = year?.let { if (it.length == 2) 2000 + it.toInt() else it.toInt() }
-            date = Ymd(y, mon, day)
-            take(m.range.first, m.range.last + 1)
+            val end = m.range.last + 1
+            if (addDate(Ymd(y, mon, day, m.range.first, end))) take(m.range.first, end)
         }
 
         // 2) Horas: intervalo "13-15h", "13:30", "13h30", "13.30", "1pm", "午後1時", "13 Uhr"
@@ -360,9 +484,10 @@ class QuickEventParser(private val source: QuickLocaleSource) {
 
         // Mês + dia (+ ano) → data explícita. Meses das línguas da app/aparelho
         // primeiro; os das outras ("marta", "maja" — também nomes próprios) só
-        // se não houver mais nada que dê o dia.
+        // se não houver mais nada que dê o dia. Até duas datas (intervalo).
         var monthError = false
         fun tryMonth(f: Found): Boolean {
+            if (!free(f.a, f.b)) return false
             var best: Best? = null
             // Antes: "2 de fevereiro", "2nd of February", "le 2 février", "2. Februar"
             val before = w.substring(maxOf(0, f.a - 14), f.a)
@@ -387,66 +512,160 @@ class QuickEventParser(private val source: QuickLocaleSource) {
                 }
             }
             val pick = best ?: return false
-            take(f.a, f.b)
-            take(pick.a, pick.b)
-            var y: Int? = null
-            val end = maxOf(f.b, pick.b)
-            val yAfter = index.yearAfter.find(w.substring(end, minOf(w.length, end + 12)))
-            if (yAfter != null && GAP.matches(yAfter.groupValues[1]) && free(end + yAfter.groupValues[1].length, end + yAfter.value.length)) {
-                y = yAfter.groupValues[2].toInt()
-                take(end + yAfter.groupValues[1].length, end + yAfter.value.length)
+            var a = minOf(f.a, pick.a)
+            var b = maxOf(f.b, pick.b)
+            // Mês partilhado: "1 a 7 de fevereiro", "do dia 1 ao dia 7 de fevereiro", "February 1–7".
+            var days = listOf(pick.d)
+            if (pick.a < f.a) {
+                index.rangeBefore.find(w.substring(maxOf(0, pick.a - 28), pick.a))?.let { pre ->
+                    val d0 = pre.groupValues[1].toInt()
+                    if (d0 in 1..pick.d && free(pick.a - pre.value.length, pick.a)) {
+                        days = listOf(d0, pick.d)
+                        a = pick.a - pre.value.length
+                    }
+                }
             } else {
-                val start = minOf(f.a, pick.a)
-                index.yearBefore.find(w.substring(maxOf(0, start - 8), start))?.let { yb ->
-                    val a = start - yb.value.length
-                    if (free(a, start)) {
-                        y = yb.groupValues[1].toInt()
-                        take(a, start)
+                index.rangeAfter.find(w.substring(b, minOf(w.length, b + 28)))?.let { post ->
+                    val d1 = post.groupValues[1].toInt()
+                    if (d1 in pick.d..31 && free(b, b + post.value.length)) {
+                        days = listOf(pick.d, d1)
+                        b += post.value.length
                     }
                 }
             }
-            date = Ymd(y, f.v, pick.d)
+            var y: Int? = null
+            var ySpan: IntArray? = null
+            val yAfter = index.yearAfter.find(w.substring(b, minOf(w.length, b + 12)))
+            if (yAfter != null && GAP.matches(yAfter.groupValues[1]) && free(b + yAfter.groupValues[1].length, b + yAfter.value.length)) {
+                y = yAfter.groupValues[2].toInt()
+                ySpan = intArrayOf(b + yAfter.groupValues[1].length, b + yAfter.value.length)
+            } else {
+                index.yearBefore.find(w.substring(maxOf(0, a - 8), a))?.let { yb ->
+                    if (free(a - yb.value.length, a)) {
+                        y = yb.groupValues[1].toInt()
+                        ySpan = intArrayOf(a - yb.value.length, a)
+                    }
+                }
+            }
+            if (dates.size + days.size > 2) return false
+            val ys = ySpan
+            val ea = if (ys != null) minOf(a, ys[0]) else a
+            val eb = if (ys != null) maxOf(b, ys[1]) else b
+            if (!addDate(Ymd(y, f.v, days[0], ea, eb))) return false
+            if (days.size > 1) dates += Ymd(y, f.v, days[1], ea, eb)
+            take(a, b)
+            if (ys != null) take(ys[0], ys[1])
             return true
         }
         val months = found.filter { it.type == "month" }
         for (f in months.filter { it.prio }) {
-            if (date != null) break
+            if (dates.size >= 2) break
             if (!tryMonth(f)) monthError = true
         }
-        if (date == null && found.none { it.type != "month" }) {
-            for (f in months.filterNot { it.prio }) if (date != null || tryMonth(f)) break
+        if (dates.isEmpty() && found.none { it.type != "month" }) {
+            for (f in months.filterNot { it.prio }) if (tryMonth(f)) break
         }
         // "Friday, Dec 5": o dia da semana junto a uma data explícita também sai do título.
-        if (date != null) found.filter { it.type == "weekday" && it.b - it.a >= 3 && free(it.a, it.b) }.forEach { take(it.a, it.b) }
+        if (dates.isNotEmpty()) found.filter { it.type == "weekday" && it.b - it.a >= 3 && free(it.a, it.b) }.forEach { take(it.a, it.b) }
+
+        // "todas as segundas até 30 de junho": a data é o fim da repetição.
+        var until: Ymd? = null
+        if (repeat != null && dates.size == 1) {
+            val d0 = dates[0]
+            UNTIL_RE.find(w.substring(maxOf(0, d0.a - 24), d0.a))?.let { um ->
+                take(d0.a - um.value.length, d0.a)
+                until = dates.removeAt(0)
+            }
+        }
 
         val today = now.toLocalDate()
-        var day: LocalDate? = null
-        var relative: Int? = null
-        val ymd = date
-        if (ymd != null) {
-            fun make(y: Int) = runCatching { LocalDate.of(y, ymd.m, ymd.d) }.getOrNull()
-            var y = ymd.y ?: today.year
-            var candidate = make(y)
-            // Sem ano: a próxima vez que o dia existe e não passou (29/2 → próximo bissexto).
+        fun fixed(dt: Ymd, y: Int): LocalDate? = runCatching { LocalDate.of(y, dt.m, dt.d) }.getOrNull()
+        // Sem ano: a próxima vez que o dia existe e não passou (29/2 → próximo bissexto).
+        fun nextFrom(dt: Ymd, from: LocalDate): LocalDate? {
+            var y = from.year
+            var c = fixed(dt, y)
             var n = 0
-            while (ymd.y == null && (candidate == null || candidate.isBefore(today)) && n++ < 8) candidate = make(++y)
-            day = candidate ?: return base.copy(error = "invalid_date")
+            while ((c == null || c.isBefore(from)) && n++ < 8) c = fixed(dt, ++y)
+            return c
+        }
+        fun md(dt: Ymd) = dt.m * 100 + dt.d
+        var day: LocalDate? = null
+        var endDate: LocalDate? = null
+        var relative: Int? = null
+        if (dates.isNotEmpty()) {
+            val d0 = dates[0]
+            val d1 = dates.getOrNull(1)
+            if (d1 != null && d0.y == null && d1.y == null) {
+                // Intervalo sem ano: o primeiro que ainda não acabou ("1 a 7 de novembro" a 2/11 é este ano).
+                var y = today.year
+                for (n in 0 until 8) {
+                    val c = fixed(d0, y)
+                    val e = fixed(d1, y + if (md(d1) < md(d0)) 1 else 0)
+                    if (c != null && e != null && !e.isBefore(today)) {
+                        day = c
+                        endDate = e
+                        break
+                    }
+                    y++
+                }
+            } else {
+                val y0 = d0.y ?: d1?.let { e -> e.y?.let { it - if (md(d0) > md(e)) 1 else 0 } }
+                day = if (y0 == null) nextFrom(d0, today) else fixed(d0, y0)
+                val s0 = day
+                if (s0 != null && d1 != null) {
+                    endDate = (if (d1.y != null) fixed(d1, d1.y) else nextFrom(d1, s0))?.takeIf { !it.isBefore(s0) }
+                    if (endDate == null) day = null
+                }
+            }
+            if (day == null) return base.copy(error = "invalid_date")
         } else {
             val rel = found.firstOrNull { it.type == "rel" && free(it.a, it.b) }
             val wd = found.firstOrNull { it.type == "weekday" && free(it.a, it.b) }
+            val passed = times.isNotEmpty() && times[0].h * 60 + times[0].m <= now.hour * 60 + now.minute
+            // "segunda 9h" dito à segunda às 10h → a próxima segunda.
+            fun aheadOf(v: Int): Int {
+                val ahead = (v - today.dayOfWeek.value + 7) % 7
+                return if (ahead == 0 && passed) 7 else ahead
+            }
+            val rep = repeat
             if (rel != null) {
                 take(rel.a, rel.b)
                 day = today.plusDays(rel.v.toLong())
                 relative = rel.v
             } else if (wd != null) {
                 take(wd.a, wd.b)
-                var ahead = (wd.v - today.dayOfWeek.value + 7) % 7
-                // "segunda 9h" dito à segunda às 10h → a próxima segunda.
-                if (ahead == 0 && times.isNotEmpty() && times[0].h * 60 + times[0].m <= now.hour * 60 + now.minute) ahead = 7
-                day = today.plusDays(ahead.toLong())
+                day = today.plusDays(aheadOf(wd.v).toLong())
+            } else if (rep != null) {
+                // "Ginásio todas as segundas 7h" / "Comprimido todos os dias 9h": começa já.
+                day = if (rep.days.isNotEmpty()) today.plusDays(rep.days.minOf(::aheadOf).toLong())
+                else if (!passed) today
+                // "Comprimido todos os dias 9h" dito às 10h: a 1.ª ocorrência é a próxima, não uma já passada.
+                else when (rep.repeat) {
+                    "daily" -> today.plusDays(rep.interval.toLong())
+                    "weekly" -> today.plusWeeks(rep.interval.toLong())
+                    "monthly" -> today.plusMonths(rep.interval.toLong())
+                    else -> today.plusYears(rep.interval.toLong())
+                }
             }
         }
-        if (day == null) return base.copy(error = if (monthError) "no_day" else "no_date")
+        var start = day ?: return base.copy(error = if (monthError) "no_day" else "no_date")
+
+        // Repetição com intervalo ("todas as segundas de 1 de fev. a 30 de jun."): o fim é o fim da repetição.
+        var untilDate: LocalDate? = null
+        val u = until
+        if (repeat != null && endDate != null) {
+            untilDate = endDate
+            endDate = null
+        } else if (u != null) {
+            untilDate = (if (u.y != null) fixed(u, u.y) else nextFrom(u, start))?.takeIf { !it.isBefore(start) }
+                ?: return base.copy(error = "invalid_date")
+        }
+        // "todas as quintas a partir de 1 de fev." (uma segunda): começa na 1.ª quinta.
+        val rd = repeat?.days.orEmpty()
+        if (rd.isNotEmpty()) {
+            while (start.dayOfWeek.value !in rd) start = start.plusDays(1)
+            if (untilDate != null && untilDate.isBefore(start)) return base.copy(error = "invalid_date")
+        }
 
         // 5) Título, local e calendário a partir do texto original (com maiúsculas e acentos).
         val sb = StringBuilder()
@@ -478,16 +697,33 @@ class QuickEventParser(private val source: QuickLocaleSource) {
         val named = base.copy(location = location, calendarId = calendarId, unknownTag = unknownTag, relative = relative)
         if (title.isEmpty()) return named.copy(error = "no_title")
 
-        // 6) Datas finais: sem hora → dia inteiro; sem fim → 1 h (ou a duração).
-        if (times.isEmpty()) return named.copy(ok = true, title = title, startDay = day, endDay = day)
-        val start = day.atTime(times[0].h, times[0].m)
-        var endAt = if (times.size > 1) day.atTime(times[1].h, times[1].m) else start.plusMinutes((duration ?: 60).toLong())
-        if (times.size > 1 && !endAt.isAfter(start)) endAt = endAt.plusDays(1)
-        return named.copy(
-            ok = true, title = title, allDay = false,
-            startDay = start.toLocalDate(), startTime = start.toLocalTime(),
+        // 6) Datas finais: sem hora → dia inteiro; sem fim → 1 h (ou a duração); intervalo → até ao último dia.
+        val lastDay = endDate ?: start
+        val done = named.copy(
+            ok = true, title = title, repeat = repeat, repeatUntil = untilDate,
+            alerts = alerts.sorted().takeIf { it.isNotEmpty() },
+        )
+        if (times.isEmpty()) return done.copy(startDay = start, endDay = lastDay)
+        val startAt = start.atTime(times[0].h, times[0].m)
+        var endAt = if (times.size > 1) lastDay.atTime(times[1].h, times[1].m) else lastDay.atTime(times[0].h, times[0].m).plusMinutes((duration ?: 60).toLong())
+        if (times.size > 1 && !endAt.isAfter(startAt)) endAt = endAt.plusDays(1)
+        return done.copy(
+            allDay = false,
+            startDay = startAt.toLocalDate(), startTime = startAt.toLocalTime(),
             endDay = endAt.toLocalDate(), endTime = endAt.toLocalTime(),
         )
+    }
+
+    /** "segundas" / "lundis" / "Mondays" / "segundas-feiras" → dia ISO; fraco ("às", "on") só com plural. */
+    private fun weekdayOf(index: Index, token: String, weak: Boolean): Int? {
+        val tries = listOf(token, token.replace(PLURAL_S, ""), token.removeSuffix("en"), token.removeSuffix("n"))
+        for ((i, t) in tries.withIndex()) {
+            // Fraco só com plural; "los lunes" já é plural (singular = plural em espanhol).
+            if (weak && (i == 0 || t == token) && !(i == 0 && token.endsWith("s"))) continue
+            val e = index.lookup[t]
+            if (e != null && e.type == "weekday") return e.v
+        }
+        return null
     }
 
     companion object {
@@ -530,8 +766,80 @@ class QuickEventParser(private val source: QuickLocaleSource) {
                 // it
                 "alle il lo di del dal da per fino prossimo prossima " +
                 // nl
-                "om op van tot voor het volgende"
+                "om op van tot voor het volgende " +
+                // "com ana@x.pt": o email sai, a ligação também
+                "com with avec con mit met"
             ).split(' ').toSet()
+
+        /*
+         * Listas escritas à mão (o CLDR não tem "todas as semanas" nem "10 min antes"):
+         * pt/en/es/fr/de/it/nl, sem acentos. Iguais na web.
+         */
+
+        /** Ligação entre as duas pontas de um intervalo ("1 a 7", "Feb 1 to 7", "1. bis 7."). */
+        private const val RANGE_ALT = "a|ao|ate|to|until|till|thru|through|au|jusqu.?au|jusqu.?a|al|hasta(?: el)?|bis(?: zum| zur)?|fino al|tot(?: en met)?"
+        private val RANGE_WORDS = "a ao ate to until till thru through au jusqu jusqua al hasta bis fino tot".split(' ').toSet()
+        /** Palavras que podem ficar entre as duas datas de um intervalo. */
+        private val RANGE_FILLER = "dia day jour tag giorno dag zum zur en met el le the o".split(' ').toSet()
+        private const val DAY_PREFIX = """(?:(?:o|the|le|el|il|den|dem)\s+)?(?:(?:dia|day|jour|tag|giorno|dag)\s+)?"""
+        /** "... até 30 de junho" numa repetição → fim da repetição. */
+        private val UNTIL_RE = Regex("""(?<![\p{L}])(?:ate|until|till|thru|bis(?: zum| zur)?|jusqu.?au|jusqu.?a|hasta(?: el)?|fino al|tot(?: en met)?)\s+(?:(?:o|a|the|le|el|al|dia|day|den|dem)\s+)*${'$'}""")
+        private val RANGE_SPLIT = Regex("""[\s,'’\-–—~]+""")
+        private val RANGE_DASH = Regex("[-–—~]")
+
+        private val REPEAT_PHRASES = mapOf(
+            "weekdays" to "dias uteis|todos os dias uteis|nos dias uteis|em dias uteis|every weekday|weekdays|on weekdays|dias laborables|todos los dias laborables|entre semana|" +
+                "jours ouvrables|tous les jours ouvrables|en semaine|werktags|an werktagen|giorni feriali|nei giorni feriali|werkdagen|op werkdagen|elke werkdag",
+            "daily" to "todos os dias|diariamente|todo dia|every day|everyday|daily|each day|cada dia|todos los dias|" +
+                "tous les jours|chaque jour|quotidiennement|taglich|jeden tag|ogni giorno|tutti i giorni|quotidianamente|dagelijks|elke dag|iedere dag",
+            "weekly" to "todas as semanas|semanalmente|toda semana|every week|weekly|each week|cada semana|todas las semanas|" +
+                "toutes les semaines|chaque semaine|hebdomadaire|wochentlich|jede woche|ogni settimana|tutte le settimane|settimanalmente|wekelijks|elke week|iedere week",
+            "monthly" to "todos os meses|mensalmente|todo mes|every month|monthly|each month|cada mes|todos los meses|mensualmente|" +
+                "tous les mois|chaque mois|mensuellement|monatlich|jeden monat|ogni mese|tutti i mesi|mensilmente|maandelijks|elke maand|iedere maand",
+            "yearly" to "todos os anos|anualmente|todo ano|every year|yearly|annually|each year|cada ano|todos los anos|" +
+                "tous les ans|chaque annee|annuellement|jahrlich|jedes jahr|ogni anno|tutti gli anni|annualmente|jaarlijks|elk jaar|ieder jaar",
+        )
+        private val REPEAT_KIND: Map<String, String> = LinkedHashMap<String, String>().apply {
+            for ((kind, list) in REPEAT_PHRASES) for (p in list.split('|')) putIfAbsent(p, kind)
+        }
+        private val REPEAT_RE = Regex(
+            "(?<![\\p{L}])(" + REPEAT_KIND.keys.sortedByDescending { it.length }.joinToString("|") { it.replace(" ", "\\s+") } + ")(?![\\p{L}])",
+        )
+        private val UNIT_KIND: Map<String, String> = LinkedHashMap<String, String>().apply {
+            mapOf(
+                "daily" to "dias dia days day jours jour tage tag giorni giorno dagen dag",
+                "weekly" to "semanas semana weeks week semaines semaine wochen woche settimane settimana weken",
+                "monthly" to "meses mes months month mois monate monat mesi mese maanden maand",
+                "yearly" to "anos ano years year ans an jahre jahr anni anno jaar jaren",
+            ).forEach { (kind, list) -> for (u in list.split(' ')) putIfAbsent(u, kind) }
+        }
+        /** "a cada 2 semanas", "every 3 months", "alle 2 Wochen". */
+        private val EVERY_N_RE = Regex(
+            "(?<![\\p{L}])(?:a\\s+cada|cada|every|tous\\s+les|toutes\\s+les|alle|ogni|elke|iedere|om\\s+de)\\s+(\\d{1,2})\\s+(" +
+                UNIT_KIND.keys.sortedByDescending { it.length }.joinToString("|") + ")(?![\\p{L}])",
+        )
+        /** "todas as segundas", "every Monday", "cada lunes"; os fracos ("às", "on") só com plural ("às segundas", "on Mondays"). */
+        private val EVERY_WD_RE = Regex(
+            """(?<![\p{L}])(todas\s+as|todos\s+os|todos\s+los|todas\s+las|tous\s+les|toutes\s+les|tutti\s+i|tutte\s+le|todas|todos|toda|todo|every|each|cada|chaque|jeden|jede|ogni|elke|iedere|as|aos|nas|nos|on|los|las|les)\s+""",
+        )
+        private val WEAK_EVERY = setOf("as", "aos", "nas", "nos", "on", "los", "las", "les")
+        private val TOKEN = Regex("""[\p{L}-]+""")
+        private val LIST_SEP = Regex("""(?:\s*[,&]\s*|\s+(?:e|and|y|et|und|ed|en)\s+)""")
+        /** "20h antes": número colado ao "h", sem "lembrar"/"remind" antes. */
+        private val COMPACT_H = Regex("""^\d{1,3}h(?!\p{L})""")
+        private val PLURAL_S = Regex("""s(?=-|${'$'})""")
+
+        private const val ALERT_PREFIX =
+            "lembrar|lembra|lembrete|lembra-me|lembrar-me|avisar|avisa-me|aviso|alerta|alertar|remind me|reminder|remind|alert|notify me|" +
+                "rappel|rappelle-moi|rappelle moi|recordar|recordatorio|recuerdame|avisame|erinnerung|erinnere mich|erinnern|promemoria|ricorda|ricordami|avviso|herinnering|herinner me"
+        private const val ALERT_BEFORE = "antes(?:\\s+(?:do|de|del)\\s+(?:inicio|comecar|empezar))?|before|beforehand|in advance|earlier|avant|plus tot|vorher|davor|im voraus|prima|in anticipo|van tevoren|ervoor|vooraf"
+        private const val MAX_ALERT_MINUTES = 10080
+        private val ORDINAL_SUFFIXES = setOf("st", "nd", "rd", "th")
+
+        /** Notas: tudo depois de "//". */
+        private val NOTES_CUT = Regex("""(?:^|\s)//""")
+        /** Emails na frase → convidados (tirados antes do "@local"). */
+        private val EMAIL = Regex("""(?<![\p{L}\p{N}._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?![\p{L}\p{N}])""")
 
         private fun normCp(cp: Int): String {
             if (Character.isWhitespace(cp) || Character.isSpaceChar(cp)) return " "
@@ -569,7 +877,8 @@ class QuickEventParser(private val source: QuickLocaleSource) {
         /** Letras de ordinal coladas ao número ("7th", "1er", "2º"): quantas tirar. */
         private fun ordinal(after: String): Int {
             val m = ORDINAL.find(after) ?: return 0
-            return if (NOSPACE.containsMatchIn(m.value)) 0 else m.value.length
+            // "1 to 7", "7 de": palavras de ligação não são ordinais.
+            return if (NOSPACE.containsMatchIn(m.value) || m.value in RANGE_WORDS || m.value in CONNECTORS) 0 else m.value.length
         }
 
         private fun stripEdges(text: String) =
@@ -604,6 +913,12 @@ class QuickEventParser(private val source: QuickLocaleSource) {
             return calendars.firstOrNull { clean(it.name) == t }
                 ?: calendars.firstOrNull { clean(it.name).startsWith(t) }
                 ?: calendars.firstOrNull { clean(it.name).contains(t) }
+        }
+
+        /** Frase sem "// notas" nem emails (título do "Mais opções" quando não se percebeu a data). */
+        fun stripExtras(text: String): String {
+            val cut = NOTES_CUT.find(text)?.range?.first ?: text.length
+            return stripEdges(EMAIL.replace(text.substring(0, cut), " "))
         }
 
         /** Códigos pedidos (pt-PT, zh-TW…) → códigos da lista, sem repetidos. */

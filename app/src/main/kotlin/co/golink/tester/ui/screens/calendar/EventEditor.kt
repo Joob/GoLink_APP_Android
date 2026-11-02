@@ -102,6 +102,9 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
+/** Limite do servidor (CalendarEventController: alerts max:5). */
+internal const val MAX_ALERTS = 5
+
 private val EMAIL = Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
 
 /** Campos do formulário (dia + hora em separado, como calendarForm.js). */
@@ -160,8 +163,13 @@ private fun defaultFields(calendarId: String?, start: Instant?, day: LocalDate):
 }
 
 /** Evento Rápido → formulário (o que não se percebeu fica como no "Novo evento"). */
-private fun fieldsFromDraft(d: co.golink.tester.domain.calendar.QuickParse, calendarId: String?, day: LocalDate): FormFields {
-    val base = defaultFields(d.calendarId ?: calendarId, null, d.startDay ?: day)
+private fun fieldsFromDraft(d: co.golink.tester.domain.calendar.QuickParse, calendarId: String?, day: LocalDate, x: QuickExtras?): FormFields {
+    val plain = defaultFields(d.calendarId ?: calendarId, null, d.startDay ?: day)
+    // Repetir/alertas/convidados/notas/anexos já resolvidos na folha (frase + botões).
+    val base = if (x == null) plain else plain.copy(
+        repeat = x.repeat, rule = x.rule, repeatUntil = x.repeatUntil, alerts = x.alerts,
+        guests = x.guests, guestsCanEdit = x.guestsCanEdit, notes = x.notes, attachments = x.attachments,
+    )
     val sd = d.startDay ?: return base.copy(title = d.title, location = d.location)
     return base.copy(
         title = d.title,
@@ -220,6 +228,7 @@ fun EventEditor(
     start: Instant?,
     day: LocalDate,
     draft: co.golink.tester.domain.calendar.QuickParse? = null,
+    draftExtras: QuickExtras? = null,
     calendars: List<CalInfo>,
     ownEmail: String?,
     saving: Boolean,
@@ -235,8 +244,8 @@ fun EventEditor(
 ) {
     val editable = calendars.filter { it.canEdit }
     val defaultCal = editable.firstOrNull { !it.isBirthdays } ?: editable.firstOrNull()
-    val initial = remember(event?.raw?.version, event?.id, draft) {
-        event?.let(::fieldsFrom) ?: draft?.let { fieldsFromDraft(it, defaultCal?.id, day) } ?: defaultFields(defaultCal?.id, start, day)
+    val initial = remember(event?.raw?.version, event?.id, draft, draftExtras) {
+        event?.let(::fieldsFrom) ?: draft?.let { fieldsFromDraft(it, defaultCal?.id, day, draftExtras) } ?: defaultFields(defaultCal?.id, start, day)
     }
     var f by remember(initial) { mutableStateOf(initial) }
     val manages = event == null || event.canManage
@@ -591,7 +600,7 @@ private fun PlainField(value: String, placeholder: String, modifier: Modifier, s
 /** Convidados por email: separa por espaços/vírgulas/; e ignora o próprio email (GuestsField.vue). */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun GuestsBlock(guests: List<String>, statuses: Map<String, String>, ownEmail: String?, onChange: (List<String>) -> Unit) {
+internal fun GuestsBlock(guests: List<String>, statuses: Map<String, String>, ownEmail: String?, onChange: (List<String>) -> Unit) {
     var input by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     fun add() {
@@ -666,7 +675,7 @@ private fun GuestsBlock(guests: List<String>, statuses: Map<String, String>, own
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DateDialog(current: LocalDate, onDismiss: () -> Unit, onPick: (LocalDate) -> Unit) {
+internal fun DateDialog(current: LocalDate, onDismiss: () -> Unit, onPick: (LocalDate) -> Unit) {
     // O DatePicker trabalha em UTC.
     val state = rememberDatePickerState(initialSelectedDateMillis = current.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli())
     DatePickerDialog(
@@ -693,7 +702,7 @@ private fun TimeDialog(current: LocalTime, onDismiss: () -> Unit, onPick: (Local
 }
 
 @Composable
-private fun AlertsDialog(current: List<Int>, onDismiss: () -> Unit, onDone: (List<Int>) -> Unit) {
+internal fun AlertsDialog(current: List<Int>, onDismiss: () -> Unit, onDone: (List<Int>) -> Unit) {
     val picked = remember { mutableStateListOf<Int>().apply { addAll(current) } }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -704,9 +713,14 @@ private fun AlertsDialog(current: List<Int>, onDismiss: () -> Unit, onDone: (Lis
                 (CalendarConst.ALERTS + current).distinct().sorted().forEach { m ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().clickable { if (m in picked) picked.remove(m) else picked.add(m) },
+                        modifier = Modifier.fillMaxWidth().clickable { if (m in picked) picked.remove(m) else if (picked.size < MAX_ALERTS) picked.add(m) },
                     ) {
-                        Checkbox(checked = m in picked, onCheckedChange = { if (it) picked.add(m) else picked.remove(m) })
+                        // O servidor aceita até 5 alertas.
+                        Checkbox(
+                            checked = m in picked,
+                            enabled = m in picked || picked.size < MAX_ALERTS,
+                            onCheckedChange = { if (it) picked.add(m) else picked.remove(m) },
+                        )
                         Text(alertLabel(m, long = true))
                     }
                 }

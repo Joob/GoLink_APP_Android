@@ -52,6 +52,8 @@ private object JvmSource : QuickLocaleSource {
             yearAffix = listOfNotNull(yearAffix[locale]),
             minuteUnits = if (locale == "en") listOf("minute", "minutes", "min") else if (locale == "pt") listOf("minuto", "minutos", "min") else emptyList(),
             hourUnits = if (locale == "en") listOf("hour", "hours", "hr") else if (locale == "pt") listOf("hora", "horas") else emptyList(),
+            dayUnits = if (locale == "en") listOf("day", "days") else if (locale == "pt") listOf("dia", "dias") else emptyList(),
+            weekUnits = if (locale == "en") listOf("week", "weeks") else if (locale == "pt") listOf("semana", "semanas") else emptyList(),
         )
     }
 }
@@ -129,6 +131,104 @@ class QuickEventParserTest {
         val r = p("en", "Gym tomorrow 7am #sport")
         assertEquals("p", r.calendarId)
         assertEquals("sport", r.unknownTag)
+    }
+}
+
+class QuickEventParserExtrasTest {
+    private val parser = QuickEventParser(JvmSource)
+    private val now = LocalDateTime.of(2026, 11, 2, 11, 0) // segunda
+    private fun p(loc: String, text: String) =
+        parser.parse(text, now, listOf(loc), dayFirst = true, calendars = listOf(QuickCalendar("w", "Work")), defaultCalendarId = "p", selfEmail = "me@golink.co")
+    private fun d(s: String) = LocalDate.parse(s)
+
+    private fun range(loc: String, text: String, title: String, from: String, to: String) {
+        val r = p(loc, text)
+        assertTrue("$text → ${r.error}", r.ok)
+        assertEquals(text, title, r.title)
+        assertEquals(text, d(from), r.startDay)
+        assertEquals(text, d(to), r.endDay)
+    }
+
+    @Test fun dateRanges() {
+        range("pt", "Férias do dia 1 de fevereiro ao dia 7 de fevereiro", "Férias", "2027-02-01", "2027-02-07")
+        range("pt", "Férias de 1 a 7 de fevereiro", "Férias", "2027-02-01", "2027-02-07")
+        range("pt", "Férias 1-7 fevereiro", "Férias", "2027-02-01", "2027-02-07")
+        range("en", "Vacation Feb 1 to Feb 7", "Vacation", "2027-02-01", "2027-02-07")
+        range("en", "Vacation February 1-7", "Vacation", "2027-02-01", "2027-02-07")
+        range("en", "Vacation February 1st to 7th", "Vacation", "2027-02-01", "2027-02-07")
+        range("de", "Urlaub 1. bis 7. Februar", "Urlaub", "2027-02-01", "2027-02-07")
+        range("fr", "Vacances du 1er au 7 février", "Vacances", "2027-02-01", "2027-02-07")
+        range("es", "Vacaciones del 1 al 7 de febrero", "Vacaciones", "2027-02-01", "2027-02-07")
+        // Vira o ano; e um intervalo que ainda não acabou fica neste ano.
+        range("pt", "Viagem 28 de dezembro a 3 de janeiro", "Viagem", "2026-12-28", "2027-01-03")
+        range("pt", "Feira 1 a 7 de novembro", "Feira", "2026-11-01", "2026-11-07")
+        range("pt", "Congresso 1/2 a 3/2", "Congresso", "2027-02-01", "2027-02-03")
+        val r = p("pt", "Congresso 1 fev 10h a 3 fev 18h")
+        assertEquals("Congresso", r.title)
+        assertEquals(d("2027-02-01"), r.startDay)
+        assertEquals(LocalTime.of(10, 0), r.startTime)
+        assertEquals(d("2027-02-03"), r.endDay)
+        assertEquals(LocalTime.of(18, 0), r.endTime)
+        // Uma data só continua a ser um dia.
+        range("en", "Party 1st of March", "Party", "2027-03-01", "2027-03-01")
+    }
+
+    @Test fun guestsAndNotes() {
+        val r = p("pt", "Reunião amanhã 15h com ana@x.com e me@golink.co @Cais #work // levar o portátil")
+        assertTrue(r.ok)
+        assertEquals("Reunião", r.title)
+        assertEquals("Cais", r.location)
+        assertEquals("w", r.calendarId)
+        assertEquals(listOf("ana@x.com"), r.guests)
+        assertEquals("levar o portátil", r.notes)
+    }
+
+    @Test fun repeatRules() {
+        val gym = p("pt", "Ginásio todas as segundas e quartas 7h 10 min antes")
+        assertEquals("Ginásio", gym.title)
+        assertEquals(QuickRepeat("weekly", 1, listOf(1, 3)), gym.repeat)
+        assertEquals(d("2026-11-04"), gym.startDay) // segunda às 7h já passou
+        assertEquals(listOf(10), gym.alerts)
+        val pill = p("pt", "Comprimido todos os dias 9h")
+        assertEquals(QuickRepeat("daily"), pill.repeat)
+        assertEquals(d("2026-11-03"), pill.startDay) // 9h de hoje já passou (são 11h)
+        assertEquals(d("2026-12-02"), p("pt", "Renda todos os meses 9h").startDay)
+        assertEquals(d("2026-11-02"), p("pt", "Comprimido todos os dias 21h").startDay)
+        assertEquals(QuickRepeat("weekly", 1, listOf(1)), p("es", "Gimnasio todos los lunes 7h").repeat)
+        assertEquals("Gimnasio", p("es", "Gimnasio todos los lunes 7h").title)
+        assertEquals(QuickRepeat("weekly", 1, listOf(1)), p("es", "Gimnasio los lunes 7h").repeat)
+        assertEquals(QuickRepeat("weekly", 1, listOf(1, 2, 3, 4, 5)), p("pt", "Standup dias úteis 9:30").repeat)
+        assertEquals(QuickRepeat("monthly", 2), p("pt", "Renda a cada 2 meses dia 5 de dezembro").repeat)
+        assertEquals(QuickRepeat("weekly", 1, listOf(1)), p("en", "Gym every Monday 7am").repeat)
+        val until = p("pt", "Aula todas as terças até 30 de junho 18h")
+        assertEquals("Aula", until.title)
+        assertEquals(d("2026-11-03"), until.startDay)
+        assertEquals(d("2027-06-30"), until.repeatUntil)
+        // Repetição + intervalo: o fim é o fim da repetição e começa no 1.º dia certo.
+        val term = p("pt", "Aulas todas as quintas de 1 de fevereiro a 30 de junho 10h")
+        assertEquals(d("2027-02-04"), term.startDay)
+        assertEquals(d("2027-02-04"), term.endDay)
+        assertEquals(d("2027-06-30"), term.repeatUntil)
+        // "segunda" sem "todas as" não repete.
+        assertEquals(null, p("pt", "Reunião segunda às 10h").repeat)
+    }
+
+    @Test fun alertsAreNotDurations() {
+        val r = p("pt", "Chamada amanhã 15h 1 dia antes 1 h antes")
+        assertEquals(listOf(60, 1440), r.alerts)
+        assertEquals(LocalTime.of(16, 0), r.endTime)
+        assertEquals(listOf(60), p("en", "Gym tomorrow 7am remind me 1 hour before").alerts)
+        assertEquals(LocalTime.of(15, 30), p("en", "Call tomorrow 3pm for 30 min").endTime)
+        assertEquals(null, p("en", "Call tomorrow 3pm for 30 min").alerts)
+        // "20h antes do cinema" é a hora, não um alerta de 20 h.
+        val dinner = p("pt", "Jantar amanhã 20h antes do cinema")
+        assertEquals(null, dinner.alerts)
+        assertEquals(LocalTime.of(20, 0), dinner.startTime)
+        assertEquals(listOf(60), p("en", "Gym tomorrow 7am remind me 1h before").alerts)
+    }
+
+    @Test fun stripExtrasForMoreOptions() {
+        assertEquals("Reunião", QuickEventParser.stripExtras("Reunião ana@x.pt // levar slides"))
     }
 }
 

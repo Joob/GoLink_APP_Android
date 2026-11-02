@@ -64,6 +64,8 @@ object AndroidQuickLocaleSource : QuickLocaleSource {
             yearAffix = listOfNotNull(literalAfter(skeleton("yMMMMd", uloc), 'y')),
             minuteUnits = units(uloc, MeasureUnit.MINUTE),
             hourUnits = units(uloc, MeasureUnit.HOUR),
+            dayUnits = units(uloc, MeasureUnit.DAY),
+            weekUnits = units(uloc, MeasureUnit.WEEK),
         )
     }
 

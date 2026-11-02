@@ -75,6 +75,7 @@ data class EditorRequest(
     val start: java.time.Instant? = null,
     /** Vindo do Evento Rápido ("Mais opções"): o editor arranca já preenchido. */
     val draft: co.golink.tester.domain.calendar.QuickParse? = null,
+    val extras: QuickExtras? = null,
 )
 
 const val AGENDA_STEP = 60L
@@ -354,17 +355,22 @@ class CalendarViewModel @Inject constructor(
         }
     }
 
-    fun closeQuick() = _state.update { it.copy(quickOpen = false) }
+    fun closeQuick() = _state.update { it.copy(quickOpen = false, picker = false, pendingAttachments = emptyList()) }
 
     /** "Mais opções": abre o editor completo com o que se percebeu. */
-    fun quickMoreOptions(draft: co.golink.tester.domain.calendar.QuickParse?) =
-        _state.update { it.copy(quickOpen = false, editor = EditorRequest(null, null, draft)) }
+    fun quickMoreOptions(draft: co.golink.tester.domain.calendar.QuickParse?, extras: QuickExtras? = null) =
+        _state.update { it.copy(quickOpen = false, picker = false, editor = EditorRequest(null, null, draft, extras)) }
 
     fun quickSave(form: EventForm) {
         if (_state.value.saving) return
         _state.update { it.copy(saving = true) }
         viewModelScope.launch {
-            repo.saveEvent(null, form)
+            // Como o editor: com convidados, os anexos levam links "só ver".
+            val ready = if (form.guestsSeeFiles && form.guests.isNotEmpty() && form.attachments.isNotEmpty()) {
+                val (list, tokens) = attachments.ensureLinks(form.attachments)
+                form.copy(attachments = list, shareTokens = form.shareTokens + tokens)
+            } else form
+            repo.saveEvent(null, ready)
                 .onSuccess { saved ->
                     _state.update { it.copy(saving = false, quickOpen = false, toast = "Evento guardado".tr()) }
                     select(saved.start.atZone(ZoneId.systemDefault()).toLocalDate())
