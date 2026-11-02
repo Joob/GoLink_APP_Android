@@ -21,6 +21,9 @@ import retrofit2.Response
 /** Um recipient com o código já aberto pela K_vault reconstruída. */
 data class LegacyCombinedRecipient(val id: String, val email: String, val meta: LegacyMeta, val code: String?)
 
+/** Passo do código por email: email mascarado + espera (0 = enviado agora). */
+data class LegacyGuardianCode(val email: String, val waitSeconds: Int)
+
 data class LegacyCombineResult(val threshold: Int, val have: Int, val status: String, val recipients: List<LegacyCombinedRecipient>)
 
 /**
@@ -49,9 +52,25 @@ class LegacyGuardingRepository @Inject constructor(
         rows
     }
 
-    /** accept | decline. */
-    suspend fun act(id: String, action: String) = withContext(Dispatchers.IO) {
-        api.guardingAction(id, action).bodyOrThrow()
+    /**
+     * Pede o código para o email do convite. Devolve o email mascarado e os
+     * segundos até poder pedir outro; 429 (enviado há pouco) não é erro — o
+     * código anterior continua válido.
+     */
+    suspend fun requestCode(id: String): LegacyGuardianCode = withContext(Dispatchers.IO) {
+        val response = api.guardingCode(id)
+        val raw = if (response.isSuccessful) response.body()?.string() else response.errorBody()?.string()
+        if (!response.isSuccessful && response.code() != 429) throw LegacyException("legacy_code_failed", response.code())
+        val obj = runCatching { Json.parseToJsonElement(raw.orEmpty()).jsonObject }.getOrNull()
+        val email = (obj?.get("email") as? JsonPrimitive)?.content.orEmpty()
+        val wait = (obj?.get("resend_in") as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
+        if (email.isEmpty()) throw LegacyException("legacy_code_failed", response.code())
+        LegacyGuardianCode(email, if (response.code() == 429) wait else 0)
+    }
+
+    /** accept | decline com o código do email. */
+    suspend fun act(id: String, action: String, code: String) = withContext(Dispatchers.IO) {
+        api.guardingAction(id, action, buildJsonObject { put("code", code) }).bodyOrThrow()
         Unit
     }
 

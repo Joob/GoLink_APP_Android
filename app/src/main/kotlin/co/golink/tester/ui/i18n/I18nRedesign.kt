@@ -504,6 +504,15 @@ object I18nRedesign {
         r("Procurar de novo na galeria", "Rescan the gallery", "Analyser à nouveau la galerie", "Volver a buscar en la galería"),
         r("Tenta outra vez os ficheiros que falharam. Os que já estão guardados não são enviados de novo.", "Tries the files that failed again. Items already saved aren't uploaded again.", "Réessaie les fichiers qui ont échoué. Ceux déjà enregistrés ne sont pas renvoyés.", "Vuelve a intentar los archivos que fallaron. Los ya guardados no se envían de nuevo."),
 
+        // Tokens API: origem de cada token (2026-11-02)
+        r("Login", "Login", "Connexion", "Inicio de sesión"),
+        r("Login social", "Social login", "Connexion sociale", "Inicio de sesión social"),
+        r("App Android", "Android app", "App Android", "App Android"),
+        r("Web", "Web", "Web", "Web"),
+        r("Criado manualmente", "Created manually", "Créé manuellement", "Creado manualmente"),
+        r("Este dispositivo", "This device", "Cet appareil", "Este dispositivo"),
+        r("ID %s", "ID %s", "ID %s", "ID %s"),
+
         // Inbox (notificações com o design da web, 2026-10-29)
         r("Inbox", "Inbox", "Boîte", "Bandeja"),
         r("Não lidas", "Unread", "Non lues", "No leídas"),

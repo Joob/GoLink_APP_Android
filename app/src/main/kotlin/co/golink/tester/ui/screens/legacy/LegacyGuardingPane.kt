@@ -12,6 +12,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -53,7 +56,13 @@ data class LegacyGuardingState(
     val rows: List<LegacyGuardingRow> = emptyList(),
     val busy: Boolean = false,
     val results: Map<String, LegacyCombineResult> = emptyMap(),
+    /** Por convite: passo do código por email antes de aceitar/recusar. */
+    val pending: Map<String, GuardianCodeStep> = emptyMap(),
 )
+
+data class GuardianCodeStep(val action: String, val email: String, val code: String = "", val error: String? = null)
+
+private val CODE_ERRORS = setOf("legacy_code_invalid", "legacy_code_expired", "legacy_code_too_many")
 
 @HiltViewModel
 class LegacyGuardingViewModel @Inject constructor(
@@ -82,9 +91,37 @@ class LegacyGuardingViewModel @Inject constructor(
         _state.update { it.copy(rows = rows, loaded = true) }
     }
 
-    fun act(row: LegacyGuardingRow, action: String) = run {
-        repo.act(row.id, action)
-        _state.update { it.copy(rows = repo.load()) }
+    /** Pede o código para o email do convite e mostra o campo (Guarding.vue: sendCode). */
+    fun requestCode(row: LegacyGuardingRow, action: String) = run {
+        val sent = repo.requestCode(row.id)
+        val error = if (sent.waitSeconds > 0) lt("guardian_code_wait", "seconds" to sent.waitSeconds) else null
+        _state.update { it.copy(pending = it.pending + (row.id to GuardianCodeStep(action, sent.email, error = error))) }
+    }
+
+    fun setCode(row: LegacyGuardingRow, code: String) {
+        val clean = code.filter(Char::isDigit).take(6)
+        _state.update { s -> s.pending[row.id]?.let { s.copy(pending = s.pending + (row.id to it.copy(code = clean))) } ?: s }
+    }
+
+    fun cancelCode(row: LegacyGuardingRow) = _state.update { it.copy(pending = it.pending - row.id) }
+
+    fun confirmCode(row: LegacyGuardingRow) = viewModelScope.launch {
+        val step = _state.value.pending[row.id] ?: return@launch
+        _state.update { it.copy(busy = true) }
+        runCatching {
+            repo.act(row.id, step.action, step.code)
+            _state.update { it.copy(rows = repo.load(), pending = it.pending - row.id) }
+        }.onFailure { e ->
+            val code = (e as? co.golink.tester.data.legacy.LegacyException)?.code
+            if (code in CODE_ERRORS) {
+                val message = lt(code!!.replace("legacy_", "guardian_"))
+                _state.update { s -> s.copy(pending = s.pending + (row.id to step.copy(code = "", error = message))) }
+            } else {
+                android.util.Log.w("Legacy", "guardião", e)
+                onToast(LegacyToast("error", true))
+            }
+        }
+        _state.update { it.copy(busy = false) }
     }
 
     fun combine(row: LegacyGuardingRow) = run {
@@ -132,10 +169,19 @@ fun LegacyGuardingPane(onToast: (LegacyToast) -> Unit, vm: LegacyGuardingViewMod
                         else -> LegacyChip(lt("guarding_standing_by"), ChipTone.Ok)
                     }
                 }
+                val step = state.pending[row.id]
                 when {
+                    row.status == "invited" && step != null -> GuardianCodeForm(
+                        step = step,
+                        busy = state.busy,
+                        onCode = { vm.setCode(row, it) },
+                        onConfirm = { vm.confirmCode(row) },
+                        onCancel = { vm.cancelCode(row) },
+                        onResend = { vm.requestCode(row, step.action) },
+                    )
                     row.status == "invited" -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 12.dp)) {
-                        Button(onClick = { vm.act(row, "accept") }, enabled = !state.busy, shape = RoundedCornerShape(12.dp)) { Text(lt("accept")) }
-                        OutlinedButton(onClick = { vm.act(row, "decline") }, enabled = !state.busy, shape = RoundedCornerShape(12.dp)) { Text(lt("decline")) }
+                        Button(onClick = { vm.requestCode(row, "accept") }, enabled = !state.busy, shape = RoundedCornerShape(12.dp)) { Text(lt("accept")) }
+                        OutlinedButton(onClick = { vm.requestCode(row, "decline") }, enabled = !state.busy, shape = RoundedCornerShape(12.dp)) { Text(lt("decline")) }
                     }
                     open -> {
                         Text(lt("combine_text", "name" to row.owner_name), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(top = 12.dp))
@@ -174,6 +220,37 @@ fun LegacyGuardingPane(onToast: (LegacyToast) -> Unit, vm: LegacyGuardingViewMod
                 }
             }
         }
+    }
+}
+
+/** Guarding.vue: passo do código por email antes de aceitar/recusar. */
+@Composable
+private fun GuardianCodeForm(
+    step: GuardianCodeStep,
+    busy: Boolean,
+    onCode: (String) -> Unit,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+    onResend: () -> Unit,
+) {
+    Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(lt("guardian_code_text", "email" to step.email), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+        OutlinedTextField(
+            value = step.code,
+            onValueChange = onCode,
+            placeholder = { Text(lt("guardian_code_placeholder")) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+            modifier = Modifier.width(160.dp),
+        )
+        step.error?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onConfirm, enabled = !busy && step.code.length == 6, shape = RoundedCornerShape(12.dp)) {
+                Text(lt(if (step.action == "accept") "accept" else "decline"))
+            }
+            OutlinedButton(onClick = onCancel, enabled = !busy, shape = RoundedCornerShape(12.dp)) { Text(lt("guardian_code_cancel")) }
+        }
+        TextButton(onClick = onResend, enabled = !busy) { Text(lt("guardian_code_resend"), fontSize = 12.sp) }
     }
 }
 

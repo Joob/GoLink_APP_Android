@@ -168,6 +168,18 @@ data class AccessToken(
     val abilities: List<String> = emptyList(),
     val last_used_at: String? = null,
     val created_at: String? = null,
+    // Este pedido foi feito com este token (é o login desta app).
+    val is_current: Boolean = false,
+    val source: TokenSource? = null,
+)
+
+/** Origem do token: login da app Android, login web ou token criado à mão. */
+@Serializable
+data class TokenSource(
+    val client: String = "api", // android | web | api
+    val browser: String? = null,
+    val device: String? = null,
+    val device_id: String? = null, // 8 primeiros caracteres do X-Device-Id
 )
 
 @Serializable

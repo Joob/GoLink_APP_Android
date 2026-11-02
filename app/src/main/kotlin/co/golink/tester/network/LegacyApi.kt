@@ -98,7 +98,11 @@ interface LegacyApi {
     @GET("api/legacy/guarding")
     suspend fun guarding(): Response<LegacyGuardingListResponse>
 
-    /** accept | decline. */
+    /** Código por email antes de aceitar/recusar (prova de posse do email do convite). */
+    @POST("api/legacy/guarding/{id}/code")
+    suspend fun guardingCode(@Path("id") id: String, @Body body: JsonObject = JsonObject(emptyMap())): Response<ResponseBody>
+
+    /** accept | decline, com o `code` do email. */
     @POST("api/legacy/guarding/{id}/{action}")
     suspend fun guardingAction(@Path("id") id: String, @Path("action") action: String, @Body body: JsonObject = JsonObject(emptyMap())): Response<ResponseBody>
 

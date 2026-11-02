@@ -80,6 +80,7 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.SupportAgent
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MailOutline
@@ -1272,6 +1273,25 @@ private fun PasswordPane(
     }
 }
 
+/** "Login · App Android" / "Login · Web"; tokens criados à mão mantêm o nome. */
+private fun tokenTitle(token: AccessToken): String {
+    val client = token.source?.client ?: "api"
+    if (client == "api") return token.name
+    val kind = if (token.name == "oauth-login") "Login social".tr() else "Login".tr()
+    return kind + " · " + (if (client == "android") "App Android" else "Web").tr()
+}
+
+/** Android: aparelho + ID da instalação; Web: browser + sistema. */
+private fun tokenDetail(token: AccessToken): String? {
+    val src = token.source ?: return "Criado manualmente".tr()
+    val parts = when (src.client) {
+        "android" -> listOf(src.device, src.device_id?.let { "ID %s".tr().format(it) })
+        "web" -> listOf(src.browser, src.device)
+        else -> return "Criado manualmente".tr()
+    }
+    return parts.filterNotNull().filter { it.isNotBlank() }.joinToString(" · ").ifBlank { null }
+}
+
 @Composable
 private fun ApiTokensPane(
     tokens: List<AccessToken>,
@@ -1337,12 +1357,18 @@ private fun ApiTokensPane(
                 )
             }
             tokens.forEachIndexed { i, token ->
+                val client = token.source?.client ?: "api"
+                val used = token.last_used_at?.let { "Último uso: %s".tr().format(friendlyWhen(it)) }
+                    ?: token.created_at?.let { "Criado: %s".tr().format(friendlyWhen(it)) }
+                    ?: "Nunca usado".tr()
                 SettingsListRow(
-                    icon = Icons.Outlined.VpnKey,
-                    title = token.name,
-                    subtitle = token.last_used_at?.let { "Último uso: %s".tr().format(friendlyWhen(it)) }
-                        ?: token.created_at?.let { "Criado: %s".tr().format(friendlyWhen(it)) }
-                        ?: "Nunca usado".tr(),
+                    icon = when (client) {
+                        "android" -> Icons.Outlined.Smartphone
+                        "web" -> Icons.Outlined.Language
+                        else -> Icons.Outlined.Code
+                    },
+                    title = tokenTitle(token) + if (token.is_current) " · " + "Este dispositivo".tr() else "",
+                    subtitle = listOfNotNull(tokenDetail(token), used).joinToString("\n"),
                     showDivider = i < tokens.lastIndex,
                 ) {
                     Text(
