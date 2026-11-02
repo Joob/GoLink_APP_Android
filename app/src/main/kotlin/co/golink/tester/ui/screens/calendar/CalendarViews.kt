@@ -105,7 +105,8 @@ fun MonthView(
     contentPadding: PaddingValues,
 ) {
     val byDay = remember(instances) { instancesByDay(instances) }
-    val grid = remember(cursor.year, cursor.monthValue) { CalendarDates.monthGrid(cursor) }
+    val ws = co.golink.tester.ui.common.UserDisplayPrefs.weekStart
+    val grid = remember(cursor.year, cursor.monthValue, ws) { CalendarDates.monthGrid(cursor, ws) }
     val today = LocalDate.now()
     val dayList = byDay[cursor].orEmpty()
 
@@ -412,7 +413,7 @@ fun DayView(
 
     Column(Modifier.fillMaxSize()) {
         // Tira da semana.
-        val week = CalendarDates.startOfWeek(cursor).let { s -> List(7) { s.plusDays(it.toLong()) } }
+        val week = CalendarDates.startOfWeek(cursor, co.golink.tester.ui.common.UserDisplayPrefs.weekStart).let { s -> List(7) { s.plusDays(it.toLong()) } }
         Row(Modifier.fillMaxWidth().swipeStep(onStep).padding(horizontal = 8.dp, vertical = 4.dp)) {
             week.forEachIndexed { i, d ->
                 Column(

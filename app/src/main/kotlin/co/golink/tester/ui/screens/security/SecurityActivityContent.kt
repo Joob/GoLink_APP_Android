@@ -301,7 +301,7 @@ private fun DayTitle(day: LocalDate?) {
         null -> "Sem data".tr()
         today -> "Hoje".tr()
         today.minusDays(1) -> "Ontem".tr()
-        else -> day.format(DateTimeFormatter.ofPattern("d MMM yyyy", appLocale()))
+        else -> co.golink.tester.ui.common.prefDate(day)
     }
     val secondary = day?.format(DateTimeFormatter.ofPattern(if (day == today || day == today.minusDays(1)) "EEEE, d MMM yyyy" else "EEEE", appLocale()))
     Text(

@@ -31,14 +31,15 @@ object CalendarDates {
     fun zoneOf(tz: String?): ZoneId =
         tz?.takeIf { it.isNotBlank() }?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: ZoneId.systemDefault()
 
-    fun startOfWeek(d: LocalDate): LocalDate = d.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    /** Início da semana; a UI passa UserDisplayPrefs.weekStart (omissão: segunda, como as regras ISO). */
+    fun startOfWeek(d: LocalDate, ws: DayOfWeek = DayOfWeek.MONDAY): LocalDate = d.with(TemporalAdjusters.previousOrSame(ws))
 
     /** Número da semana ISO 8601. */
     fun isoWeek(d: LocalDate): Int = d.get(WeekFields.ISO.weekOfWeekBasedYear())
 
     /** 42 dias (6 semanas) da grelha mensal. */
-    fun monthGrid(d: LocalDate): List<LocalDate> {
-        val first = startOfWeek(d.withDayOfMonth(1))
+    fun monthGrid(d: LocalDate, ws: DayOfWeek = DayOfWeek.MONDAY): List<LocalDate> {
+        val first = startOfWeek(d.withDayOfMonth(1), ws)
         return List(42) { first.plusDays(it.toLong()) }
     }
 

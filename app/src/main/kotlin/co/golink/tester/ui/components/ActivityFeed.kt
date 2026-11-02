@@ -391,7 +391,7 @@ private fun DayLabel(day: LocalDate?) {
     val primary = when (day) {
         today -> "Hoje".tr()
         today.minusDays(1) -> "Ontem".tr()
-        else -> day.format(DateTimeFormatter.ofPattern("d MMM yyyy", appLocale()))
+        else -> co.golink.tester.ui.common.prefDate(day)
     }
     val secondary = if (day == today || day == today.minusDays(1)) {
         day.format(DateTimeFormatter.ofPattern("EEEE, d MMM yyyy", appLocale()))

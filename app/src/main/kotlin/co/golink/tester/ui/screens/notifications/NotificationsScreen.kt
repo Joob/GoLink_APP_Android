@@ -97,8 +97,8 @@ private fun timeLabel(n: Notification, t: ZonedDateTime?, today: LocalDate, days
     if (t == null) return n.createdAt.orEmpty()
     return when {
         !t.toLocalDate().isBefore(today.minusDays(1)) -> t.format(HOUR_FORMAT)
-        t.year == today.year -> t.format(days.sameYear)
-        else -> t.format(days.otherYear)
+        t.year == today.year -> co.golink.tester.ui.common.UserDisplayPrefs.format(t.toLocalDate(), withYear = false) ?: t.format(days.sameYear)
+        else -> co.golink.tester.ui.common.UserDisplayPrefs.format(t.toLocalDate()) ?: t.format(days.otherYear)
     }
 }
 

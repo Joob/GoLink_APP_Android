@@ -93,9 +93,11 @@ fun fmtDayMonth(d: LocalDate): String {
     return "$wd, " + d.format(DateTimeFormatter.ofPattern("d MMMM", appLocale()))
 }
 
-/** Letras dos dias (S T Q Q S S D), a começar à segunda. */
-fun weekdayLetters(): List<String> =
-    DayOfWeek.entries.map { it.getDisplayName(TextStyle.NARROW, appLocale()).uppercase(appLocale()) }
+/** Letras dos dias (S T Q Q S S D), a começar no início da semana do utilizador. */
+fun weekdayLetters(): List<String> {
+    val ws = co.golink.tester.ui.common.UserDisplayPrefs.weekStart
+    return List(7) { ws.plus(it.toLong()) }.map { it.getDisplayName(TextStyle.NARROW, appLocale()).uppercase(appLocale()) }
+}
 
 /** "08:30 – 09:30", "Todo o dia" ou com datas quando passa a meia-noite. */
 fun fmtSpan(event: CalEvent, start: Instant, end: Instant): String {

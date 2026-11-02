@@ -1,5 +1,6 @@
 package co.golink.tester.data.user
 
+import co.golink.tester.ui.common.UserDisplayPrefs
 import co.golink.tester.data.auth.TokenStore
 import co.golink.tester.domain.user.User
 import co.golink.tester.domain.user.UserResponse
@@ -27,6 +28,7 @@ class UserRepository @Inject constructor(
         val body = response.body() ?: throw UserFetchException(0, "Resposta vazia")
         User.fromResponse(body).also {
             _me.value = it
+            UserDisplayPrefs.update(it.dateFormat, it.weekStart)
             if (token != null) {
                 runCatching { tokenStore.saveCachedUser(token, json.encodeToString(UserResponse.serializer(), body)) }
             }
@@ -38,10 +40,16 @@ class UserRepository @Inject constructor(
         val cached = tokenStore.cachedUser ?: return null
         return runCatching { User.fromResponse(json.decodeFromString(UserResponse.serializer(), cached)) }
             .getOrNull()
-            ?.also { _me.value = it }
+            ?.also {
+                _me.value = it
+                UserDisplayPrefs.update(it.dateFormat, it.weekStart)
+            }
     }
 
     class UserFetchException(val statusCode: Int, message: String) : Exception(message)
 
-    fun clear() { _me.value = null }
+    fun clear() {
+        _me.value = null
+        UserDisplayPrefs.clear()
+    }
 }

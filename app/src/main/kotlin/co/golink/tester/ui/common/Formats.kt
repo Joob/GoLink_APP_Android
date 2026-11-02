@@ -28,15 +28,17 @@ fun parseIsoLocal(iso: String?): ZonedDateTime? = iso?.let {
 
 /** "14 out 2026". */
 fun formatDay(iso: String?): String =
-    parseIsoLocal(iso)?.format(DateTimeFormatter.ofPattern("d MMM yyyy", appLocale())).orEmpty()
+    parseIsoLocal(iso)?.let { prefDate(it.toLocalDate()) }.orEmpty()
 
 /** "21:59". */
 fun formatTime(iso: String?): String =
     parseIsoLocal(iso)?.format(DateTimeFormatter.ofPattern("HH:mm", appLocale())).orEmpty()
 
 /** "14 out, 21:59". */
-fun formatDayTime(iso: String?): String =
-    parseIsoLocal(iso)?.format(DateTimeFormatter.ofPattern("d MMM, HH:mm", appLocale())).orEmpty()
+fun formatDayTime(iso: String?): String = parseIsoLocal(iso)?.let { t ->
+    UserDisplayPrefs.format(t.toLocalDate(), withYear = false)?.let { "$it, " + t.format(DateTimeFormatter.ofPattern("HH:mm")) }
+        ?: t.format(DateTimeFormatter.ofPattern("d MMM, HH:mm", appLocale()))
+}.orEmpty()
 
 /** "setembro 2026" → com maiúscula: "Setembro 2026". */
 fun formatMonth(iso: String?): String =

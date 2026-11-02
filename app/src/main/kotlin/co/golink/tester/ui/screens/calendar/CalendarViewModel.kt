@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.calendar
 
+import co.golink.tester.ui.common.UserDisplayPrefs
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -194,8 +195,8 @@ class CalendarViewModel @Inject constructor(
     }
 
     private fun range(s: CalendarUiState): Pair<LocalDate, LocalDate> = when (s.view) {
-        CalView.Month -> CalendarDates.monthGrid(s.cursor).let { it.first() to it.last().plusDays(1) }
-        CalView.Day -> CalendarDates.startOfWeek(s.cursor).let { it to it.plusDays(7) }
+        CalView.Month -> CalendarDates.monthGrid(s.cursor, UserDisplayPrefs.weekStart).let { it.first() to it.last().plusDays(1) }
+        CalView.Day -> CalendarDates.startOfWeek(s.cursor, UserDisplayPrefs.weekStart).let { it to it.plusDays(7) }
         CalView.Agenda -> s.cursor to s.cursor.plusDays(s.agendaDays)
     }
 

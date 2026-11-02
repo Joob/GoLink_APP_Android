@@ -662,7 +662,7 @@ private fun MiniMonth(cursor: LocalDate, onSelect: (LocalDate) -> Unit, onWeek: 
                 Text(it, fontSize = 10.sp, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
             }
         }
-        CalendarDates.monthGrid(month).chunked(7).forEach { week ->
+        CalendarDates.monthGrid(month, co.golink.tester.ui.common.UserDisplayPrefs.weekStart).chunked(7).forEach { week ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().then(
@@ -677,7 +677,7 @@ private fun MiniMonth(cursor: LocalDate, onSelect: (LocalDate) -> Unit, onWeek: 
                             .clickable { onWeek(if (today in week) today else week.first()) },
                     ) {
                         Text(
-                            CalendarDates.isoWeek(week.first()).toString(), fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
+                            CalendarDates.isoWeek(week[3]).toString(), fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }

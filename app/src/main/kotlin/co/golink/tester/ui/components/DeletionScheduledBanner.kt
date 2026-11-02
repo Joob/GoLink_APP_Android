@@ -89,8 +89,9 @@ fun DeletionScheduledBanner(viewModel: DeletionScheduledViewModel = hiltViewMode
         }
     }
     val secondsLeft = ((target.toEpochMilli() - now) / 1000).coerceAtLeast(0)
-    val whenText = DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", co.golink.tester.ui.common.appLocale())
-        .withZone(ZoneId.systemDefault()).format(target)
+    val whenText = target.atZone(ZoneId.systemDefault()).let { z ->
+        co.golink.tester.ui.common.prefDate(z.toLocalDate()) + ", " + z.format(DateTimeFormatter.ofPattern("HH:mm"))
+    }
     val left = leftText(secondsLeft)
 
     Column(
@@ -150,8 +151,9 @@ fun DeletionScheduledLoginDialog(viewModel: DeletionScheduledViewModel = hiltVie
     var open by remember(scheduledFor) { androidx.compose.runtime.mutableStateOf(true) }
     if (!open) return
 
-    val whenText = DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", co.golink.tester.ui.common.appLocale())
-        .withZone(ZoneId.systemDefault()).format(target)
+    val whenText = target.atZone(ZoneId.systemDefault()).let { z ->
+        co.golink.tester.ui.common.prefDate(z.toLocalDate()) + ", " + z.format(DateTimeFormatter.ofPattern("HH:mm"))
+    }
     val left = leftText(((target.toEpochMilli() - System.currentTimeMillis()) / 1000).coerceAtLeast(0))
     val dismiss = { DeletionPromptSeen.markSeen(scheduledFor); open = false }
 

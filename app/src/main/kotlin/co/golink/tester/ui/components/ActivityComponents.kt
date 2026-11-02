@@ -139,7 +139,7 @@ internal fun activityRelative(iso: String?): String {
         mins < 60 -> "$mins min"
         mins < 24 * 60 -> "${mins / 60} h"
         t.toLocalDate() == LocalDate.now().minusDays(1) -> "Ontem".tr()
-        else -> t.format(DateTimeFormatter.ofPattern("d MMM yyyy", appLocale()))
+        else -> co.golink.tester.ui.common.prefDate(t.toLocalDate())
     }
 }
 
@@ -152,7 +152,7 @@ internal fun activityDayLabel(iso: String?): String {
     return when (d) {
         today -> "Hoje".tr()
         today.minusDays(1) -> "Ontem".tr()
-        else -> d.format(DateTimeFormatter.ofPattern("d MMM yyyy", appLocale()))
+        else -> co.golink.tester.ui.common.prefDate(d)
     }
 }
 
