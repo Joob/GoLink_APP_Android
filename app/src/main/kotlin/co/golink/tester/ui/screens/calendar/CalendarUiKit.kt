@@ -94,9 +94,16 @@ fun fmtDayMonth(d: LocalDate): String {
 }
 
 /** Letras dos dias (S T Q Q S S D), a começar no início da semana do utilizador. */
-fun weekdayLetters(): List<String> {
-    val ws = co.golink.tester.ui.common.UserDisplayPrefs.weekStart
+fun weekdayLetters(ws: java.time.DayOfWeek = co.golink.tester.ui.common.UserDisplayPrefs.weekStart): List<String> {
     return List(7) { ws.plus(it.toLong()) }.map { it.getDisplayName(TextStyle.NARROW, appLocale()).uppercase(appLocale()) }
+}
+
+/** Letras dos dias guardadas entre recomposições; só mudam com o início da semana ou o idioma. */
+@androidx.compose.runtime.Composable
+fun rememberWeekdayLetters(): List<String> {
+    val ws = co.golink.tester.ui.common.UserDisplayPrefs.weekStart
+    val lang = co.golink.tester.ui.i18n.I18n.lang
+    return androidx.compose.runtime.remember(ws, lang) { weekdayLetters(ws) }
 }
 
 /** "08:30 – 09:30", "Todo o dia" ou com datas quando passa a meia-noite. */
@@ -116,7 +123,7 @@ fun fmtSpan(event: CalEvent, start: Instant, end: Instant): String {
     }
 }
 
-fun shortDate(d: LocalDate): String = d.format(DateTimeFormatter.ofPattern("d MMM", appLocale()))
+fun shortDate(d: LocalDate): String = co.golink.tester.ui.common.prefDateShort(d)
 
 fun repeatLabel(repeat: String): String = when (repeat) {
     "daily" -> "Diário"

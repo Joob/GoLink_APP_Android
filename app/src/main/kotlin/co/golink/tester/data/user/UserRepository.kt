@@ -1,15 +1,18 @@
 package co.golink.tester.data.user
 
-import co.golink.tester.ui.common.UserDisplayPrefs
 import co.golink.tester.data.auth.TokenStore
+import co.golink.tester.domain.user.DisplayPrefs
 import co.golink.tester.domain.user.User
 import co.golink.tester.domain.user.UserResponse
 import co.golink.tester.network.UserApi
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.serialization.json.Json
 
 @Singleton
@@ -21,6 +24,9 @@ class UserRepository @Inject constructor(
     private val _me = MutableStateFlow<User?>(null)
     val me: StateFlow<User?> = _me.asStateFlow()
 
+    /** Única fonte das preferências de datas: derivadas de [me], nunca guardadas à parte. */
+    val displayPrefs: Flow<DisplayPrefs> = me.map(DisplayPrefs::from).distinctUntilChanged()
+
     suspend fun fetchMe(): Result<User> = runCatching {
         val token = tokenStore.token
         val response = api.me()
@@ -28,7 +34,6 @@ class UserRepository @Inject constructor(
         val body = response.body() ?: throw UserFetchException(0, "Resposta vazia")
         User.fromResponse(body).also {
             _me.value = it
-            UserDisplayPrefs.update(it.dateFormat, it.weekStart)
             if (token != null) {
                 runCatching { tokenStore.saveCachedUser(token, json.encodeToString(UserResponse.serializer(), body)) }
             }
@@ -42,7 +47,6 @@ class UserRepository @Inject constructor(
             .getOrNull()
             ?.also {
                 _me.value = it
-                UserDisplayPrefs.update(it.dateFormat, it.weekStart)
             }
     }
 
@@ -50,6 +54,5 @@ class UserRepository @Inject constructor(
 
     fun clear() {
         _me.value = null
-        UserDisplayPrefs.clear()
     }
 }

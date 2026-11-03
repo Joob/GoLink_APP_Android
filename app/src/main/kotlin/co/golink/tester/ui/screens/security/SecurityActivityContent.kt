@@ -303,7 +303,10 @@ private fun DayTitle(day: LocalDate?) {
         today.minusDays(1) -> "Ontem".tr()
         else -> co.golink.tester.ui.common.prefDate(day)
     }
-    val secondary = day?.format(DateTimeFormatter.ofPattern(if (day == today || day == today.minusDays(1)) "EEEE, d MMM yyyy" else "EEEE", appLocale()))
+    val secondary = day?.let {
+        val weekday = it.format(co.golink.tester.ui.common.DateFormatters.localized("EEEE"))
+        if (it == today || it == today.minusDays(1)) "$weekday, " + co.golink.tester.ui.common.prefDate(it) else weekday
+    }
     Text(
         buildAnnotatedString {
             withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)) { append(primary) }

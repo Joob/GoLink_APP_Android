@@ -658,11 +658,13 @@ private fun MiniMonth(cursor: LocalDate, onSelect: (LocalDate) -> Unit, onWeek: 
         }
         Row(Modifier.fillMaxWidth()) {
             Spacer(Modifier.width(26.dp))
-            weekdayLetters().forEach {
+            rememberWeekdayLetters().forEach {
                 Text(it, fontSize = 10.sp, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
             }
         }
-        CalendarDates.monthGrid(month, co.golink.tester.ui.common.UserDisplayPrefs.weekStart).chunked(7).forEach { week ->
+        val ws = co.golink.tester.ui.common.UserDisplayPrefs.weekStart
+        val weeks = remember(month, ws) { CalendarDates.monthGrid(month, ws).chunked(7) }
+        weeks.forEach { week ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().then(

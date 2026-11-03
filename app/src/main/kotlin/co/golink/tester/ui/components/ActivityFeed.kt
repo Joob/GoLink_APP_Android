@@ -394,8 +394,8 @@ private fun DayLabel(day: LocalDate?) {
         else -> co.golink.tester.ui.common.prefDate(day)
     }
     val secondary = if (day == today || day == today.minusDays(1)) {
-        day.format(DateTimeFormatter.ofPattern("EEEE, d MMM yyyy", appLocale()))
-    } else day.format(DateTimeFormatter.ofPattern("EEEE", appLocale()))
+        day.format(co.golink.tester.ui.common.DateFormatters.localized("EEEE")) + ", " + co.golink.tester.ui.common.prefDate(day)
+    } else day.format(co.golink.tester.ui.common.DateFormatters.localized("EEEE"))
     Text(
         buildAnnotatedString {
             withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)) { append(primary) }
@@ -865,7 +865,7 @@ private fun DuplicatesSheet(
                                                 Text(folder, fontSize = 12.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                 Text(
                                                     buildAnnotatedString {
-                                                        append(parseIsoLocal(f.createdAtIso)?.toLocalDate()?.format(DateTimeFormatter.ofPattern("d MMM yyyy", appLocale())).orEmpty())
+                                                        append(parseIsoLocal(f.createdAtIso)?.toLocalDate()?.let { co.golink.tester.ui.common.prefDate(it) }.orEmpty())
                                                         if (keep) {
                                                             append(" · ")
                                                             withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = GREEN)) { append("A manter".tr()) }

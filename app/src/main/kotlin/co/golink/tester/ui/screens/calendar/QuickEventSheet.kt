@@ -470,7 +470,7 @@ private fun PanelPick(label: String, onClick: () -> Unit) {
 
 private fun countLabel(n: Int, one: String, many: String) = (if (n == 1) one else many).tr().format(n)
 
-private fun untilLabel(d: LocalDate): String = d.format(DateTimeFormatter.ofPattern("d MMM yyyy", appLocale()))
+private fun untilLabel(d: LocalDate): String = co.golink.tester.ui.common.prefDate(d)
 
 @Composable
 private fun SectionLabel(text: String) {

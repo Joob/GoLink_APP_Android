@@ -89,8 +89,13 @@ fun DeletionScheduledBanner(viewModel: DeletionScheduledViewModel = hiltViewMode
         }
     }
     val secondsLeft = ((target.toEpochMilli() - now) / 1000).coerceAtLeast(0)
-    val whenText = target.atZone(ZoneId.systemDefault()).let { z ->
-        co.golink.tester.ui.common.prefDate(z.toLocalDate()) + ", " + z.format(DateTimeFormatter.ofPattern("HH:mm"))
+    // Fixo enquanto o alvo e as preferências não mudam (o banner recompõe a cada segundo).
+    val prefs = co.golink.tester.ui.common.UserDisplayPrefs.current
+    val lang = co.golink.tester.ui.i18n.I18n.lang
+    val whenText = remember(target, prefs, lang) {
+        target.atZone(ZoneId.systemDefault()).let { z ->
+            co.golink.tester.ui.common.prefDate(z.toLocalDate()) + ", " + z.format(co.golink.tester.ui.common.DateFormatters.HM)
+        }
     }
     val left = leftText(secondsLeft)
 
@@ -151,8 +156,13 @@ fun DeletionScheduledLoginDialog(viewModel: DeletionScheduledViewModel = hiltVie
     var open by remember(scheduledFor) { androidx.compose.runtime.mutableStateOf(true) }
     if (!open) return
 
-    val whenText = target.atZone(ZoneId.systemDefault()).let { z ->
-        co.golink.tester.ui.common.prefDate(z.toLocalDate()) + ", " + z.format(DateTimeFormatter.ofPattern("HH:mm"))
+    // Fixo enquanto o alvo e as preferências não mudam (o banner recompõe a cada segundo).
+    val prefs = co.golink.tester.ui.common.UserDisplayPrefs.current
+    val lang = co.golink.tester.ui.i18n.I18n.lang
+    val whenText = remember(target, prefs, lang) {
+        target.atZone(ZoneId.systemDefault()).let { z ->
+            co.golink.tester.ui.common.prefDate(z.toLocalDate()) + ", " + z.format(co.golink.tester.ui.common.DateFormatters.HM)
+        }
     }
     val left = leftText(((target.toEpochMilli() - System.currentTimeMillis()) / 1000).coerceAtLeast(0))
     val dismiss = { DeletionPromptSeen.markSeen(scheduledFor); open = false }

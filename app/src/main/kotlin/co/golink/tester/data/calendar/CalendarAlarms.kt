@@ -152,10 +152,10 @@ class CalendarAlarmStore(private val context: Context) {
         val dayText = when (day) {
             today -> I18n.t("Hoje")
             today.plusDays(1) -> I18n.t("Amanhã")
-            else -> day.format(java.time.format.DateTimeFormatter.ofPattern("d MMM", java.util.Locale.forLanguageTag(I18n.lang)))
+            else -> co.golink.tester.ui.common.prefDateShort(day)
         }
         if (alarm.allDay) return "$dayText · ${I18n.t("Todo o dia")}"
-        val time = start.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+        val time = start.format(co.golink.tester.ui.common.DateFormatters.HM)
         return when {
             alarm.minutes == 0 -> I18n.t("a começar agora (%s)").format(time)
             day == today -> I18n.t("começa às %s").format(time)

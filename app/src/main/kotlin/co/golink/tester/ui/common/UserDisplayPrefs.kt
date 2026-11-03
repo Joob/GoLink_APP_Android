@@ -3,48 +3,66 @@ package co.golink.tester.ui.common
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import co.golink.tester.domain.user.DisplayPrefs
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
- * Preferências de apresentação do utilizador (web: Settings › Preferences),
- * espelho de resources/js/helpers/userPrefs.js. Atualizadas pelo
- * UserRepository sempre que o utilizador é carregado. Estado Compose para os
- * ecrãs abertos recomporem quando mudam.
- *
- * date_format: null = automático pelo idioma; senão 'd MMM y' | 'dd/MM/y' | 'MM/dd/y' | 'y-MM-dd'.
- * week_start: 0 = domingo, 1 = segunda (omissão), 6 = sábado.
+ * Espelho Compose de [DisplayPrefs] (espelho de resources/js/helpers/userPrefs.js)
+ * para os ecrãs recomporem quando mudam. A fonte é UserRepository.displayPrefs;
+ * o App recolhe-a no Main e chama [set] — um só estado, escrito numa só thread,
+ * para nenhum frame ver o formato novo com o início de semana antigo.
  */
 object UserDisplayPrefs {
-    var dateFormat by mutableStateOf<String?>(null)
-        private set
-    var weekStart by mutableStateOf(DayOfWeek.MONDAY)
+    var current by mutableStateOf(DisplayPrefs.DEFAULT)
         private set
 
-    fun update(dateFormat: String?, weekStart: Int?) {
-        this.dateFormat = dateFormat?.takeIf { it in FORMATS }
-        this.weekStart = when (weekStart) {
-            0 -> DayOfWeek.SUNDAY
-            6 -> DayOfWeek.SATURDAY
-            else -> DayOfWeek.MONDAY
-        }
+    val dateFormat: String? get() = current.dateFormat
+    val weekStart: DayOfWeek get() = current.weekStart
+
+    fun set(prefs: DisplayPrefs) {
+        current = prefs
     }
-
-    fun clear() = update(null, null)
 
     /** Data no formato escolhido; null em modo automático (quem chama usa o seu padrão). */
     fun format(d: LocalDate, withYear: Boolean = true): String? = when (dateFormat) {
-        "d MMM y" -> d.format(DateTimeFormatter.ofPattern(if (withYear) "d MMM yyyy" else "d MMM", appLocale())).replace(".", "")
-        "dd/MM/y" -> d.format(DateTimeFormatter.ofPattern(if (withYear) "dd/MM/yyyy" else "dd/MM"))
-        "MM/dd/y" -> d.format(DateTimeFormatter.ofPattern(if (withYear) "MM/dd/yyyy" else "MM/dd"))
-        "y-MM-dd" -> d.format(DateTimeFormatter.ofPattern(if (withYear) "yyyy-MM-dd" else "MM-dd"))
+        "d MMM y" -> d.format(if (withYear) DateFormatters.localized("d MMM yyyy") else DateFormatters.localized("d MMM")).replace(".", "")
+        "dd/MM/y" -> d.format(if (withYear) DMY else DM)
+        "MM/dd/y" -> d.format(if (withYear) MDY else MD)
+        "y-MM-dd" -> d.format(if (withYear) YMD else MD_ISO)
         else -> null
     }
 
-    private val FORMATS = setOf("d MMM y", "dd/MM/y", "MM/dd/y", "y-MM-dd")
+    private val DMY = DateTimeFormatter.ofPattern("dd/MM/yyyy")
+    private val DM = DateTimeFormatter.ofPattern("dd/MM")
+    private val MDY = DateTimeFormatter.ofPattern("MM/dd/yyyy")
+    private val MD = DateTimeFormatter.ofPattern("MM/dd")
+    private val YMD = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+    private val MD_ISO = DateTimeFormatter.ofPattern("MM-dd")
+}
+
+/**
+ * Formatadores reutilizados nas listas (atividade, notificações, segurança):
+ * criar um DateTimeFormatter por linha e por recomposição pesa no scroll.
+ * Os dependentes do idioma ficam em cache por (padrão, locale).
+ */
+object DateFormatters {
+    val HM: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+
+    private val cache = java.util.concurrent.ConcurrentHashMap<Pair<String, Locale>, DateTimeFormatter>()
+
+    fun localized(pattern: String): DateTimeFormatter {
+        val locale = appLocale()
+        return cache.getOrPut(pattern to locale) { DateTimeFormatter.ofPattern(pattern, locale) }
+    }
 }
 
 /** "14 out 2026" ou o formato escolhido pelo utilizador. */
 fun prefDate(d: LocalDate): String =
-    UserDisplayPrefs.format(d) ?: d.format(DateTimeFormatter.ofPattern("d MMM yyyy", appLocale()))
+    UserDisplayPrefs.format(d) ?: d.format(DateFormatters.localized("d MMM yyyy"))
+
+/** "14 out" (sem ano) ou o formato escolhido pelo utilizador. */
+fun prefDateShort(d: LocalDate): String =
+    UserDisplayPrefs.format(d, withYear = false) ?: d.format(DateFormatters.localized("d MMM")).replace(".", "")

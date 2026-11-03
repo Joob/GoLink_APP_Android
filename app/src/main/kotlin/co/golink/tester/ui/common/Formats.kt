@@ -32,17 +32,17 @@ fun formatDay(iso: String?): String =
 
 /** "21:59". */
 fun formatTime(iso: String?): String =
-    parseIsoLocal(iso)?.format(DateTimeFormatter.ofPattern("HH:mm", appLocale())).orEmpty()
+    parseIsoLocal(iso)?.format(DateFormatters.HM).orEmpty()
 
 /** "14 out, 21:59". */
 fun formatDayTime(iso: String?): String = parseIsoLocal(iso)?.let { t ->
-    UserDisplayPrefs.format(t.toLocalDate(), withYear = false)?.let { "$it, " + t.format(DateTimeFormatter.ofPattern("HH:mm")) }
-        ?: t.format(DateTimeFormatter.ofPattern("d MMM, HH:mm", appLocale()))
+    UserDisplayPrefs.format(t.toLocalDate(), withYear = false)?.let { "$it, " + t.format(DateFormatters.HM) }
+        ?: t.format(DateFormatters.localized("d MMM, HH:mm"))
 }.orEmpty()
 
 /** "setembro 2026" → com maiúscula: "Setembro 2026". */
 fun formatMonth(iso: String?): String =
-    parseIsoLocal(iso)?.format(DateTimeFormatter.ofPattern("LLLL yyyy", appLocale()))
+    parseIsoLocal(iso)?.format(DateFormatters.localized("LLLL yyyy"))
         ?.replaceFirstChar { it.titlecase(appLocale()) }
         .orEmpty()
 

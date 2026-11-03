@@ -107,6 +107,7 @@ fun MonthView(
     val byDay = remember(instances) { instancesByDay(instances) }
     val ws = co.golink.tester.ui.common.UserDisplayPrefs.weekStart
     val grid = remember(cursor.year, cursor.monthValue, ws) { CalendarDates.monthGrid(cursor, ws) }
+    val letters = rememberWeekdayLetters()
     val today = LocalDate.now()
     val dayList = byDay[cursor].orEmpty()
 
@@ -114,7 +115,7 @@ fun MonthView(
         item {
             Column(Modifier.swipeStep(onStep).padding(horizontal = 8.dp)) {
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                    weekdayLetters().forEach {
+                    letters.forEach {
                         Text(
                             it, fontSize = 11.sp, fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -413,14 +414,16 @@ fun DayView(
 
     Column(Modifier.fillMaxSize()) {
         // Tira da semana.
-        val week = CalendarDates.startOfWeek(cursor, co.golink.tester.ui.common.UserDisplayPrefs.weekStart).let { s -> List(7) { s.plusDays(it.toLong()) } }
+        val ws = co.golink.tester.ui.common.UserDisplayPrefs.weekStart
+        val week = remember(cursor, ws) { CalendarDates.startOfWeek(cursor, ws).let { s -> List(7) { s.plusDays(it.toLong()) } } }
+        val letters = rememberWeekdayLetters()
         Row(Modifier.fillMaxWidth().swipeStep(onStep).padding(horizontal = 8.dp, vertical = 4.dp)) {
             week.forEachIndexed { i, d ->
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).clickable { onSelect(d) }.padding(vertical = 4.dp),
                 ) {
-                    Text(weekdayLetters()[i], fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(letters[i], fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier

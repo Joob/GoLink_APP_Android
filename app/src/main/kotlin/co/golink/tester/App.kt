@@ -8,6 +8,7 @@ import coil.ImageLoaderFactory
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 import javax.inject.Provider
+import kotlinx.coroutines.launch
 
 @HiltAndroidApp
 class App : Application(), Configuration.Provider, ImageLoaderFactory {
@@ -19,6 +20,9 @@ class App : Application(), Configuration.Provider, ImageLoaderFactory {
     // Lembretes do calendário (AlarmManager): agenda ao desbloquear, limpa no logout.
     @Inject lateinit var calendarAlarms: co.golink.tester.data.calendar.CalendarAlarmScheduler
 
+    // Preferências de datas: derivadas do utilizador, aplicadas ao estado Compose no Main.
+    @Inject lateinit var userRepository: co.golink.tester.data.user.UserRepository
+
     override fun onCreate() {
         super.onCreate()
         // Carrega o idioma guardado antes de qualquer UI compor.
@@ -27,6 +31,9 @@ class App : Application(), Configuration.Provider, ImageLoaderFactory {
         co.golink.tester.ui.theme.AppThemeMode.init(this)
         co.golink.tester.ui.components.drawer.DrawerPanel.init(this)
         calendarAlarms.start()
+        kotlinx.coroutines.MainScope().launch {
+            userRepository.displayPrefs.collect { co.golink.tester.ui.common.UserDisplayPrefs.set(it) }
+        }
         // Ficheiros desencriptados deixados por uma sessão que terminou mal.
         val startedAt = System.currentTimeMillis()
         Thread { co.golink.tester.data.encryption.PlaintextCache.sweep(this, olderThan = startedAt) }.start()

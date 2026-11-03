@@ -1,6 +1,5 @@
 package co.golink.tester.ui.screens.calendar
 
-import co.golink.tester.ui.common.UserDisplayPrefs
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -25,6 +24,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.flowOn
@@ -98,6 +98,15 @@ class CalendarViewModel @Inject constructor(
     )
     val state: StateFlow<CalendarUiState> = _state
 
+    /**
+     * Início da semana derivado do utilizador (não do singleton da UI, que é
+     * atualizado noutra corrotina): o intervalo carregado e a grelha do mês
+     * vêm da mesma fonte, e uma mudança recarrega já o intervalo novo.
+     */
+    private val weekStart: StateFlow<java.time.DayOfWeek> = userRepository.displayPrefs
+        .map { it.weekStart }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, co.golink.tester.domain.user.DisplayPrefs.from(userRepository.me.value).weekStart)
+
     val calendars: StateFlow<List<CalInfo>> = repo.calendars
 
     // Feriados: visibilidade por aparelho (como o localStorage da web), país no perfil.
@@ -170,6 +179,10 @@ class CalendarViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
+            // drop(1): o valor inicial já é o usado no primeiro carregamento.
+            weekStart.drop(1).collect { reload(silent = true) }
+        }
+        viewModelScope.launch {
             keys.unlocked.collect { unlocked ->
                 if (unlocked) {
                     loadCalendars()
@@ -195,8 +208,8 @@ class CalendarViewModel @Inject constructor(
     }
 
     private fun range(s: CalendarUiState): Pair<LocalDate, LocalDate> = when (s.view) {
-        CalView.Month -> CalendarDates.monthGrid(s.cursor, UserDisplayPrefs.weekStart).let { it.first() to it.last().plusDays(1) }
-        CalView.Day -> CalendarDates.startOfWeek(s.cursor, UserDisplayPrefs.weekStart).let { it to it.plusDays(7) }
+        CalView.Month -> CalendarDates.monthGrid(s.cursor, weekStart.value).let { it.first() to it.last().plusDays(1) }
+        CalView.Day -> CalendarDates.startOfWeek(s.cursor, weekStart.value).let { it to it.plusDays(7) }
         CalView.Agenda -> s.cursor to s.cursor.plusDays(s.agendaDays)
     }
 

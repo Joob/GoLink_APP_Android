@@ -71,8 +71,9 @@ private fun detailLabel(key: String): String = when (key) {
 private fun formatWhen(n: Notification): String? {
     val iso = n.createdAtIso ?: return n.createdAt
     val date = n.createdAtInstant ?: return n.createdAt
-    val absolute = date.atZone(java.time.ZoneId.systemDefault())
-        .format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).withLocale(Locale.forLanguageTag(I18n.lang)))
+    val zoned = date.atZone(java.time.ZoneId.systemDefault())
+    val absolute = co.golink.tester.ui.common.UserDisplayPrefs.format(zoned.toLocalDate())?.let { "$it, " + zoned.format(co.golink.tester.ui.common.DateFormatters.HM) }
+        ?: zoned.format(DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).withLocale(Locale.forLanguageTag(I18n.lang)))
     // Mais de uma semana: o relativeAgo devolve só o dia, que já está no absoluto.
     val week = Duration.between(date, java.time.Instant.now()).toDays() >= 7
     return if (week) absolute else "$absolute · " + relativeAgo(iso)
