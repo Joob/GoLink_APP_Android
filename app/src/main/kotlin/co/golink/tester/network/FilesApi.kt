@@ -228,6 +228,9 @@ interface FilesApi {
         // Índice do chunk: o servidor grava cada parte no seu sítio, por isso um
         // reenvio (timeout) deixa de duplicar bytes e corromper o ficheiro.
         @Part("chunk_index") chunkIndex: RequestBody? = null,
+        // Nº total de partes: o servidor recusa (413) logo na 1.ª parte um
+        // ficheiro acima do limite do plano, em vez de o receber todo.
+        @Part("total_chunks") totalChunks: RequestBody? = null,
         @Part("overwrite_existing") overwriteExisting: RequestBody?,
         @Part("overwrite_file_id") overwriteFileId: RequestBody? = null,
         // Backup por chunks (vídeos grandes): marca a origem; o servidor monta

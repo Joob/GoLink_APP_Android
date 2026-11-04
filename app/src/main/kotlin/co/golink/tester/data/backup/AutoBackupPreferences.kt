@@ -146,6 +146,8 @@ class AutoBackupPreferences @Inject constructor(
     @Synchronized
     fun requeueFailed() {
         prefs.edit {
+            // Upgrade feito ou não, volta a tentar: o aviso do limite reaparece se ainda valer.
+            remove(KEY_OVER_LIMIT_NOTICE)
             prefs.all.filterKeys { it.startsWith(FAILED_PREFIX) }.forEach { (key, value) ->
                 val reset = (value as? String)?.split(',')
                     ?.joinToString(",") { "${it.substringBefore(':')}:0" }
@@ -167,6 +169,13 @@ class AutoBackupPreferences @Inject constructor(
     var lastError: String?
         get() = prefs.getString(KEY_LAST_ERROR, null)
         set(value) { prefs.edit { putString(KEY_LAST_ERROR, value) }; refresh() }
+
+    // Aviso "ficheiros acima do limite do plano": esses ficheiros já não voltam a
+    // ser tentados, por isso o aviso tem de sobreviver aos ticks seguintes (que
+    // terminam sem erros) até o utilizador o fechar ou procurar de novo.
+    var overLimitNotice: String?
+        get() = prefs.getString(KEY_OVER_LIMIT_NOTICE, null)
+        set(value) { prefs.edit { putString(KEY_OVER_LIMIT_NOTICE, value) } }
 
     // Ligado no telemóvel mas o servidor ainda não sabe (POST por confirmar).
     // Enquanto true, um "desligado" lido do servidor é a flag antiga — não
@@ -243,7 +252,7 @@ class AutoBackupPreferences @Inject constructor(
     }
 
     fun clearError() {
-        prefs.edit { remove(KEY_LAST_ERROR) }
+        prefs.edit { remove(KEY_LAST_ERROR); remove(KEY_OVER_LIMIT_NOTICE) }
         refresh()
     }
 
@@ -303,6 +312,7 @@ class AutoBackupPreferences @Inject constructor(
         const val KEY_VIDEOS_COUNT = "videos_count"
         const val KEY_VIDEOS_BYTES = "videos_bytes"
         const val KEY_LAST_ERROR = "last_error"
+        private const val KEY_OVER_LIMIT_NOTICE = "over_limit_notice"
     }
 }
 

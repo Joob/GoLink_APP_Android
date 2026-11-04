@@ -332,6 +332,8 @@ object I18nRedesign {
         r("Verificação em dois passos", "Two-step verification", "Validation en deux étapes", "Verificación en dos pasos"),
         r("atual", "current", "actuel", "actual"),
         r("membros ilimitados", "unlimited members", "membres illimités", "miembros ilimitados"),
+        r("ficheiros até %s", "files up to %s", "fichiers jusqu'à %s", "archivos de hasta %s"),
+        r("sem limite por ficheiro", "no file size limit", "sans limite par fichier", "sin límite por archivo"),
         r("usados de %s · %d%%", "used of %s · %d%%", "utilisés sur %s · %d%%", "usados de %s · %d%%"),
         r("Última atividade: %s", "Last activity: %s", "Dernière activité : %s", "Última actividad: %s"),
         r("Último uso: %s", "Last used: %s", "Dernière utilisation : %s", "Último uso: %s"),

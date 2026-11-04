@@ -54,6 +54,9 @@ data class UploadTask(
     val e2eLocked: Boolean = false,
     // Vai cifrado (E2E): cadeado no anel do painel, como na web.
     val encrypted: Boolean = false,
+    // Recusado por passar o limite por ficheiro do plano (413 upload_limit):
+    // definitivo — o backup não volta a tentar. Valor = limite formatado ("5 GB").
+    val overLimit: String? = null,
 ) {
     enum class State { Queued, Uploading, Completed, Failed, Cancelled, Conflict }
 }
@@ -306,6 +309,22 @@ class UploadManager @Inject constructor(
 
     private class ConflictException : RuntimeException("conflict")
 
+    /** 413 com corpo {type:"upload_limit"}: o ficheiro passa o limite do plano do dono. */
+    private class UploadLimitException(val limitFormatted: String) : RuntimeException("upload_limit")
+
+    /** Falha HTTP definitiva: 413 por limite do plano vira [UploadLimitException]; o resto, mensagem. */
+    private fun failHttp(code: Int, body: String?): Nothing {
+        if (code == 413 && body?.contains("\"upload_limit\"") == true) {
+            val limit = runCatching {
+                kotlinx.serialization.json.Json.parseToJsonElement(body)
+                    .let { (it as? kotlinx.serialization.json.JsonObject)?.get("limit_formatted") }
+                    ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+            }.getOrNull()
+            throw UploadLimitException(limit ?: "—")
+        }
+        error(httpErrorMessage(code, body))
+    }
+
     private fun runTask(taskId: String, uri: Uri, metadata: FileMetadata, parentId: String?, overwrite: Boolean = false, mobileBackup: Boolean = false, backupFolder: String? = null, backupPath: String? = null, replacesId: String? = null): Job {
         val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             // Uploads do utilizador: no máximo 3 ficheiros em simultâneo (antes
@@ -378,6 +397,10 @@ class UploadManager @Inject constructor(
                     } else {
                         update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Conflict, errorMessage = null) else it } }
                     }
+                } else if (t is UploadLimitException) {
+                    forgetTask(taskId)
+                    val message = "Ficheiro acima do limite do teu plano (%s por ficheiro).".tr().format(t.limitFormatted)
+                    update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Failed, errorMessage = message, waitingForNetwork = false, networkError = false, overLimit = t.limitFormatted) else it } }
                 } else {
                     val isNetwork = t is java.io.IOException
                     val isLocked = t.message == "e2e_locked"
@@ -445,7 +468,7 @@ class UploadManager @Inject constructor(
         val current = _tasks.value.firstOrNull { it.id == taskId } ?: return
         if (current.state != UploadTask.State.Failed) return
         val metadata = readMetadata(source.uri).copy(displayName = current.name)
-        update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Queued, progress = 0f, errorMessage = null, networkError = false, e2eLocked = false) else it } }
+        update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Queued, progress = 0f, errorMessage = null, networkError = false, e2eLocked = false, overLimit = null) else it } }
         if (!source.mobileBackup) track(taskId, source.uri, metadata, source.parentId, overwrite = source.overwrite, replacesId = source.replacesId, treeUri = source.treeUri)
         runTask(taskId, source.uri, metadata, source.parentId, overwrite = source.overwrite, mobileBackup = source.mobileBackup, backupFolder = source.backupFolder, backupPath = source.backupPath, replacesId = source.replacesId)
     }
@@ -514,7 +537,7 @@ class UploadManager @Inject constructor(
             file = filePart,
         )
         if (response.code() == 409) throw ConflictException()
-        if (!response.isSuccessful) error(httpErrorMessage(response.code(), response.errorBody()?.string()))
+        if (!response.isSuccessful) failHttp(response.code(), response.errorBody()?.string())
         rememberCreated(taskId, response.body()?.data)
         updateProgress(taskId, 1f)
     }
@@ -595,7 +618,7 @@ class UploadManager @Inject constructor(
                 nameEncrypted = nameEncrypted?.let { textPart(it) },
             )
             if (response.code() == 409) throw ConflictException()
-            if (!response.isSuccessful) error(httpErrorMessage(response.code(), response.errorBody()?.string()))
+            if (!response.isSuccessful) failHttp(response.code(), response.errorBody()?.string())
 
             rememberCreated(taskId, response.body()?.data)
             // Já existia (reenvio): o ficheiro tem a data key do 1.º envio, por isso
@@ -847,6 +870,7 @@ class UploadManager @Inject constructor(
                         parentId = parentId?.let { textPart(it) },
                         isLastChunk = textPart(if (isLast) "1" else "0"),
                         chunkIndex = textPart(chunkIndex.toString()),
+                        totalChunks = textPart(chunkCount.toString()),
                         overwriteExisting = if (overwrite && isLast) textPart("1") else null,
                         overwriteFileId = replacesId?.takeIf { overwrite && isLast }?.let { textPart(it) },
                         mobileBackup = if (mobileBackup) textPart("1") else null,
@@ -956,6 +980,7 @@ class UploadManager @Inject constructor(
                         parentId = parentId?.let { textPart(it) },
                         isLastChunk = textPart(if (isLast) "1" else "0"),
                         chunkIndex = textPart(chunkIndex.toString()),
+                        totalChunks = textPart(chunkCount.toString()),
                         overwriteExisting = if (overwrite && isLast) textPart("1") else null,
                         mobileBackup = mobileFlag?.let { textPart(it) },
                         folder = backupBucket?.let { textPart(it) },
@@ -1003,13 +1028,14 @@ class UploadManager @Inject constructor(
                     parentId = parentId?.let { textPart(it) },
                     isLastChunk = textPart(if (isLast) "1" else "0"),
                     chunkIndex = textPart(plainChunkIndex.toString()),
+                    totalChunks = if (total > 0L) textPart(((total + CHUNK_SIZE - 1) / CHUNK_SIZE).toString()) else null,
                     overwriteExisting = if (overwrite && isLast) textPart("1") else null,
                     mobileBackup = mobileFlag?.let { textPart(it) },
                     folder = backupBucket?.let { textPart(it) },
                     chunk = chunkPart,
                 )
                 if (response.code() == 409) throw ConflictException()
-                if (!response.isSuccessful) error(httpErrorMessage(response.code(), response.errorBody()?.string()))
+                if (!response.isSuccessful) failHttp(response.code(), response.errorBody()?.string())
                 sent += filled
                 plainChunkIndex++
                 if (total > 0L) updateProgress(taskId, sent.toFloat() / total.toFloat())
@@ -1113,9 +1139,9 @@ class UploadManager @Inject constructor(
                         throw MissingChunksException(missing)
                     }
                     val retryable = result.code() == 429 || result.code() >= 500
-                    if (!retryable) error(httpErrorMessage(result.code(), errBody))
+                    if (!retryable) failHttp(result.code(), errBody)
                     attempt++
-                    if (attempt >= CHUNK_MAX_ATTEMPTS) error(httpErrorMessage(result.code(), errBody))
+                    if (attempt >= CHUNK_MAX_ATTEMPTS) failHttp(result.code(), errBody)
                     val retryAfter = result.headers()["Retry-After"]?.toLongOrNull()
                     connectivity.delayOrRetryNow(retryAfter?.times(1000) ?: backoffMs(attempt))
                     continue

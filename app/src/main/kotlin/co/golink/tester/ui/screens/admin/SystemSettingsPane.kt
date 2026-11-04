@@ -102,8 +102,8 @@ private val SOCIAL = listOf("google" to "Google", "github" to "GitHub", "microso
 private fun schema(tab: String): List<SSection> = when (tab) {
     "app" -> listOf(
         SSection("Envio de ficheiros".tr(), listOf(
-            SField("upload_limit", "Limite de upload (MB)".tr(), FieldKind.Number, "Vazio = sem limite.".tr()),
-            SField("chunk_size", "Tamanho das partes (MB)".tr(), FieldKind.Number),
+            SField("upload_limit", "Limite por ficheiro — plano Free (MB)".tr(), FieldKind.Number, "Só contas sem plano pago. Os planos pagos têm o limite próprio em Planos. Vazio = sem limite.".tr()),
+            SField("chunk_size", "Tamanho das partes (MB)".tr(), FieldKind.Number, "Recomendado: 32 MB.".tr()),
             SField("mimetypes_blacklist", "Tipos de ficheiro bloqueados".tr(), help = "Extensões separadas por vírgulas, ex.: exe,bat".tr()),
         )),
         SSection("Funcionalidades dos utilizadores".tr(), listOf(

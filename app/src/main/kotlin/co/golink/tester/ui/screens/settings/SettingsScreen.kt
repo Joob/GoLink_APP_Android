@@ -2135,6 +2135,14 @@ private fun BillingAddressSection(
 private fun PlanOptionRow(plan: Plan, selected: Boolean, isCurrent: Boolean, onClick: () -> Unit) {
     val storage = plan.features["max_storage_amount"]?.let { if (it >= 1024 && it % 1024 == 0L) "${it / 1024} TB" else "$it GB" }
     val members = plan.features["max_team_members"]?.let { if (it == -1L) "membros ilimitados".tr() else "%d membros".tr().format(it) }
+    // max_upload_size em GB (base 1024, como o resto da app)
+    val upload = plan.features["max_upload_size"]?.let {
+        when {
+            it == -1L -> "sem limite por ficheiro".tr()
+            it > 0 -> "ficheiros até %s".tr().format(if (it >= 1024 && it % 1024 == 0L) "${it / 1024} TB" else "$it GB")
+            else -> null
+        }
+    }
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = if (selected) SettingsAccent.copy(alpha = 0.06f) else settingsCardColor(),
@@ -2158,7 +2166,7 @@ private fun PlanOptionRow(plan: Plan, selected: Boolean, isCurrent: Boolean, onC
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
-                listOfNotNull(storage, members).takeIf { it.isNotEmpty() }?.let {
+                listOfNotNull(storage, members, upload).takeIf { it.isNotEmpty() }?.let {
                     Text(it.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }

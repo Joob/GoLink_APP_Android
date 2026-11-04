@@ -224,6 +224,7 @@ object BackupNotifications {
 
     const val ALERT_QUOTA = "quota"
     const val ALERT_FAILED = "failed"
+    const val ALERT_OVER_LIMIT = "over_limit"
     private const val ALERT_E2E_LOCKED = "e2e_locked"
     private const val ALERT_E2E_NOT_CONFIGURED = "e2e_not_configured"
     private const val REPEAT_AFTER_MS = 24L * 60 * 60 * 1000

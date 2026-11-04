@@ -295,6 +295,9 @@ class AutoBackupWorker @AssistedInject constructor(
         var failedTotal = 0
         // Falhas do próprio ficheiro (não rede/servidor/sessão).
         var permanentFailedTotal = 0
+        // Recusados por passarem o limite por ficheiro do plano (e esse limite).
+        var overLimitTotal = 0
+        var overLimitSize: String? = null
         // O run parou antes do fim (lote inteiro a falhar por rede/servidor).
         var interrupted = false
         // Sinalizado quando o servidor recusa por falta de espaço (HTTP 507) a
@@ -372,7 +375,13 @@ class AutoBackupWorker @AssistedInject constructor(
                                 // servidor (5xx), sessão, pausa e falta de espaço não
                                 // — senão uma ligação instável desistia de ficheiros bons.
                                 val attempts = failed[item.mediaStoreId] ?: 0
-                                failed[item.mediaStoreId] = if (result.transient) attempts else attempts + 1
+                                failed[item.mediaStoreId] = when {
+                                    // Acima do limite do plano: repetir não muda nada — desiste já
+                                    // ("Procurar de novo" volta a pô-lo na fila, ex. após upgrade).
+                                    result.overLimit != null -> MAX_ATTEMPTS
+                                    result.transient -> attempts
+                                    else -> attempts + 1
+                                }
                             }
                         }
                     }
@@ -391,6 +400,10 @@ class AutoBackupWorker @AssistedInject constructor(
                 conflictTotal += results.count { it.conflict }
                 failedTotal += batchFailed
                 permanentFailedTotal += results.count { !it.success && !it.transient }
+                results.filter { !it.success && it.overLimit != null }.let { over ->
+                    overLimitTotal += over.size
+                    if (over.isNotEmpty()) overLimitSize = over.first().overLimit
+                }
                 // Servidor recusou por falta de espaço (HTTP 507) — pára já o
                 // resto do run: não adianta continuar a enviar.
                 if (results.any { !it.success && isQuotaError(it.error) }) quotaExceeded = true
@@ -459,15 +472,34 @@ class AutoBackupWorker @AssistedInject constructor(
         }
 
         val completed = !interrupted && !conditionsChanged.get() && !isStopped
-        return if (failedTotal > 0) {
-            preferences.lastError = "$failedTotal ${AutoBackupManager.FAILED_FILES_ERROR}"
+        // Ficheiros acima do limite do plano: aviso próprio (diz o limite e o que
+        // fazer), uma vez por 24 h em background como os outros avisos de estado.
+        // Não voltam a ser tentados, por isso o texto fica guardado para o ecrã.
+        if (overLimitTotal > 0) {
+            preferences.overLimitNotice = "%d ficheiro(s) acima do limite do teu plano (%s por ficheiro) não foram enviados. Faz upgrade e toca em \"Procurar de novo na galeria\".".tr()
+                .format(overLimitTotal, overLimitSize ?: "—")
+        }
+        val overLimitText = preferences.overLimitNotice
+        val otherFailed = failedTotal - overLimitTotal
+        if (overLimitTotal > 0 && otherFailed == 0) {
+            BackupNotifications.showResult(
+                applicationContext,
+                title = "Ficheiros demasiado grandes para o plano".tr(),
+                text = overLimitText.orEmpty(),
+                alertKey = alertKey(BackupNotifications.ALERT_OVER_LIMIT),
+            )
+        }
+        return if (otherFailed > 0) {
+            preferences.lastError = "$otherFailed ${AutoBackupManager.FAILED_FILES_ERROR}"
             // Em background, falhas só de rede/servidor são retomadas sozinhas
             // no tick seguinte: avisar em cada minuto era ruído.
-            if (userInitiated || permanentFailedTotal > 0) {
+            if (userInitiated || permanentFailedTotal - overLimitTotal > 0) {
+                // Mesma notificação (id único): junta o aviso do limite, se houver neste run.
+                val extra = if (overLimitTotal > 0) "\n" + overLimitText.orEmpty() else ""
                 BackupNotifications.showResult(
                     applicationContext,
                     title = "Backup terminou com erros".tr(),
-                    text = "%d enviados, %d falharam.".tr().format(uploadedTotal, failedTotal),
+                    text = "%d enviados, %d falharam.".tr().format(uploadedTotal, otherFailed) + extra,
                     alertKey = alertKey(BackupNotifications.ALERT_FAILED),
                 )
             }
@@ -475,7 +507,8 @@ class AutoBackupWorker @AssistedInject constructor(
             // só somava um backoff exponencial ao tick.
             Result.success()
         } else {
-            preferences.lastError = null
+            // Sem outras falhas: fica (ou some) o aviso do limite do plano.
+            preferences.lastError = overLimitText
             BackupNotifications.clearAlert(applicationContext, BackupNotifications.ALERT_FAILED)
             // Só no backup pedido pelo utilizador e terminado: o tick de 1 min
             // envia cada foto nova à medida que aparece, e avisar "Backup
@@ -554,7 +587,8 @@ class AutoBackupWorker @AssistedInject constructor(
                 item,
                 success = false,
                 error = task?.errorMessage,
-                transient = task == null || task.networkError || task.e2eLocked || isTransientError(task.errorMessage),
+                transient = task?.overLimit == null && (task == null || task.networkError || task.e2eLocked || isTransientError(task.errorMessage)),
+                overLimit = task?.overLimit,
             )
         }
         if (result.success && !result.conflict) {
@@ -767,6 +801,8 @@ class AutoBackupWorker @AssistedInject constructor(
         val error: String? = null,
         // Falha que não é do ficheiro (rede/servidor/sessão): não gasta tentativa.
         val transient: Boolean = false,
+        // Passa o limite por ficheiro do plano ("5 GB"): definitivo, sem novas tentativas.
+        val overLimit: String? = null,
     )
 
     companion object {

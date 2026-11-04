@@ -78,6 +78,7 @@ internal fun AdminPlan.fixedFeatures(): Map<String, String> =
 private fun featureLabel(key: String) = when (key) {
     "max_storage_amount" -> "Armazenamento (GB)".tr()
     "max_team_members" -> "Membros da equipa".tr()
+    "max_upload_size" -> "Tamanho máx. por ficheiro (GB)".tr()
     else -> key
 }
 
@@ -252,6 +253,7 @@ private fun CreatePlanSheet(state: PlansViewModel.UiState, vm: PlansViewModel) {
     var interval by remember { mutableStateOf("month") }
     var storage by remember { mutableStateOf("") }
     var members by remember { mutableStateOf("") }
+    var uploadSize by remember { mutableStateOf("10") }
     ModalBottomSheet(onDismissRequest = { vm.showCreate(false) }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp),
@@ -267,6 +269,7 @@ private fun CreatePlanSheet(state: PlansViewModel.UiState, vm: PlansViewModel) {
             AdminSegmented(listOf("month" to "Mensal".tr(), "year" to "Anual".tr()), interval, { interval = it })
             SettingsField(featureLabel("max_storage_amount"), storage, { storage = it.filter(Char::isDigit) }, keyboardType = KeyboardType.Number)
             SettingsField(featureLabel("max_team_members"), members, { members = it.filter(Char::isDigit) }, keyboardType = KeyboardType.Number)
+            SettingsField(featureLabel("max_upload_size"), uploadSize, { uploadSize = it.filter(Char::isDigit) }, keyboardType = KeyboardType.Number)
             state.formError?.let { SettingsNotice(it, MaterialTheme.colorScheme.error) }
             val price = amount.toDoubleOrNull()
             SettingsPrimaryButton(
@@ -282,6 +285,7 @@ private fun CreatePlanSheet(state: PlansViewModel.UiState, vm: PlansViewModel) {
                             features = mapOf(
                                 "max_storage_amount" to (storage.toIntOrNull() ?: 0),
                                 "max_team_members" to (members.toIntOrNull() ?: 0),
+                                "max_upload_size" to (uploadSize.toIntOrNull()?.takeIf { it > 0 } ?: 10),
                             ),
                         ),
                     )
