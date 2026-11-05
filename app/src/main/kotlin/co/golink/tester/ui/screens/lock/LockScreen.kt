@@ -6,6 +6,28 @@ import androidx.activity.compose.BackHandler
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.Dp
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -22,7 +44,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -66,6 +87,7 @@ import kotlinx.coroutines.launch
 /**
  * Bloqueio da app em folha a subir de baixo (por cima do conteúdo desfocado):
  * teclado redondo para o PIN ou ecrã de impressão digital, com "Usar PIN".
+ * A folha fica sempre acima da barra de navegação (insets da janela do bloqueio).
  */
 @Composable
 fun LockScreen(
@@ -120,9 +142,9 @@ fun LockScreen(
     LaunchedEffect(error) {
         if (error != null) {
             scope.launch {
-                for (x in listOf(14f, -12f, 9f, -6f, 3f, 0f)) shake.animateTo(x, androidx.compose.animation.core.tween(45))
+                for (x in listOf(12f, -10f, 7f, -4f, 2f, 0f)) shake.animateTo(x, tween(80, easing = EaseOutSoft))
             }
-            delay(900)
+            delay(1100)
             pin = ""
             viewModel.consumeError()
         }
@@ -138,6 +160,7 @@ fun LockScreen(
     // Fundo: desfoque da janela de bloqueio no Android 12+ (tapa também folhas e
     // popups abertos); sem desfoque entre janelas (antes do 12, poupança de
     // bateria, aparelhos sem suporte) fica opaco para não se ver nada.
+    // O fundo aparece logo (nada do conteúdo pode ver-se); só a folha sobe devagar.
     val crossWindowBlur = remember {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
             (context.getSystemService(android.content.Context.WINDOW_SERVICE) as? android.view.WindowManager)
@@ -145,7 +168,10 @@ fun LockScreen(
     }
     val scrim = if (crossWindowBlur) Color.Black.copy(alpha = if (dark) 0.55f else 0.35f)
     else MaterialTheme.colorScheme.background
-    Box(
+    val rise = remember { Animatable(1f) }
+    LaunchedEffect(Unit) { rise.animateTo(0f, tween(SHEET_RISE_MS, easing = EaseOutSoft)) }
+
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(scrim)
@@ -153,19 +179,33 @@ fun LockScreen(
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
         contentAlignment = Alignment.BottomCenter,
     ) {
+        // Ecrãs baixos: teclas mais pequenas para a folha caber acima da barra de navegação.
+        val keySize = when {
+            maxHeight < 620.dp -> 58.dp
+            maxHeight < 720.dp -> 64.dp
+            else -> 72.dp
+        }
         Surface(
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
             color = MaterialTheme.colorScheme.surface,
             contentColor = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.fillMaxWidth().widthIn(max = 520.dp),
+            shadowElevation = 12.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 520.dp)
+                .graphicsLayer {
+                    translationY = size.height * rise.value
+                    alpha = 1f - rise.value * 0.6f
+                },
         ) {
-            Box(Modifier.navigationBarsPadding()) {
+            // A barra de navegação (gestos ou botões) fica livre por baixo da folha.
+            Box(Modifier.windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.displayCutout.only(WindowInsetsSides.Bottom)))) {
                 // Fechar: manda a app para segundo plano (continua bloqueada).
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(top = 14.dp, end = 14.dp)
+                        .padding(top = 16.dp, end = 16.dp)
                         .size(36.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.surfaceVariant)
@@ -176,23 +216,35 @@ fun LockScreen(
 
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.fillMaxWidth().padding(top = 26.dp, bottom = 18.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 20.dp),
                 ) {
+                    // Pega da folha
+                    Box(
+                        Modifier
+                            .width(36.dp)
+                            .height(4.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)),
+                    )
+                    Spacer(Modifier.height(18.dp))
                     // Logótipo
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .size(48.dp)
+                            .clip(RoundedCornerShape(14.dp))
                             .background(MaterialTheme.colorScheme.primary),
-                    ) { Text("go", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp) }
-                    Spacer(Modifier.height(6.dp))
-                    Text("GoLink", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(14.dp))
+                    ) { Text("go", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp) }
+                    Spacer(Modifier.height(16.dp))
 
                     AnimatedContent(
                         targetState = usePin,
-                        transitionSpec = { fadeIn() togetherWith fadeOut() },
+                        transitionSpec = {
+                            (fadeIn(tween(MODE_IN_MS, delayMillis = 90, easing = EaseOutSoft)) +
+                                slideInVertically(tween(MODE_IN_MS, delayMillis = 90, easing = EaseOutSoft)) { it / 14 }) togetherWith
+                                fadeOut(tween(MODE_OUT_MS)) using
+                                SizeTransform(clip = false) { _, _ -> tween(MODE_IN_MS, easing = EaseOutSoft) }
+                        },
                         label = "lock-mode",
                     ) { pinMode ->
                         if (pinMode) {
@@ -200,6 +252,7 @@ fun LockScreen(
                                 pin = pin,
                                 error = error,
                                 shakeX = shake.value,
+                                keySize = keySize,
                                 showBiometric = biometricAvailable,
                                 onDigit = ::onDigit,
                                 onDelete = { if (pin.isNotEmpty() && error == null) pin = pin.dropLast(1) },
@@ -213,30 +266,26 @@ fun LockScreen(
                             )
                         }
                     }
-
-                    // Indicador da folha
-                    Spacer(Modifier.height(14.dp))
-                    Box(
-                        Modifier
-                            .width(96.dp)
-                            .height(4.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)),
-                    )
                 }
             }
         }
     }
 }
 
+// Movimento calmo: a folha sobe devagar e assenta sem ressalto.
+private const val SHEET_RISE_MS = 620
+private const val MODE_IN_MS = 460
+private const val MODE_OUT_MS = 220
+private val EaseOutSoft = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
+
 @Composable
 private fun Header(title: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(title, fontSize = 24.sp, fontWeight = FontWeight.Normal)
+        Text(title, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(6.dp))
         Text(
             "Desbloqueia os teus ficheiros encriptados".tr(),
-            fontSize = 12.sp,
+            fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -247,127 +296,187 @@ private fun PinPane(
     pin: String,
     error: String?,
     shakeX: Float,
+    keySize: Dp,
     showBiometric: Boolean,
     onDigit: (String) -> Unit,
     onDelete: () -> Unit,
     onBiometric: () -> Unit,
 ) {
+    val gap = if (keySize < 64.dp) 18.dp else 24.dp
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
         Header("Introduz o PIN".tr())
-        Spacer(Modifier.height(22.dp))
+        Spacer(Modifier.height(24.dp))
         Row(
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.offset { IntOffset(shakeX.dp.roundToPx(), 0) },
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.height(16.dp).offset { IntOffset(shakeX.dp.roundToPx(), 0) },
         ) {
-            val ring = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-            repeat(4) { i ->
-                val filled = i < pin.length
-                val c = when {
-                    error != null -> MaterialTheme.colorScheme.error
-                    filled -> MaterialTheme.colorScheme.primary
-                    else -> ring
-                }
-                Box(
-                    Modifier
-                        .size(11.dp)
-                        .clip(CircleShape)
-                        .background(if (filled || error != null) c else Color.Transparent)
-                        .border(1.5.dp, c, CircleShape),
-                )
+            repeat(4) { i -> PinDot(filled = i < pin.length, error = error != null) }
+        }
+        Box(Modifier.height(30.dp), contentAlignment = Alignment.Center) {
+            androidx.compose.animation.AnimatedVisibility(visible = error != null, enter = fadeIn(tween(240)), exit = fadeOut(tween(240))) {
+                Text(error.orEmpty(), fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
             }
         }
-        Box(Modifier.height(26.dp), contentAlignment = Alignment.Center) {
-            error?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.error) }
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(if (keySize < 64.dp) 10.dp else 14.dp)) {
             listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9")).forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    row.forEach { d -> DigitKey(d) { onDigit(d) } }
+                Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    row.forEach { d -> DigitKey(d, keySize) { onDigit(d) } }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
                 if (showBiometric) {
-                    DarkKey(onClick = onBiometric) {
-                        Icon(Icons.Outlined.Fingerprint, contentDescription = "Biometria".tr(), modifier = Modifier.size(24.dp))
+                    GhostKey(keySize, onClick = onBiometric) {
+                        Icon(Icons.Outlined.Fingerprint, contentDescription = "Biometria".tr(), tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
                     }
                 } else {
-                    Spacer(Modifier.size(KeySize))
+                    Spacer(Modifier.size(keySize))
                 }
-                DigitKey("0") { onDigit("0") }
-                DarkKey(onClick = onDelete) {
-                    Icon(Icons.AutoMirrored.Outlined.Backspace, contentDescription = "Apagar".tr(), modifier = Modifier.size(22.dp))
+                DigitKey("0", keySize) { onDigit("0") }
+                GhostKey(keySize, onClick = onDelete) {
+                    Icon(Icons.AutoMirrored.Outlined.Backspace, contentDescription = "Apagar".tr(), modifier = Modifier.size(24.dp))
                 }
             }
         }
     }
+}
+
+/** Ponto do PIN: enche e cresce devagar; vermelho no erro. */
+@Composable
+private fun PinDot(filled: Boolean, error: Boolean) {
+    val ring = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+    val target = when {
+        error -> MaterialTheme.colorScheme.error
+        filled -> MaterialTheme.colorScheme.primary
+        else -> ring
+    }
+    val color by animateColorAsState(target, tween(280), label = "dot-color")
+    val fill by animateFloatAsState(if (filled || error) 1f else 0f, tween(260, easing = EaseOutSoft), label = "dot-fill")
+    val size by animateDpAsState(if (filled) 14.dp else 12.dp, spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessLow), label = "dot-size")
+    Box(
+        Modifier
+            .size(size)
+            .clip(CircleShape)
+            .border(1.5.dp, color, CircleShape)
+            .padding(1.5.dp)
+            .graphicsLayer { scaleX = fill; scaleY = fill }
+            .clip(CircleShape)
+            .background(color),
+    )
 }
 
 @Composable
 private fun BiometricPane(showUsePin: Boolean, onFingerprint: () -> Unit, onUsePin: () -> Unit) {
     val primary = MaterialTheme.colorScheme.primary
+    // Halo a respirar devagar à volta do sensor.
+    val pulse = androidx.compose.animation.core.rememberInfiniteTransition(label = "fp-pulse")
+    val halo by pulse.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.12f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(tween(1600, easing = androidx.compose.animation.core.FastOutSlowInEasing), androidx.compose.animation.core.RepeatMode.Reverse),
+        label = "fp-halo",
+    )
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
         Header("Desbloquear GoLink".tr())
-        Spacer(Modifier.height(72.dp))
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(108.dp)
-                .clip(CircleShape)
-                .background(primary.copy(alpha = 0.14f))
-                .border(2.dp, primary.copy(alpha = 0.35f), CircleShape)
-                .clickable(onClick = onFingerprint),
-        ) {
-            Icon(Icons.Outlined.Fingerprint, contentDescription = "Biometria".tr(), tint = primary, modifier = Modifier.size(40.dp))
+        Spacer(Modifier.height(48.dp))
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(132.dp)) {
+            Box(
+                Modifier
+                    .size(108.dp)
+                    .graphicsLayer { scaleX = halo; scaleY = halo; alpha = 1.6f - halo }
+                    .clip(CircleShape)
+                    .background(primary.copy(alpha = 0.10f)),
+            )
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(96.dp)
+                    .clip(CircleShape)
+                    .background(primary.copy(alpha = 0.14f))
+                    .clickable(onClick = onFingerprint),
+            ) {
+                Icon(Icons.Outlined.Fingerprint, contentDescription = "Biometria".tr(), tint = primary, modifier = Modifier.size(44.dp))
+            }
         }
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(14.dp))
         Text("Toca no sensor de impressão digital".tr(), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(80.dp))
+        Spacer(Modifier.height(48.dp))
         if (showUsePin) {
             Text(
                 "Usar PIN".tr(),
-                fontSize = 13.sp,
+                fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
                     .background(MaterialTheme.colorScheme.surfaceVariant)
                     .clickable(onClick = onUsePin)
-                    .padding(horizontal = 22.dp, vertical = 12.dp),
+                    .padding(horizontal = 26.dp, vertical = 13.dp),
             )
         } else {
-            Spacer(Modifier.height(44.dp))
+            Spacer(Modifier.height(46.dp))
         }
+        Spacer(Modifier.height(8.dp))
     }
 }
 
-private val KeySize = 64.dp
+/** Escala suave ao carregar (mola lenta, sem ressalto brusco). */
+@Composable
+private fun pressScale(interaction: MutableInteractionSource): Float {
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        if (pressed) 0.9f else 1f,
+        spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMediumLow),
+        label = "key-press",
+    )
+    return scale
+}
 
 @Composable
-private fun DigitKey(digit: String, onClick: () -> Unit) {
+private fun DigitKey(digit: String, size: Dp, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val base = MaterialTheme.colorScheme.surfaceVariant
+    val bg by animateColorAsState(
+        if (pressed) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f).compositeOver(base) else base,
+        tween(if (pressed) 90 else 360),
+        label = "key-bg",
+    )
+    val scale = pressScale(interaction)
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(KeySize)
+            .size(size)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick),
+            .background(bg)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
     ) {
-        Text(digit, fontSize = 24.sp, fontWeight = FontWeight.Normal, color = MaterialTheme.colorScheme.onSurface)
+        Text(digit, fontSize = if (size < 64.dp) 24.sp else 28.sp, fontWeight = FontWeight.Light, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 
+/** Biometria / apagar: sem fundo, só o ícone (mais leve que as teclas dos números). */
 @Composable
-private fun DarkKey(onClick: () -> Unit, content: @Composable () -> Unit) {
-    val dark = LocalDarkTheme.current
+private fun GhostKey(size: Dp, onClick: () -> Unit, content: @Composable () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val bg by animateColorAsState(
+        if (pressed) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+        tween(if (pressed) 90 else 360),
+        label = "ghost-bg",
+    )
+    val scale = pressScale(interaction)
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .size(KeySize)
+            .size(size)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(CircleShape)
-            .background(if (dark) Color(0xFFE5E7EB) else Color(0xFF3B403E))
-            .clickable(onClick = onClick),
+            .background(bg)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
     ) {
         androidx.compose.runtime.CompositionLocalProvider(
-            androidx.compose.material3.LocalContentColor provides if (dark) Color(0xFF111111) else Color.White,
+            androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface,
         ) { content() }
     }
 }

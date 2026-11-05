@@ -23,7 +23,9 @@ import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Named
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -31,6 +33,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
@@ -42,6 +45,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
@@ -81,7 +85,36 @@ class OfficeEditorViewModel @Inject constructor(
 
     /** Do Lixo, de outro dono/can-view ou com o E2E trancado: abre só para ler. */
     val canEdit: Boolean
-        get() = file.let { f -> f != null && !session.fromTrash && f.id !in session.readOnlyIds && (!f.encrypted || e2eKeyManager.isUnlocked) }
+        get() = file.let { f ->
+            f != null && !session.fromTrash && (resolvedCanEdit ?: (f.id !in session.readOnlyIds)) && (!f.encrypted || e2eKeyManager.isUnlocked)
+        }
+
+    // Permissão real numa pasta de equipa: quem abre (pesquisa, raiz do "Partilhado comigo",
+    // Atividade, calendário) nem sempre sabe se é can-edit. Pergunta-se ao servidor ao abrir;
+    // null = não se sabe (sem rede, fora de equipa) e vale o que veio em readOnlyIds.
+    @Volatile
+    private var resolvedCanEdit: Boolean? = null
+    private val permission: Deferred<Boolean?> = viewModelScope.async(Dispatchers.IO) { resolveCanEdit() }
+
+    private suspend fun resolveCanEdit(): Boolean? {
+        val f = file ?: return null
+        val me = currentUser()?.id ?: return null
+        if (f.ownerId == me) return true
+        return runCatching {
+            val response = filesApi.fileMembers(f.id)
+            if (!response.isSuccessful) return@runCatching null
+            val members = Json.parseToJsonElement(response.body()?.string().orEmpty()).jsonObject["members"]?.jsonArray
+            members?.firstOrNull { it.jsonObject["id"]?.jsonPrimitive?.contentOrNull == me }
+                ?.jsonObject?.get("permission")?.jsonPrimitive?.contentOrNull
+                ?.let { it == "can-edit" || it == "owner" }
+        }.getOrNull()
+    }
+
+    /** Corre na thread da ponte (não na principal): pode esperar pela resposta. */
+    private fun awaitPermission() {
+        if (resolvedCanEdit != null) return
+        resolvedCanEdit = runCatching { runBlocking { withTimeoutOrNull(4_000) { permission.await() } } }.getOrNull()
+    }
 
     val editorUrl: String get() = backendUrlHolder.current.trimEnd('/') + "/editor-embed"
 
@@ -107,6 +140,7 @@ class OfficeEditorViewModel @Inject constructor(
 
     fun infoJson(dark: Boolean): String {
         val f = file ?: return "null"
+        awaitPermission()
         return buildJsonObject {
             put("file", fileJson(f))
             put("canEdit", canEdit)

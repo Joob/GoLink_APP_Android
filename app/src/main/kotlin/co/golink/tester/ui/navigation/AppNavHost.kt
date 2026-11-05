@@ -762,7 +762,7 @@ fun AppNavHost(
                 visibleState = lockVisible,
                 // Sem fade de entrada: ao voltar à app o conteúdo não pode aparecer nem um instante.
                 enter = androidx.compose.animation.EnterTransition.None,
-                exit = fadeOut(animationSpec = tween(320)) + scaleOut(animationSpec = tween(320), targetScale = 1.08f),
+                exit = fadeOut(animationSpec = tween(520, easing = androidx.compose.animation.core.FastOutSlowInEasing)) + scaleOut(animationSpec = tween(520, easing = androidx.compose.animation.core.FastOutSlowInEasing), targetScale = 1.04f),
             ) {
                 LockScreen()
             }
@@ -782,6 +782,21 @@ private fun LockWindowSetup() {
     androidx.compose.runtime.SideEffect {
         val window = (view.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window ?: return@SideEffect
         window.setLayout(android.view.WindowManager.LayoutParams.MATCH_PARENT, android.view.WindowManager.LayoutParams.MATCH_PARENT)
+        // Ecrã inteiro a sério: sem isto a janela começava abaixo da barra de estado com a
+        // altura do ecrã todo (o teclado do PIN ia parar por baixo da barra de navegação)
+        // e os insets chegavam a zero.
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN)
+        @Suppress("DEPRECATION")
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        @Suppress("DEPRECATION")
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        window.attributes = window.attributes.apply {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) fitInsetsTypes = 0
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
         window.setWindowAnimations(0)
         window.setDimAmount(0f)
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
