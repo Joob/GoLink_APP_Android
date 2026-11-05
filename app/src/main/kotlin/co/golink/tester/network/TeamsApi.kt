@@ -76,4 +76,18 @@ interface TeamsApi {
         @Query("sort") sort: String? = null,
         @Query("direction") direction: String? = null,
     ): Response<BrowseListResponse>
+
+    // Convite de equipa aberto a partir do email (App Link). preview é público.
+    @GET("api/teams/invitations/{id}/preview")
+    suspend fun invitationPreview(@Path("id") id: String): Response<co.golink.tester.domain.teams.TeamInvitationEnvelope>
+
+    @retrofit2.http.PUT("api/teams/invitations/{id}")
+    suspend fun acceptInvitation(@Path("id") id: String): Response<okhttp3.ResponseBody>
+
+    @retrofit2.http.DELETE("api/teams/invitations/{id}")
+    suspend fun declineInvitation(@Path("id") id: String): Response<okhttp3.ResponseBody>
+
+    // Sem conta: o convite fica à espera do registo com este email.
+    @POST("api/teams/invitations/{id}/register")
+    suspend fun awaitInvitationRegistration(@Path("id") id: String): Response<okhttp3.ResponseBody>
 }

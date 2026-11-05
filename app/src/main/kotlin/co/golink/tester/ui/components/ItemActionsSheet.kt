@@ -33,6 +33,9 @@ import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -72,6 +75,8 @@ fun ItemActionsSheet(
     onCopyLink: (() -> Unit)? = null,
     // false = só leitura (membro can-view): esconde editar/mover/eliminar.
     canEdit: Boolean = true,
+    // false = raiz de equipa de outro dono (só o dono a move; mover termina a equipa).
+    canMove: Boolean = true,
     onConvertToTeamFolder: () -> Unit = {},
     onFileRequest: () -> Unit = {},
     showFolderCollaboration: Boolean = true,
@@ -113,7 +118,10 @@ fun ItemActionsSheet(
                         Tile(Icons.Outlined.Info, "Detalhes".tr()) { onDetails(); onDismiss() },
                     ),
                 )
-                DangerButton("Eliminar para sempre".tr()) { onPermanentDelete(); onDismiss() }
+                Spacer(Modifier.height(10.dp))
+                ActionGroup {
+                    ActionRow(Icons.Outlined.DeleteOutline, "Eliminar para sempre".tr(), tint = danger, showDivider = false) { onPermanentDelete(); onDismiss() }
+                }
             } else {
                 // Ações rápidas em quadrados (Partilhar em destaque), como no mockup.
                 val tiles = buildList {
@@ -134,31 +142,28 @@ fun ItemActionsSheet(
                 QuickTiles(tiles)
 
                 // Lista: editar, mover, colaborar, equipa.
-                val rows = buildList<@Composable () -> Unit> {
+                val rows = buildList<@Composable (Boolean) -> Unit> {
                     if (canEdit) {
-                        add { ActionRow(Icons.Outlined.Edit, (if (folder != null) "Editar nome e ícone" else "Editar nome").tr()) { onRename(); onDismiss() } }
-                        add { ActionRow(Icons.AutoMirrored.Outlined.DriveFileMove, "Mover".tr()) { onMove(); onDismiss() } }
+                        add { d -> ActionRow(Icons.Outlined.Edit, (if (folder != null) "Editar nome e ícone" else "Editar nome").tr(), showDivider = d) { onRename(); onDismiss() } }
+                        if (canMove) add { d -> ActionRow(Icons.AutoMirrored.Outlined.DriveFileMove, "Mover".tr(), "Ou copiar para outra pasta".tr(), showDivider = d) { onMove(); onDismiss() } }
                     }
                     if (folder != null && copyLink != null) {
-                        add { ActionRow(Icons.Outlined.ContentCopy, "Copiar link".tr()) { copyLink(); onDismiss() } }
+                        add { d -> ActionRow(Icons.Outlined.ContentCopy, "Copiar link".tr(), showDivider = d) { copyLink(); onDismiss() } }
                     }
                     if (folder != null && showFolderCollaboration && canEdit) {
-                        add { ActionRow(Icons.Outlined.Upload, "Pedir ficheiros".tr(), "Outros carregam para esta pasta".tr()) { onFileRequest(); onDismiss() } }
+                        add { d -> ActionRow(Icons.Outlined.Upload, "Pedir ficheiros".tr(), "Outros carregam para esta pasta".tr(), showDivider = d) { onFileRequest(); onDismiss() } }
                         if (!folder.isTeamFolder) {
-                            add { ActionRow(Icons.Outlined.Groups, "Transformar em pasta de equipa".tr(), "Trabalhar com outras pessoas".tr()) { onConvertToTeamFolder(); onDismiss() } }
+                            add { d -> ActionRow(Icons.Outlined.Groups, "Transformar em pasta de equipa".tr(), "Trabalhar com outras pessoas".tr(), showDivider = d) { onConvertToTeamFolder(); onDismiss() } }
                         }
                     }
-                    onEditTeam?.let { editTeam -> add { ActionRow(Icons.Outlined.GroupAdd, "Gerir membros".tr(), "Adicionar pessoas e mudar permissões".tr()) { editTeam(); onDismiss() } } }
-                    onLeaveTeam?.let { leave -> add { ActionRow(Icons.AutoMirrored.Outlined.Logout, "Sair da pasta de equipa".tr(), tint = danger) { leave(); onDismiss() } } }
-                    onDissolveTeam?.let { dissolve -> add { ActionRow(Icons.Outlined.GroupRemove, "Dissolver equipa".tr(), tint = danger) { dissolve(); onDismiss() } } }
+                    onEditTeam?.let { editTeam -> add { d -> ActionRow(Icons.Outlined.GroupAdd, "Gerir membros".tr(), "Adicionar pessoas e mudar permissões".tr(), showDivider = d) { editTeam(); onDismiss() } } }
+                    onLeaveTeam?.let { leave -> add { d -> ActionRow(Icons.AutoMirrored.Outlined.Logout, "Sair da pasta de equipa".tr(), tint = danger, showDivider = d) { leave(); onDismiss() } } }
+                    onDissolveTeam?.let { dissolve -> add { d -> ActionRow(Icons.Outlined.GroupRemove, "Dissolver equipa".tr(), tint = danger, showDivider = d) { dissolve(); onDismiss() } } }
+                    if (canEdit) add { d -> ActionRow(Icons.Outlined.DeleteOutline, "Mover para o lixo".tr(), tint = danger, showDivider = d) { onDelete(); onDismiss() } }
                 }
                 if (rows.isNotEmpty()) {
                     Spacer(Modifier.height(10.dp))
-                    ActionGroup { rows.forEach { it() } }
-                }
-
-                if (canEdit) {
-                    DangerButton((if (folder != null) "Apagar pasta" else "Apagar ficheiro").tr()) { onDelete(); onDismiss() }
+                    ActionGroup { rows.forEachIndexed { i, row -> row(i < rows.lastIndex) } }
                 }
             }
         }
@@ -193,14 +198,14 @@ private fun QuickTiles(tiles: List<Tile>) {
                 verticalArrangement = Arrangement.Center,
                 modifier = Modifier
                     .weight(1f)
-                    .height(72.dp)
-                    .clip(RoundedCornerShape(14.dp))
+                    .height(76.dp)
+                    .clip(RoundedCornerShape(16.dp))
                     .background(bg)
                     .clickable(onClick = tile.onClick)
                     .padding(horizontal = 4.dp),
             ) {
                 Icon(tile.icon, contentDescription = null, tint = fg, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
                 Text(
                     tile.label,
                     style = MaterialTheme.typography.labelSmall,
@@ -220,45 +225,34 @@ private fun ActionRow(
     label: String,
     subtitle: String? = null,
     tint: Color = Color.Unspecified,
+    showDivider: Boolean = false,
     onClick: () -> Unit,
 ) {
     val color = if (tint == Color.Unspecified) MaterialTheme.colorScheme.onSurface else tint
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = if (subtitle != null) 10.dp else 14.dp),
-    ) {
-        Icon(icon, contentDescription = null, tint = if (tint == Color.Unspecified) MaterialTheme.colorScheme.onSurfaceVariant else tint, modifier = Modifier.size(20.dp))
-        Spacer(Modifier.width(16.dp))
-        Column {
-            Text(label, style = MaterialTheme.typography.bodyLarge, color = color)
-            if (subtitle != null) {
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 8.dp, vertical = if (subtitle != null) 10.dp else 14.dp),
+        ) {
+            Icon(icon, contentDescription = null, tint = if (tint == Color.Unspecified) MaterialTheme.colorScheme.onSurfaceVariant else tint, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(18.dp))
+            Column {
+                Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = color)
+                if (subtitle != null) {
+                    Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
-    }
-}
-
-// Botão vermelho a toda a largura (Apagar / Eliminar para sempre).
-@Composable
-private fun DangerButton(label: String, onClick: () -> Unit) {
-    val danger = MaterialTheme.colorScheme.error
-    Spacer(Modifier.height(10.dp))
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(danger.copy(alpha = 0.10f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-    ) {
-        Icon(Icons.Outlined.DeleteOutline, contentDescription = null, tint = danger, modifier = Modifier.size(20.dp))
-        Spacer(Modifier.width(16.dp))
-        Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = danger)
+        if (showDivider) {
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                modifier = Modifier.padding(horizontal = 8.dp),
+            )
+        }
     }
 }
 
@@ -309,16 +303,29 @@ private fun SheetHeader(item: BrowseItem) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            val subtitle = buildSubtitle(item)
-            if (subtitle.isNotBlank()) {
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            val (meta, state) = buildSubtitle(item)
+            Spacer(Modifier.height(2.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val muted = MaterialTheme.colorScheme.onSurfaceVariant
+                if (meta.isNotBlank()) {
+                    Text(
+                        "$meta · ",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
+                val isPrivate = !(item is BrowseItem.Folder && item.isTeamFolder) && item.share == null
+                val stateIcon = when {
+                    item is BrowseItem.Folder && item.isTeamFolder -> Icons.Outlined.Groups
+                    item.share != null -> Icons.Outlined.Public
+                    else -> Icons.Outlined.Lock
+                }
+                Icon(stateIcon, contentDescription = null, tint = if (isPrivate) Color(0xFFF59E0B) else muted, modifier = Modifier.size(13.dp))
+                Spacer(Modifier.width(3.dp))
+                Text(state, style = MaterialTheme.typography.bodySmall, color = muted, maxLines = 1)
             }
         }
     }
@@ -329,22 +336,21 @@ private fun ActionGroup(content: @Composable () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+            .padding(horizontal = 12.dp),
     ) {
         content()
     }
 }
 
-// "2 itens · 56.03 GB · Privada" / "Vídeo · 13.51 MB · Partilhado"
-private fun buildSubtitle(item: BrowseItem): String {
+// ("2 itens · 56.03 GB", "Privada") / ("Vídeo · 13.51 MB", "Partilhado")
+private fun buildSubtitle(item: BrowseItem): Pair<String, String> {
     val parts = mutableListOf<String>()
+    val state: String
     when (item) {
         is BrowseItem.Folder -> {
             item.itemCount?.let { parts += if (it == 1) "1 item".tr() else "%d itens".tr().format(it) }
             item.filesize?.takeIf { item.filesizeBytes > 0 }?.let { parts += it }
-            parts += when {
+            state = when {
                 item.isTeamFolder -> "Equipa".tr()
                 item.share != null -> "Partilhada".tr()
                 else -> "Privada".tr()
@@ -353,8 +359,8 @@ private fun buildSubtitle(item: BrowseItem): String {
         is BrowseItem.File -> {
             parts += fileTypeLabel(item)
             item.filesize?.let { parts += it }
-            if (item.share != null) parts += "Partilhado".tr()
+            state = (if (item.share != null) "Partilhado" else "Privado").tr()
         }
     }
-    return parts.joinToString(" · ")
+    return parts.joinToString(" · ") to state
 }

@@ -106,6 +106,9 @@ fun NotificationDetailDialog(
     onToggleRead: () -> Unit,
     onDelete: () -> Unit,
     onAction: (() -> Unit)?,
+    answering: Boolean = false,
+    /** Convite por responder: true = Aceitar, false = Recusar. */
+    onAnswer: ((Boolean) -> Unit)? = null,
 ) {
     // Estado no momento em que abriu: a etiqueta não desaparece a meio.
     val wasUnread = remember(notification.id) { !notification.isRead }
@@ -254,7 +257,23 @@ fun NotificationDetailDialog(
                                 tint = muted,
                                 onClick = { confirmDelete = true },
                             )
-                            if (onAction != null) {
+                            if (onAnswer != null) {
+                                OutlinedButton(
+                                    onClick = { onAnswer(false) },
+                                    enabled = !answering,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.weight(1f).height(44.dp),
+                                ) { Text("Recusar".tr(), fontWeight = FontWeight.Bold) }
+                                Button(
+                                    onClick = { onAnswer(true) },
+                                    enabled = !answering,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.weight(1f).height(44.dp),
+                                ) {
+                                    if (answering) androidx.compose.material3.CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    else Text("Aceitar".tr(), fontWeight = FontWeight.Bold)
+                                }
+                            } else if (onAction != null) {
                                 Button(
                                     onClick = onAction,
                                     shape = RoundedCornerShape(12.dp),

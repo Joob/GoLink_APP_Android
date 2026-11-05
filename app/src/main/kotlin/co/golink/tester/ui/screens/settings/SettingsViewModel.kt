@@ -60,6 +60,8 @@ data class SettingsUiState(
     val isUpdatingProfile: Boolean = false,
     val biometricEnabled: Boolean = false,
     val pinEnabled: Boolean = false,
+    val lockDelayMs: Long = 0L,
+    val hideInRecents: Boolean = true,
     val twoFactorEnabled: Boolean = false,
     val newTokenPlaintext: String? = null,
     val toast: String? = null,
@@ -120,6 +122,8 @@ class SettingsViewModel @Inject constructor(
             it.copy(
                 biometricEnabled = securityPrefs.biometricEnabled,
                 pinEnabled = securityPrefs.pinEnabled,
+                lockDelayMs = securityPrefs.lockDelayMs,
+                hideInRecents = securityPrefs.hideInRecents,
             )
         }
         viewModelScope.launch {
@@ -397,6 +401,38 @@ class SettingsViewModel @Inject constructor(
         logger.log("Security", "PIN de bloqueio desactivado")
         _state.update { it.copy(pinEnabled = false) }
         return true
+    }
+
+    /** Mudar o PIN: só com o PIN atual certo. */
+    fun changePin(current: String, new: String): Boolean {
+        if (!securityPrefs.verifyPin(current)) return false
+        securityPrefs.setPinHash(new)
+        logger.log("Security", "PIN de bloqueio alterado")
+        return true
+    }
+
+    /**
+     * Desligar o bloqueio (interruptor geral): pede o PIN quando há um; desliga
+     * o PIN e a biometria.
+     */
+    fun disableAppLock(pin: String?): Boolean {
+        if (securityPrefs.hasPinSet && (pin == null || !securityPrefs.verifyPin(pin))) return false
+        if (securityPrefs.hasPinSet) securityPrefs.clearPin()
+        securityPrefs.pinEnabled = false
+        securityPrefs.biometricEnabled = false
+        logger.log("Security", "Bloqueio da app desactivado")
+        _state.update { it.copy(pinEnabled = false, biometricEnabled = false) }
+        return true
+    }
+
+    fun setLockDelay(ms: Long) {
+        securityPrefs.lockDelayMs = ms
+        _state.update { it.copy(lockDelayMs = ms) }
+    }
+
+    fun setHideInRecents(on: Boolean) {
+        securityPrefs.hideInRecents = on
+        _state.update { it.copy(hideInRecents = on) }
     }
 
     @OptIn(coil.annotation.ExperimentalCoilApi::class)

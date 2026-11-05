@@ -34,6 +34,8 @@ data class NotificationAttributes(
     val details: List<NotificationDetail> = emptyList(),
     val sender: String? = null,
     val message: String? = null,
+    /** Convite de evento: { event_id, status|null } (null = por responder). */
+    val rsvp: JsonElement? = null,
 )
 
 /** Linha "rótulo → valor" do popup; o rótulo vem como chave (traduzida na app). */
@@ -64,7 +66,15 @@ data class Notification(
     val details: List<NotificationDetail> = emptyList(),
     val sender: String? = null,
     val message: String? = null,
+    /** Convite de equipa por responder (action "invitation"). */
+    val invitationId: String? = null,
+    /** Convite de evento: id do evento e a resposta dada (null = por responder). */
+    val rsvpEventId: String? = null,
+    val rsvpStatus: String? = null,
 ) {
+    /** Há Aceitar/Recusar a mostrar. */
+    val pendingAnswer: Boolean get() = invitationId != null || (rsvpEventId != null && rsvpStatus == null)
+
     companion object {
         fun fromEnvelope(envelope: NotificationEnvelope): Notification {
             val attrs = envelope.data.attributes
@@ -85,6 +95,9 @@ data class Notification(
                 details = attrs.details,
                 sender = attrs.sender,
                 message = attrs.message,
+                invitationId = if (extractActionType(attrs.action) == "invitation") actionParam(attrs.action, "id") else null,
+                rsvpEventId = (attrs.rsvp as? JsonObject)?.get("event_id")?.let { it as? JsonPrimitive }?.takeIf { it.isString }?.content,
+                rsvpStatus = (attrs.rsvp as? JsonObject)?.get("status")?.let { it as? JsonPrimitive }?.takeIf { it.isString }?.content,
             )
         }
 

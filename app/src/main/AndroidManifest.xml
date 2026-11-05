@@ -72,6 +72,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|uiMode|keyboard|keyboardHidden|navigation"
             android:theme="@style/Theme.VueFileManager.Splash">
             <intent-filter>
@@ -95,6 +96,27 @@
                 <data android:pathPrefix="/legacy-open/" />
                 <data android:pathPrefix="/legacy-invite/" />
                 <data android:pathPrefix="/legacy-checkin/" />
+            </intent-filter>
+            <!-- Links dos emails com ecrã na app (AppLinkRouter): confirmar email,
+                 convite de equipa, pastas, calendário, suporte, faturação, Legacy.
+                 /share, /request e /event-invite ficam no browser (públicos, #k=). -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="golink.co" />
+                <data android:host="tester.golink.co" />
+                <data android:pathPrefix="/api/user/verify/" />
+                <data android:pathPrefix="/team-folder-invitation/" />
+                <data android:pathPrefix="/platform/files" />
+                <data android:pathPrefix="/platform/team-folders" />
+                <data android:pathPrefix="/calendar" />
+                <data android:pathPrefix="/support/tickets" />
+                <data android:pathPrefix="/admin/support/tickets" />
+                <data android:pathPrefix="/user/settings/billing" />
+                <data android:path="/legacy" />
+                <data android:pathPrefix="/legacy/" />
             </intent-filter>
         </activity>
 

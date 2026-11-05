@@ -232,7 +232,7 @@ fun SecurityActivityContent(
                         val active = key == filter
                         Surface(
                             shape = RoundedCornerShape(50),
-                            color = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surface,
+                            color = if (active) MaterialTheme.colorScheme.onSurface else co.golink.tester.ui.screens.settings.settingsCardColor(),
                             border = if (active) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                             modifier = Modifier.clip(RoundedCornerShape(50)).clickable { filter = key },
                         ) {
@@ -268,9 +268,9 @@ fun SecurityActivityContent(
                     DayTitle(day)
                     Spacer(Modifier.height(6.dp))
                     Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
-                        color = MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(18.dp),
+                        border = co.golink.tester.ui.screens.settings.settingsCardBorder(),
+                        color = co.golink.tester.ui.screens.settings.settingsCardColor(),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Column {

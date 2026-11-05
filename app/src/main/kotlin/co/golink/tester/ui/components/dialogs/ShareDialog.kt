@@ -1,22 +1,15 @@
 package co.golink.tester.ui.components.dialogs
 
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.outlined.Download
-import co.golink.tester.ui.i18n.tr
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import co.golink.tester.ui.components.shareTimeLeft
-import co.golink.tester.ui.components.EXPIRATION_OPTIONS
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,27 +20,31 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.MailOutline
+import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.QrCode2
 import androidx.compose.material.icons.outlined.RemoveRedEye
 import androidx.compose.material.icons.outlined.Schedule
-import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -55,6 +52,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,18 +63,23 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.ShareInfo
-
-private enum class SharePanel { None, Qr, Edit }
+import co.golink.tester.ui.components.EXPIRATION_OPTIONS
+import co.golink.tester.ui.components.shareTimeLeft
+import co.golink.tester.ui.i18n.tr
+import kotlinx.coroutines.delay
 
 data class ShareDialogState(
     val item: BrowseItem,
@@ -90,6 +93,13 @@ data class ShareDialogState(
     val keyPending: Boolean = false,
 )
 
+private enum class ShareTab { Link, People }
+
+/**
+ * Partilhar (mockup 2026-11): separadores Link | Pessoas (Pessoas só em pastas,
+ * quando [people] vem preenchido), formulário com permissão em cartões e
+ * "Proteção" em linhas com switch; com a partilha criada mostra "Link pronto".
+ */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ShareDialog(
@@ -102,67 +112,74 @@ fun ShareDialog(
     onSendEmail: (List<String>) -> Unit,
     onShowEmailDialog: (Boolean) -> Unit,
     onRevoke: () -> Unit,
+    people: SharePeopleConfig? = null,
 ) {
     val item = state.item
     val isFolder = item is BrowseItem.Folder
     val clipboard = LocalClipboardManager.current
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
+    val share = state.share
+
+    var tab by remember { mutableStateOf(ShareTab.Link) }
+    // Com partilha: "Link pronto"; "Definições do link" abre o formulário.
+    var editing by remember { mutableStateOf(false) }
+    val showReady = share != null && !editing && tab == ShareTab.Link
 
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         containerColor = MaterialTheme.colorScheme.surface,
+        dragHandle = {
+            Box(
+                modifier = Modifier
+                    .padding(top = 12.dp, bottom = 4.dp)
+                    .size(width = 36.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MaterialTheme.colorScheme.outlineVariant),
+            )
+        },
     ) {
-        run {
-            Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
-                // Cabeçalho: Partilhar "Pasta 1" · estado do link
-                Text(
-                    "Partilhar “%s”".tr().format(item.name),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+        Column(modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 24.dp)) {
+            if (showReady) {
+                LinkReadyView(
+                    share = share!!,
+                    sendingEmail = state.sendingEmail,
+                    keyPending = state.keyPending,
+                    onCopy = {
+                        val link = share.link ?: return@LinkReadyView
+                        clipboard.setText(AnnotatedString(link))
+                        onCopy(link)
+                    },
+                    onShowEmailDialog = { onShowEmailDialog(true) },
+                    onSettings = { editing = true },
+                    onRevoke = onRevoke,
                 )
-                Text(
-                    if (state.share != null) "Link ativo · qualquer pessoa com o link".tr() else "Cria um link para partilhar".tr(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            } else {
+                ShareHeader(
+                    name = item.name,
+                    encrypted = share?.link?.contains("#k=") == true || (item as? BrowseItem.File)?.encrypted == true,
+                    onBack = { if (share != null && editing) { editing = false; tab = ShareTab.Link } else onDismiss() },
                 )
-                Spacer(Modifier.height(14.dp))
-
-                Column(
-                    modifier = Modifier
-                        .heightIn(max = 620.dp)
-                        .verticalScroll(rememberScrollState()),
-                ) {
-                    if (state.share == null) {
-                        CreateShareForm(
-                            isFolder = isFolder,
-                            isWorking = state.isWorking,
-                            onCreate = onCreate,
-                        )
-                    } else {
-                        ExistingShareView(
-                            share = state.share,
-                            isFolder = isFolder,
-                            sendingEmail = state.sendingEmail,
-                            isWorking = state.isWorking,
-                            keyPending = state.keyPending,
-                            onCopy = {
-                                if (state.keyPending) return@ExistingShareView
-                                val link = state.share.link ?: return@ExistingShareView
-                                clipboard.setText(AnnotatedString(link))
-                                onCopy(link)
-                            },
-                            onShowEmailDialog = { onShowEmailDialog(true) },
-                            onUpdate = onUpdate,
-                            onRevoke = onRevoke,
-                        )
-                    }
+                if (people != null) {
+                    Spacer(Modifier.height(14.dp))
+                    SegmentedTabs(
+                        selected = tab,
+                        onSelect = { tab = it },
+                    )
                 }
-
+                Spacer(Modifier.height(14.dp))
+                when (tab) {
+                    ShareTab.Link -> ShareForm(
+                        share = share,
+                        isFolder = isFolder,
+                        isWorking = state.isWorking,
+                        onCreate = onCreate,
+                        onUpdate = { p, perm, m, d, v, prot -> onUpdate(p, perm, m, d, v, prot); editing = false },
+                    )
+                    ShareTab.People -> SharePeopleTab(config = people!!, onDone = onDismiss)
+                }
             }
         }
     }
@@ -195,202 +212,559 @@ fun ShareDialog(
     }
 }
 
+// ‹  Partilhar “X”  ·  Link encriptado · só quem tem o link o pode abrir
 @Composable
-private fun SwitchRow(
-    icon: ImageVector,
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-    ) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(10.dp))
-        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-            ),
-        )
-    }
-}
-
-@Composable
-private fun PermissionChip(
-    icon: ImageVector,
-    label: String,
-    selected: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val bg = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent
-    val fg = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-    val borderColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(bg)
-            .border(1.dp, borderColor, RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
+private fun ShareHeader(name: String, encrypted: Boolean, onBack: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                .clickable(onClick = onBack),
+        ) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar".tr(), modifier = Modifier.size(18.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
             Text(
-                label,
+                "Partilhar “%s”".tr().format(name),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                (if (encrypted) "Link encriptado · só quem tem o link o pode abrir" else "Só quem tem o link o pode abrir").tr(),
                 style = MaterialTheme.typography.bodySmall,
-                color = fg,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
             )
         }
     }
 }
 
 @Composable
-private fun PermissionSection(
-    permission: String,
-    onPermissionChange: (String) -> Unit,
-    // Ficheiros: só Ver / Transferir (editar é só em pastas).
-    isFolder: Boolean = true,
+private fun SegmentedTabs(selected: ShareTab, onSelect: (ShareTab) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+            .padding(4.dp),
+    ) {
+        listOf(ShareTab.Link to "Link", ShareTab.People to "Pessoas").forEach { (t, label) ->
+            val on = t == selected
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(if (on) MaterialTheme.colorScheme.surface else Color.Transparent)
+                    .clickable { onSelect(t) }
+                    .padding(vertical = 10.dp),
+            ) {
+                Text(
+                    label.tr(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
+                    color = if (on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun SectionLabel(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(bottom = 8.dp),
+    )
+}
+
+// Cartão de permissão: "Só ver" / "Ver e transferir" / "Carregar e editar".
+@Composable
+private fun PermissionCard(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    val shape = RoundedCornerShape(14.dp)
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(if (selected) primary.copy(alpha = 0.08f) else Color.Transparent)
+            .border(if (selected) 1.5.dp else 1.dp, if (selected) primary else MaterialTheme.colorScheme.outlineVariant, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, contentDescription = null, tint = if (selected) primary else MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(17.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = if (selected) primary else MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+// Linha de "Proteção": ícone · nome · valor · switch; o conteúdo extra expande por baixo.
+@Composable
+private fun ProtectionRow(
+    icon: ImageVector,
+    label: String,
+    value: String?,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    expanded: @Composable () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            .padding(14.dp),
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
     ) {
-        Text(
-            "Permissão".tr(),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            when (permission) {
-                "viewer" -> "Só pré-visualizar".tr()
-                "editor" -> "Carregar e alterar".tr()
-                else -> "Ver e descarregar".tr()
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // viewer = só pré-visualizar (sem transferir), como na web.
-            PermissionChip(
-                icon = Icons.Outlined.RemoveRedEye,
-                label = "Ver".tr(),
-                selected = permission == "viewer",
-                modifier = Modifier.weight(1f),
-                onClick = { onPermissionChange("viewer") },
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onCheckedChange(!checked) }
+                .padding(start = 14.dp, end = 10.dp, top = 6.dp, bottom = 6.dp),
+        ) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
+            Spacer(Modifier.width(12.dp))
+            Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+            value?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(10.dp))
+            }
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                ),
             )
-            PermissionChip(
-                icon = Icons.Outlined.Download,
-                label = "Transferir".tr(),
-                selected = permission == "visitor",
-                modifier = Modifier.weight(1f),
-                onClick = { onPermissionChange("visitor") },
-            )
-            if (isFolder) PermissionChip(
-                icon = Icons.Outlined.Edit,
-                label = "Editar".tr(),
-                selected = permission == "editor",
-                modifier = Modifier.weight(1f),
-                onClick = { onPermissionChange("editor") },
-            )
+        }
+        AnimatedVisibility(visible = checked) {
+            Box(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 12.dp)) { expanded() }
         }
     }
 }
 
 /**
- * Validade + limite de visualizações + limite de downloads, iguais nos
- * formulários de criar e de editar. Visualizações só em ficheiros e exclusivas
- * do limite de downloads (o link só pode prometer uma regra ao visitante).
+ * Criar (share == null) ou editar a partilha. Regras como antes: visualizações
+ * só em ficheiros e exclusivas do limite de downloads; password obrigatória ao
+ * proteger uma partilha que ainda não tinha.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ShareLimitsFields(
+private fun ShareForm(
+    share: ShareInfo?,
     isFolder: Boolean,
-    hasExpiration: Boolean,
-    onHasExpiration: (Boolean) -> Unit,
-    expirationMinutes: Int,
-    onExpirationMinutes: (Int) -> Unit,
-    hasViewLimit: Boolean,
-    onHasViewLimit: (Boolean) -> Unit,
-    viewLimit: Int,
-    onViewLimit: (Int) -> Unit,
-    hasDownloadLimit: Boolean,
-    onHasDownloadLimit: (Boolean) -> Unit,
-    downloadLimit: String,
-    onDownloadLimit: (String) -> Unit,
+    isWorking: Boolean,
+    onCreate: (password: String?, permission: String?, expirationMinutes: Int?, downloadLimit: Int?, viewLimit: Int?) -> Unit,
+    onUpdate: (password: String?, permission: String?, expirationMinutes: Int?, downloadLimit: Int?, viewLimit: Int?, protected: Boolean) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SwitchRow(
-            icon = Icons.Outlined.Schedule,
-            label = "Expira após".tr(),
-            checked = hasExpiration,
-            onCheckedChange = onHasExpiration,
+    val key = share?.token
+    var permission by remember(key) { mutableStateOf(share?.permission?.takeIf { it.isNotBlank() } ?: "viewer") }
+    var hasPassword by remember(key) { mutableStateOf(share?.protected == true) }
+    var password by remember(key) { mutableStateOf("") }
+    var hasExpiration by remember(key) { mutableStateOf((share?.expireInMinutes ?: 0) > 0) }
+    var expirationMinutes by remember(key) { mutableStateOf(share?.expireInMinutes?.takeIf { it > 0 } ?: 1440) }
+    var hasViewLimit by remember(key) { mutableStateOf(!isFolder && (share?.viewLimit ?: 0) > 0) }
+    var viewLimit by remember(key) { mutableStateOf(share?.viewLimit?.takeIf { it > 0 } ?: 1) }
+    var hasDownloadLimit by remember(key) { mutableStateOf((share?.downloadLimit ?: 0) > 0) }
+    var downloadLimit by remember(key) { mutableStateOf(share?.downloadLimit?.takeIf { it > 0 }?.toString() ?: "10") }
+
+    // Ficheiros "só ver" não transferem: o limite de downloads não se aplica.
+    val downloadsApply = isFolder || (permission != "viewer" && !hasViewLimit)
+    val effDownloadLimit = downloadLimit.toIntOrNull()?.takeIf { hasDownloadLimit && downloadsApply && it > 0 }
+    val effViews = viewLimit.takeIf { hasViewLimit && !isFolder }
+    val expirationLabel = EXPIRATION_OPTIONS.firstOrNull { it.first == expirationMinutes }?.second
+
+    val valid = !isWorking &&
+        !(hasPassword && share?.protected != true && password.isBlank()) &&
+        (!hasDownloadLimit || !downloadsApply || effDownloadLimit != null)
+
+    Column {
+        Column(
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .heightIn(max = 560.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            SectionLabel("Quem tem o link pode".tr())
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PermissionCard(
+                    icon = Icons.Outlined.RemoveRedEye,
+                    title = "Só ver".tr(),
+                    subtitle = "Abre no browser, sem transferir".tr(),
+                    selected = permission == "viewer",
+                    modifier = Modifier.weight(1f),
+                ) { permission = "viewer" }
+                PermissionCard(
+                    icon = Icons.Outlined.Download,
+                    title = "Ver e transferir".tr(),
+                    subtitle = "Pode guardar uma cópia".tr(),
+                    selected = permission == "visitor",
+                    modifier = Modifier.weight(1f),
+                ) { permission = "visitor" }
+            }
+            if (isFolder) {
+                Spacer(Modifier.height(8.dp))
+                PermissionCard(
+                    icon = Icons.Outlined.Edit,
+                    title = "Carregar e editar".tr(),
+                    subtitle = "Pode adicionar e alterar ficheiros".tr(),
+                    selected = permission == "editor",
+                    modifier = Modifier.fillMaxWidth(),
+                ) { permission = "editor" }
+            }
+
+            Spacer(Modifier.height(18.dp))
+            SectionLabel("Proteção".tr())
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ProtectionRow(
+                    icon = Icons.Outlined.Lock,
+                    label = "Password".tr(),
+                    value = null,
+                    checked = hasPassword,
+                    onCheckedChange = { hasPassword = it },
+                ) {
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text((if (share?.protected == true) "Nova password" else "Password").tr()) },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                ProtectionRow(
+                    icon = Icons.Outlined.Schedule,
+                    label = "Expira".tr(),
+                    value = if (hasExpiration) expirationLabel else "Nunca".tr(),
+                    checked = hasExpiration,
+                    onCheckedChange = { hasExpiration = it },
+                ) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        EXPIRATION_OPTIONS.forEach { (minutes, label) ->
+                            OptionChip(label = label, selected = expirationMinutes == minutes) { expirationMinutes = minutes }
+                        }
+                    }
+                }
+                if (!isFolder) {
+                    ProtectionRow(
+                        icon = Icons.Outlined.RemoveRedEye,
+                        label = "Limitar aberturas".tr(),
+                        value = if (hasViewLimit) viewLimit.toString() else "Ilimitado".tr(),
+                        checked = hasViewLimit,
+                        onCheckedChange = { hasViewLimit = it; if (it) hasDownloadLimit = false },
+                    ) {
+                        NumberStepper(label = "Aberturas máximas".tr(), value = viewLimit, onChange = { viewLimit = it })
+                    }
+                }
+                if (downloadsApply) {
+                    ProtectionRow(
+                        icon = Icons.Outlined.Download,
+                        label = "Limitar downloads".tr(),
+                        value = if (hasDownloadLimit) downloadLimit.ifBlank { "—" } else "Ilimitado".tr(),
+                        checked = hasDownloadLimit,
+                        onCheckedChange = { hasDownloadLimit = it },
+                    ) {
+                        OutlinedTextField(
+                            value = downloadLimit,
+                            onValueChange = { v -> downloadLimit = v.filter { it.isDigit() }.take(6) },
+                            label = { Text("Número de downloads".tr()) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Text(
+                formSummary(permission, hasPassword, expirationLabel.takeIf { hasExpiration }, effViews, effDownloadLimit),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.06f))
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            )
+            Spacer(Modifier.height(16.dp))
+        }
+
+        Button(
+            onClick = {
+                val pwd = password.takeIf { hasPassword && it.isNotBlank() }
+                val minutes = expirationMinutes.takeIf { hasExpiration }
+                if (share == null) {
+                    onCreate(pwd, permission, minutes, effDownloadLimit, effViews)
+                } else {
+                    // O estado do switch, e não "escreveu password": sem isto gravar
+                    // outra opção numa partilha protegida tirava-lhe a proteção.
+                    onUpdate(pwd, permission, minutes, effDownloadLimit, effViews, hasPassword)
+                }
+            },
+            enabled = valid,
+            shape = RoundedCornerShape(16.dp),
+            contentPadding = PaddingValues(vertical = 15.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            if (isWorking) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+            }
+            Text((if (share == null) "Criar link de partilha" else "Guardar alterações").tr(), fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+// "Qualquer pessoa com o link pode só ver · nunca expira."
+private fun formSummary(permission: String, password: Boolean, expiration: String?, views: Int?, downloads: Int?): String {
+    val base = when (permission) {
+        "visitor" -> "Qualquer pessoa com o link pode ver e transferir"
+        "editor" -> "Qualquer pessoa com o link pode carregar e editar"
+        else -> "Qualquer pessoa com o link pode só ver"
+    }.tr()
+    val parts = mutableListOf(base)
+    if (password) parts += "com password".tr()
+    parts += expiration?.let { "expira após %s".tr().format(it) } ?: "nunca expira".tr()
+    views?.let { parts += "máx. %d aberturas".tr().format(it) }
+    downloads?.let { parts += "máx. %d downloads".tr().format(it) }
+    return parts.joinToString(" · ") + "."
+}
+
+// Ecrã "Link pronto": ✓, resumo, link + Copiar, Mensagem/E-mail/QR/Mais.
+@Composable
+private fun LinkReadyView(
+    share: ShareInfo,
+    sendingEmail: Boolean,
+    keyPending: Boolean,
+    onCopy: () -> Unit,
+    onShowEmailDialog: () -> Unit,
+    onSettings: () -> Unit,
+    onRevoke: () -> Unit,
+) {
+    val context = LocalContext.current
+    val primary = MaterialTheme.colorScheme.primary
+    val danger = MaterialTheme.colorScheme.error
+    var showQr by remember { mutableStateOf(false) }
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) { if (copied) { delay(2000); copied = false } }
+    val link = share.link.orEmpty()
+    val canSend = !keyPending && link.isNotBlank()
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 680.dp)
+            .verticalScroll(rememberScrollState()),
+    ) {
+        Spacer(Modifier.height(12.dp))
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.size(52.dp).clip(CircleShape).background(primary.copy(alpha = 0.12f)),
+        ) {
+            Icon(Icons.Filled.Check, contentDescription = null, tint = primary, modifier = Modifier.size(26.dp))
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            (if (share.active) "Link pronto" else "Link inativo").tr(),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
         )
-        AnimatedVisibility(visible = hasExpiration) {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth(),
+        Spacer(Modifier.height(4.dp))
+        Text(
+            readySummary(share),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(16.dp))
+
+        // Link + Copiar
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+        ) {
+            Text(
+                if (keyPending) "A preparar a chave de encriptação…".tr()
+                else link.ifBlank { "(sem URL)" }.removePrefix("https://").removePrefix("http://"),
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
+            Button(
+                onClick = { onCopy(); copied = true },
+                enabled = canSend,
+                shape = RoundedCornerShape(11.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
             ) {
-                EXPIRATION_OPTIONS.forEach { (minutes, label) ->
-                    OptionChip(label = label, selected = expirationMinutes == minutes) { onExpirationMinutes(minutes) }
+                if (keyPending) {
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                } else {
+                    Text((if (copied) "Copiado" else "Copiar").tr(), fontWeight = FontWeight.SemiBold)
                 }
             }
         }
 
-        if (!isFolder) {
-            SwitchRow(
-                icon = Icons.Outlined.RemoveRedEye,
-                label = "Restringir nº de visualizações".tr(),
-                checked = hasViewLimit,
-                onCheckedChange = onHasViewLimit,
-            )
-            AnimatedVisibility(visible = hasViewLimit) {
-                NumberStepper(
-                    label = "Visualizações máximas".tr(),
-                    value = viewLimit,
-                    onChange = onViewLimit,
+        // E2E: o link leva a chave (#k=).
+        if (link.contains("#k=")) {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.Top, modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+                Icon(Icons.Filled.Warning, contentDescription = null, tint = Color(0xFFB45309), modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "O link inclui a chave para abrir os ficheiros. Envia-o só a quem confias.".tr(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF92400E),
                 )
             }
         }
 
-        if (!hasViewLimit || isFolder) {
-            SwitchRow(
-                icon = Icons.Outlined.Schedule,
-                label = "Limite de downloads".tr(),
-                checked = hasDownloadLimit,
-                onCheckedChange = onHasDownloadLimit,
-            )
-            AnimatedVisibility(visible = hasDownloadLimit) {
-                OutlinedTextField(
-                    value = downloadLimit,
-                    onValueChange = { v -> onDownloadLimit(v.filter { it.isDigit() }.take(6)) },
-                    label = { Text("Número de downloads".tr()) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            ReadyTile(Icons.AutoMirrored.Outlined.Chat, "Mensagem".tr(), enabled = canSend, modifier = Modifier.weight(1f)) {
+                val sms = android.content.Intent(android.content.Intent.ACTION_SENDTO, android.net.Uri.parse("smsto:")).apply {
+                    putExtra("sms_body", link)
+                }
+                runCatching { context.startActivity(sms) }
+            }
+            ReadyTile(Icons.Outlined.MailOutline, "E-mail", enabled = canSend && !sendingEmail, modifier = Modifier.weight(1f)) {
+                showQr = false
+                onShowEmailDialog()
+            }
+            ReadyTile(Icons.Outlined.QrCode2, "Código QR".tr(), enabled = canSend, active = showQr, modifier = Modifier.weight(1f)) {
+                showQr = !showQr
+            }
+            ReadyTile(Icons.Outlined.MoreHoriz, "Mais".tr(), enabled = canSend, modifier = Modifier.weight(1f)) {
+                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(android.content.Intent.EXTRA_TEXT, link)
+                }
+                runCatching { context.startActivity(android.content.Intent.createChooser(send, null)) }
             }
         }
+
+        AnimatedVisibility(visible = showQr && link.isNotBlank()) {
+            Box(
+                modifier = Modifier
+                    .padding(top = 10.dp)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color.White)
+                    .padding(16.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                co.golink.tester.ui.components.QrCodeImage(url = link)
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = onSettings,
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(vertical = 14.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Definições do link".tr(), fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+            }
+            OutlinedButton(
+                onClick = onRevoke,
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(vertical = 14.dp),
+                border = BorderStroke(1.dp, danger.copy(alpha = 0.35f)),
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Parar partilha".tr(), fontWeight = FontWeight.SemiBold, color = danger, maxLines = 1)
+            }
+        }
+    }
+}
+
+// "Só ver · com password · expira em 7 d"
+private fun readySummary(share: ShareInfo): String {
+    val parts = mutableListOf<String>()
+    share.permission?.takeIf { it.isNotBlank() }?.let { parts += prettyPermission(it) }
+    if (share.protected) parts += "com password".tr()
+    val timeLeft = shareTimeLeft(share.expiresAt)
+    parts += when {
+        timeLeft == null -> "nunca expira".tr()
+        timeLeft.expired -> timeLeft.text
+        else -> "expira em %s".tr().format(timeLeft.text)
+    }
+    if ((share.viewLimit ?: 0) > 0) parts += "${share.viewCount ?: 0}/${share.viewLimit} " + "aberturas".tr()
+    if ((share.downloadLimit ?: 0) > 0) parts += "${share.downloadCount ?: 0}/${share.downloadLimit} downloads"
+    return parts.joinToString(" · ")
+}
+
+@Composable
+private fun ReadyTile(
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val alpha = if (enabled) 1f else 0.4f
+    val primary = MaterialTheme.colorScheme.primary
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = modifier
+            .height(70.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (active) primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 4.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = (if (active) primary else MaterialTheme.colorScheme.onSurface).copy(alpha = alpha), modifier = Modifier.size(20.dp))
+        Spacer(Modifier.height(6.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -400,8 +774,8 @@ private fun OptionChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(if (selected) primary.copy(alpha = 0.10f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-            .border(1.5.dp, if (selected) primary else Color.Transparent, RoundedCornerShape(12.dp))
+            .background(if (selected) primary.copy(alpha = 0.10f) else MaterialTheme.colorScheme.surface)
+            .border(1.5.dp, if (selected) primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 9.dp),
         contentAlignment = Alignment.Center,
@@ -422,7 +796,7 @@ private fun NumberStepper(label: String, value: Int, onChange: (Int) -> Unit, mi
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .background(MaterialTheme.colorScheme.surface)
             .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
     ) {
         Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
@@ -453,391 +827,6 @@ private fun StepButton(symbol: String, enabled: Boolean, onClick: () -> Unit) {
             color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
         )
     }
-}
-
-@Composable
-private fun CreateShareForm(
-    isFolder: Boolean,
-    isWorking: Boolean,
-    onCreate: (password: String?, permission: String?, expirationMinutes: Int?, downloadLimit: Int?, viewLimit: Int?) -> Unit,
-) {
-    var protectWithPassword by remember { mutableStateOf(false) }
-    var password by remember { mutableStateOf("") }
-    var permission by remember { mutableStateOf("visitor") }
-    var hasExpiration by remember { mutableStateOf(false) }
-    var expirationMinutes by remember { mutableStateOf(1440) }
-    var hasDownloadLimit by remember { mutableStateOf(false) }
-    var downloadLimit by remember { mutableStateOf("10") }
-    var hasViewLimit by remember { mutableStateOf(false) }
-    var viewLimit by remember { mutableStateOf(1) }
-
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SwitchRow(
-            icon = Icons.Filled.Lock,
-            label = "Proteger com password".tr(),
-            checked = protectWithPassword,
-            onCheckedChange = { protectWithPassword = it },
-        )
-        AnimatedVisibility(visible = protectWithPassword) {
-            OutlinedTextField(
-                value = password,
-                onValueChange = { password = it },
-                label = { Text("Password") },
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-
-        PermissionSection(permission = permission, onPermissionChange = { permission = it }, isFolder = isFolder)
-
-        ShareLimitsFields(
-            isFolder = isFolder,
-            hasExpiration = hasExpiration,
-            onHasExpiration = { hasExpiration = it },
-            expirationMinutes = expirationMinutes,
-            onExpirationMinutes = { expirationMinutes = it },
-            hasViewLimit = hasViewLimit,
-            onHasViewLimit = { hasViewLimit = it; if (it) hasDownloadLimit = false },
-            viewLimit = viewLimit,
-            onViewLimit = { viewLimit = it },
-            hasDownloadLimit = hasDownloadLimit,
-            onHasDownloadLimit = { hasDownloadLimit = it },
-            downloadLimit = downloadLimit,
-            onDownloadLimit = { downloadLimit = it },
-        )
-
-        Spacer(Modifier.height(4.dp))
-        Button(
-            onClick = {
-                val views = viewLimit.takeIf { hasViewLimit && !isFolder }
-                onCreate(
-                    password.takeIf { protectWithPassword && it.isNotBlank() },
-                    permission,
-                    expirationMinutes.takeIf { hasExpiration },
-                    downloadLimit.toIntOrNull()?.takeIf { hasDownloadLimit && views == null && it > 0 },
-                    views,
-                )
-            },
-            enabled = !isWorking && (!protectWithPassword || password.isNotBlank()) &&
-                (hasViewLimit || !hasDownloadLimit || downloadLimit.toIntOrNull()?.let { it > 0 } == true),
-            shape = RoundedCornerShape(14.dp),
-            contentPadding = PaddingValues(vertical = 14.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            if (isWorking) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(18.dp),
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    strokeWidth = 2.dp,
-                )
-                Spacer(Modifier.width(8.dp))
-            }
-            Text("Criar link de partilha".tr(), fontWeight = FontWeight.SemiBold)
-        }
-    }
-}
-
-@Composable
-private fun ExistingShareView(
-    share: ShareInfo,
-    isFolder: Boolean,
-    sendingEmail: Boolean,
-    isWorking: Boolean,
-    keyPending: Boolean = false,
-    onCopy: () -> Unit,
-    onShowEmailDialog: () -> Unit,
-    onUpdate: (password: String?, permission: String?, expirationMinutes: Int?, downloadLimit: Int?, viewLimit: Int?, protected: Boolean) -> Unit,
-    onRevoke: () -> Unit,
-) {
-    var activePanel by remember { mutableStateOf(SharePanel.None) }
-    val editMode = activePanel == SharePanel.Edit
-    val showQr = activePanel == SharePanel.Qr
-    var password by remember { mutableStateOf("") }
-    var hasPassword by remember(share.protected) { mutableStateOf(share.protected) }
-    var permission by remember(share.permission) { mutableStateOf(share.permission ?: "visitor") }
-    // Pré-preenchido com o que está gravado na partilha.
-    var hasExpiration by remember(share.expireInMinutes) { mutableStateOf((share.expireInMinutes ?: 0) > 0) }
-    var expirationMinutes by remember(share.expireInMinutes) { mutableStateOf(share.expireInMinutes?.takeIf { it > 0 } ?: 1440) }
-    var hasDownloadLimit by remember(share.downloadLimit) { mutableStateOf((share.downloadLimit ?: 0) > 0) }
-    var downloadLimit by remember(share.downloadLimit) { mutableStateOf(share.downloadLimit?.takeIf { it > 0 }?.toString() ?: "10") }
-    var hasViewLimit by remember(share.viewLimit) { mutableStateOf((share.viewLimit ?: 0) > 0) }
-    var viewLimit by remember(share.viewLimit) { mutableStateOf(share.viewLimit?.takeIf { it > 0 } ?: 1) }
-
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        // Link: endereço, etiquetas e "Copiar link" em destaque.
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                .padding(14.dp),
-        ) {
-            Text(
-                (share.link ?: "(sem URL)").removePrefix("https://").removePrefix("http://"),
-                style = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            val timeLeft = shareTimeLeft(share.expiresAt)
-            if (share.protected || timeLeft != null ||
-                (share.downloadLimit != null && share.downloadLimit > 0) ||
-                (share.viewLimit != null && share.viewLimit > 0) || !share.permission.isNullOrBlank()
-            ) {
-                Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                    if (share.protected) TagChip("Com senha".tr())
-                    if (!share.permission.isNullOrBlank()) TagChip(prettyPermission(share.permission))
-                    timeLeft?.let { TagChip(if (it.expired) it.text else "Expira em".tr() + " " + it.text) }
-                    if (share.downloadLimit != null && share.downloadLimit > 0) {
-                        TagChip("${share.downloadCount ?: 0}/${share.downloadLimit} downloads")
-                    }
-                    if (share.viewLimit != null && share.viewLimit > 0) {
-                        TagChip("${share.viewCount ?: 0}/${share.viewLimit} " + "visualizações".tr())
-                    }
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            Button(
-                onClick = onCopy,
-                enabled = !keyPending,
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(vertical = 13.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                if (keyPending) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text("A preparar a chave de encriptação…".tr(), fontWeight = FontWeight.SemiBold)
-                } else {
-                    Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Copiar link".tr(), fontWeight = FontWeight.SemiBold)
-                }
-            }
-        }
-
-        // E2E: o link leva a chave (#k=).
-        if (share.link?.contains("#k=") == true) {
-            Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(horizontal = 4.dp)) {
-                Icon(Icons.Filled.Warning, contentDescription = null, tint = Color(0xFFB45309), modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "O link inclui a chave para abrir os ficheiros. Envia-o só a quem confias.".tr(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF92400E),
-                )
-            }
-        }
-
-        // Enviar… · Código QR · E-mail · Definições
-        val shareContext = androidx.compose.ui.platform.LocalContext.current
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ShareActionButton(
-                icon = Icons.Filled.Send,
-                label = "Enviar…".tr(),
-                modifier = Modifier.weight(1f),
-                enabled = !keyPending && !share.link.isNullOrBlank(),
-                onClick = {
-                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(android.content.Intent.EXTRA_TEXT, share.link)
-                    }
-                    runCatching { shareContext.startActivity(android.content.Intent.createChooser(send, null)) }
-                },
-            )
-            ShareActionButton(
-                icon = Icons.Filled.QrCode2,
-                label = "Código QR".tr(),
-                modifier = Modifier.weight(1f),
-                active = showQr,
-                enabled = !keyPending,
-                onClick = { activePanel = if (showQr) SharePanel.None else SharePanel.Qr },
-            )
-            ShareActionButton(
-                icon = Icons.Filled.Email,
-                label = "E-mail",
-                modifier = Modifier.weight(1f),
-                enabled = !sendingEmail && !keyPending,
-                onClick = {
-                    activePanel = SharePanel.None
-                    onShowEmailDialog()
-                },
-            )
-            ShareActionButton(
-                icon = Icons.Outlined.Tune,
-                label = "Definições".tr(),
-                modifier = Modifier.weight(1f),
-                active = editMode,
-                onClick = { activePanel = if (editMode) SharePanel.None else SharePanel.Edit },
-            )
-        }
-
-        // QR code display
-        AnimatedVisibility(visible = showQr && !share.link.isNullOrBlank()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color.White)
-                    .padding(16.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                co.golink.tester.ui.components.QrCodeImage(url = share.link ?: "")
-            }
-        }
-
-        // Edit panel
-        AnimatedVisibility(visible = editMode) {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
-                    .padding(14.dp),
-            ) {
-                Text(
-                    "Editar partilha".tr(),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                SwitchRow(
-                    icon = Icons.Filled.Lock,
-                    label = "Proteger com password".tr(),
-                    checked = hasPassword,
-                    onCheckedChange = { hasPassword = it },
-                )
-                AnimatedVisibility(visible = hasPassword) {
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        label = { Text("Nova password".tr()) },
-                        visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                PermissionSection(permission = permission, onPermissionChange = { permission = it }, isFolder = isFolder)
-                ShareLimitsFields(
-                    isFolder = isFolder,
-                    hasExpiration = hasExpiration,
-                    onHasExpiration = { hasExpiration = it },
-                    expirationMinutes = expirationMinutes,
-                    onExpirationMinutes = { expirationMinutes = it },
-                    hasViewLimit = hasViewLimit,
-                    onHasViewLimit = { hasViewLimit = it; if (it) hasDownloadLimit = false },
-                    viewLimit = viewLimit,
-                    onViewLimit = { viewLimit = it },
-                    hasDownloadLimit = hasDownloadLimit,
-                    onHasDownloadLimit = { hasDownloadLimit = it },
-                    downloadLimit = downloadLimit,
-                    onDownloadLimit = { downloadLimit = it },
-                )
-                Button(
-                    onClick = {
-                        val views = viewLimit.takeIf { hasViewLimit && !isFolder }
-                        onUpdate(
-                            password.takeIf { hasPassword && it.isNotBlank() },
-                            permission,
-                            expirationMinutes.takeIf { hasExpiration },
-                            downloadLimit.toIntOrNull()?.takeIf { hasDownloadLimit && views == null && it > 0 },
-                            views,
-                            // O estado do switch, e não "escreveu password": sem
-                            // isto gravar outra opção numa partilha protegida
-                            // tirava-lhe a proteção.
-                            hasPassword,
-                        )
-                        activePanel = SharePanel.None
-                    },
-                    // Proteger uma partilha que nunca teve password exige uma.
-                    enabled = !isWorking && !(hasPassword && !share.protected && password.isBlank()),
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(vertical = 12.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (isWorking) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            strokeWidth = 2.dp,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    Text("Guardar alterações".tr(), fontWeight = FontWeight.SemiBold)
-                }
-            }
-        }
-
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-        // Desativar link (texto vermelho, como no mockup)
-        Text(
-            "Desativar link".tr(),
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.error,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .clickable(onClick = onRevoke)
-                .padding(vertical = 12.dp),
-        )
-    }
-}
-
-@Composable
-private fun ShareActionButton(
-    icon: ImageVector,
-    label: String,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    active: Boolean = false,
-    onClick: () -> Unit,
-) {
-    val alpha = if (enabled) 1f else 0.4f
-    val bg = if (active)
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-    else
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.10f * alpha)
-    val border = if (active)
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-    else
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.2f * alpha)
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(bg)
-            .border(1.dp, border, RoundedCornerShape(12.dp))
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 12.dp),
-    ) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary.copy(alpha = alpha), modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary.copy(alpha = alpha), fontWeight = FontWeight.SemiBold)
-    }
-}
-
-@Composable
-private fun TagChip(label: String) {
-    Text(
-        label,
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.primary,
-        fontWeight = FontWeight.Medium,
-        modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-    )
 }
 
 @Composable

@@ -104,6 +104,11 @@ object Routes {
     const val LEGACY_OPEN = "legacy_open/{token}"
     const val LEGACY_INVITE = "legacy_invite/{id}"
     const val LEGACY_CHECKIN = "legacy_checkin/{token}"
+    // Links dos emails (AppLinkRouter): abrem com ou sem sessão.
+    const val VERIFY_EMAIL = "verify_email?url={url}"
+    fun verifyEmail(url: String) = "verify_email?url=${android.net.Uri.encode(url)}"
+    const val TEAM_INVITATION = "team_invitation/{id}"
+    fun teamInvitation(id: String) = "team_invitation/$id"
 }
 
 enum class TopState { Loading, NeedsAuth, NeedsOtp, Authenticated, BootstrapFailed }
@@ -213,6 +218,8 @@ fun AppNavHost(
             current == target -> false
             // Páginas públicas do Legacy: abrem com ou sem sessão, o gate não as tira.
             current.startsWith("legacy_") -> false
+            // Links dos emails (confirmar email, convite de equipa): idem.
+            current.startsWith("verify_email") || current.startsWith("team_invitation") -> false
             target == Routes.HOME && inAuthenticated -> false
             target == Routes.LANDING && inAuthStack -> false
             else -> true
@@ -246,6 +253,50 @@ fun AppNavHost(
         if (route != Routes.HOME && !route.startsWith("calendar") && route != Routes.NOTIFICATIONS && !route.startsWith("settings")) return@LaunchedEffect
         InboxDeepLink.consume()
         if (route != Routes.NOTIFICATIONS) navController.navigate(Routes.NOTIFICATIONS)
+    }
+
+    // Pasta vinda de um link (email / convite aceite): volta à Home e pede-lhe a pasta.
+    fun openFolderFromLink(kind: String, id: String?) {
+        if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
+            navController.navigate(Routes.HOME) {
+                popUpTo(0) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+        runCatching { navController.getBackStackEntry(Routes.HOME).savedStateHandle["open_folder"] = "$kind:${id.orEmpty()}" }
+    }
+
+    // Link de um email (App Link): abre o destino. Confirmar email e convites não
+    // precisam de sessão; o resto espera pelo login (e fica por cima da Home).
+    val appLink by AppLinkRouter.pending.collectAsState()
+    LaunchedEffect(appLink, top, currentRoute) {
+        val link = appLink ?: return@LaunchedEffect
+        val route = currentRoute ?: return@LaunchedEffect
+        // Ainda a decidir a sessão: o gate ia limpar a pilha a seguir.
+        if (top == TopState.Loading || route == Routes.SPLASH) return@LaunchedEffect
+        val authed = top == TopState.Authenticated
+        val needsAuth = when (link) {
+            is AppLinkRouter.Target.Nav, is AppLinkRouter.Target.VerifyEmail -> false
+            is AppLinkRouter.Target.TeamInvite -> link.requireAuth
+            else -> true
+        }
+        val inApp = route == Routes.HOME || route == Routes.NOTIFICATIONS || route.startsWith("settings") ||
+            route.startsWith("calendar") || route.startsWith("support") || route.startsWith("legacy") ||
+            route.startsWith("viewer/") || route.startsWith("team_invitation") || route.startsWith("verify_email")
+        if (needsAuth && (!authed || !inApp)) return@LaunchedEffect
+        val target = AppLinkRouter.consume() ?: return@LaunchedEffect
+        fun onTopOfHome(dest: String) = navController.navigate(dest) { popUpTo(Routes.HOME) }
+        when (target) {
+            is AppLinkRouter.Target.Nav -> runCatching { navController.navigate(target.uri) }
+            is AppLinkRouter.Target.VerifyEmail -> navController.navigate(Routes.verifyEmail(target.url))
+            is AppLinkRouter.Target.TeamInvite -> navController.navigate(Routes.teamInvitation(target.id))
+            is AppLinkRouter.Target.Folder -> openFolderFromLink(target.kind, target.id)
+            is AppLinkRouter.Target.Calendar -> onTopOfHome(Routes.calendar(target.event))
+            is AppLinkRouter.Target.Ticket -> onTopOfHome(Routes.supportTicket(target.id, target.admin))
+            AppLinkRouter.Target.NewTicket -> onTopOfHome(Routes.SUPPORT_NEW)
+            AppLinkRouter.Target.Billing -> onTopOfHome(Routes.settings("billing"))
+            is AppLinkRouter.Target.Legacy -> onTopOfHome(Routes.legacy(target.pane))
+        }
     }
 
     // Convite de guardião aberto antes do login: Guarding assim que houver sessão.
@@ -419,6 +470,8 @@ fun AppNavHost(
             // Vindo do Calendário (toggle Admin/Suporte): abre a gaveta nessa área.
             val areaRequest by entry.savedStateHandle.getStateFlow<String?>("drawer_area", null).collectAsState()
             val drawerRequest by entry.savedStateHandle.getStateFlow("open_drawer", false).collectAsState()
+            // Link de um email: "kind:id" (files | team | shared).
+            val folderLink by entry.savedStateHandle.getStateFlow<String?>("open_folder", null).collectAsState()
             androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
                 BrowseScreen(
                     openTrashRequest = openTrash,
@@ -438,6 +491,8 @@ fun AppNavHost(
                     onAreaRequestHandled = { entry.savedStateHandle["drawer_area"] = null },
                     openDrawerRequest = drawerRequest,
                     onDrawerRequestHandled = { entry.savedStateHandle["open_drawer"] = false },
+                    folderLinkRequest = folderLink,
+                    onFolderLinkHandled = { entry.savedStateHandle["open_folder"] = null },
                 )
                 // Gate E2E: pede unlock/setup quando autenticado mas sem privada em memória.
                 co.golink.tester.ui.screens.encryption.E2EGate()
@@ -645,6 +700,39 @@ fun AppNavHost(
                 onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
             )
         }
+        composable(
+            Routes.VERIFY_EMAIL,
+            arguments = listOf(navArgument("url") { type = NavType.StringType; nullable = true; defaultValue = null }),
+        ) { entry ->
+            co.golink.tester.ui.screens.applinks.VerifyEmailScreen(
+                url = entry.arguments?.getString("url").orEmpty(),
+                authenticated = top == TopState.Authenticated,
+                onContinue = { navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true }; launchSingleTop = true } },
+                onSignIn = { freshSignIn() },
+                onBack = { backOrRestart() },
+            )
+        }
+        composable(
+            Routes.TEAM_INVITATION,
+            arguments = listOf(navArgument("id") { type = NavType.StringType }),
+        ) { entry ->
+            val id = entry.arguments?.getString("id").orEmpty()
+            co.golink.tester.ui.screens.applinks.TeamInvitationScreen(
+                id = id,
+                authenticated = top == TopState.Authenticated,
+                onOpenTeamFolder = { folderId -> openFolderFromLink("shared", folderId) },
+                onSignIn = {
+                    // Depois do login volta a este convite.
+                    AppLinkRouter.set(AppLinkRouter.Target.TeamInvite(id, requireAuth = true))
+                    freshSignIn()
+                },
+                onRegister = {
+                    navController.navigate(Routes.LANDING) { popUpTo(0) { inclusive = true }; launchSingleTop = true }
+                    navController.navigate(Routes.REGISTER)
+                },
+                onDone = { backOrRestart() },
+            )
+        }
         composable(Routes.BOOTSTRAP_ERROR) {
             BootstrapErrorScreen()
         }
@@ -655,12 +743,59 @@ fun AppNavHost(
     }
     }
 
-    AnimatedVisibility(
-        visible = locked && top == TopState.Authenticated,
-        // Sem fade de entrada: ao voltar à app o conteúdo não pode aparecer nem um instante.
-        enter = androidx.compose.animation.EnterTransition.None,
-        exit = fadeOut(animationSpec = tween(320)) + scaleOut(animationSpec = tween(320), targetScale = 1.08f),
-    ) {
-        LockScreen()
+    // O bloqueio vai numa janela própria (Dialog): folhas e popups abertos são
+    // janelas por cima da principal e ficavam à vista e clicáveis sobre o PIN.
+    val lockVisible = remember { androidx.compose.animation.core.MutableTransitionState(false) }
+    lockVisible.targetState = locked && top == TopState.Authenticated
+    if (lockVisible.currentState || lockVisible.targetState) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = {},
+            properties = androidx.compose.ui.window.DialogProperties(
+                dismissOnBackPress = false,
+                dismissOnClickOutside = false,
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false,
+            ),
+        ) {
+            LockWindowSetup()
+            AnimatedVisibility(
+                visibleState = lockVisible,
+                // Sem fade de entrada: ao voltar à app o conteúdo não pode aparecer nem um instante.
+                enter = androidx.compose.animation.EnterTransition.None,
+                exit = fadeOut(animationSpec = tween(320)) + scaleOut(animationSpec = tween(320), targetScale = 1.08f),
+            ) {
+                LockScreen()
+            }
+        }
     }
+}
+
+/**
+ * Janela do bloqueio: ecrã inteiro, sem escurecer nem animar a entrada e, no
+ * Android 12+, desfoca tudo o que está por trás (incluindo folhas/popups — o blur
+ * da janela principal não lhes chega). Herda o FLAG_SECURE da atividade.
+ */
+@Composable
+private fun LockWindowSetup() {
+    val view = androidx.compose.ui.platform.LocalView.current
+    val activity = androidx.compose.ui.platform.LocalContext.current.findActivity()
+    androidx.compose.runtime.SideEffect {
+        val window = (view.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window ?: return@SideEffect
+        window.setLayout(android.view.WindowManager.LayoutParams.MATCH_PARENT, android.view.WindowManager.LayoutParams.MATCH_PARENT)
+        window.setWindowAnimations(0)
+        window.setDimAmount(0f)
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
+            window.attributes = window.attributes.apply { blurBehindRadius = 80 }
+        }
+        val secure = ((activity?.window?.attributes?.flags ?: 0) and android.view.WindowManager.LayoutParams.FLAG_SECURE) != 0
+        if (secure) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE) else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+    }
+}
+
+private tailrec fun android.content.Context.findActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

@@ -9,6 +9,7 @@ import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Event
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.PersonAdd
+import androidx.compose.material.icons.outlined.PersonRemove
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.SupportAgent
@@ -22,7 +23,7 @@ import co.golink.tester.ui.theme.LocalDarkTheme
 /** Categoria → chip de filtro (igual ao categories.js da web; ordem = ordem dos chips). */
 val NOTIFICATION_GROUPS: List<Pair<String, Set<String>>> = listOf(
     "security" to setOf("security-alert", "file-quarantined", "share-blocked", "abuse-report"),
-    "sharing" to setOf("team-invitation", "file-comment"),
+    "sharing" to setOf("team-invitation", "team-ended", "file-comment"),
     "calendar" to setOf("calendar"),
     "legacy" to setOf("legacy"),
     "files" to setOf("file-request", "remote-upload-done"),
@@ -67,6 +68,7 @@ fun notificationIcon(category: String?): NotificationIcon {
         "calendar" -> rose(Icons.Outlined.Event)
         "legacy" -> tone(Icons.Outlined.Shield, 0xFF7C3AED, 0xFFEDE9FE, 0xFFA78BFA, 0xFF4C1D95)
         "team-invitation" -> tone(Icons.Outlined.PersonAdd, 0xFF4F46E5, 0xFFE0E7FF, 0xFF818CF8, 0xFF312E81)
+        "team-ended" -> tone(Icons.Outlined.PersonRemove, 0xFF4F46E5, 0xFFE0E7FF, 0xFF818CF8, 0xFF312E81)
         "file-request", "remote-upload-done" ->
             tone(Icons.Outlined.CloudUpload, 0xFF7C3AED, 0xFFEDE9FE, 0xFFA78BFA, 0xFF4C1D95)
         "file-comment" -> sky(Icons.Outlined.ChatBubbleOutline)

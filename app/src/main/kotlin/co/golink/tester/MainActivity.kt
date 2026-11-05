@@ -57,6 +57,8 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         if (savedInstanceState == null && !fromHistory) {
             co.golink.tester.ui.navigation.CalendarDeepLink.from(intent)
             co.golink.tester.ui.navigation.InboxDeepLink.from(intent)
+            // Link de um email (App Link): abre o ecrã certo na app.
+            co.golink.tester.ui.navigation.AppLinkRouter.from(intent, fromNewIntent = false)
         }
         lifecycle.addObserver(LifecycleEventObserver { _, event ->
             when (event) {
@@ -93,7 +95,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
     // Android 13+: só a miniatura dos recentes fica em branco (capturas continuam).
     // Antes do 13 não há alternativa ao FLAG_SECURE (bloqueia também capturas).
     private fun applyPrivacyMode() {
-        val on = lockManager.enabled
+        val on = lockManager.hideInRecents
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             setRecentsScreenshotEnabled(!on)
         } else if (on) {
@@ -133,5 +135,6 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         setIntent(intent)
         co.golink.tester.ui.navigation.CalendarDeepLink.from(intent)
         co.golink.tester.ui.navigation.InboxDeepLink.from(intent)
+        co.golink.tester.ui.navigation.AppLinkRouter.from(intent, fromNewIntent = true)
     }
 }

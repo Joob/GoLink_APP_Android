@@ -135,8 +135,15 @@ fun LockScreen(
         }
     }
 
-    // Fundo: desfoque no Android 12+ (AppNavHost); antes disso, opaco para não se ver nada.
-    val scrim = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Color.Black.copy(alpha = if (dark) 0.55f else 0.35f)
+    // Fundo: desfoque da janela de bloqueio no Android 12+ (tapa também folhas e
+    // popups abertos); sem desfoque entre janelas (antes do 12, poupança de
+    // bateria, aparelhos sem suporte) fica opaco para não se ver nada.
+    val crossWindowBlur = remember {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            (context.getSystemService(android.content.Context.WINDOW_SERVICE) as? android.view.WindowManager)
+                ?.isCrossWindowBlurEnabled == true
+    }
+    val scrim = if (crossWindowBlur) Color.Black.copy(alpha = if (dark) 0.55f else 0.35f)
     else MaterialTheme.colorScheme.background
     Box(
         modifier = Modifier

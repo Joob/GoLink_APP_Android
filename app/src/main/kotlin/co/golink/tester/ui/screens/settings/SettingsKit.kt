@@ -1,5 +1,6 @@
 package co.golink.tester.ui.screens.settings
 
+import androidx.compose.ui.text.withStyle
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -80,10 +81,14 @@ fun SettingsField(
     keyboardType: KeyboardType = KeyboardType.Text,
     isError: Boolean = false,
     supportingText: String? = null,
+    hint: String? = null,
+    showLabel: Boolean = true,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
-        Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(6.dp))
+        if (showLabel) {
+            SettingsFieldLabel(label, hint)
+            Spacer(Modifier.height(6.dp))
+        }
         // Campo compacto (46dp) com contorno fino, como no mockup.
         var focused by remember { mutableStateOf(false) }
         val borderColor = when {
@@ -101,16 +106,16 @@ fun SettingsField(
             keyboardOptions = KeyboardOptions(keyboardType = if (isPassword) KeyboardType.Password else keyboardType),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(46.dp)
+                .height(50.dp)
                 .onFocusChanged { focused = it.isFocused },
             decorationBox = { inner ->
                 Box(
                     contentAlignment = Alignment.CenterStart,
                     modifier = Modifier
                         .fillMaxSize()
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .background(settingsCardColor())
-                        .border(if (focused) 1.5.dp else 1.dp, borderColor, RoundedCornerShape(10.dp))
+                        .border(if (focused) 1.5.dp else 1.dp, borderColor, RoundedCornerShape(12.dp))
                         .padding(horizontal = 14.dp),
                 ) {
                     if (value.isEmpty() && placeholder != null) {
@@ -129,6 +134,21 @@ fun SettingsField(
             )
         }
     }
+}
+
+/** Etiqueta de um campo: "Apelido · opcional". */
+@Composable
+fun SettingsFieldLabel(label: String, hint: String? = null) {
+    Text(
+        androidx.compose.ui.text.buildAnnotatedString {
+            withStyle(androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.SemiBold)) { append(label) }
+            if (!hint.isNullOrBlank()) {
+                withStyle(androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.Normal)) { append(" · "); append(hint) }
+            }
+        },
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 /**
@@ -243,15 +263,15 @@ fun SettingsPinInput(value: String, onValueChange: (String) -> Unit, isError: Bo
 
 /** Caixa de escolha compacta (abre um menu), com o mesmo aspeto do [SettingsField]. */
 @Composable
-fun SettingsSelectBox(text: String, placeholder: String? = null, onClick: () -> Unit) {
+fun SettingsSelectBox(text: String, placeholder: String? = null, extra: String? = null, onClick: () -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .height(46.dp)
-            .clip(RoundedCornerShape(10.dp))
+            .height(50.dp)
+            .clip(RoundedCornerShape(12.dp))
             .background(settingsCardColor())
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .padding(start = 14.dp, end = 10.dp),
     ) {
@@ -263,6 +283,10 @@ fun SettingsSelectBox(text: String, placeholder: String? = null, onClick: () -> 
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        if (!extra.isNullOrBlank()) {
+            Text(extra, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            Spacer(Modifier.width(6.dp))
+        }
         Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
     }
 }
@@ -349,7 +373,7 @@ object SettingsColors {
     val Teal = Color(0xFF14B8A6)
     val Orange = Color(0xFFF97316)
     val Amber = Color(0xFFF59E0B)
-    val Red = Color(0xFFFD397A)
+    val Red = Color(0xFFE11D48)
     val Pink = Color(0xFFEC4899)
     val Slate = Color(0xFF64748B)
 }
@@ -358,43 +382,68 @@ object SettingsColors {
 @Composable
 fun settingsCardColor(): Color =
     // Pelo fundo do tema da app (e não do sistema): a app tem o seu próprio claro/escuro.
-    if (MaterialTheme.colorScheme.background.luminanceIsDark()) {
+    if (settingsIsDark()) {
         MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
     } else {
         Color.White
     }
 
+@Composable
+fun settingsIsDark(): Boolean = MaterialTheme.colorScheme.background.luminanceIsDark()
+
+/** Fundo dos ecrãs das Definições: cinza claro (cartões brancos por cima). */
+@Composable
+fun settingsScreenBackground(): Color =
+    if (settingsIsDark()) MaterialTheme.colorScheme.background else Color(0xFFF2F3F2)
+
+/** Caixa interna cinza dentro de um cartão (ex.: espaço usado no menu). */
+@Composable
+fun settingsInsetColor(): Color =
+    if (settingsIsDark()) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f) else Color(0xFFF4F5F4)
+
 private fun Color.luminanceIsDark(): Boolean = (0.299f * red + 0.587f * green + 0.114f * blue) < 0.5f
 
+/** Contorno dos cartões fora das Definições (admin): mantém-se sempre. */
 @Composable
-fun settingsCardBorderStroke(): BorderStroke = settingsCardBorder()
-
-@Composable
-private fun settingsCardBorder(): BorderStroke =
+fun settingsCardBorderStroke(): BorderStroke =
     BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
 
-/** Quadrado arredondado com o ícone na cor da categoria. */
+/** Cartões das Definições: sem contorno no claro (fundo cinza), subtil no escuro. */
 @Composable
-fun SettingsIconTile(icon: ImageVector, color: Color, size: Int = 36, enabled: Boolean = true) {
+fun settingsCardBorder(): BorderStroke? =
+    if (settingsIsDark()) BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)) else null
+
+/** Separador entre linhas de um cartão. */
+@Composable
+fun SettingsRowDivider(start: androidx.compose.ui.unit.Dp = 16.dp) {
+    HorizontalDivider(
+        thickness = 0.5.dp,
+        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f),
+        modifier = Modifier.padding(start = start, end = 16.dp),
+    )
+}
+
+/** Quadrado arredondado com o ícone na cor do grupo (fundo suave). */
+@Composable
+fun SettingsIconTile(icon: ImageVector, color: Color, size: Int = 38, enabled: Boolean = true) {
     val alpha = if (enabled) 1f else 0.45f
     Box(
         modifier = Modifier
             .size(size.dp)
             .clip(RoundedCornerShape((size * 0.3f).dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f * alpha)),
+            .background(color.copy(alpha = (if (settingsIsDark()) 0.22f else 0.13f) * alpha)),
         contentAlignment = Alignment.Center,
     ) {
-        // Redesign: ícones neutros (sem cor por categoria), como na web.
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f * alpha), modifier = Modifier.size((size * 0.55f).dp))
+        Icon(icon, contentDescription = null, tint = color.copy(alpha = alpha), modifier = Modifier.size((size * 0.52f).dp))
     }
 }
 
-/** Título de secção em maiúsculas pequenas, por cima de um grupo/cartão. */
+/** Título de secção por cima de um grupo/cartão (cinza, fora do cartão). */
 @Composable
 fun SettingsSectionTitle(text: String, modifier: Modifier = Modifier) {
     Text(
         text,
-        modifier = modifier.padding(start = 4.dp, bottom = 8.dp, top = 4.dp),
+        modifier = modifier.padding(start = 12.dp, bottom = 8.dp, top = 4.dp),
         style = MaterialTheme.typography.labelLarge,
         fontWeight = FontWeight.SemiBold,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -417,7 +466,174 @@ fun SettingsGroup(title: String? = null, content: @Composable ColumnScope.() -> 
     }
 }
 
-/** Linha de navegação: ícone colorido, título, subtítulo e valor/badge à direita. */
+/** Chip: pill ("2FA ativa", "Este telemóvel") ou círculo com número ("5"). */
+@Composable
+fun SettingsBadge(text: String, color: Color, round: Boolean = false) {
+    val dark = settingsIsDark()
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .then(if (round) Modifier.size(22.dp) else Modifier)
+            .clip(RoundedCornerShape(50))
+            .background(color.copy(alpha = if (dark) 0.24f else 0.15f))
+            .padding(horizontal = if (round) 0.dp else 8.dp, vertical = if (round) 0.dp else 3.dp),
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = if (dark) color else color.darken(),
+            maxLines = 1,
+        )
+    }
+}
+
+private fun Color.darken(f: Float = 0.72f): Color = Color(red * f, green * f, blue * f, alpha)
+
+/** Interruptor verde das Definições. */
+@Composable
+fun SettingsSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, enabled: Boolean = true) {
+    androidx.compose.material3.Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        enabled = enabled,
+        colors = androidx.compose.material3.SwitchDefaults.colors(
+            checkedThumbColor = Color.White,
+            checkedTrackColor = SettingsAccent,
+            checkedBorderColor = SettingsAccent,
+            uncheckedThumbColor = Color.White,
+            uncheckedTrackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+            uncheckedBorderColor = Color.Transparent,
+        ),
+        thumbContent = {},
+    )
+}
+
+/** Linha com interruptor (ícone opcional em mosaico). Toda a linha alterna. */
+@Composable
+fun SettingsToggleRow(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    subtitle: String? = null,
+    icon: ImageVector? = null,
+    iconColor: Color = SettingsAccent,
+    enabled: Boolean = true,
+    showDivider: Boolean = false,
+    bold: Boolean = false,
+) {
+    val alpha = if (enabled) 1f else 0.5f
+    Column {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = enabled) { onCheckedChange(!checked) }
+                .padding(horizontal = 16.dp, vertical = 13.dp),
+        ) {
+            if (icon != null) {
+                SettingsIconTile(icon, iconColor, enabled = enabled)
+                Spacer(Modifier.width(14.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
+                )
+                if (!subtitle.isNullOrBlank()) {
+                    Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha))
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            SettingsSwitch(checked = checked, onCheckedChange = null, enabled = enabled)
+        }
+        if (showDivider) SettingsRowDivider(if (icon != null) 68.dp else 16.dp)
+    }
+}
+
+/** Ação de texto verde à direita ("Alterar", "Mudar PIN", "Melhorar →"). */
+@Composable
+fun SettingsActionText(text: String, onClick: () -> Unit, color: Color = SettingsAccent, enabled: Boolean = true) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.Bold,
+        color = color.copy(alpha = if (enabled) 1f else 0.45f),
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+    )
+}
+
+/** Botão pequeno em pill com contorno ("Terminar", "Revogar"). */
+@Composable
+fun SettingsPillButton(text: String, onClick: () -> Unit, enabled: Boolean = true, color: Color = Color.Unspecified) {
+    val c = if (color == Color.Unspecified) MaterialTheme.colorScheme.onSurface else color
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), RoundedCornerShape(50))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+    ) {
+        Text(text, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = c.copy(alpha = if (enabled) 1f else 0.45f))
+    }
+}
+
+/** Escolha segmentada (ex.: Agora / 1 min / 5 min / 15 min). */
+@Composable
+fun <T> SettingsSegmented(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(settingsInsetColor())
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        options.forEach { (value, label) ->
+            val on = value == selected
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (on) settingsCardColor().let { if (settingsIsDark()) MaterialTheme.colorScheme.surface else it } else Color.Transparent)
+                    .clickable { onSelect(value) }
+                    .padding(vertical = 10.dp),
+            ) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
+                    color = if (on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+/** Barra fixa em baixo com o botão principal de um formulário. */
+@Composable
+fun SettingsBottomBar(content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(settingsScreenBackground())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            content = content,
+        )
+    }
+}
+
+/** Linha de navegação: ícone em mosaico na cor do grupo, título, subtítulo e chip/valor à direita. */
 @Composable
 fun SettingsNavRow(
     icon: ImageVector,
@@ -427,6 +643,7 @@ fun SettingsNavRow(
     trailing: String? = null,
     enabled: Boolean = true,
     showDivider: Boolean = true,
+    badge: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val alpha = if (enabled) 1f else 0.5f
@@ -436,16 +653,15 @@ fun SettingsNavRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(enabled = enabled, onClick = onClick)
-                .padding(horizontal = 16.dp, vertical = 13.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
-            // Ícone simples, cinzento (mockup).
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f * alpha), modifier = Modifier.size(21.dp))
-            Spacer(Modifier.width(16.dp))
+            SettingsIconTile(icon, color, enabled = enabled)
+            Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     title,
                     style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -460,29 +676,28 @@ fun SettingsNavRow(
                     )
                 }
             }
-            if (!trailing.isNullOrBlank()) {
+            if (badge != null) {
+                Spacer(Modifier.width(8.dp))
+                badge()
+                Spacer(Modifier.width(6.dp))
+            } else if (!trailing.isNullOrBlank()) {
                 Spacer(Modifier.width(8.dp))
                 Text(
                     trailing,
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.width(4.dp))
             }
             Icon(
                 Icons.Filled.ChevronRight,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f * alpha),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f * alpha),
+                modifier = Modifier.size(20.dp),
             )
         }
-        if (showDivider) {
-            HorizontalDivider(
-                thickness = 0.5.dp,
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f),
-                modifier = Modifier.padding(start = 53.dp, end = 16.dp),
-            )
-        }
+        if (showDivider) SettingsRowDivider(66.dp)
     }
 }
 
@@ -581,8 +796,8 @@ fun SettingsPrimaryButton(
     Button(
         onClick = onClick,
         enabled = enabled && !loading,
-        shape = RoundedCornerShape(10.dp),
-        contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
+        shape = RoundedCornerShape(14.dp),
+        contentPadding = PaddingValues(vertical = 15.dp, horizontal = 16.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = SettingsAccent,
             contentColor = Color.White,
@@ -612,14 +827,14 @@ fun SettingsOutlinedButton(
     icon: ImageVector? = null,
     modifier: Modifier = Modifier,
 ) {
-    val color = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    val color = if (destructive) SettingsColors.Red else MaterialTheme.colorScheme.onSurface
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
         shape = RoundedCornerShape(14.dp),
-        contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
-        border = BorderStroke(1.dp, color.copy(alpha = if (enabled) 0.45f else 0.2f)),
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = color),
+        contentPadding = PaddingValues(vertical = 15.dp, horizontal = 16.dp),
+        border = BorderStroke(1.dp, if (destructive) color.copy(alpha = if (enabled) 0.35f else 0.15f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
+        colors = ButtonDefaults.outlinedButtonColors(containerColor = settingsCardColor(), contentColor = color),
         modifier = modifier.fillMaxWidth(),
     ) {
         if (icon != null) {

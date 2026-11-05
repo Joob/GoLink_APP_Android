@@ -67,3 +67,35 @@ data class TeamClearName(
 data class TeamClearNamesRequest(
     val items: List<TeamClearName>,
 )
+
+// GET api/teams/invitations/{id}/preview (TeamInvitationResource).
+@Serializable
+data class TeamInvitationEnvelope(val data: TeamInvitationData)
+
+@Serializable
+data class TeamInvitationData(
+    val id: String,
+    val attributes: TeamInvitationAttributes,
+    val relationships: TeamInvitationRelationships? = null,
+)
+
+@Serializable
+data class TeamInvitationAttributes(
+    val parent_id: String,
+    val email: String,
+    val status: String? = null,
+    val permission: String? = null,
+    val isExistedUser: Boolean = false,
+)
+
+@Serializable
+data class TeamInvitationRelationships(val inviter: TeamInviterEnvelope? = null)
+
+@Serializable
+data class TeamInviterEnvelope(val data: TeamInviterData)
+
+@Serializable
+data class TeamInviterData(val id: String, val attributes: TeamInviterAttributes)
+
+@Serializable
+data class TeamInviterAttributes(val name: String? = null, val avatar: String? = null, val color: String? = null)

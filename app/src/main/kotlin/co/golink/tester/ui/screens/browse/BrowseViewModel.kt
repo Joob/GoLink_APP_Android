@@ -50,6 +50,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withTimeoutOrNull
 
+private const val LINK_PLACEHOLDER = "…"
+
 sealed interface BrowseMode {
     data class Folder(val id: String?, val name: String) : BrowseMode
     data object Latest : BrowseMode
@@ -351,6 +353,42 @@ class BrowseViewModel @Inject constructor(
         loadCurrent()
     }
 
+    /**
+     * Pasta aberta a partir de um link (email / convite aceite). O nome ainda não é
+     * conhecido: fica "…" até a listagem trazer a raiz (ver loadPaged).
+     */
+    fun openLinkedFolder(kind: String, id: String?) {
+        val teamsLabel = "Pastas de equipa".tr()
+        val sharedLabel = "Partilhado comigo".tr()
+        when {
+            id == null && kind == "team" -> return openTeamFolders()
+            id == null && kind == "shared" -> return openSharedWithMe()
+            id == null -> return openRoot()
+        }
+        val (mode, root) = when (kind) {
+            "team" -> BrowseMode.TeamFolder(id = id, name = LINK_PLACEHOLDER) to
+                Crumb(null, teamsLabel, origin = BrowseMode.TeamFolder(id = null, name = teamsLabel))
+            "shared" -> BrowseMode.SharedWithMe(id = id, name = LINK_PLACEHOLDER) to
+                Crumb(null, sharedLabel, origin = BrowseMode.SharedWithMe(id = null, name = sharedLabel))
+            else -> BrowseMode.Folder(id = id, name = LINK_PLACEHOLDER) to Crumb(null, "Ficheiros".tr())
+        }
+        _state.update {
+            it.copy(mode = mode, crumbs = listOf(root, Crumb(id, LINK_PLACEHOLDER)), searchQuery = "", searchChips = emptyList())
+        }
+        loadCurrent()
+    }
+
+    // Pasta aberta por link: troca o "…" pelo nome real quando a raiz chega.
+    private fun fillLinkedFolderName(root: BrowseItem.Folder?) {
+        root ?: return
+        _state.update { st ->
+            val last = st.crumbs.lastOrNull()
+            if (last == null || last.id != root.id || last.name != LINK_PLACEHOLDER) return@update st
+            // Só o crumb (os títulos vêm dele): mudar o mode invalidava as verificações em curso.
+            st.copy(crumbs = st.crumbs.dropLast(1) + last.copy(name = root.name))
+        }
+    }
+
     fun goToCrumb(index: Int) {
         val crumbs = _state.value.crumbs.take(index + 1)
         val last = crumbs.lastOrNull() ?: return openRoot()
@@ -594,6 +632,8 @@ class BrowseViewModel @Inject constructor(
         exitSelectMode()
         targets.forEach { move(it, toFolderId) }
     }
+
+    fun showToast(message: String) = _state.update { it.copy(toast = message) }
 
     fun consumeToast() = _state.update { it.copy(toast = null) }
 
@@ -1747,6 +1787,7 @@ class BrowseViewModel @Inject constructor(
                         root = firstPaged.root ?: it.root,
                     )
                 }
+                fillLinkedFolderName(firstPaged.root)
                 if (mode is BrowseMode.TeamFolder) clearTeamFolderNames(mode, all)
             }
             .onFailure { t ->

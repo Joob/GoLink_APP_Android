@@ -51,10 +51,13 @@ fun SecurityActivityScreen(
     LaunchedEffect(state.toast) {
         state.toast?.let { snackbarHost.showSnackbar(it); viewModel.consumeToast() }
     }
+    val bg = co.golink.tester.ui.screens.settings.settingsScreenBackground()
     Scaffold(
+        containerColor = bg,
         topBar = {
             TopAppBar(
-                title = { Text("Atividade de segurança".tr(), fontWeight = FontWeight.Bold) },
+                title = { Text("Atividade de segurança".tr(), style = androidx.compose.material3.MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) },
+                colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(containerColor = bg, scrolledContainerColor = bg),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar".tr())

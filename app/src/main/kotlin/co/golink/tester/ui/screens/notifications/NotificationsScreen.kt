@@ -55,6 +55,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -62,6 +63,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -244,6 +246,7 @@ fun NotificationsScreen(
     }
 
     var openId by rememberSaveable { mutableStateOf<String?>(null) }
+    val answering by viewModel.answering.collectAsState()
 
     // Popup de detalhe (como na web): abrir já não marca como lida, o ✓ é que marca.
     items.firstOrNull { it.id == openId }?.let { n ->
@@ -254,6 +257,8 @@ fun NotificationsScreen(
             onDismiss = { openId = null },
             onToggleRead = { viewModel.toggleRead(n); openId = null },
             onDelete = { viewModel.delete(n.id); openId = null },
+            answering = n.id in answering,
+            onAnswer = if (n.pendingAnswer) { yes -> viewModel.answer(n, yes) } else null,
             // Seguir a ação conta como lida (abrir o popup não).
             onAction = target?.let { go -> { if (!n.isRead) viewModel.markRead(n.id); openId = null; go() } },
         )
@@ -383,6 +388,8 @@ fun NotificationsScreen(
                                 onAction = target?.let { go -> { if (!n.isRead) viewModel.markRead(n.id); go() } },
                                 onToggleRead = { viewModel.toggleRead(n) },
                                 onDelete = { viewModel.delete(n.id) },
+                                answering = n.id in answering,
+                                onAnswer = if (n.pendingAnswer) { yes -> viewModel.answer(n, yes) } else null,
                             )
                         }
                     }
@@ -434,6 +441,9 @@ private fun NotificationRow(
     onAction: (() -> Unit)?,
     onToggleRead: () -> Unit,
     onDelete: () -> Unit,
+    answering: Boolean = false,
+    /** Convite por responder: true = Aceitar, false = Recusar. */
+    onAnswer: ((Boolean) -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     val unread = !notification.isRead
@@ -501,9 +511,22 @@ private fun NotificationRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                if (onAction != null) {
+                if (onAnswer != null) {
                     Spacer(Modifier.height(10.dp))
-                    OutlineAction(notification.actionButton?.takeIf { it.isNotBlank() } ?: "Abrir".tr(), onAction)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlineAction("Recusar".tr(), enabled = !answering) { onAnswer(false) }
+                        OutlineAction("Aceitar".tr(), primary = true, enabled = !answering) { onAnswer(true) }
+                        if (answering) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    }
+                } else {
+                    rsvpLabel(notification.rsvpStatus)?.let { label ->
+                        Spacer(Modifier.height(8.dp))
+                        RsvpDone(label)
+                    }
+                    if (onAction != null) {
+                        Spacer(Modifier.height(10.dp))
+                        OutlineAction(notification.actionButton?.takeIf { it.isNotBlank() } ?: "Abrir".tr(), onClick = onAction)
+                    }
                 }
             }
             Box {
@@ -534,22 +557,40 @@ private fun NotificationRow(
     }
 }
 
-/** Botão secundário da web: fundo claro com borda. */
+/** Botão da web: secundário (fundo claro com borda) ou primário (cheio, como "Aceitar"). */
 @Composable
-private fun OutlineAction(label: String, onClick: () -> Unit) {
+private fun OutlineAction(label: String, primary: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Text(
         label,
         fontSize = 13.sp,
         fontWeight = FontWeight.SemiBold,
-        color = scheme.onSurface,
+        color = if (primary) scheme.surface else scheme.onSurface,
         modifier = Modifier
+            .alpha(if (enabled) 1f else 0.6f)
             .clip(RoundedCornerShape(8.dp))
-            .background(scheme.surface)
-            .border(1.dp, scheme.outline, RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
+            .background(if (primary) scheme.onSurface else scheme.surface)
+            .border(1.dp, if (primary) scheme.onSurface else scheme.outline, RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 6.dp),
     )
+}
+
+/** Resposta já dada a um convite de evento. */
+internal fun rsvpLabel(status: String?): String? = when (status) {
+    "accepted" -> "Aceitaste".tr()
+    "declined" -> "Recusaste".tr()
+    "tentative" -> "Respondeste talvez".tr()
+    else -> null
+}
+
+@Composable
+internal fun RsvpDone(label: String) {
+    val green = if (co.golink.tester.ui.theme.LocalDarkTheme.current) Color(0xFF34D399) else Color(0xFF059669)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Icon(Icons.Outlined.Done, contentDescription = null, tint = green, modifier = Modifier.size(14.dp))
+        Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = green)
+    }
 }
 
 /**

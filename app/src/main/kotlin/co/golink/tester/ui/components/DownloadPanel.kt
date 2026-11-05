@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -84,15 +85,31 @@ private val Green = Color(0xFF15803D)
  * desencriptação e Cancelar. As transferências continuam no serviço mesmo que a
  * app seja fechada.
  */
+/**
+ * Altura ocupada em baixo pelo painel de downloads (global, em AppNavHost), para
+ * o botão "+" subir e não tapar os botões encolher/fechar.
+ */
+object TransferOverlay {
+    var downloadPanelHeight by androidx.compose.runtime.mutableStateOf(0.dp)
+}
+
 @Composable
 fun DownloadPanel(modifier: Modifier = Modifier, viewModel: DownloadPanelViewModel = hiltViewModel()) {
     val jobs by viewModel.tracker.jobs.collectAsState()
-    if (jobs.isEmpty()) return
+    // Sem cartões (ou ao sair do ecrã) o "+" volta ao sítio.
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { TransferOverlay.downloadPanelHeight = 0.dp } }
+    if (jobs.isEmpty()) {
+        androidx.compose.runtime.SideEffect { TransferOverlay.downloadPanelHeight = 0.dp }
+        return
+    }
     val context = LocalContext.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
 
     Column(
         modifier = modifier
             .navigationBarsPadding()
+            // Altura sem a barra de navegação (o "+" já a desconta).
+            .onSizeChanged { TransferOverlay.downloadPanelHeight = with(density) { it.height.toDp() } }
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {

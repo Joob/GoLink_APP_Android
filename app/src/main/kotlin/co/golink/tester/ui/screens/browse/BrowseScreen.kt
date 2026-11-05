@@ -182,6 +182,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -299,9 +301,19 @@ fun BrowseScreen(
     onDrawerRequestHandled: () -> Unit = {},
     openTrashRequest: Boolean = false,
     onTrashRequestHandled: () -> Unit = {},
+    /** Pasta pedida por um link de email: "kind:id" (files | team | shared; id vazio = raiz). */
+    folderLinkRequest: String? = null,
+    onFolderLinkHandled: () -> Unit = {},
     viewModel: BrowseViewModel = hiltViewModel(),
     shell: BrowseShellViewModel = hiltViewModel(),
 ) {
+    LaunchedEffect(folderLinkRequest) {
+        val request = folderLinkRequest ?: return@LaunchedEffect
+        val kind = request.substringBefore(':')
+        val id = request.substringAfter(':', "").ifBlank { null }
+        viewModel.openLinkedFolder(kind, id)
+        onFolderLinkHandled()
+    }
     LaunchedEffect(openTrashRequest) {
         if (openTrashRequest) {
             viewModel.openTrash()
@@ -421,8 +433,12 @@ fun BrowseScreen(
     var actionTarget by remember { mutableStateOf<BrowseItem?>(null) }
     var sheetItem by remember { mutableStateOf<BrowseItem?>(null) }
     var activeDialog by remember { mutableStateOf(ActionDialog.None) }
+    // Mover que inclui a raiz de uma equipa: confirma antes (a equipa termina e os membros são avisados).
+    var pendingTeamMove by remember { mutableStateOf<PendingTeamMove?>(null) }
     var createInMoveFor by remember { mutableStateOf<Pair<Boolean, String?>?>(null) }
     var fabMenuOpen by remember { mutableStateOf(false) }
+    // Altura do painel de uploads (fundo do ecrã): o "+" sobe para não o tapar.
+    var uploadBannerPx by remember { mutableStateOf(0) }
     // "Pesquisar ficheiros" na gaveta: incrementa → a SearchRow pede o foco.
     var membersPopupFolder by remember { mutableStateOf<BrowseItem.Folder?>(null) }
     // Editar membros/convites da Team Folder (só o dono, na raiz).
@@ -656,8 +672,14 @@ fun BrowseScreen(
                 activeDialog = ActionDialog.Rename
             }
         }
-        val moveSelected: () -> Unit = {
+        val moveSelected: () -> Unit = MoveSelected@{
             val sel = viewModel.selectedItems()
+            // Raízes de equipa de outro dono não se movem (o servidor dá 403).
+            val me = viewModel.currentUserId()
+            if (sel.any { it is BrowseItem.Folder && it.isTeamRoot == true && it.ownerId != me }) {
+                viewModel.showToast("Só o dono pode mover uma pasta de equipa.".tr())
+                return@MoveSelected
+            }
             viewModel.loadNavigationTree()
             actionTarget = if (sel.size == 1) sel.first() else null
             if (sel.isNotEmpty()) activeDialog = ActionDialog.Move
@@ -1219,7 +1241,7 @@ fun BrowseScreen(
                         }
                     }
                 }
-                Box(modifier = Modifier.fillMaxWidth()) {
+                Box(modifier = Modifier.fillMaxWidth().onSizeChanged { uploadBannerPx = it.height }) {
                     // Auto-backup uploads are surfaced inside the Backups
                     // Automáticos screen, not in this global banner, so the
                     // browser only sees user-initiated uploads here.
@@ -1261,8 +1283,12 @@ fun BrowseScreen(
             SpeedDialFab(
                 open = fabMenuOpen,
                 onOpenChange = { fabMenuOpen = it },
-                // Sem barra de baixo desde o redesign 2026-10.
-                bottomOffset = 0.dp,
+                // Sem barra de baixo desde o redesign 2026-10; sobe acima dos painéis
+                // de upload/download para não tapar os botões encolher/fechar.
+                bottomOffset = maxOf(
+                    with(LocalDensity.current) { uploadBannerPx.toDp() },
+                    co.golink.tester.ui.components.TransferOverlay.downloadPanelHeight,
+                ),
                 actions = run {
                     val up = "Carregar".tr()
                     val mk = "Criar".tr()
@@ -1410,6 +1436,29 @@ fun BrowseScreen(
         }
     }
 
+    pendingTeamMove?.let { pending ->
+        val members = pending.roots
+            .flatMap { it.members }
+            .filter { it.permission != "owner" && it.id != viewModel.currentUserId() }
+            .distinctBy { it.id }
+        ConfirmDialog(
+            title = "Mover e terminar a equipa?".tr(),
+            message = if (members.isEmpty()) {
+                "A pasta passa a ser uma pasta privada tua e os convites pendentes são cancelados.".tr()
+            } else {
+                "A pasta passa a ser uma pasta privada tua. Estes membros perdem o acesso e vão ser avisados por email e na Inbox:".tr() +
+                    "\n\n" + members.joinToString("\n") { "• " + (it.name?.takeIf(String::isNotBlank) ?: it.email) }
+            },
+            confirmText = "Mover e terminar".tr(),
+            destructive = true,
+            onDismiss = { pendingTeamMove = null },
+            onConfirm = {
+                if (pending.multi) viewModel.moveSelected(pending.destinationId)
+                else pending.target?.let { viewModel.move(it, pending.destinationId) }
+            },
+        )
+    }
+
     sheetItem?.let { target ->
         val folder = target as? BrowseItem.Folder
         val me = viewModel.currentUserId()
@@ -1444,6 +1493,8 @@ fun BrowseScreen(
             onDetails = { actionTarget = target; activeDialog = ActionDialog.Details },
             onCopyLink = if (canCopyLinks && mine && target.id !in foreignActivityIds) { { viewModel.copyShareLink(target) } } else null,
             canEdit = access.canEdit,
+            // Raiz de equipa: só o dono move (o servidor dá 403 aos membros).
+            canMove = folder?.isTeamRoot != true || folder.ownerId == me,
             onConvertToTeamFolder = { actionTarget = target; activeDialog = ActionDialog.ConvertToTeamFolder },
             onFileRequest = { actionTarget = target; activeDialog = ActionDialog.FileRequest },
             // Pedir ficheiros / transformar: o servidor exige ser o dono (Gate owner).
@@ -1602,7 +1653,11 @@ fun BrowseScreen(
                     excludeId = excludeId,
                     onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
                     onConfirm = { destinationId ->
-                        if (multi) viewModel.moveSelected(destinationId)
+                        val items = if (multi) viewModel.selectedItems() else listOfNotNull(actionTarget)
+                        val roots = items.filterIsInstance<BrowseItem.Folder>().filter { it.isTeamRoot == true }
+                        if (roots.isNotEmpty()) {
+                            pendingTeamMove = PendingTeamMove(multi, actionTarget, destinationId, roots)
+                        } else if (multi) viewModel.moveSelected(destinationId)
                         else actionTarget?.let { viewModel.move(it, destinationId) }
                     },
                     onCreateFolder = { parentId -> createInMoveFor = true to parentId },
@@ -1647,6 +1702,28 @@ fun BrowseScreen(
                     onSendEmail = viewModel::sendShareEmail,
                     onShowEmailDialog = viewModel::setEmailDialogVisible,
                     onRevoke = viewModel::revokeCurrentShare,
+                    // Separador Pessoas: pasta normal (dono) → converte em equipa; raiz de equipa (dono) → gere membros.
+                    people = (ss.item as? BrowseItem.Folder)?.let { f ->
+                        val me = viewModel.currentUserId()
+                        val mine = f.ownerId == null || f.ownerId == me
+                        when {
+                            !f.isTeamFolder && mine -> co.golink.tester.ui.components.dialogs.SharePeopleConfig(
+                                folder = f,
+                                ownerName = user?.name.orEmpty(),
+                                ownerEmail = user?.email.orEmpty(),
+                                convert = true,
+                                onSave = { _, invitations, onDone -> viewModel.convertToTeamFolder(f.id, invitations, onDone) },
+                            )
+                            f.isTeamFolder && canEditTeam(f) -> co.golink.tester.ui.components.dialogs.SharePeopleConfig(
+                                folder = f,
+                                ownerName = user?.name.orEmpty(),
+                                ownerEmail = user?.email.orEmpty(),
+                                convert = false,
+                                onSave = { members, invitations, onDone -> viewModel.updateTeamFolder(f.id, members, invitations, onDone) },
+                            )
+                            else -> null
+                        }
+                    },
                 )
             }
         }
@@ -1685,7 +1762,7 @@ fun BrowseScreen(
         ActionDialog.DissolveTeam -> (actionTarget as? BrowseItem.Folder)?.let { folder ->
             ConfirmDialog(
                 title = "Dissolver a equipa?".tr(),
-                message = "Os membros deixam de ter acesso e a pasta volta para os teus ficheiros.".tr(),
+                message = "Os membros deixam de ter acesso e vão ser avisados por email e na Inbox. A pasta volta para os teus ficheiros.".tr(),
                 confirmText = "Dissolver".tr(),
                 destructive = true,
                 onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
@@ -2780,3 +2857,11 @@ private fun newCameraUri(context: android.content.Context, video: Boolean): Uri 
     val file = java.io.File(dir, if (video) "VID_$stamp.mp4" else "IMG_$stamp.jpg")
     return androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
 }
+
+/** Mover pendente de confirmação por incluir a raiz de uma pasta de equipa. */
+private data class PendingTeamMove(
+    val multi: Boolean,
+    val target: BrowseItem?,
+    val destinationId: String?,
+    val roots: List<BrowseItem.Folder>,
+)

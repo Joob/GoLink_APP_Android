@@ -39,6 +39,30 @@ class TeamsRepository @Inject constructor(
         check(response.isSuccessful) { "HTTP ${response.code()}" }
     }
 
+    /** Código HTTP no erro: 410 usado/expirado, 403 outra conta. */
+    class InvitationError(val code: Int) : Exception("HTTP $code")
+
+    suspend fun invitationPreview(id: String): Result<co.golink.tester.domain.teams.TeamInvitationData> = runCatching {
+        val response = api.invitationPreview(id)
+        if (!response.isSuccessful) throw InvitationError(response.code())
+        (response.body() ?: error("Resposta vazia")).data
+    }
+
+    suspend fun acceptInvitation(id: String): Result<Unit> = runCatching {
+        val response = api.acceptInvitation(id)
+        if (!response.isSuccessful) throw InvitationError(response.code())
+    }
+
+    suspend fun declineInvitation(id: String): Result<Unit> = runCatching {
+        val response = api.declineInvitation(id)
+        if (!response.isSuccessful) throw InvitationError(response.code())
+    }
+
+    suspend fun awaitInvitationRegistration(id: String): Result<Unit> = runCatching {
+        val response = api.awaitInvitationRegistration(id)
+        if (!response.isSuccessful) throw InvitationError(response.code())
+    }
+
     suspend fun leave(id: String): Result<Unit> = runCatching {
         val response = api.leaveTeamFolder(id)
         check(response.isSuccessful) { "HTTP ${response.code()}" }

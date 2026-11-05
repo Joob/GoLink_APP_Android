@@ -1,5 +1,8 @@
 package co.golink.tester.ui.screens.settings
 
+import androidx.compose.ui.text.withStyle
+import androidx.compose.material.icons.outlined.Laptop
+import androidx.compose.material.icons.outlined.Language
 import co.golink.tester.domain.browse.BrowseItem
 import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -110,6 +113,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -265,9 +269,14 @@ fun SettingsScreen(
     }
 
     Scaffold(
+        containerColor = settingsScreenBackground(),
         topBar = {
             TopAppBar(
-                title = { Text(title) },
+                title = { Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) },
+                colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+                    containerColor = settingsScreenBackground(),
+                    scrolledContainerColor = settingsScreenBackground(),
+                ),
                 navigationIcon = {
                     IconButton(onClick = {
                         if (route == SettingsRoute.Menu || route == entryRoute) onBack() else route = SettingsRoute.Menu
@@ -300,6 +309,7 @@ fun SettingsScreen(
                     user = user,
                     storage = state.storage,
                     activeSessions = state.sessions.size,
+                    twoFactorEnabled = state.twoFactorEnabled,
                     backup = backupState,
                     onNavigate = { route = it },
                     onOpenAutoBackup = onOpenAutoBackup,
@@ -314,6 +324,7 @@ fun SettingsScreen(
                     onUpdateFields = viewModel::updateProfileFields,
                     onUpdateAvatar = viewModel::updateAvatar,
                     onRetry = { viewModel.refreshUser() },
+                    onOpenEmail = { route = SettingsRoute.Email },
                 )
                 SettingsRoute.Password -> PasswordPane(
                     isLoading = state.isUpdatingPassword,
@@ -325,16 +336,14 @@ fun SettingsScreen(
                     onRefreshUser = viewModel::refreshUser,
                     onResetCsrf = viewModel::resetCsrf,
                 )
-                SettingsRoute.Email -> PaneColumn {
-                    EmailChangeSection(
-                        currentEmail = user?.email.orEmpty(),
-                        hasPasskeys = user?.hasPasskeys == true,
-                        state = state,
-                        onRequest = viewModel::requestEmailChange,
-                        onConfirm = viewModel::confirmEmailChange,
-                        onCancel = viewModel::cancelEmailChange,
-                    )
-                }
+                SettingsRoute.Email -> EmailChangeSection(
+                    currentEmail = user?.email.orEmpty(),
+                    hasPasskeys = user?.hasPasskeys == true,
+                    state = state,
+                    onRequest = viewModel::requestEmailChange,
+                    onConfirm = viewModel::confirmEmailChange,
+                    onCancel = viewModel::cancelEmailChange,
+                )
                 SettingsRoute.ApiTokens -> ApiTokensPane(
                     tokens = state.tokens,
                     isLoadingTokens = state.isLoadingTokens,
@@ -394,7 +403,12 @@ fun SettingsScreen(
                     hasPinSet = viewModel.hasPinSet,
                     onBiometricToggle = viewModel::setBiometricEnabled,
                     onEnablePin = viewModel::enablePin,
-                    onDisablePin = viewModel::disablePin,
+                    onChangePin = viewModel::changePin,
+                    onDisableAppLock = viewModel::disableAppLock,
+                    lockDelayMs = state.lockDelayMs,
+                    onSetLockDelay = viewModel::setLockDelay,
+                    hideInRecents = state.hideInRecents,
+                    onSetHideInRecents = viewModel::setHideInRecents,
                     onClearCache = viewModel::clearCache,
                     cacheBytes = state.cacheBytes,
                     onLoadCacheSize = viewModel::loadCacheSize,
@@ -440,6 +454,7 @@ private fun MenuPane(
     user: User?,
     storage: co.golink.tester.domain.settings.StorageUsage?,
     activeSessions: Int,
+    twoFactorEnabled: Boolean,
     backup: AutoBackupState,
     onNavigate: (SettingsRoute) -> Unit,
     onOpenAutoBackup: () -> Unit,
@@ -500,11 +515,12 @@ private fun MenuPane(
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         user?.let { u ->
-            // Cartão de perfil (mockup): avatar, nome, e-mail, › para o Perfil e espaço usado.
+            // Cartão de perfil (mockup): avatar, nome, e-mail, › e o espaço usado
+            // numa caixa interna com o plano e "Melhorar".
             Surface(
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(20.dp),
                 color = settingsCardColor(),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+                border = settingsCardBorder(),
                 modifier = Modifier.fillMaxWidth(),
             ) {
             Column {
@@ -513,7 +529,7 @@ private fun MenuPane(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { onNavigate(SettingsRoute.Profile) }
-                    .padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 14.dp),
+                    .padding(start = 14.dp, end = 12.dp, top = 14.dp, bottom = 12.dp),
             ) {
                 // Clicar no avatar → escolher/recortar/enviar nova imagem.
                 Box(
@@ -529,29 +545,7 @@ private fun MenuPane(
                         },
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (u.avatar != null) {
-                        AsyncImage(
-                            model = u.avatar,
-                            contentDescription = "Alterar imagem".tr(),
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize().clip(CircleShape),
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.onSurface),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                u.name.split(' ').filter { it.isNotBlank() }.take(2).joinToString("") { it.take(1) }.uppercase().ifBlank { "?" },
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.surface,
-                            )
-                        }
-                    }
+                    UserAvatar(u, textStyle = MaterialTheme.typography.titleMedium)
                 }
                 Spacer(Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
@@ -570,49 +564,58 @@ private fun MenuPane(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Icon(
-                    Icons.Filled.ChevronRight,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                )
+                SettingsChevron()
             }
             // Espaço usado, com a cor do nível (verde / âmbar / vermelho).
             storage?.let { st ->
                 val barColor = when (st.level) {
                     co.golink.tester.domain.settings.StorageLevel.DANGER -> SettingsColors.Red
                     co.golink.tester.domain.settings.StorageLevel.WARNING -> SettingsColors.Amber
-                    else -> SettingsColors.Green
+                    else -> SettingsAccent
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                val freePlan = u.planName.isNullOrBlank()
                 Column(
                     modifier = Modifier
+                        .padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
                         .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(settingsInsetColor())
                         .clickable { onNavigate(SettingsRoute.Storage) }
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
                 ) {
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            "%s de %s".tr().format(st.used, st.capacity),
+                            androidx.compose.ui.text.buildAnnotatedString {
+                                withStyle(androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.SemiBold)) { append(st.used) }
+                                withStyle(androidx.compose.ui.text.SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) { append(" " + "de".tr() + " ") }
+                                append(st.capacity)
+                            },
                             style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium,
                             modifier = Modifier.weight(1f),
                         )
                         Text(
                             "${st.percentage.toInt()}%",
                             style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Bold,
+                            color = barColor,
                         )
                     }
                     Spacer(Modifier.height(8.dp))
                     androidx.compose.material3.LinearProgressIndicator(
                         progress = { (st.percentage / 100f).coerceIn(0f, 1f) },
                         color = barColor,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f),
                         strokeCap = androidx.compose.ui.graphics.StrokeCap.Round,
                         gapSize = 0.dp,
                         drawStopIndicator = {},
                         modifier = Modifier.fillMaxWidth().height(6.dp),
                     )
+                    Spacer(Modifier.height(10.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        SettingsBadge(if (freePlan) "Plano gratuito".tr() else u.planName.orEmpty(), SettingsColors.Purple)
+                        Spacer(Modifier.weight(1f))
+                        if (freePlan) SettingsActionText("Melhorar →".tr(), onClick = { onNavigate(SettingsRoute.Billing) })
+                    }
                 }
             }
             }
@@ -627,21 +630,25 @@ private fun MenuPane(
 
         SettingsGroup(title = "Conta".tr()) {
             SettingsNavRow(Icons.Outlined.Person, SettingsColors.Blue, "Perfil".tr(), "Nome, fotografia e fuso horário".tr()) { onNavigate(SettingsRoute.Profile) }
-            SettingsNavRow(Icons.Outlined.Email, SettingsColors.Teal, "E-mail".tr(), "Alterar o e-mail da conta".tr(), showDivider = false) { onNavigate(SettingsRoute.Email) }
+            SettingsNavRow(Icons.Outlined.Email, SettingsColors.Blue, "E-mail".tr(), user?.email ?: "Alterar o e-mail da conta".tr(), showDivider = false) { onNavigate(SettingsRoute.Email) }
         }
 
         Spacer(Modifier.height(20.dp))
 
         SettingsGroup(title = "Segurança".tr()) {
-            SettingsNavRow(Icons.Outlined.Lock, SettingsColors.Indigo, "Password e 2FA".tr(), "Password e verificação em dois passos".tr()) { onNavigate(SettingsRoute.Password) }
-            SettingsNavRow(Icons.Outlined.Code, SettingsColors.Blue, "Tokens API".tr(), "Chaves de acesso pessoal".tr()) { onNavigate(SettingsRoute.ApiTokens) }
-            SettingsNavRow(Icons.Outlined.VpnKey, SettingsColors.Green, "Encriptação".tr(), "Frase-passe e impressão digital da chave".tr()) { onNavigate(SettingsRoute.Encryption) }
+            val sec = SettingsColors.Amber
             SettingsNavRow(
-                Icons.Outlined.Devices, SettingsColors.Orange, "Sessões ativas".tr(), "Dispositivos com sessão iniciada".tr(),
-                trailing = activeSessions.takeIf { it > 0 }?.toString(),
+                Icons.Outlined.Lock, sec, "Password e 2FA".tr(), "Password e verificação em dois passos".tr(),
+                badge = if (twoFactorEnabled) { { SettingsBadge("2FA ativa".tr(), SettingsAccent) } } else null,
+            ) { onNavigate(SettingsRoute.Password) }
+            SettingsNavRow(Icons.Outlined.VpnKey, sec, "Encriptação".tr(), "Frase-passe e impressão digital da chave".tr()) { onNavigate(SettingsRoute.Encryption) }
+            SettingsNavRow(
+                Icons.Outlined.Devices, sec, "Sessões ativas".tr(), "Dispositivos com sessão iniciada".tr(),
+                badge = if (activeSessions > 0) { { SettingsBadge(activeSessions.toString(), SettingsColors.Amber, round = true) } } else null,
             ) { onNavigate(SettingsRoute.Sessions) }
-            SettingsNavRow(Icons.Outlined.Shield, SettingsColors.Red, "Atividade de segurança".tr(), "Inícios de sessão e alterações".tr()) { onNavigate(SettingsRoute.SecurityActivity) }
-            SettingsNavRow(Icons.Outlined.Fingerprint, SettingsColors.Purple, "Bloqueio da app".tr(), "Impressão digital e PIN".tr(), showDivider = false) { onNavigate(SettingsRoute.AppSecurity) }
+            SettingsNavRow(Icons.Outlined.Shield, sec, "Atividade de segurança".tr(), "Inícios de sessão e alterações".tr()) { onNavigate(SettingsRoute.SecurityActivity) }
+            SettingsNavRow(Icons.Outlined.Fingerprint, sec, "Bloqueio da app".tr(), "Impressão digital e PIN".tr()) { onNavigate(SettingsRoute.AppSecurity) }
+            SettingsNavRow(Icons.Outlined.Code, sec, "Tokens API".tr(), "Chaves de acesso pessoal".tr(), showDivider = false) { onNavigate(SettingsRoute.ApiTokens) }
         }
 
         Spacer(Modifier.height(20.dp))
@@ -649,7 +656,7 @@ private fun MenuPane(
         SettingsGroup(title = "Plano".tr()) {
             val hasSupport = user?.role != "admin"
             SettingsNavRow(Icons.Outlined.CloudQueue, SettingsColors.Teal, "Armazenamento".tr(), "Espaço utilizado e disponível".tr()) { onNavigate(SettingsRoute.Storage) }
-            SettingsNavRow(Icons.Outlined.CreditCard, SettingsColors.Amber, "Plano e pagamentos".tr(), "Donativos, faturação e histórico".tr(), showDivider = hasSupport) { onNavigate(SettingsRoute.Billing) }
+            SettingsNavRow(Icons.Outlined.CreditCard, SettingsColors.Purple, "Plano e pagamentos".tr(), "Donativos, faturação e histórico".tr(), showDivider = hasSupport) { onNavigate(SettingsRoute.Billing) }
             // Como na web: o admin não abre tickets. A Administração e o Support Desk
             // vivem agora na gaveta (toggle Drive | Admin / Support).
             if (hasSupport) {
@@ -663,7 +670,7 @@ private fun MenuPane(
         Surface(
             shape = RoundedCornerShape(18.dp),
             color = settingsCardColor(),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+            border = settingsCardBorder(),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Row(
@@ -671,10 +678,10 @@ private fun MenuPane(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { showLogoutConfirm = true }
-                    .padding(horizontal = 16.dp, vertical = 15.dp),
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
             ) {
-                Icon(Icons.Filled.Logout, contentDescription = null, tint = SettingsColors.Red, modifier = Modifier.size(21.dp))
-                Spacer(Modifier.width(16.dp))
+                SettingsIconTile(Icons.Filled.Logout, SettingsColors.Red)
+                Spacer(Modifier.width(14.dp))
                 Text(
                     "Terminar sessão".tr(),
                     style = MaterialTheme.typography.bodyLarge,
@@ -768,18 +775,19 @@ private fun AutoBackupFeaturedRow(backup: AutoBackupState, onClick: () -> Unit) 
         backup.needsAttention -> "Ativo · requer atenção".tr()
         else -> "Ativo · %s".tr().format(what)
     }
-    // ✓ verde só quando está mesmo a enviar; ligado mas parado → "!" âmbar.
+    // Ligado mas parado (pausa, atenção, nada escolhido) → subtítulo âmbar.
     val healthy = on && !backup.devicePaused && !backup.needsAttention && kinds.isNotEmpty()
-    val indicator = when {
-        healthy -> SettingsColors.Green
-        on -> SettingsColors.Amber
-        else -> Color.Transparent
-    }
-    // Cartão claro (mockup): mosaico verde, estado e indicador ✓.
+    val subtitle = if (healthy && backup.lastBackupAt > 0L) {
+        "Ativo · último backup %s".tr().format(
+            co.golink.tester.ui.common.relativeAgo(java.time.Instant.ofEpochMilli(backup.lastBackupAt).toString()),
+        )
+    } else summary
+    // Cartão (mockup): mosaico verde, estado e interruptor (abre o ecrã do backup,
+    // onde estão as permissões e as pastas).
     Surface(
         shape = RoundedCornerShape(18.dp),
         color = settingsCardColor(),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+        border = settingsCardBorder(),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
@@ -787,52 +795,54 @@ private fun AutoBackupFeaturedRow(backup: AutoBackupState, onClick: () -> Unit) 
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onClick)
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(SettingsColors.Green.copy(alpha = 0.14f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Outlined.CloudUpload, contentDescription = null, tint = SettingsColors.Green, modifier = Modifier.size(22.dp))
-            }
+            SettingsIconTile(Icons.Outlined.CloudUpload, SettingsAccent)
             Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     "Backup automático".tr(),
                     style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    summary,
+                    subtitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (on && !healthy) SettingsColors.Amber else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
             Spacer(Modifier.width(8.dp))
-            Box(
-                modifier = Modifier
-                    .size(22.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(indicator)
-                    .border(
-                        1.5.dp,
-                        if (on) indicator else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                        RoundedCornerShape(6.dp),
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (on) Icon(
-                    if (healthy) Icons.Filled.Check else Icons.Filled.PriorityHigh,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
+            SettingsSwitch(checked = on, onCheckedChange = { onClick() })
+        }
+    }
+}
+
+/** Avatar redondo: fotografia ou iniciais em branco sobre escuro. */
+@Composable
+private fun UserAvatar(u: User, textStyle: androidx.compose.ui.text.TextStyle) {
+    if (u.avatar != null) {
+        AsyncImage(
+            model = u.avatar,
+            contentDescription = "Alterar imagem".tr(),
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize().clip(CircleShape),
+        )
+    } else {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(CircleShape)
+                .background(Color(0xFF14202B)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                u.name.split(' ').filter { it.isNotBlank() }.take(2).joinToString("") { it.take(1) }.uppercase().ifBlank { "?" },
+                style = textStyle,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+            )
         }
     }
 }
@@ -855,7 +865,7 @@ private fun friendlyWhen(iso: String): String {
 /** Título de secção dos painéis (cinzento, fora do cartão) com ação opcional à direita. */
 @Composable
 internal fun PaneSection(title: String, action: String? = null, onAction: (() -> Unit)? = null) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(start = 4.dp, top = 6.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 8.dp)) {
         Text(
             title,
             style = MaterialTheme.typography.labelLarge,
@@ -879,9 +889,9 @@ internal fun PaneSection(title: String, action: String? = null, onAction: (() ->
 @Composable
 internal fun PaneCard(padded: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     Surface(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
         color = settingsCardColor(),
-        border = settingsCardBorderStroke(),
+        border = settingsCardBorder(),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
@@ -889,6 +899,27 @@ internal fun PaneCard(padded: Boolean = true, content: @Composable ColumnScope.(
             verticalArrangement = if (padded) Arrangement.spacedBy(12.dp) else Arrangement.Top,
             content = content,
         )
+    }
+}
+
+/** Painel com formulário: conteúdo com scroll e, opcionalmente, botão fixo em baixo. */
+@Composable
+private fun PaneFormColumn(
+    bottomBar: (@Composable ColumnScope.() -> Unit)?,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            content()
+            Spacer(Modifier.height(16.dp))
+        }
+        if (bottomBar != null) SettingsBottomBar(bottomBar)
     }
 }
 
@@ -914,6 +945,7 @@ private fun ProfilePane(
     onUpdateFields: (Map<String, String>) -> Unit,
     onUpdateAvatar: (ByteArray) -> Unit,
     onRetry: () -> Unit,
+    onOpenEmail: () -> Unit,
 ) {
     if (user == null) {
         Column(
@@ -931,7 +963,13 @@ private fun ProfilePane(
     // Cada campo volta ao valor do servidor quando este muda (após guardar ou alteração na web).
     var firstName by remember(user.id, user.firstName) { mutableStateOf(user.firstName.orEmpty()) }
     var lastName by remember(user.id, user.lastName) { mutableStateOf(user.lastName.orEmpty()) }
-    var phoneNumber by remember(user.id, user.phoneNumber) { mutableStateOf(user.phoneNumber.orEmpty()) }
+    // Telefone: indicativo + número; só se recompõe ("+351 912…") depois de mexer,
+    // para um número antigo sem indicativo não contar como alteração.
+    val parsedPhone = remember(user.id, user.phoneNumber) { splitPhone(user.phoneNumber.orEmpty()) }
+    var dialIso by remember(user.id, user.phoneNumber) { mutableStateOf(parsedPhone.first) }
+    var phoneLocal by remember(user.id, user.phoneNumber) { mutableStateOf(parsedPhone.second) }
+    var phoneTouched by remember(user.id, user.phoneNumber) { mutableStateOf(false) }
+    val phoneNumber = if (!phoneTouched) user.phoneNumber.orEmpty() else joinPhone(dialIso, phoneLocal)
     var timezone by remember(user.id, user.timezone) { mutableStateOf(user.timezone.orEmpty()) }
 
     // Só os campos alterados vão ao servidor; sem alterações o botão fica inativo.
@@ -971,53 +1009,89 @@ private fun ProfilePane(
         )
     }
 
-    PaneColumn {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-            Box(
-                modifier = Modifier.size(76.dp).clip(CircleShape).clickable(enabled = !isUpdatingAvatar, onClick = pickAvatar),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (user.avatar != null) {
-                    AsyncImage(model = user.avatar, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                } else {
-                    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.onSurface), contentAlignment = Alignment.Center) {
-                        Text(
-                            user.name.split(' ').filter { it.isNotBlank() }.take(2).joinToString("") { it.take(1) }.uppercase().ifBlank { "?" },
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.surface,
-                        )
+    Column(Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .weight(1f)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp)) {
+            Box(modifier = Modifier.size(100.dp)) {
+                Box(
+                    modifier = Modifier.fillMaxSize().clip(CircleShape).clickable(enabled = !isUpdatingAvatar, onClick = pickAvatar),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    UserAvatar(user, textStyle = MaterialTheme.typography.headlineMedium)
+                    if (isUpdatingAvatar) {
+                        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp, color = Color.White)
+                        }
                     }
                 }
-                if (isUpdatingAvatar) {
-                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp, color = Color.White)
-                    }
+                // Botão da câmara (mockup): verde, com aro da cor do fundo.
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(settingsScreenBackground())
+                        .padding(3.dp)
+                        .clip(CircleShape)
+                        .background(SettingsAccent)
+                        .clickable(enabled = !isUpdatingAvatar, onClick = pickAvatar),
+                ) {
+                    Icon(Icons.Filled.PhotoCamera, contentDescription = "Mudar fotografia".tr(), tint = Color.White, modifier = Modifier.size(16.dp))
                 }
             }
-            Spacer(Modifier.height(10.dp))
-            OutlinedButton(
-                onClick = pickAvatar,
-                enabled = !isUpdatingAvatar,
-                shape = RoundedCornerShape(50),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
-            ) { Text("Mudar fotografia".tr(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface) }
+            Spacer(Modifier.height(12.dp))
+            Text(user.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                listOf(user.email, user.planName?.takeIf { it.isNotBlank() } ?: "Plano gratuito".tr()).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
 
-        // O e-mail muda-se no ecrã "E-mail" (código de verificação).
-        PaneSection("Os teus dados".tr())
         PaneCard {
             SettingsField("Nome".tr(), firstName, { firstName = it })
-            SettingsField("Apelido".tr(), lastName, { lastName = it }, placeholder = "Opcional".tr())
+            SettingsField("Apelido".tr(), lastName, { lastName = it }, placeholder = "ex. Silva".tr(), hint = "opcional".tr())
             Column {
-                Text("Fuso horário".tr(), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                SettingsFieldLabel("Fuso horário".tr())
                 Spacer(Modifier.height(6.dp))
                 TimezoneDropdown(value = timezone, onValueChange = { timezone = it })
             }
-            SettingsField("Telefone".tr(), phoneNumber, { phoneNumber = it }, keyboardType = KeyboardType.Phone)
+            Column {
+                SettingsFieldLabel("Telefone".tr(), "para recuperar a conta".tr())
+                Spacer(Modifier.height(6.dp))
+                PhoneField(
+                    iso = dialIso,
+                    number = phoneLocal,
+                    onIso = { dialIso = it; phoneTouched = true },
+                    onNumber = { phoneLocal = it; phoneTouched = true },
+                )
+            }
         }
 
+        // O e-mail muda-se no ecrã "E-mail" (código de verificação).
+        PaneCard(padded = false) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenEmail).padding(horizontal = 16.dp, vertical = 13.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("E-mail".tr(), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                    Text(user.email, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                SettingsActionText("Alterar".tr(), onClick = onOpenEmail)
+            }
+        }
+    }
+    SettingsBottomBar {
         SettingsPrimaryButton(
             text = if (dirty) "Guardar alterações".tr() else "Sem alterações".tr(),
             onClick = { onUpdateFields(changes) },
@@ -1025,6 +1099,91 @@ private fun ProfilePane(
             loading = isUpdating,
         )
     }
+    }
+}
+
+/** Indicativos (ISO → "+351"), pela ordem da lista de países. */
+private val DIAL_CODES = listOf(
+    "PT" to "+351", "ES" to "+34", "FR" to "+33", "DE" to "+49", "IT" to "+39", "GB" to "+44",
+    "IE" to "+353", "NL" to "+31", "BE" to "+32", "LU" to "+352", "CH" to "+41", "AT" to "+43",
+    "DK" to "+45", "SE" to "+46", "NO" to "+47", "FI" to "+358", "PL" to "+48", "CZ" to "+420",
+    "SK" to "+421", "HU" to "+36", "RO" to "+40", "BG" to "+359", "GR" to "+30", "HR" to "+385",
+    "SI" to "+386", "EE" to "+372", "LV" to "+371", "LT" to "+370", "US" to "+1", "CA" to "+1",
+    "MX" to "+52", "BR" to "+55", "AR" to "+54", "CL" to "+56", "CO" to "+57", "PE" to "+51",
+    "AU" to "+61", "NZ" to "+64", "JP" to "+81", "KR" to "+82", "CN" to "+86", "HK" to "+852",
+    "TW" to "+886", "SG" to "+65", "IN" to "+91", "ID" to "+62", "TH" to "+66", "VN" to "+84",
+    "PH" to "+63", "MY" to "+60", "AE" to "+971", "SA" to "+966", "IL" to "+972", "TR" to "+90",
+    "EG" to "+20", "ZA" to "+27", "NG" to "+234", "KE" to "+254", "MA" to "+212", "AO" to "+244",
+    "MZ" to "+258", "CV" to "+238", "RU" to "+7", "UA" to "+380",
+)
+
+private fun dialCode(iso: String): String = DIAL_CODES.firstOrNull { it.first == iso }?.second ?: "+351"
+
+private fun flagEmoji(iso: String): String =
+    iso.uppercase().take(2).map { Character.toChars(0x1F1E6 + (it - 'A')).concatToString() }.joinToString("")
+
+/** "+351 912 345 678" → ("PT", "912 345 678"). Sem indicativo: PT e o número tal como está. */
+private fun splitPhone(raw: String): Pair<String, String> {
+    val v = raw.trim().let { if (it.startsWith("00")) "+" + it.drop(2) else it }
+    if (!v.startsWith("+")) return "PT" to v
+    val digits = v.filter { it.isDigit() || it == '+' }
+    val match = DIAL_CODES.filter { digits.startsWith(it.second) }.maxByOrNull { it.second.length }
+        ?: return "PT" to v
+    // Tira o indicativo do texto original (mantém os espaços do resto).
+    var seen = 0
+    var cut = 0
+    for ((i, c) in v.withIndex()) {
+        if (c == '+' || c.isDigit()) seen++
+        if (seen == match.second.length) { cut = i + 1; break }
+    }
+    return match.first to v.substring(cut).trim()
+}
+
+private fun joinPhone(iso: String, number: String): String {
+    val n = number.trim()
+    return if (n.isEmpty()) "" else "${dialCode(iso)} $n"
+}
+
+/** Indicativo (bandeira + código, abre a lista) e número, lado a lado. */
+@Composable
+private fun PhoneField(iso: String, number: String, onIso: (String) -> Unit, onNumber: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(108.dp)) {
+            SettingsSelectBox(text = "${flagEmoji(iso)}  ${dialCode(iso)}", onClick = { expanded = true })
+            androidx.compose.material3.DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.heightIn(max = 320.dp),
+            ) {
+                DIAL_CODES.forEach { (code, dial) ->
+                    val name = COUNTRIES.firstOrNull { it.first == code }?.second ?: code
+                    DropdownMenuItem(
+                        text = { Text("${flagEmoji(code)}  $name  $dial") },
+                        onClick = { onIso(code); expanded = false },
+                    )
+                }
+            }
+        }
+        SettingsField(
+            label = "",
+            value = number,
+            onValueChange = { v -> onNumber(v.filter { it.isDigit() || it == ' ' }) },
+            placeholder = "912 345 678",
+            keyboardType = KeyboardType.Phone,
+            modifier = Modifier.weight(1f),
+            showLabel = false,
+        )
+    }
+}
+
+/** "agora 10:13" no fuso escolhido (deslocamento em horas, ex. "5.5"). */
+private fun timeAtOffset(value: String): String? {
+    val h = value.toDoubleOrNull() ?: return null
+    return runCatching {
+        java.time.OffsetDateTime.now(java.time.ZoneOffset.ofTotalSeconds((h * 3600).toInt()))
+            .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+    }.getOrNull()
 }
 
 // Fuso horário: rótulos curtos ("Lisboa, Londres (GMT+0)"); o valor guardado
@@ -1095,7 +1254,11 @@ private fun TimezoneDropdown(value: String, onValueChange: (String) -> Unit) {
     val selectedLabel = TIMEZONES.firstOrNull { it.first == value || (value.toDoubleOrNull() != null && it.first.toDouble() == value.toDoubleOrNull()) }?.second
         ?: value
     Box(modifier = Modifier.fillMaxWidth()) {
-        SettingsSelectBox(text = selectedLabel, onClick = { expanded = true })
+        SettingsSelectBox(
+            text = selectedLabel,
+            extra = timeAtOffset(value)?.let { "agora %s".tr().format(it) },
+            onClick = { expanded = true },
+        )
         androidx.compose.material3.DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
@@ -1161,8 +1324,8 @@ private fun PasswordPane(
             dismissText = "Fechar".tr(),
             onDismiss = { show2faInfo = false },
         ) {
-            TextButton(onClick = { onRefreshUser(); show2faInfo = false }, modifier = Modifier.fillMaxWidth()) {
-                Text("Atualizar estado".tr(), color = SettingsAccent, fontWeight = FontWeight.SemiBold)
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                SettingsActionText("Atualizar estado".tr(), onClick = { onRefreshUser(); show2faInfo = false })
             }
         }
     }
@@ -1184,7 +1347,19 @@ private fun PasswordPane(
         newPassword.any { !it.isLetterOrDigit() },
     ).count { it }
 
-    PaneColumn {
+    PaneFormColumn(
+        bottomBar = {
+            SettingsPrimaryButton(
+                text = "Guardar nova password".tr(),
+                onClick = {
+                    onSubmit(current, newPassword, passkeyToken)
+                    current = ""; newPassword = ""; confirmation = ""; passkeyToken = null
+                },
+                enabled = canSubmit,
+                loading = isLoading,
+            )
+        },
+    ) {
         PasskeysSection(socialiteAccount = socialiteAccount, hasPasskeys = hasPasskeys)
 
         PaneSection("Proteção da conta".tr())
@@ -1226,7 +1401,7 @@ private fun PasswordPane(
                 SettingsField("Password atual".tr(), current, { current = it }, isPassword = true)
             }
             Column {
-                SettingsField("Nova password".tr(), newPassword, { newPassword = it }, isPassword = true, isError = tooShort)
+                SettingsField("Nova password".tr(), newPassword, { newPassword = it }, isPassword = true, isError = tooShort, hint = "mínimo 8 caracteres".tr())
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     repeat(4) { i ->
@@ -1240,12 +1415,10 @@ private fun PasswordPane(
                         Box(Modifier.weight(1f).height(4.dp).clip(RoundedCornerShape(2.dp)).background(c))
                     }
                 }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Mínimo 8 caracteres".tr(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (tooShort) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (tooShort) {
+                    Spacer(Modifier.height(4.dp))
+                    Text("Mínimo 8 caracteres".tr(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                }
             }
             SettingsField(
                 "Confirmar nova password".tr(), confirmation, { confirmation = it }, isPassword = true,
@@ -1255,15 +1428,6 @@ private fun PasswordPane(
                 "Por segurança, terminamos a sessão nos outros dispositivos.".tr(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            SettingsPrimaryButton(
-                text = "Guardar nova password".tr(),
-                onClick = {
-                    onSubmit(current, newPassword, passkeyToken)
-                    current = ""; newPassword = ""; confirmation = ""; passkeyToken = null
-                },
-                enabled = canSubmit,
-                loading = isLoading,
             )
         }
 
@@ -1277,12 +1441,7 @@ private fun PasswordPane(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            OutlinedButton(
-                onClick = onResetCsrf,
-                shape = RoundedCornerShape(10.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Repor token".tr(), color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold) }
+            SettingsOutlinedButton(text = "Repor token".tr(), onClick = onResetCsrf)
         }
     }
 }
@@ -1385,13 +1544,7 @@ private fun ApiTokensPane(
                     subtitle = listOfNotNull(tokenDetail(token), used).joinToString("\n"),
                     showDivider = i < tokens.lastIndex,
                 ) {
-                    Text(
-                        "Revogar".tr(),
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { onDeleteToken(token.id) }.padding(6.dp),
-                    )
+                    SettingsPillButton("Revogar".tr(), onClick = { onDeleteToken(token.id) }, color = SettingsColors.Red)
                 }
             }
         }
@@ -1434,75 +1587,73 @@ private fun EmailChangeSection(
         }
     }
 
-    PaneSection("E-mail da conta".tr())
-
-    if (!editing && !inCodeStep) {
-        PaneCard(padded = false) {
-            SettingsListRow(icon = Icons.Outlined.Email, title = currentEmail) {
-                Text(
-                    "Mudar".tr(),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = SettingsAccent,
-                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { editing = true }.padding(6.dp),
-                )
-            }
-        }
-        return
-    }
-
-    PaneCard {
-    if (!inCodeStep) {
-        SettingsField("Novo endereço de email".tr(), newEmail, { newEmail = it }, keyboardType = KeyboardType.Email)
-        PasskeyConfirmRow(purpose = "email", hasPasskeys = hasPasskeys, confirmed = passkeyToken != null, onToken = { passkeyToken = it })
-        if (passkeyToken == null) {
-            SettingsField("Password atual".tr(), password, { password = it }, isPassword = true)
-        }
-    } else {
-        Text(
-            "Enviámos um código de 6 dígitos para %s.".tr().format(state.emailChangeTarget),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        SettingsField(
-            "Código de confirmação".tr(), code, { v -> code = v.filter { it.isDigit() }.take(6) },
-            keyboardType = KeyboardType.NumberPassword,
-        )
-        Text(
-            if (secondsLeft > 0) "O código expira em %ds".tr().format(secondsLeft)
-            else "O código expirou. Pede um novo.".tr(),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-
-    state.emailChangeError?.let {
-        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-    }
-
+    val formOpen = editing || inCodeStep
     val canSubmit = !state.isChangingEmail && if (inCodeStep) code.length == 6 && secondsLeft > 0
         else android.util.Patterns.EMAIL_ADDRESS.matcher(newEmail.trim()).matches() && (password.isNotBlank() || passkeyToken != null)
+    val cancel = { onCancel(); editing = false; newEmail = ""; password = ""; code = ""; passkeyToken = null }
 
-    SettingsPrimaryButton(
-        text = if (inCodeStep) "Confirmar alteração".tr() else "Enviar código".tr(),
-        onClick = {
-            if (inCodeStep) onConfirm(code)
-            else { onRequest(newEmail, password, passkeyToken); passkeyToken = null } // uso único no servidor
-        },
-        enabled = canSubmit,
-        loading = state.isChangingEmail,
-    )
-    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-        if (inCodeStep) {
-            TextButton(
-                onClick = { onRequest(state.emailChangeTarget, password, passkeyToken) },
-                enabled = !state.isChangingEmail,
-            ) { Text("Reenviar código".tr()) }
+    PaneFormColumn(
+        bottomBar = if (!formOpen) null else { {
+            SettingsPrimaryButton(
+                text = if (inCodeStep) "Confirmar alteração".tr() else "Enviar código".tr(),
+                onClick = {
+                    if (inCodeStep) onConfirm(code)
+                    else { onRequest(newEmail, password, passkeyToken); passkeyToken = null } // uso único no servidor
+                },
+                enabled = canSubmit,
+                loading = state.isChangingEmail,
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                if (inCodeStep) {
+                    SettingsActionText(
+                        "Reenviar código".tr(),
+                        onClick = { onRequest(state.emailChangeTarget, password, passkeyToken) },
+                        enabled = !state.isChangingEmail,
+                    )
+                    Spacer(Modifier.width(16.dp))
+                }
+                SettingsActionText("Cancelar".tr(), onClick = cancel, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } },
+    ) {
+        PaneSection("E-mail da conta".tr())
+
+        if (!formOpen) {
+            PaneCard(padded = false) {
+                SettingsListRow(icon = Icons.Outlined.Email, title = currentEmail) {
+                    SettingsActionText("Alterar".tr(), onClick = { editing = true })
+                }
+            }
+            return@PaneFormColumn
         }
-        TextButton(onClick = { onCancel(); editing = false; newEmail = ""; password = ""; code = ""; passkeyToken = null }) {
-            Text("Cancelar".tr())
+
+        PaneCard {
+            if (!inCodeStep) {
+                SettingsField("Novo endereço de email".tr(), newEmail, { newEmail = it }, keyboardType = KeyboardType.Email, placeholder = "nome@exemplo.com")
+                PasskeyConfirmRow(purpose = "email", hasPasskeys = hasPasskeys, confirmed = passkeyToken != null, onToken = { passkeyToken = it })
+                if (passkeyToken == null) {
+                    SettingsField("Password atual".tr(), password, { password = it }, isPassword = true, hint = "para confirmar que és tu".tr())
+                }
+            } else {
+                Text(
+                    "Enviámos um código de 6 dígitos para %s.".tr().format(state.emailChangeTarget),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                SettingsField(
+                    "Código de confirmação".tr(), code, { v -> code = v.filter { it.isDigit() }.take(6) },
+                    keyboardType = KeyboardType.NumberPassword,
+                    hint = "6 dígitos".tr(),
+                    supportingText = if (secondsLeft > 0) "O código expira em %ds".tr().format(secondsLeft)
+                        else "O código expirou. Pede um novo.".tr(),
+                )
+            }
+
+            state.emailChangeError?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
         }
-    }
     }
 }
 
@@ -1833,73 +1984,106 @@ private fun SessionsPane(
 
     val current = sessions.firstOrNull { it.is_current }
     val others = sessions.filter { !it.is_current }
-    val otherPhones = others.filter { it.isMobileSession() }
-    val browsers = others.filter { !it.isMobileSession() }
+        .sortedByDescending { it.last_activity_at ?: it.login_at ?: "" }
+    val ordered = listOfNotNull(current) + others
 
     PaneColumn {
-        Text(
-            "Dispositivos com sessão iniciada na tua conta. Se não reconheces algum, revoga-o e muda a password.".tr(),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+            Text(
+                if (sessions.size == 1) "1 dispositivo com sessão iniciada na tua conta.".tr()
+                else "%d dispositivos com sessão iniciada na tua conta.".tr().format(sessions.size),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = SettingsAccent)
+            } else {
+                IconButton(onClick = onRefresh, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Filled.Refresh, contentDescription = "Atualizar".tr(), tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                }
+            }
+        }
         if (isLoading && sessions.isEmpty()) {
-            PaneCard { Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
+            PaneCard { Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = SettingsAccent) } }
         }
 
-        // Este telemóvel: cartão em destaque.
-        current?.let { s ->
-            PaneSection("Este telemóvel".tr(), action = if (isLoading) "A atualizar…".tr() else "Atualizar".tr(), onAction = if (isLoading) null else onRefresh)
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = SettingsAccent.copy(alpha = 0.06f),
-                border = BorderStroke(1.dp, SettingsAccent.copy(alpha = 0.35f)),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(16.dp)) {
-                    Box(
-                        Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(SettingsAccent.copy(alpha = 0.14f)),
-                        contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Filled.Smartphone, contentDescription = null, tint = SettingsAccent, modifier = Modifier.size(20.dp)) }
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(sessionTitle(s), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(sessionMeta(s), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
-                            Box(Modifier.size(6.dp).clip(CircleShape).background(SettingsAccent))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Ativa agora".tr(), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = SettingsAccent)
-                        }
-                    }
+        if (ordered.isNotEmpty()) {
+            PaneCard(padded = false) {
+                ordered.forEachIndexed { i, s ->
+                    SessionRow(s, onRevoke = { pendingRevoke = s })
+                    if (i < ordered.lastIndex) SettingsRowDivider(68.dp)
                 }
             }
         }
 
-        SessionsGroup(
-            title = "Outros telemóveis".tr(),
-            sessions = otherPhones,
-            emptyText = "Sem sessões noutros telemóveis.".tr(),
-            onRevoke = { pendingRevoke = it },
-        )
-        SessionsGroup(
-            title = "Browsers".tr(),
-            sessions = browsers,
-            emptyText = "Sem sessões web ativas.".tr(),
-            onRevoke = { pendingRevoke = it },
+        Text(
+            "Não reconheces um dispositivo? Termina-lhe a sessão e muda a password.".tr(),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp),
         )
 
         if (others.isNotEmpty()) {
-            OutlinedButton(
+            SettingsOutlinedButton(
+                text = "Terminar sessão nos outros dispositivos".tr(),
                 onClick = { showRevokeAll = true },
-                shape = RoundedCornerShape(10.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                contentPadding = PaddingValues(vertical = 13.dp),
-                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-            ) {
-                Text("Terminar todas as outras sessões".tr() + " (${others.size})", fontWeight = FontWeight.SemiBold)
-            }
+                destructive = true,
+                modifier = Modifier.padding(top = 4.dp),
+            )
         }
+    }
+}
+
+/** Linha de uma sessão: mosaico do tipo, nome, chip na atual, meta e "Terminar". */
+@Composable
+private fun SessionRow(s: SessionItem, onRevoke: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Box(
+            Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(settingsInsetColor()),
+            contentAlignment = Alignment.Center,
+        ) { Icon(sessionIcon(s), contentDescription = null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f), modifier = Modifier.size(20.dp)) }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    sessionTitle(s),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (s.is_current) {
+                    Spacer(Modifier.width(6.dp))
+                    SettingsBadge("Este telemóvel".tr(), SettingsAccent)
+                }
+            }
+            Text(
+                sessionMeta(s),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (!s.is_current) {
+            Spacer(Modifier.width(10.dp))
+            SettingsPillButton("Terminar".tr(), onClick = onRevoke)
+        }
+    }
+}
+
+/** Telemóvel / portátil / browser genérico (globo). */
+private fun sessionIcon(s: SessionItem): ImageVector {
+    if (s.isMobileSession()) return Icons.Filled.Smartphone
+    val text = listOfNotNull(s.device, s.browser).joinToString(" ").lowercase()
+    return when {
+        listOf("windows", "mac", "linux", "chrome os", "chromeos").any { it in text } -> Icons.Outlined.Laptop
+        else -> Icons.Outlined.Language
     }
 }
 
@@ -1915,11 +2099,11 @@ private fun sessionTitle(s: SessionItem): String {
     }
 }
 
-/** "Lisboa · 192.168.1.10 · ativa hoje, 14:36". */
+/** "Lisboa, PT · há 2 h" (sem localização, o IP). */
 private fun sessionMeta(s: SessionItem): String = listOfNotNull(
-    s.location?.takeIf { it.isNotBlank() },
-    s.ip_address?.takeIf { it.isNotBlank() },
-    (s.last_activity_at ?: s.login_at)?.let { "ativa %s".tr().format(friendlyWhen(it)) },
+    s.location?.takeIf { it.isNotBlank() } ?: s.ip_address?.takeIf { it.isNotBlank() },
+    if (s.is_current) "ativa agora".tr()
+    else (s.last_activity_at ?: s.login_at)?.let { co.golink.tester.ui.common.relativeAgo(it) }?.takeIf { it.isNotBlank() },
 ).joinToString(" · ")
 
 /**
@@ -1946,38 +2130,6 @@ private fun SecurityActivityPane(
         onLoadMore = onLoadMore,
     )
 }
-
-@Composable
-private fun SessionsGroup(
-    title: String,
-    sessions: List<SessionItem>,
-    emptyText: String,
-    onRevoke: (SessionItem) -> Unit,
-) {
-    PaneSection(if (sessions.isEmpty()) title else "$title · ${sessions.size}")
-    PaneCard(padded = false) {
-        if (sessions.isEmpty()) {
-            Text(emptyText, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        sessions.forEachIndexed { i, s ->
-            SettingsListRow(
-                icon = if (s.isMobileSession()) Icons.Filled.Smartphone else Icons.Outlined.Devices,
-                title = sessionTitle(s),
-                subtitle = sessionMeta(s),
-                showDivider = i < sessions.lastIndex,
-            ) {
-                Text(
-                    "Revogar".tr(),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { onRevoke(s) }.padding(6.dp),
-                )
-            }
-        }
-    }
-}
-
 
 @Composable
 private fun BillingPane(
@@ -2487,7 +2639,12 @@ private fun AppSecurityPane(
     hasPinSet: Boolean,
     onBiometricToggle: (Boolean) -> Unit,
     onEnablePin: (String) -> Unit,
-    onDisablePin: (String) -> Boolean,
+    onChangePin: (String, String) -> Boolean,
+    onDisableAppLock: (String?) -> Boolean,
+    lockDelayMs: Long,
+    onSetLockDelay: (Long) -> Unit,
+    hideInRecents: Boolean,
+    onSetHideInRecents: (Boolean) -> Unit,
     onClearCache: () -> Unit,
     cacheBytes: Long?,
     onLoadCacheSize: () -> Unit,
@@ -2554,14 +2711,14 @@ private fun AppSecurityPane(
     if (showPinDisable) {
         val close = { showPinDisable = false; pinDisableInput = ""; pinDisableError = null }
         SettingsDialog(
-            title = "Desativar PIN".tr(),
+            title = "Desativar bloqueio".tr(),
             message = "Introduz o PIN atual para desativar o bloqueio.".tr(),
             icon = Icons.Outlined.Lock,
             destructive = true,
             confirmText = "Desativar".tr(),
             confirmEnabled = pinDisableInput.length == 4,
             onConfirm = {
-                if (!onDisablePin(pinDisableInput)) { pinDisableError = "PIN incorreto".tr(); pinDisableInput = "" } else close()
+                if (!onDisableAppLock(pinDisableInput)) { pinDisableError = "PIN incorreto".tr(); pinDisableInput = "" } else close()
             },
             onDismiss = close,
         ) {
@@ -2569,6 +2726,46 @@ private fun AppSecurityPane(
             pinDisableError?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center) }
         }
     }
+    // Mudar PIN: atual (1) → novo (2) → confirmar (3).
+    var changeStep by remember { mutableStateOf(0) }
+    var changeCurrent by remember { mutableStateOf("") }
+    var changeNew by remember { mutableStateOf("") }
+    var changeInput by remember { mutableStateOf("") }
+    var changeError by remember { mutableStateOf<String?>(null) }
+    val closeChange = { changeStep = 0; changeCurrent = ""; changeNew = ""; changeInput = ""; changeError = null }
+    if (changeStep in 1..3) {
+        SettingsDialog(
+            title = when (changeStep) { 1 -> "PIN atual".tr(); 2 -> "Novo PIN".tr(); else -> "Confirmar PIN".tr() },
+            message = when (changeStep) {
+                1 -> "Introduz o PIN atual.".tr()
+                2 -> "Escolhe um PIN novo de 4 dígitos.".tr()
+                else -> "Repete o PIN para confirmar.".tr()
+            },
+            icon = Icons.Outlined.Lock,
+            confirmText = if (changeStep == 3) "Mudar PIN".tr() else "Seguinte".tr(),
+            confirmEnabled = changeInput.length == 4,
+            onConfirm = {
+                when (changeStep) {
+                    1 -> { changeCurrent = changeInput; changeInput = ""; changeStep = 2 }
+                    2 -> { changeNew = changeInput; changeInput = ""; changeStep = 3 }
+                    else -> when {
+                        changeInput != changeNew -> { changeError = "Os PINs não coincidem".tr(); changeInput = "" }
+                        !onChangePin(changeCurrent, changeNew) -> {
+                            // PIN atual errado: volta ao primeiro passo.
+                            changeCurrent = ""; changeNew = ""; changeInput = ""; changeStep = 1
+                            changeError = "PIN incorreto".tr()
+                        }
+                        else -> closeChange()
+                    }
+                }
+            },
+            onDismiss = closeChange,
+        ) {
+            SettingsPinInput(changeInput, { changeInput = it; changeError = null }, isError = changeError != null)
+            changeError?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center) }
+        }
+    }
+
     var confirmClearCache by remember { mutableStateOf(false) }
     if (confirmClearCache) {
         SettingsDialog(
@@ -2607,45 +2804,95 @@ private fun AppSecurityPane(
     val bioOn = biometricEnabled && biometricAvailable
     LaunchedEffect(Unit) { onLoadCacheSize() }
 
+    val lockOn = pinEnabled || bioOn
+    val toggleLock: (Boolean) -> Unit = { want ->
+        if (want) {
+            if (!lockOn) pinStep = 1
+        } else if (hasPinSet) {
+            showPinDisable = true
+        } else {
+            onDisableAppLock(null)
+        }
+    }
+
     PaneColumn {
-        Text(
-            "Protege a app neste telemóvel, mesmo que alguém o tenha desbloqueado.".tr(),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
         PaneCard(padded = false) {
-            SettingsListRow(
-                icon = Icons.Outlined.Lock,
-                title = "Pedir PIN ao abrir".tr(),
-                subtitle = if (pinEnabled) "Ligado".tr() else "Desligado".tr(),
-                subtitleColor = if (pinEnabled) SettingsAccent else Color.Unspecified,
-                showDivider = true,
-                onClick = { if (!pinEnabled) pinStep = 1 else if (hasPinSet) showPinDisable = true },
-            ) {
-                SettingsCheckSquare(checked = pinEnabled) { if (!pinEnabled) pinStep = 1 else if (hasPinSet) showPinDisable = true }
-            }
-            SettingsListRow(
+            SettingsToggleRow(
+                title = "Bloqueio da app".tr(),
+                subtitle = "Pedir desbloqueio ao abrir o GoLink".tr(),
+                checked = lockOn,
+                onCheckedChange = toggleLock,
                 icon = Icons.Outlined.Fingerprint,
-                title = "Impressão digital".tr(),
-                subtitle = when {
-                    !biometricAvailable -> "Não disponível neste telemóvel".tr()
-                    bioOn -> "Ligada".tr()
-                    else -> "Desligada".tr()
-                },
-                subtitleColor = if (bioOn) SettingsAccent else Color.Unspecified,
-                enabled = biometricAvailable,
-                onClick = { if (bioOn) onBiometricToggle(false) else enableBiometric() },
-            ) {
-                if (biometricAvailable) SettingsCheckSquare(checked = bioOn) { if (bioOn) onBiometricToggle(false) else enableBiometric() }
+                iconColor = SettingsAccent,
+                bold = true,
+            )
+        }
+
+        if (lockOn) {
+            PaneSection("Desbloquear com".tr())
+            PaneCard(padded = false) {
+                SettingsToggleRow(
+                    title = "Impressão digital".tr(),
+                    subtitle = if (!biometricAvailable) "Não disponível neste telemóvel".tr() else null,
+                    checked = bioOn,
+                    enabled = biometricAvailable,
+                    onCheckedChange = { want -> if (want) enableBiometric() else onBiometricToggle(false) },
+                    showDivider = true,
+                )
+                val pinReady = pinEnabled && hasPinSet
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { if (pinReady) changeStep = 1 else pinStep = 1 }
+                        .padding(horizontal = 16.dp, vertical = 13.dp),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("PIN".tr(), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (pinReady) "4 dígitos · sempre disponível".tr() else "Sem PIN definido".tr(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    SettingsActionText(
+                        if (pinReady) "Mudar PIN".tr() else "Definir PIN".tr(),
+                        onClick = { if (pinReady) changeStep = 1 else pinStep = 1 },
+                    )
+                }
+            }
+
+            PaneSection("Bloquear depois de sair da app".tr())
+            PaneCard(padded = false) {
+                Box(Modifier.padding(8.dp)) {
+                    SettingsSegmented(
+                        options = listOf(
+                            0L to "Agora".tr(),
+                            60_000L to "%d min".tr().format(1),
+                            300_000L to "%d min".tr().format(5),
+                            900_000L to "%d min".tr().format(15),
+                        ),
+                        selected = lockDelayMs,
+                        onSelect = onSetLockDelay,
+                    )
+                }
+            }
+
+            PaneSection("Privacidade".tr())
+            PaneCard(padded = false) {
+                SettingsToggleRow(
+                    title = "Ocultar nas apps recentes".tr(),
+                    // Android 13+: só a miniatura; antes disso o FLAG_SECURE também bloqueia capturas.
+                    subtitle = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU)
+                        "Pré-visualização em branco".tr()
+                    else "Pré-visualização em branco, bloqueia capturas de ecrã".tr(),
+                    checked = hideInRecents,
+                    onCheckedChange = onSetHideInRecents,
+                )
             }
         }
-        Text(
-            "O bloqueio é pedido sempre que a app fica em segundo plano mais de 30 segundos.".tr(),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
+
+        PaneSection("Segurança".tr())
         PaneCard(padded = false) {
             SettingsListRow(
                 icon = Icons.Outlined.Shield,

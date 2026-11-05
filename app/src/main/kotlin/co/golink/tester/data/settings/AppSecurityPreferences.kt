@@ -33,6 +33,16 @@ class AppSecurityPreferences @Inject constructor(
         get() = prefs.getBoolean("pin_enabled", false)
         set(value) = prefs.edit { putBoolean("pin_enabled", value) }
 
+    /** Tempo em segundo plano antes de voltar a pedir o desbloqueio (0 = logo). */
+    var lockDelayMs: Long
+        get() = prefs.getLong("lock_delay_ms", 0L)
+        set(value) = prefs.edit { putLong("lock_delay_ms", value) }
+
+    /** Miniatura em branco nos recentes enquanto o bloqueio estiver ligado. */
+    var hideInRecents: Boolean
+        get() = prefs.getBoolean("hide_in_recents", true)
+        set(value) = prefs.edit { putBoolean("hide_in_recents", value) }
+
     val hasPinSet: Boolean
         get() = encryptedPrefs.getString("pin_hash", null) != null
 

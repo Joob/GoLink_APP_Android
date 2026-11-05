@@ -4,6 +4,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -88,15 +91,36 @@ fun SearchSheet(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
-        Surface(
+        // Cartão centrado (como o Spotlight da web): altura fixa até 70% do espaço
+        // livre (o teclado conta), tocar fora fecha.
+        BoxWithConstraints(
+            contentAlignment = Alignment.Center,
             modifier = Modifier
                 .fillMaxSize()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss,
+                )
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .imePadding()
-                .padding(12.dp),
+                .padding(16.dp),
+        ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 560.dp)
+                .height(minOf(maxHeight * 0.7f, 560.dp).coerceAtLeast(minOf(maxHeight, 280.dp)))
+                // Absorve toques dentro do cartão (senão fechavam o popup).
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                ),
             shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 12.dp,
         ) {
             Column(Modifier.fillMaxSize()) {
                 // Campo + fechar
@@ -241,6 +265,7 @@ fun SearchSheet(
                     }
                 }
             }
+        }
         }
     }
 }

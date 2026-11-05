@@ -26,14 +26,33 @@ class AppLockManager @Inject constructor(
         if (enabled) expectReturnUntil = SystemClock.elapsedRealtime() + 10 * 60_000L
     }
 
-    /** Sair da app (home, trocar de app, ecrã desligado): bloqueia logo. */
+    /** Esconder a app nos recentes: bloqueio ligado e a opção ativa. */
+    val hideInRecents: Boolean get() = enabled && securityPrefs.hideInRecents
+
+    // Momento em que a app foi para segundo plano (só com atraso > 0).
+    private var backgroundedAt = 0L
+
+    /**
+     * Sair da app (home, trocar de app, ecrã desligado): sem atraso bloqueia
+     * logo; com atraso guarda o momento e decide ao voltar (onForeground).
+     */
     fun onBackground() {
+        backgroundedAt = 0L
         if (!enabled) return
         if (SystemClock.elapsedRealtime() < expectReturnUntil) return
-        _locked.value = true
+        if (securityPrefs.lockDelayMs <= 0L) {
+            _locked.value = true
+        } else {
+            backgroundedAt = SystemClock.elapsedRealtime()
+        }
     }
 
     fun onForeground() {
+        val since = backgroundedAt
+        backgroundedAt = 0L
+        if (enabled && since > 0L && SystemClock.elapsedRealtime() - since >= securityPrefs.lockDelayMs) {
+            _locked.value = true
+        }
         expectReturnUntil = 0L
     }
 
