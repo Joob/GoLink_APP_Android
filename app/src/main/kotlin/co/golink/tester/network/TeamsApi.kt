@@ -20,6 +20,13 @@ interface TeamsApi {
         @Body body: ConvertToTeamFolderRequest,
     ): Response<Unit>
 
+    // Dono: membros/convites da raiz (lista completa, como a web).
+    @retrofit2.http.PATCH("api/teams/folders/{id}")
+    suspend fun updateTeamFolder(
+        @Path("id") id: String,
+        @Body body: co.golink.tester.domain.teams.UpdateTeamFolderRequest,
+    ): Response<okhttp3.ResponseBody>
+
     // Dono: dissolve (a pasta volta a ser pessoal). Membro: sai da equipa.
     @retrofit2.http.DELETE("api/teams/folders/{id}")
     suspend fun dissolveTeamFolder(@Path("id") id: String): Response<okhttp3.ResponseBody>

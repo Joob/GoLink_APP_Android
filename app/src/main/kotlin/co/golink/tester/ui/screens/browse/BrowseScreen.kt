@@ -406,6 +406,11 @@ fun BrowseScreen(
     LaunchedEffect(completedUploads) {
         if (completedUploads > 0) shell.refreshStorage()
     }
+    // Pasta mudou noutro lado (outro membro da Team Folder, web): o espaço do dono também.
+    val remoteChanges by viewModel.remoteChanges.collectAsStateWithLifecycle()
+    LaunchedEffect(remoteChanges) {
+        if (remoteChanges > 0) shell.refreshStorage()
+    }
 
     // Sincroniza a pasta em tempo real (polling) só enquanto o ecrã está visível.
     LifecycleStartEffect(Unit) {
@@ -420,6 +425,18 @@ fun BrowseScreen(
     var fabMenuOpen by remember { mutableStateOf(false) }
     // "Pesquisar ficheiros" na gaveta: incrementa → a SearchRow pede o foco.
     var membersPopupFolder by remember { mutableStateOf<BrowseItem.Folder?>(null) }
+    // Editar membros/convites da Team Folder (só o dono, na raiz).
+    var editTeamFolder by remember { mutableStateOf<BrowseItem.Folder?>(null) }
+    // Dono da raiz da Team Folder (o servidor só aceita editar aí). Só em Pastas de
+    // equipa: é a listagem que traz membros E convites — o PATCH leva a lista completa
+    // e, sem as relações (pesquisa, favoritos), apagaria todos os membros.
+    val canEditTeam: (BrowseItem.Folder) -> Boolean = { f ->
+        val me = viewModel.currentUserId()
+        me != null && f.isTeamFolder && state.mode is BrowseMode.TeamFolder && f.members.isNotEmpty() && when (f.isTeamRoot) {
+            null -> state.mode is BrowseMode.TeamFolder && f.members.any { it.id == me && it.permission == "owner" }
+            else -> f.isTeamRoot && f.ownerId == me
+        }
+    }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) viewModel.uploadMany(uris)
@@ -1441,6 +1458,7 @@ fun BrowseScreen(
             }?.let { f ->
                 { actionTarget = f; activeDialog = ActionDialog.DissolveTeam }
             },
+            onEditTeam = folder?.takeIf(canEditTeam)?.let { f -> { editTeamFolder = f } },
             // Só na raiz: numa subpasta o servidor não tem membro a remover.
             onLeaveTeam = folder?.takeIf { f -> f.isTeamFolder && (f.isTeamRoot?.let { it && !mine } ?: access.legacySharedTop) }?.let { f ->
                 { actionTarget = f; activeDialog = ActionDialog.LeaveTeam }
@@ -1453,6 +1471,23 @@ fun BrowseScreen(
             folder = folder,
             onDismiss = { membersPopupFolder = null },
             loadOnline = { viewModel.onlineMembers(folder.id) },
+            onEdit = if (canEditTeam(folder)) {
+                { membersPopupFolder = null; editTeamFolder = folder }
+            } else null,
+        )
+    }
+
+    editTeamFolder?.let { folder ->
+        EditTeamFolderSheet(
+            folder = folder,
+            ownerEmail = user?.email.orEmpty(),
+            onDismiss = { editTeamFolder = null },
+            onSave = { members, invitations, onDone ->
+                viewModel.updateTeamFolder(folder.id, members, invitations) { err ->
+                    if (err == null) editTeamFolder = null
+                    onDone(err)
+                }
+            },
         )
     }
 
@@ -1538,6 +1573,7 @@ fun BrowseScreen(
                     subtitle = "Escolhe a pasta onde guardar".tr(),
                     confirmText = "Carregar".tr(),
                     initialId = viewModel.uploadTargetId(),
+                    initialLabel = state.crumbs.lastOrNull()?.name,
                     onDismiss = { activeDialog = ActionDialog.None; cameraUri = null },
                     onConfirm = { destinationId -> viewModel.uploadTo(listOf(Uri.parse(uri)), destinationId) },
                     onCreateFolder = { parentId -> createInMoveFor = true to parentId },
@@ -2516,6 +2552,7 @@ private fun TeamMembersPopup(
     folder: BrowseItem.Folder,
     onDismiss: () -> Unit,
     loadOnline: suspend () -> Set<String>?,
+    onEdit: (() -> Unit)? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
@@ -2575,6 +2612,18 @@ private fun TeamMembersPopup(
                             color = Color(0xFF16A34A),
                             fontWeight = FontWeight.SemiBold,
                         )
+                    }
+                }
+                // Dono: abre a edição (adicionar, remover, permissões).
+                onEdit?.let {
+                    androidx.compose.material3.FilledTonalButton(
+                        onClick = it,
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                    ) {
+                        Icon(Icons.Outlined.GroupAdd, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Gerir".tr(), fontWeight = FontWeight.SemiBold)
                     }
                 }
             }

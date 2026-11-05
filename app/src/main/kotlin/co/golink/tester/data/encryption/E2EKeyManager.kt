@@ -394,7 +394,7 @@ class E2EKeyManager @Inject constructor(
     // ---- Manter desbloqueado neste dispositivo (como na web) -----------------
     //
     // A privada fica cifrada (AES-GCM) com uma chave do Android Keystore que
-    // nunca sai do hardware; dura 14 dias e é apagada no lock/logout. Ao abrir
+    // nunca sai do hardware; dura 7 dias (depois volta a pedir a passphrase, para não ser esquecida) e é apagada no lock/logout. Ao abrir
     // a app, [restoreFromDevice] repõe-na sem pedir a passphrase.
 
     private val devicePrefs = context.getSharedPreferences("e2e_device_key", android.content.Context.MODE_PRIVATE)
@@ -402,7 +402,7 @@ class E2EKeyManager @Inject constructor(
     val hasDeviceKey: Boolean
         get() = (devicePrefs.getLong(DEVICE_EXPIRES, 0L) > System.currentTimeMillis()) && devicePrefs.contains(DEVICE_CIPHER)
 
-    /** Guarda a privada atual cifrada no dispositivo (14 dias). */
+    /** Guarda a privada atual cifrada no dispositivo (7 dias). */
     fun rememberOnDevice() {
         val sk = secretKey ?: return
         val pub = publicKeyB64 ?: return
@@ -519,7 +519,7 @@ class E2EKeyManager @Inject constructor(
         const val DEVICE_PUB = "public_key"
         const val DEVICE_BACKEND = "backend"
         const val DEVICE_EXPIRES = "expires_at"
-        const val DEVICE_TTL_MS = 14L * 24 * 60 * 60 * 1000
+        const val DEVICE_TTL_MS = 7L * 24 * 60 * 60 * 1000
     }
 }
 

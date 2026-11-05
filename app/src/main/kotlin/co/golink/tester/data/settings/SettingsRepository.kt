@@ -92,12 +92,13 @@ class SettingsRepository @Inject constructor(
         check(response.isSuccessful) { "HTTP ${response.code()}" }
     }
 
-    suspend fun updatePassword(current: String, newPassword: String): Result<Unit> = runCatching {
+    suspend fun updatePassword(current: String, newPassword: String, passkeyToken: String? = null): Result<Unit> = runCatching {
         val response = api.updatePassword(
             UpdatePasswordRequest(
                 current = current,
                 password = newPassword,
                 password_confirmation = newPassword,
+                passkey_token = passkeyToken,
             ),
         )
         check(response.isSuccessful) { "HTTP ${response.code()}" }
@@ -105,9 +106,9 @@ class SettingsRepository @Inject constructor(
 
     // Passo 1: password actual + novo email → servidor envia código ao NOVO email.
     // Devolve a validade do código em segundos.
-    suspend fun requestEmailChange(email: String, password: String): Result<Int> = runCatching {
+    suspend fun requestEmailChange(email: String, password: String, passkeyToken: String? = null): Result<Int> = runCatching {
         val response = api.requestEmailChange(
-            co.golink.tester.domain.settings.EmailChangeRequest(email = email.trim(), password = password),
+            co.golink.tester.domain.settings.EmailChangeRequest(email = email.trim(), password = password, passkey_token = passkeyToken),
         )
         check(response.isSuccessful) { serverMessage(response) }
         response.body()?.expires_in ?: 120

@@ -404,7 +404,7 @@ private fun SecretContent(
                 androidx.compose.material3.Checkbox(checked = viewModel.keepUnlocked, onCheckedChange = { viewModel.keepUnlocked = it })
                 Column {
                     Text("Manter desbloqueado neste dispositivo".tr(), style = MaterialTheme.typography.bodyMedium)
-                    Text("Durante 14 dias ou até terminares sessão.".tr(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Durante 7 dias ou até terminares sessão.".tr(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

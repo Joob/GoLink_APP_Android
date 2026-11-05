@@ -19,6 +19,19 @@ data class CreateTeamFolderRequest(
     val invitations: List<TeamInvitation>,
 )
 
+// PATCH api/teams/folders/{id}: lista completa (o que falta é removido).
+@Serializable
+data class TeamMemberUpdate(
+    val id: String,
+    val permission: String,
+)
+
+@Serializable
+data class UpdateTeamFolderRequest(
+    val members: List<TeamMemberUpdate>,
+    val invitations: List<TeamInvitation>,
+)
+
 @Serializable
 data class ConvertToTeamFolderRequest(
     val invitations: List<TeamInvitation>,

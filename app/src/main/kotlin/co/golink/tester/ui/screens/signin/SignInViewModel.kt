@@ -26,12 +26,14 @@ data class SignInUiState(
     val socialLogins: SocialLogins = SocialLogins(),
     val registrationAllowed: Boolean = true,
     val loginSucceeded: Boolean = false,
+    val passkeyLoading: Boolean = false,
 )
 
 @HiltViewModel
 class SignInViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val configRepository: ConfigRepository,
+    private val passkeyRepository: co.golink.tester.data.auth.PasskeyRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SignInUiState())
@@ -72,6 +74,31 @@ class SignInViewModel @Inject constructor(
                     _state.update { it.copy(isLoading = false, error = readableError(t)) }
                 }
         }
+    }
+
+    /** Entrar com passkey: sem email nem OTP — o gate segue logo para a Home. */
+    fun passkeyLogin(activity: android.content.Context) {
+        if (_state.value.passkeyLoading || _state.value.isLoading) return
+        _state.update { it.copy(passkeyLoading = true, error = null) }
+        viewModelScope.launch {
+            passkeyRepository.signIn(activity)
+                .onSuccess { _state.update { it.copy(passkeyLoading = false, loginSucceeded = true) } }
+                .onFailure { t ->
+                    _state.update {
+                        it.copy(
+                            passkeyLoading = false,
+                            error = if (t is co.golink.tester.data.auth.PasskeyError.Cancelled) null else passkeyError(t),
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun passkeyError(t: Throwable): String = when (t) {
+        is co.golink.tester.data.auth.PasskeyError.NoPasskey -> "Não há passkeys para esta app neste aparelho".tr()
+        is co.golink.tester.data.auth.PasskeyError -> "Passkey indisponível neste aparelho".tr()
+        is AuthError.InvalidCredentials -> "A passkey não foi aceite. Tenta de novo ou usa a password.".tr()
+        else -> readableError(t)
     }
 
     private fun readableError(t: Throwable): String = when (t) {

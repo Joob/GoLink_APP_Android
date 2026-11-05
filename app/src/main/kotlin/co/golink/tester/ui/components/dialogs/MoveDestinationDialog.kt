@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -36,6 +37,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,9 +65,25 @@ fun MoveDestinationDialog(
     subtitle: String = "Escolhe a pasta de destino".tr(),
     confirmText: String = "Mover".tr(),
     initialId: String? = null,
+    // Nome da pasta inicial, p/ a mostrar fixada se não estiver na árvore.
+    initialLabel: String? = null,
 ) {
     var selectedId by remember { mutableStateOf(initialId) }
+    val initialPath = remember(sections, initialId) {
+        initialId?.let { id -> sections.firstNotNullOfOrNull { findPath(it.folders, id) } }
+    }
+    // Abre os antepassados da pasta inicial para ela ficar visível.
     val expanded = remember { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(initialPath) {
+        initialPath?.let { p -> expanded.value = expanded.value + p.dropLast(1).map { it.id } }
+    }
+    val pinned = initialId != null && initialPath == null && !initialLabel.isNullOrBlank()
+    val listState = rememberLazyListState()
+    LaunchedEffect(initialPath) {
+        val rootId = initialPath?.firstOrNull()?.id ?: return@LaunchedEffect
+        val idx = sections.flatMap { it.folders }.indexOfFirst { it.id == rootId }
+        if (idx >= 0) listState.scrollToItem(idx + if (pinned) 1 else 0)
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -143,7 +161,23 @@ fun MoveDestinationDialog(
 
                 Column(modifier = Modifier.heightIn(min = 200.dp, max = 380.dp)) {
                     RootRow(selected = selectedId == null) { selectedId = null }
-                    LazyColumn {
+                    LazyColumn(state = listState) {
+                        if (pinned) item(key = "pinned-initial") {
+                            RowBase(
+                                indentStart = 0,
+                                leading = {
+                                    Icon(
+                                        Icons.Outlined.FolderOpen,
+                                        contentDescription = null,
+                                        tint = if (selectedId == initialId) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                },
+                                label = initialLabel!!,
+                                selected = selectedId == initialId,
+                                onClick = { selectedId = initialId },
+                            )
+                        }
                         sections.forEach { section ->
                             items(section.folders, key = { it.id }) { folder ->
                                 FolderTree(
@@ -236,6 +270,14 @@ private fun RowBase(
             overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+private fun findPath(nodes: List<NavFolder>, id: String): List<NavFolder>? {
+    for (n in nodes) {
+        if (n.id == id) return listOf(n)
+        findPath(n.folders, id)?.let { return listOf(n) + it }
+    }
+    return null
 }
 
 @Composable

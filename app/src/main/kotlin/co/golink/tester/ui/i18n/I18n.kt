@@ -48,9 +48,9 @@ object I18n {
 
     fun t(pt: String): String = when (lang) {
         PT -> pt
-        EN -> en[pt] ?: I18nDict.en[pt] ?: I18nRedesign.en[pt] ?: I18nAdmin.en[pt] ?: I18nCalendar.en[pt] ?: pt
-        FR -> fr[pt] ?: I18nDict.fr[pt] ?: I18nRedesign.fr[pt] ?: I18nAdmin.fr[pt] ?: I18nCalendar.fr[pt] ?: pt
-        ES -> es[pt] ?: I18nDict.es[pt] ?: I18nRedesign.es[pt] ?: I18nAdmin.es[pt] ?: I18nCalendar.es[pt] ?: pt
+        EN -> en[pt] ?: I18nDict.en[pt] ?: I18nRedesign.en[pt] ?: I18nAdmin.en[pt] ?: I18nCalendar.en[pt] ?: I18nPasskeys.en[pt] ?: pt
+        FR -> fr[pt] ?: I18nDict.fr[pt] ?: I18nRedesign.fr[pt] ?: I18nAdmin.fr[pt] ?: I18nCalendar.fr[pt] ?: I18nPasskeys.fr[pt] ?: pt
+        ES -> es[pt] ?: I18nDict.es[pt] ?: I18nRedesign.es[pt] ?: I18nAdmin.es[pt] ?: I18nCalendar.es[pt] ?: I18nPasskeys.es[pt] ?: pt
         else -> pt
     }
 
@@ -60,6 +60,7 @@ object I18n {
     private const val KEY = "lang"
 
     private val en = mapOf(
+        "Eu" to "Me",
         // Comuns / acções
         "Abrir" to "Open", "Adicionar" to "Add", "Descarregar" to "Download",
         "Detalhes" to "Details", "Eliminar" to "Delete",
@@ -152,6 +153,7 @@ object I18n {
     )
 
     private val fr = mapOf(
+        "Eu" to "Moi",
         "Abrir" to "Ouvrir", "Adicionar" to "Ajouter", "Descarregar" to "Télécharger",
         "Detalhes" to "Détails", "Eliminar" to "Supprimer",
         "Eliminar permanentemente" to "Supprimer définitivement",
@@ -240,6 +242,7 @@ object I18n {
     )
 
     private val es = mapOf(
+        "Eu" to "Yo",
         "Abrir" to "Abrir", "Adicionar" to "Añadir", "Descarregar" to "Descargar",
         "Detalhes" to "Detalles", "Eliminar" to "Eliminar",
         "Eliminar permanentemente" to "Eliminar permanentemente",

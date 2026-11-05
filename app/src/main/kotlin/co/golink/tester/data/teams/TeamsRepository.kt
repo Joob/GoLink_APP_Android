@@ -25,6 +25,15 @@ class TeamsRepository @Inject constructor(
         check(response.isSuccessful) { "HTTP ${response.code()}: ${response.errorBody()?.string()?.take(300)}" }
     }
 
+    suspend fun updateTeamFolder(
+        id: String,
+        members: List<co.golink.tester.domain.teams.TeamMemberUpdate>,
+        invitations: List<TeamInvitation>,
+    ): Result<Unit> = runCatching {
+        val response = api.updateTeamFolder(id, co.golink.tester.domain.teams.UpdateTeamFolderRequest(members, invitations))
+        check(response.isSuccessful) { "HTTP ${response.code()}: ${response.errorBody()?.string()?.take(300)}" }
+    }
+
     suspend fun dissolve(id: String): Result<Unit> = runCatching {
         val response = api.dissolveTeamFolder(id)
         check(response.isSuccessful) { "HTTP ${response.code()}" }

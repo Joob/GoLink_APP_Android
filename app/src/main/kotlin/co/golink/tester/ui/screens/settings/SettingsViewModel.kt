@@ -245,19 +245,19 @@ class SettingsViewModel @Inject constructor(
             .onFailure { t -> _state.update { it.copy(logoutOverlay = null, toast = t.message) } }
     }
 
-    fun updatePassword(current: String, newPassword: String) {
+    fun updatePassword(current: String, newPassword: String, passkeyToken: String? = null) {
         _state.update { it.copy(isUpdatingPassword = true) }
         viewModelScope.launch {
-            repository.updatePassword(current, newPassword)
+            repository.updatePassword(current, newPassword, passkeyToken)
                 .onSuccess { _state.update { it.copy(isUpdatingPassword = false, toast = "Password actualizada".tr()) } }
                 .onFailure { t -> _state.update { it.copy(isUpdatingPassword = false, toast = t.message) } }
         }
     }
 
-    fun requestEmailChange(email: String, password: String) {
+    fun requestEmailChange(email: String, password: String, passkeyToken: String? = null) {
         _state.update { it.copy(isChangingEmail = true, emailChangeError = null) }
         viewModelScope.launch {
-            repository.requestEmailChange(email, password)
+            repository.requestEmailChange(email, password, passkeyToken)
                 .onSuccess { ttl ->
                     _state.update {
                         it.copy(

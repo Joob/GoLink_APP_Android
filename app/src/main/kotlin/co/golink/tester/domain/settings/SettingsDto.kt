@@ -121,12 +121,15 @@ data class UpdatePasswordRequest(
     val current: String,
     val password: String,
     val password_confirmation: String,
+    // Confirmação com passkey: substitui a password atual.
+    val passkey_token: String? = null,
 )
 
 @Serializable
 data class EmailChangeRequest(
     val email: String,
     val password: String,
+    val passkey_token: String? = null,
 )
 
 @Serializable

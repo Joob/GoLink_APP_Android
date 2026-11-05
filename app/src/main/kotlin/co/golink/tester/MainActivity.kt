@@ -23,7 +23,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     @Inject lateinit var lockManager: AppLockManager
     @Inject lateinit var logger: AppLogger
@@ -66,13 +66,17 @@ class MainActivity : ComponentActivity() {
                     sessionManager.resyncIfNeeded()
                     logger.log("App", "App em primeiro plano")
                 }
+                // Modo privado: sem miniatura nos recentes enquanto o bloqueio estiver ligado.
+                Lifecycle.Event.ON_RESUME, Lifecycle.Event.ON_PAUSE -> applyPrivacyMode()
                 Lifecycle.Event.ON_STOP -> {
-                    lockManager.onBackground()
+                    // Rodar o ecrã / mudar de tema recria a atividade: não é sair da app.
+                    if (!isChangingConfigurations) lockManager.onBackground()
                     logger.log("App", "App em segundo plano")
                 }
                 else -> {}
             }
         })
+        applyPrivacyMode()
         setContent {
             VueFileManagerTheme(darkTheme = co.golink.tester.ui.theme.AppThemeMode.isDark()) {
                 androidx.compose.foundation.layout.Box(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
@@ -84,6 +88,43 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    // Android 13+: só a miniatura dos recentes fica em branco (capturas continuam).
+    // Antes do 13 não há alternativa ao FLAG_SECURE (bloqueia também capturas).
+    private fun applyPrivacyMode() {
+        val on = lockManager.enabled
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            setRecentsScreenshotEnabled(!on)
+        } else if (on) {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
+    // Câmara, seletores de ficheiros/pastas, etc. (launchers de resultado passam
+    // por aqui): voltar deles não volta a pedir o PIN.
+    @Deprecated("Deprecated in Java")
+    @Suppress("DEPRECATION")
+    override fun startActivityForResult(intent: android.content.Intent, requestCode: Int, options: Bundle?) {
+        lockManager.expectExternalReturn()
+        super.startActivityForResult(intent, requestCode, options)
+    }
+
+    @Deprecated("Deprecated in Java")
+    @Suppress("DEPRECATION")
+    override fun startIntentSenderForResult(
+        intent: android.content.IntentSender,
+        requestCode: Int,
+        fillInIntent: android.content.Intent?,
+        flagsMask: Int,
+        flagsValues: Int,
+        extraFlags: Int,
+        options: Bundle?,
+    ) {
+        lockManager.expectExternalReturn()
+        super.startIntentSenderForResult(intent, requestCode, fillInIntent, flagsMask, flagsValues, extraFlags, options)
     }
 
     // Lembrete do calendário tocado com a app já aberta.

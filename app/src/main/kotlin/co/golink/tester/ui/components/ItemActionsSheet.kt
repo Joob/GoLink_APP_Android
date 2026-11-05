@@ -1,6 +1,7 @@
 package co.golink.tester.ui.components
 
 import androidx.compose.material.icons.outlined.GroupRemove
+import androidx.compose.material.icons.outlined.GroupAdd
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.Upload
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -77,6 +78,8 @@ fun ItemActionsSheet(
     // Pastas de equipa (raiz): dono dissolve, membro sai — como na web.
     onDissolveTeam: (() -> Unit)? = null,
     onLeaveTeam: (() -> Unit)? = null,
+    // Dono, na raiz: adicionar/remover membros e mudar permissões.
+    onEditTeam: (() -> Unit)? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -145,6 +148,7 @@ fun ItemActionsSheet(
                             add { ActionRow(Icons.Outlined.Groups, "Transformar em pasta de equipa".tr(), "Trabalhar com outras pessoas".tr()) { onConvertToTeamFolder(); onDismiss() } }
                         }
                     }
+                    onEditTeam?.let { editTeam -> add { ActionRow(Icons.Outlined.GroupAdd, "Gerir membros".tr(), "Adicionar pessoas e mudar permissões".tr()) { editTeam(); onDismiss() } } }
                     onLeaveTeam?.let { leave -> add { ActionRow(Icons.AutoMirrored.Outlined.Logout, "Sair da pasta de equipa".tr(), tint = danger) { leave(); onDismiss() } } }
                     onDissolveTeam?.let { dissolve -> add { ActionRow(Icons.Outlined.GroupRemove, "Dissolver equipa".tr(), tint = danger) { dissolve(); onDismiss() } } }
                 }

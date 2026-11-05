@@ -82,6 +82,15 @@ fun BoxScope.SpeedDialFab(
     actions: List<SpeedDialAction>,
     bottomOffset: Dp = 80.dp,
 ) {
+    // Só uma ação (ex.: raiz de Pastas de equipa): o "+" executa-a logo, sem menu.
+    val single = actions.singleOrNull()
+    // Aberto por fora (ex.: "Novo" na gaveta) com uma só ação: idem.
+    if (single != null && open) {
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            onOpenChange(false)
+            single.onClick()
+        }
+    }
     BackHandler(enabled = open) { onOpenChange(false) }
 
     // Fundo escurecido: tocar fora fecha.
@@ -133,7 +142,7 @@ fun BoxScope.SpeedDialFab(
             label = "fab-rotation",
         )
         FloatingActionButton(
-            onClick = { onOpenChange(!open) },
+            onClick = { if (single != null) single.onClick() else onOpenChange(!open) },
             shape = RoundedCornerShape(18.dp),
             containerColor = MaterialTheme.colorScheme.primary,
             contentColor = Color.White,

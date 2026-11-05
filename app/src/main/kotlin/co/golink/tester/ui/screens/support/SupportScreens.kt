@@ -814,7 +814,7 @@ private fun MessageBubble(
     isBusy: Boolean,
     deletionError: String?,
     onDownload: (String, String) -> Unit,
-    onConfirmDeletion: (String, String) -> Unit,
+    onConfirmDeletion: (String, String, String?) -> Unit,
     onCancelDeletion: (String) -> Unit,
 ) {
     val a = message.data.attributes
@@ -881,7 +881,7 @@ private fun MessageBubble(
                         viewerIsAdmin = viewerIsAdmin,
                         isBusy = isBusy,
                         error = deletionError,
-                        onConfirm = { password -> onConfirmDeletion(request.id, password) },
+                        onConfirm = { password, token -> onConfirmDeletion(request.id, password, token) },
                         onCancel = { onCancelDeletion(request.id) },
                     )
                 }
@@ -951,10 +951,11 @@ private fun DeletionRequestCard(
     viewerIsAdmin: Boolean,
     isBusy: Boolean,
     error: String?,
-    onConfirm: (String) -> Unit,
+    onConfirm: (password: String, passkeyToken: String?) -> Unit,
     onCancel: () -> Unit,
 ) {
     var password by remember(request.id) { mutableStateOf("") }
+    var passkeyToken by remember(request.id) { mutableStateOf<String?>(null) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(request.status) {
         while (request.status == "scheduled") {
@@ -994,7 +995,12 @@ private fun DeletionRequestCard(
 
         if (!viewerIsAdmin && request.status == "pending") {
             Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
+            co.golink.tester.ui.screens.settings.PasskeyConfirmRow(
+                purpose = "delete_account",
+                confirmed = passkeyToken != null,
+                onToken = { passkeyToken = it },
+            )
+            if (passkeyToken == null) OutlinedTextField(
                 value = password,
                 onValueChange = { password = it },
                 label = { Text("Password actual".tr()) },
@@ -1006,8 +1012,8 @@ private fun DeletionRequestCard(
                 modifier = Modifier.fillMaxWidth(),
             )
             Button(
-                onClick = { onConfirm(password) },
-                enabled = password.isNotBlank() && !isBusy,
+                onClick = { onConfirm(password, passkeyToken); passkeyToken = null }, // uso único no servidor
+                enabled = (password.isNotBlank() || passkeyToken != null) && !isBusy,
                 colors = ButtonDefaults.buttonColors(containerColor = Rose),
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Confirmar eliminação".tr()) }

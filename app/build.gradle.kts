@@ -23,8 +23,8 @@ android {
         applicationId = "co.golink.tester"
         minSdk = 26
         targetSdk = 36
-        versionCode = 150
-        versionName = "3.73.0"
+        versionCode = 151
+        versionName = "3.74.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -132,6 +132,9 @@ dependencies {
 
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.biometric)
+    // Passkeys (WebAuthn) via Credential Manager; play-services para Android ≤ 13.
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services)
     implementation(libs.androidx.browser)
     implementation(libs.androidx.webkit)
 

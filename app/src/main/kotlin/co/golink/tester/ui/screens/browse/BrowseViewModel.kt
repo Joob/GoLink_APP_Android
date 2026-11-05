@@ -226,6 +226,11 @@ class BrowseViewModel @Inject constructor(
     private var pollJob: Job? = null
     @Volatile private var lastFingerprint: String? = null
 
+    // Conta mudanças remotas detetadas pelo polling (ex.: upload de outro membro
+    // numa Team Folder) — o drawer recalcula o armazenamento a cada incremento.
+    private val _remoteChanges = kotlinx.coroutines.flow.MutableStateFlow(0)
+    val remoteChanges: kotlinx.coroutines.flow.StateFlow<Int> = _remoteChanges
+
     init {
         // Config do servidor logo no arranque: com sessão já iniciada não se passa
         // pelo login/landing, e sem ela o tipo de faturação ficava "none" (sem
@@ -1442,6 +1447,30 @@ class BrowseViewModel @Inject constructor(
     }
 
     /** Pasta de equipa: o dono dissolve (volta aos ficheiros), o membro sai. */
+    /** Editar membros/convites da raiz da Team Folder (só o dono). onDone(erro): null = ok. */
+    fun updateTeamFolder(
+        folderId: String,
+        members: List<co.golink.tester.domain.teams.TeamMemberUpdate>,
+        invitations: List<TeamInvitation>,
+        onDone: (String?) -> Unit,
+    ) {
+        viewModelScope.launch {
+            teamsRepository.updateTeamFolder(folderId, members, invitations)
+                .onSuccess {
+                    onDone(null)
+                    _state.update { it.copy(toast = "Pasta de equipa atualizada".tr()) }
+                    uploadManager.invalidateMemberKeys()
+                    loadCurrent(silent = true)
+                }
+                .onFailure { t ->
+                    onDone(
+                        if (t.message.orEmpty().startsWith("HTTP 401")) "Atingiste o limite de membros do teu plano".tr()
+                        else failText(t)
+                    )
+                }
+        }
+    }
+
     fun dissolveTeam(folder: BrowseItem.Folder) = teamAction(folder, "Equipa dissolvida — a pasta voltou aos teus ficheiros".tr()) {
         teamsRepository.dissolve(folder.id)
     }
@@ -1775,6 +1804,7 @@ class BrowseViewModel @Inject constructor(
         val previous = lastFingerprint
         lastFingerprint = signature
         if (previous != null && previous != signature) {
+            _remoteChanges.value++
             loadCurrent(silent = true)
         }
     }

@@ -23,6 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.blur
 import androidx.lifecycle.viewModelScope
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -266,7 +268,14 @@ fun AppNavHost(
         navDeepLink { uriPattern = "https://tester.golink.co/$path" },
     )
 
-    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+    // Bloqueada: o conteúdo fica desfocado por trás da folha do PIN (Android 12+;
+    // antes disso o LockScreen tapa-o com um fundo opaco).
+    val lockedNow = locked && top == TopState.Authenticated
+    androidx.compose.foundation.layout.Box(
+        androidx.compose.ui.Modifier
+            .fillMaxSize()
+            .then(if (lockedNow) androidx.compose.ui.Modifier.blur(28.dp) else androidx.compose.ui.Modifier),
+    ) {
     NavHost(navController = navController, startDestination = Routes.SPLASH) {
         composable(Routes.SPLASH) { SplashScreen() }
         composable(Routes.LANDING) {
@@ -648,7 +657,8 @@ fun AppNavHost(
 
     AnimatedVisibility(
         visible = locked && top == TopState.Authenticated,
-        enter = fadeIn(animationSpec = tween(150)),
+        // Sem fade de entrada: ao voltar à app o conteúdo não pode aparecer nem um instante.
+        enter = androidx.compose.animation.EnterTransition.None,
         exit = fadeOut(animationSpec = tween(320)) + scaleOut(animationSpec = tween(320), targetScale = 1.08f),
     ) {
         LockScreen()

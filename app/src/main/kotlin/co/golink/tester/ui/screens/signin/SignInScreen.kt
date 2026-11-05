@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.Email
+import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -58,6 +59,7 @@ fun SignInScreen(
     viewModel: SignInViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     LaunchedEffect(state.loginSucceeded) {
         if (state.loginSucceeded) onLoginSucceeded()
@@ -145,6 +147,24 @@ fun SignInScreen(
                 Spacer(Modifier.width(8.dp))
             }
             Text("Entrar".tr(), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+        }
+
+        Spacer(Modifier.height(10.dp))
+        OutlinedButton(
+            onClick = { viewModel.passkeyLogin(context) },
+            enabled = !state.isLoading && !state.passkeyLoading,
+            shape = RoundedCornerShape(14.dp),
+            contentPadding = PaddingValues(vertical = 14.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            if (state.passkeyLoading) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            } else {
+                Icon(Icons.Outlined.Key, contentDescription = null, modifier = Modifier.size(18.dp))
+            }
+            Spacer(Modifier.width(8.dp))
+            Text("Entrar com passkey".tr(), fontWeight = FontWeight.Medium)
         }
 
         if (state.socialLogins.any) {

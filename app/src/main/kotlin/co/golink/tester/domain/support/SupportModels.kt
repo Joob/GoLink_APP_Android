@@ -168,7 +168,11 @@ data class PageMeta(
 )
 
 @Serializable
-data class ConfirmDeletionRequest(val password: String)
+data class ConfirmDeletionRequest(
+    val password: String,
+    // Confirmação com passkey em vez da password.
+    val passkey_token: String? = null,
+)
 
 @Serializable
 data class ConfirmDeletionResponse(val scheduled_for: String? = null)

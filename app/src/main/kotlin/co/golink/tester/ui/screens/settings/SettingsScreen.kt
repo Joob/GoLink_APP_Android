@@ -318,6 +318,8 @@ fun SettingsScreen(
                 SettingsRoute.Password -> PasswordPane(
                     isLoading = state.isUpdatingPassword,
                     onSubmit = viewModel::updatePassword,
+                    hasPasskeys = user?.hasPasskeys == true,
+                    socialiteAccount = user?.socialiteAccount == true,
                     twoFactorEnabled = state.twoFactorEnabled,
                     backendUrl = backendUrl,
                     onRefreshUser = viewModel::refreshUser,
@@ -326,6 +328,7 @@ fun SettingsScreen(
                 SettingsRoute.Email -> PaneColumn {
                     EmailChangeSection(
                         currentEmail = user?.email.orEmpty(),
+                        hasPasskeys = user?.hasPasskeys == true,
                         state = state,
                         onRequest = viewModel::requestEmailChange,
                         onConfirm = viewModel::confirmEmailChange,
@@ -851,7 +854,7 @@ private fun friendlyWhen(iso: String): String {
 
 /** Título de secção dos painéis (cinzento, fora do cartão) com ação opcional à direita. */
 @Composable
-private fun PaneSection(title: String, action: String? = null, onAction: (() -> Unit)? = null) {
+internal fun PaneSection(title: String, action: String? = null, onAction: (() -> Unit)? = null) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(start = 4.dp, top = 6.dp)) {
         Text(
             title,
@@ -874,7 +877,7 @@ private fun PaneSection(title: String, action: String? = null, onAction: (() -> 
 
 /** Cartão branco dos painéis (padding interno opcional). */
 @Composable
-private fun PaneCard(padded: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
+internal fun PaneCard(padded: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = settingsCardColor(),
@@ -1132,7 +1135,9 @@ private fun CountryDropdown(value: String, onValueChange: (String) -> Unit) {
 @Composable
 private fun PasswordPane(
     isLoading: Boolean,
-    onSubmit: (current: String, new: String) -> Unit,
+    onSubmit: (current: String, new: String, passkeyToken: String?) -> Unit,
+    hasPasskeys: Boolean,
+    socialiteAccount: Boolean,
     twoFactorEnabled: Boolean,
     backendUrl: String,
     onRefreshUser: () -> Unit,
@@ -1162,12 +1167,13 @@ private fun PasswordPane(
         }
     }
     var current by remember { mutableStateOf("") }
+    var passkeyToken by remember { mutableStateOf<String?>(null) }
     var newPassword by remember { mutableStateOf("") }
     var confirmation by remember { mutableStateOf("") }
     val mismatch = newPassword.isNotEmpty() && confirmation.isNotEmpty() && newPassword != confirmation
     // 8 = mesma política do registo e do servidor (Fortify\Rules\Password).
     val tooShort = newPassword.isNotEmpty() && newPassword.length < MIN_PASSWORD_LENGTH
-    val canSubmit = !isLoading && current.isNotBlank() &&
+    val canSubmit = !isLoading && (current.isNotBlank() || passkeyToken != null) &&
         newPassword.length >= MIN_PASSWORD_LENGTH && newPassword == confirmation
 
     // Força simples (4 traços): comprimento, maiúsculas+minúsculas, números, símbolos.
@@ -1179,6 +1185,8 @@ private fun PasswordPane(
     ).count { it }
 
     PaneColumn {
+        PasskeysSection(socialiteAccount = socialiteAccount, hasPasskeys = hasPasskeys)
+
         PaneSection("Proteção da conta".tr())
         PaneCard {
             Row(verticalAlignment = Alignment.Top) {
@@ -1213,7 +1221,10 @@ private fun PasswordPane(
 
         PaneSection("Mudar password".tr())
         PaneCard {
-            SettingsField("Password atual".tr(), current, { current = it }, isPassword = true)
+            PasskeyConfirmRow(purpose = "password", hasPasskeys = hasPasskeys, confirmed = passkeyToken != null, onToken = { passkeyToken = it })
+            if (passkeyToken == null) {
+                SettingsField("Password atual".tr(), current, { current = it }, isPassword = true)
+            }
             Column {
                 SettingsField("Nova password".tr(), newPassword, { newPassword = it }, isPassword = true, isError = tooShort)
                 Spacer(Modifier.height(8.dp))
@@ -1247,7 +1258,10 @@ private fun PasswordPane(
             )
             SettingsPrimaryButton(
                 text = "Guardar nova password".tr(),
-                onClick = { onSubmit(current, newPassword); current = ""; newPassword = ""; confirmation = "" },
+                onClick = {
+                    onSubmit(current, newPassword, passkeyToken)
+                    current = ""; newPassword = ""; confirmation = ""; passkeyToken = null
+                },
                 enabled = canSubmit,
                 loading = isLoading,
             )
@@ -1391,14 +1405,16 @@ private fun ApiTokensPane(
 @Composable
 private fun EmailChangeSection(
     currentEmail: String,
+    hasPasskeys: Boolean,
     state: SettingsUiState,
-    onRequest: (email: String, password: String) -> Unit,
+    onRequest: (email: String, password: String, passkeyToken: String?) -> Unit,
     onConfirm: (code: String) -> Unit,
     onCancel: () -> Unit,
 ) {
     var editing by remember { mutableStateOf(false) }
     var newEmail by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var passkeyToken by remember { mutableStateOf<String?>(null) }
     var code by remember { mutableStateOf("") }
     var secondsLeft by remember { mutableStateOf(0) }
     val inCodeStep = state.emailChangeStep == "code"
@@ -1414,7 +1430,7 @@ private fun EmailChangeSection(
     }
     LaunchedEffect(state.emailChangeStep) {
         if (state.emailChangeStep == "idle" && !state.isChangingEmail && state.emailChangeError == null) {
-            editing = false; newEmail = ""; password = ""; code = ""
+            editing = false; newEmail = ""; password = ""; code = ""; passkeyToken = null
         }
     }
 
@@ -1438,7 +1454,10 @@ private fun EmailChangeSection(
     PaneCard {
     if (!inCodeStep) {
         SettingsField("Novo endereço de email".tr(), newEmail, { newEmail = it }, keyboardType = KeyboardType.Email)
-        SettingsField("Password atual".tr(), password, { password = it }, isPassword = true)
+        PasskeyConfirmRow(purpose = "email", hasPasskeys = hasPasskeys, confirmed = passkeyToken != null, onToken = { passkeyToken = it })
+        if (passkeyToken == null) {
+            SettingsField("Password atual".tr(), password, { password = it }, isPassword = true)
+        }
     } else {
         Text(
             "Enviámos um código de 6 dígitos para %s.".tr().format(state.emailChangeTarget),
@@ -1462,22 +1481,25 @@ private fun EmailChangeSection(
     }
 
     val canSubmit = !state.isChangingEmail && if (inCodeStep) code.length == 6 && secondsLeft > 0
-        else android.util.Patterns.EMAIL_ADDRESS.matcher(newEmail.trim()).matches() && password.isNotBlank()
+        else android.util.Patterns.EMAIL_ADDRESS.matcher(newEmail.trim()).matches() && (password.isNotBlank() || passkeyToken != null)
 
     SettingsPrimaryButton(
         text = if (inCodeStep) "Confirmar alteração".tr() else "Enviar código".tr(),
-        onClick = { if (inCodeStep) onConfirm(code) else onRequest(newEmail, password) },
+        onClick = {
+            if (inCodeStep) onConfirm(code)
+            else { onRequest(newEmail, password, passkeyToken); passkeyToken = null } // uso único no servidor
+        },
         enabled = canSubmit,
         loading = state.isChangingEmail,
     )
     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
         if (inCodeStep) {
             TextButton(
-                onClick = { onRequest(state.emailChangeTarget, password) },
+                onClick = { onRequest(state.emailChangeTarget, password, passkeyToken) },
                 enabled = !state.isChangingEmail,
             ) { Text("Reenviar código".tr()) }
         }
-        TextButton(onClick = { onCancel(); editing = false; newEmail = ""; password = ""; code = "" }) {
+        TextButton(onClick = { onCancel(); editing = false; newEmail = ""; password = ""; code = ""; passkeyToken = null }) {
             Text("Cancelar".tr())
         }
     }

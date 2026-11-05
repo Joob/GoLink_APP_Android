@@ -11,25 +11,30 @@ import kotlinx.coroutines.flow.asStateFlow
 class AppLockManager @Inject constructor(
     private val securityPrefs: AppSecurityPreferences,
 ) {
+    /** Bloqueio ligado (PIN ou biometria): também esconde a app nos recentes. */
+    val enabled: Boolean get() = securityPrefs.pinEnabled || securityPrefs.biometricEnabled
+
     // Cold start: lock immediately if PIN or biometric is enabled.
-    private val _locked = MutableStateFlow(securityPrefs.pinEnabled || securityPrefs.biometricEnabled)
+    private val _locked = MutableStateFlow(enabled)
     val locked: StateFlow<Boolean> = _locked.asStateFlow()
 
-    private var backgroundedAt = 0L
+    // Ecrã externo aberto pela própria app (câmara, seletor de ficheiros…):
+    // voltar dele não pede o PIN. Expira para não ficar aberto indefinidamente.
+    private var expectReturnUntil = 0L
 
+    fun expectExternalReturn() {
+        if (enabled) expectReturnUntil = SystemClock.elapsedRealtime() + 10 * 60_000L
+    }
+
+    /** Sair da app (home, trocar de app, ecrã desligado): bloqueia logo. */
     fun onBackground() {
-        if (securityPrefs.biometricEnabled || securityPrefs.pinEnabled) {
-            backgroundedAt = SystemClock.elapsedRealtime()
-        }
+        if (!enabled) return
+        if (SystemClock.elapsedRealtime() < expectReturnUntil) return
+        _locked.value = true
     }
 
     fun onForeground() {
-        if (backgroundedAt == 0L) return
-        val elapsed = SystemClock.elapsedRealtime() - backgroundedAt
-        if ((securityPrefs.biometricEnabled || securityPrefs.pinEnabled) && elapsed >= 30_000L) {
-            _locked.value = true
-        }
-        backgroundedAt = 0L
+        expectReturnUntil = 0L
     }
 
     fun lock() { _locked.value = true }

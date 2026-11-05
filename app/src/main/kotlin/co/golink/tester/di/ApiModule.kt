@@ -34,6 +34,11 @@ object ApiModule {
 
     @Provides
     @Singleton
+    fun providePasskeyApi(retrofit: Retrofit): co.golink.tester.network.PasskeyApi =
+        retrofit.create(co.golink.tester.network.PasskeyApi::class.java)
+
+    @Provides
+    @Singleton
     fun provideUserApi(retrofit: Retrofit): UserApi = retrofit.create(UserApi::class.java)
 
     @Provides

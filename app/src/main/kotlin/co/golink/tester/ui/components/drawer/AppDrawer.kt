@@ -3,6 +3,10 @@ package co.golink.tester.ui.components.drawer
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.ui.draw.rotate
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -634,14 +638,7 @@ private fun DrawerRail(
                 .height(1.dp)
                 .background(MaterialTheme.colorScheme.outline),
         )
-        RailIcon(Icons.Outlined.HelpOutline, "Ajuda".tr(), onHelp)
-        RailIcon(
-            if (dark) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
-            if (dark) "Tema claro".tr() else "Tema escuro".tr(),
-        ) {
-            AppThemeMode.set(context, if (dark) AppThemeMode.Mode.LIGHT else AppThemeMode.Mode.DARK)
-        }
-        Spacer(Modifier.height(6.dp))
+        // Como na web: cartão "Eu" (abre o menu) e, por baixo, ajuda + tema lado a lado.
         UserMenu(
             user = user,
             appVersion = appVersion,
@@ -650,6 +647,16 @@ private fun DrawerRail(
             onSettings = onSettings,
             onLogout = onLogout,
         )
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RailFootIcon(Icons.Outlined.HelpOutline, "Ajuda".tr(), onHelp)
+            RailFootIcon(
+                if (dark) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
+                if (dark) "Tema claro".tr() else "Tema escuro".tr(),
+            ) {
+                AppThemeMode.set(context, if (dark) AppThemeMode.Mode.LIGHT else AppThemeMode.Mode.DARK)
+            }
+        }
     }
 }
 
@@ -727,29 +734,87 @@ private fun UserMenu(
 ) {
     val context = LocalContext.current
     var menuOpen by remember { mutableStateOf(false) }
+    val dark = LocalDarkTheme.current
+    val primary = MaterialTheme.colorScheme.primary
+    val cardShape = RoundedCornerShape(16.dp)
+    val cardBorder = when {
+        menuOpen -> primary
+        dark -> Color.White.copy(alpha = 0.08f)
+        else -> Color(0xFFE5E7EB)
+    }
+    val cardBg = if (dark) Color.White.copy(alpha = 0.04f) else Color.White
+    val dotRing = if (dark) Color(0xFF111111) else Color.White
+    val muted = if (dark) Color(0xFF6B7280) else Color(0xFF9CA3AF)
     Box {
-        Box(
-            contentAlignment = Alignment.Center,
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(3.dp),
             modifier = Modifier
-                .size(38.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
-                .clickable { menuOpen = true },
+                .width(60.dp)
+                .then(if (menuOpen) Modifier.border(3.dp, primary.copy(alpha = 0.15f), cardShape) else Modifier)
+                .clip(cardShape)
+                .background(cardBg)
+                .border(1.dp, cardBorder, cardShape)
+                .clickable { menuOpen = !menuOpen }
+                .padding(top = 8.dp, bottom = 6.dp),
         ) {
-            val avatar = user?.avatar
-            if (!avatar.isNullOrBlank()) {
-                AsyncImage(
-                    model = avatar,
-                    contentDescription = "Perfil".tr(),
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize().clip(CircleShape),
+            Box {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(primary.copy(alpha = 0.15f)),
+                ) {
+                    val avatar = user?.avatar
+                    if (!avatar.isNullOrBlank()) {
+                        AsyncImage(
+                            model = avatar,
+                            contentDescription = "Perfil".tr(),
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().clip(CircleShape),
+                        )
+                    } else {
+                        Text(
+                            user?.name?.firstOrNull()?.uppercase() ?: "U",
+                            fontWeight = FontWeight.SemiBold,
+                            color = primary,
+                        )
+                    }
+                }
+                // Ponto "online" (o próprio utilizador está sempre ligado).
+                Box(
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .offset(x = 2.dp, y = 1.dp)
+                        .size(12.dp)
+                        .clip(CircleShape)
+                        .background(dotRing)
+                        .padding(2.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF10B981)),
                 )
-            } else {
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    user?.name?.firstOrNull()?.uppercase() ?: "U",
+                    "Eu".tr(),
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary,
+                    lineHeight = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 44.dp),
                 )
+                Icon(
+                    Icons.Filled.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(12.dp).rotate(if (menuOpen) 180f else 0f),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                repeat(3) { Box(Modifier.size(3.dp).clip(CircleShape).background(muted)) }
             }
         }
         DropdownMenu(
@@ -819,6 +884,21 @@ private fun UserMenu(
                 onClick = { menuOpen = false; onLogout() },
             )
         }
+    }
+}
+
+/** Botão do rodapé da barra (ajuda/tema): 36dp, cantos 10dp, como na web. */
+@Composable
+private fun RailFootIcon(icon: ImageVector, description: String, onClick: () -> Unit) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(36.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = description },
+    ) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
     }
 }
 

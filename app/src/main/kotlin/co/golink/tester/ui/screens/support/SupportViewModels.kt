@@ -413,10 +413,10 @@ class SupportTicketViewModel @Inject constructor(
     }
 
     // ---- Pedido de eliminação de conta
-    fun confirmDeletion(requestId: String, password: String) {
+    fun confirmDeletion(requestId: String, password: String, passkeyToken: String? = null) {
         _state.update { it.copy(isBusy = true, deletionError = null) }
         viewModelScope.launch {
-            val response = runCatching { api.confirmDeletion(ticketId, requestId, ConfirmDeletionRequest(password)) }.getOrNull()
+            val response = runCatching { api.confirmDeletion(ticketId, requestId, ConfirmDeletionRequest(password, passkeyToken)) }.getOrNull()
             if (response?.isSuccessful == true) {
                 _state.update { it.copy(isBusy = false) }
                 sessionManager.refreshUser() // mostra o banner com contagem

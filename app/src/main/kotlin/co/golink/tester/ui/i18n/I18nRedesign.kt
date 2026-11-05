@@ -136,7 +136,7 @@ object I18nRedesign {
         r("Dissolver", "Dissolve", "Dissoudre", "Disolver"),
         r("Dissolver a equipa?", "Dissolve the team?", "Dissoudre l'équipe ?", "¿Disolver el equipo?"),
         r("Dissolver equipa", "Dissolve team", "Dissoudre l'équipe", "Disolver equipo"),
-        r("Durante 14 dias ou até terminares sessão.", "For 14 days or until you sign out.", "Pendant 14 jours ou jusqu'à la déconnexion.", "Durante 14 días o hasta que cierres sesión."),
+        r("Durante 7 dias ou até terminares sessão.", "For 7 days or until you sign out.", "Pendant 7 jours ou jusqu'à la déconnexion.", "Durante 7 días o hasta que cierres sesión."),
         r("Editaste", "You edited", "Vous avez modifié", "Editaste"),
         r("Restauraste uma versão de", "You restored a version of", "Vous avez restauré une version de", "Restauraste una versión de"),
         r("Eliminados ao fim de %d dias", "Deleted after %d days", "Supprimés après %d jours", "Eliminados a los %d días"),
@@ -523,6 +523,25 @@ object I18nRedesign {
         r("Novidades", "News", "Actualités", "Novedades"),
         r("Limpar lidas", "Clear read", "Effacer les lues", "Borrar leídas"),
         r("Ainda não há nada aqui.", "Nothing here yet.", "Rien pour l'instant.", "Aún no hay nada aquí."),
+        // Editar pasta de equipa (2026-11-05)
+        r("Editar pasta de equipa", "Edit team folder", "Modifier le dossier d'équipe", "Editar carpeta de equipo"),
+        r("Gerir membros", "Manage members", "Gérer les membres", "Gestionar miembros"),
+        r("Adicionar pessoas e mudar permissões", "Add people and change permissions", "Ajouter des personnes et modifier les autorisations", "Añadir personas y cambiar permisos"),
+        r("Os teus membros", "Your members", "Vos membres", "Tus miembros"),
+        r("Escreve o e-mail do membro…", "Type member email…", "Saisissez l'e-mail du membre…", "Escribe el e-mail del miembro…"),
+        r("Escreve um e-mail válido", "Type a valid email", "Saisissez un e-mail valide", "Escribe un e-mail válido"),
+        r("Não te podes convidar a ti próprio", "You can't invite yourself", "Vous ne pouvez pas vous inviter vous-même", "No puedes invitarte a ti mismo"),
+        r("Esta pessoa já está na lista", "This person is already on the list", "Cette personne est déjà dans la liste", "Esta persona ya está en la lista"),
+        r("Adiciona pelo menos um membro à pasta de equipa.", "Add at least one member to the team folder.", "Ajoutez au moins un membre au dossier d'équipe.", "Añade al menos un miembro a la carpeta de equipo."),
+        r("À espera que aceite o convite", "Waiting for them to accept the invitation", "En attente d'acceptation de l'invitation", "Esperando a que acepte la invitación"),
+        r("Pasta de equipa atualizada", "Team folder updated", "Dossier d'équipe mis à jour", "Carpeta de equipo actualizada"),
+        // Bloqueio da app (2026-11-05)
+        r("Desbloquear GoLink", "Unlock GoLink", "Déverrouiller GoLink", "Desbloquear GoLink"),
+        r("Desbloqueia os teus ficheiros encriptados", "Unlock your encrypted files", "Déverrouillez vos fichiers chiffrés", "Desbloquea tus archivos cifrados"),
+        r("Usar PIN", "Use PIN instead", "Utiliser le code PIN", "Usar PIN"),
+        r("Toca no sensor de impressão digital", "Touch the fingerprint sensor", "Touchez le capteur d'empreinte", "Toca el sensor de huellas"),
+        r("Biometria", "Biometrics", "Biométrie", "Biometría"),
+        r("Atingiste o limite de membros do teu plano", "You've reached your plan's member limit", "Vous avez atteint la limite de membres de votre forfait", "Has alcanzado el límite de miembros de tu plan"),
     )
 
     val en: Map<String, String> = rows.associate { it[0] to it[1] }
