@@ -302,7 +302,7 @@ fun NotesScreen(
                 user == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(strokeWidth = 2.dp) }
                 // Este ramo só existe desbloqueado: um lock tira a WebView da composição
                 // e o desbloqueio seguinte cria outra (nada do estado anterior sobrevive).
-                else -> NotesWebView(vm, onView = { webView = it }, onClose = onBack)
+                else -> NotesWebView(vm, onView = { webView = it }, onClose = onBack, onMenu = { scope.launch { drawerState.open() } })
             }
         }
     }
@@ -368,13 +368,23 @@ fun NotesScreen(
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose: () -> Unit) {
+private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose: () -> Unit, onMenu: () -> Unit) {
     val dark = LocalDarkTheme.current
     var webView by remember { mutableStateOf<WebView?>(null) }
     var loading by remember { mutableStateOf(true) }
     var failed by remember { mutableStateOf(false) }
     var rendererGone by remember { mutableStateOf(false) }
     val pageUri = remember { Uri.parse(vm.notesUrl) }
+    val pageReady by vm.pageReady.collectAsStateWithLifecycle()
+    // Página que nunca avisa (bundle antigo no servidor): ao fim de 15 s mostra o que houver.
+    var readyTimeout by remember { mutableStateOf(false) }
+    LaunchedEffect(loading, pageReady) {
+        readyTimeout = false
+        if (!loading && !pageReady) {
+            kotlinx.coroutines.delay(15_000)
+            readyTimeout = true
+        }
+    }
 
     // Segundo plano: grava já (a app pode ser morta a seguir).
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -406,6 +416,8 @@ private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose
                     settings.allowFileAccess = false
                     settings.allowContentAccess = false
                     settings.setSupportZoom(false)
+                    // Como no editor: sem zonas brancas ao entrar (transição/gaveta) nem ao deslizar.
+                    settings.offscreenPreRaster = true
                     setBackgroundColor(if (dark) 0xFF151515.toInt() else 0xFFFFFFFF.toInt())
 
                     addJavascriptInterface(NotesBridge(vm, dark) { webView }, "GoLinkNotesHost")
@@ -466,6 +478,7 @@ private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose
                         }
                     }
 
+                    vm.onPageLoading()
                     loadUrl(vm.notesUrl)
                     webView = this
                     onView(this)
@@ -492,12 +505,24 @@ private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose
                     Button(onClick = {
                         failed = false
                         loading = true
+                        vm.onPageLoading()
                         if (rendererGone) rendererGone = false else webView?.loadUrl(vm.notesUrl)
                     }) { Text(nt("retry")) }
                 }
             }
-        } else if (loading) {
-            CircularProgressIndicator(Modifier.align(Alignment.Center), strokeWidth = 2.dp)
+        } else if (loading || (!pageReady && !readyTimeout)) {
+            // Tapa a página até ela ter algo à vista; o menu nativo fica sempre à mão (como no Calendar/Legacy).
+            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                if (!isPermanentDrawer()) {
+                    IconButton(onClick = onMenu, modifier = Modifier.padding(4.dp)) {
+                        Icon(Icons.Filled.Menu, contentDescription = "Menu")
+                    }
+                }
+                Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(strokeWidth = 2.dp)
+                    Text(nt("title"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp))
+                }
+            }
         }
     }
 }

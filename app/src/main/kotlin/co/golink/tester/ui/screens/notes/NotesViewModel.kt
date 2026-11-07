@@ -123,6 +123,15 @@ class NotesViewModel @Inject constructor(
 
     private val results = ConcurrentHashMap<Int, String>()
 
+    /** A página já tem algo à vista (notas carregadas, ou o seu erro): a app tira o indicador. */
+    private val _pageReady = MutableStateFlow(false)
+    val pageReady: StateFlow<Boolean> = _pageReady.asStateFlow()
+
+    /** Nova carga da página (inicial, Tentar de novo): volta a mostrar o indicador. */
+    fun onPageLoading() {
+        _pageReady.value = false
+    }
+
     /** wrapped_key de notas vistas nas respostas de /api/notes/… (as únicas que open_sealed abre). */
     private val noteKeys: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -211,6 +220,22 @@ class NotesViewModel @Inject constructor(
             if (args.string("sealed") !in noteKeys) throw BridgeError(403, "unknown_key")
             val key = withContext(Dispatchers.Default) { keys.openFileDataKey(args.string("sealed")) }
             JsonPrimitive(Base64.getEncoder().encodeToString(key))
+        }
+        "open_sealed_many" -> {
+            if (!keys.isUnlocked) throw BridgeError(403, "e2e_locked")
+            val list = (args["sealed"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty().distinct()
+            withContext(Dispatchers.Default) {
+                buildJsonObject {
+                    list.forEach { sealed ->
+                        val key = if (sealed in noteKeys) runCatching { keys.openFileDataKey(sealed) }.getOrNull() else null
+                        put(sealed, key?.let { JsonPrimitive(Base64.getEncoder().encodeToString(it)) } ?: JsonNull)
+                    }
+                }
+            }
+        }
+        "ready" -> {
+            _pageReady.value = true
+            JsonNull
         }
         "open_name" -> JsonPrimitive(keys.openNameOrNull(args.string("sealed")) ?: throw BridgeError(422, "unreadable"))
         "seal_name" -> JsonPrimitive(keys.sealName(args.string("name")) ?: throw BridgeError(403, "e2e_locked"))
