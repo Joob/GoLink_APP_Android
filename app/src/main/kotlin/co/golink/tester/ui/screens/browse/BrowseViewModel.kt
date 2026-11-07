@@ -194,6 +194,7 @@ class BrowseViewModel @Inject constructor(
     private val sessionManager: SessionManager,
     private val downloader: FileDownloader,
     private val uploadManager: UploadManager,
+    private val moveManager: co.golink.tester.data.files.MoveManager,
     private val fileViewerSession: FileViewerSession,
     private val viewPreferences: co.golink.tester.data.settings.ViewPreferences,
     private val e2eKeys: co.golink.tester.data.encryption.E2EKeyManager,
@@ -271,6 +272,24 @@ class BrowseViewModel @Inject constructor(
             // Restaurado / apagado de vez a partir do preview do Lixo.
             trashRepository.changes.collect {
                 if (_state.value.mode == BrowseMode.Trash) reloadTrashItems()
+            }
+        }
+        viewModelScope.launch {
+            // Mover terminou (aqui ou noutro ecrã): recarrega; se a pasta aberta
+            // foi a movida, sobe um nível.
+            moveManager.completedTick.collect { t ->
+                if (t <= 0) return@collect
+                val crumbs = _state.value.crumbs
+                val openId = crumbs.lastOrNull()?.id
+                val movedOpen = openId != null && moveManager.jobs.value.any { j ->
+                    j.state == co.golink.tester.data.files.MoveJob.State.Done && j.items.any { it.id == openId }
+                }
+                when {
+                    !movedOpen -> loadCurrent()
+                    crumbs.size > 1 -> goToCrumb(crumbs.size - 2)
+                    else -> openRoot()
+                }
+                loadNavigationTree()
             }
         }
         viewModelScope.launch {
@@ -643,18 +662,18 @@ class BrowseViewModel @Inject constructor(
     fun moveSelected(toFolderId: String?) {
         val targets = selectedItems()
         exitSelectMode()
-        targets.forEach { move(it, toFolderId) }
+        startMove(targets, toFolderId, null)
     }
 
     fun showToast(message: String) = _state.update { it.copy(toast = message) }
 
     fun consumeToast() = _state.update { it.copy(toast = null) }
 
-    fun createFolder(name: String, color: String? = null) {
+    fun createFolder(name: String, color: String? = null, emoji: String? = null) {
         val parentId = currentParentId()
         viewModelScope.launch {
             // Em equipa/partilhado o nome fica em claro (os membros têm de o ler).
-            filesRepository.createFolder(name.trim(), parentId, encryptName = isPrivateNameContext() && isPrivateTarget(parentId), color = color)
+            filesRepository.createFolder(name.trim(), parentId, encryptName = isPrivateNameContext() && isPrivateTarget(parentId), color = color, emoji = emoji)
                 .onSuccess {
                     _state.update { it.copy(toast = "Pasta criada".tr()) }
                     // Como em createFolderIn: a árvore (Mover, isPrivateTarget) tem de a ver.
@@ -810,12 +829,21 @@ class BrowseViewModel @Inject constructor(
         }
     }
 
-    fun move(item: BrowseItem, toFolderId: String?) {
-        viewModelScope.launch {
-            filesRepository.move(listOf(item), toFolderId)
-                .onSuccess { _state.update { it.copy(toast = "Movido".tr()) }; teamsRepository.invalidateClearedNames(); reloadAfterRemoving(item) }
-                .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
-        }
+    fun move(item: BrowseItem, toFolderId: String?) = startMove(listOf(item), toFolderId, null)
+
+    val moveJobs = moveManager.jobs
+
+    fun retryMove(id: String) = moveManager.retry(id)
+
+    fun dismissMove(id: String) = moveManager.dismiss(id)
+
+    /** Um só pedido para o lote, com painel "A mover…" (sem toasts). */
+    private fun startMove(items: List<BrowseItem>, toFolderId: String?, folderName: String?) {
+        if (items.isEmpty()) return
+        val name = folderName
+            ?: co.golink.tester.data.files.MoveManager.folderName(_state.value.navigationTree, toFolderId)
+            ?: (if (toFolderId == null) "O meu Drive".tr() else "pasta".tr())
+        moveManager.move(items, toFolderId, name)
     }
 
     /** Apagou/moveu a pasta onde se está (menu do cabeçalho): sobe um nível. */
@@ -833,11 +861,7 @@ class BrowseViewModel @Inject constructor(
         val targets = items.filter { it.id != toFolderId }
         if (targets.isEmpty()) return
         if (state.value.selectMode) exitSelectMode()
-        viewModelScope.launch {
-            filesRepository.move(targets, toFolderId)
-                .onSuccess { _state.update { it.copy(toast = "Movido para %s".tr().format(folderName)) }; teamsRepository.invalidateClearedNames(); loadCurrent() }
-                .onFailure { t -> _state.update { it.copy(toast = failText(t)) } }
-        }
+        startMove(targets, toFolderId, folderName)
     }
 
     // Nomes (em claro) dos ficheiros já visíveis na pasta: com nomes cifrados é

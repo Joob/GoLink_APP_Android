@@ -121,6 +121,7 @@ fun MobileBackupsScreen(
     val backupEnabled by viewModel.backupEnabled.collectAsStateWithLifecycle()
     val shareState by viewModel.shareState.collectAsStateWithLifecycle()
     val unread by viewModel.unreadNotifications.collectAsStateWithLifecycle()
+    val moveJobs by viewModel.moveJobs.collectAsStateWithLifecycle()
 
     // Em modo de selecção o back cancela a selecção; dentro de uma subpasta
     // sobe um nível; na raiz sai do ecrã.
@@ -280,6 +281,13 @@ fun MobileBackupsScreen(
         snackbarHost = { SnackbarHost(snackbarHost) },
         bottomBar = {
             Column {
+                co.golink.tester.ui.components.MoveProgressBanner(
+                    jobs = moveJobs,
+                    onRetry = viewModel::retryMove,
+                    onDismiss = viewModel::dismissMove,
+                    // O destino pode ser fora do Backup Mobile: aqui só fecha.
+                    onOpenFolder = { job -> viewModel.dismissMove(job.id) },
+                )
                 if (state.selectMode) {
                     SelectionActionBar(
                         onDownload = { viewModel.downloadSelected() },

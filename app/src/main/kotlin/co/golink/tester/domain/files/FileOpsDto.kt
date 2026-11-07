@@ -10,6 +10,8 @@ data class CreateFolderRequest(
     val name_encrypted: String? = null,
     // Cor da pasta (hex, ex. "#3b82f6"); null = cor do tema.
     val color: String? = null,
+    // Emoji da pasta (no lugar do ícone); null = ícone normal.
+    val emoji: String? = null,
 )
 
 @Serializable

@@ -352,6 +352,7 @@ fun BrowseScreen(
     val foreignActivityIds = remember(feedState.entries) { viewModel.activityReadOnlyIds() }
     val notOwnedActivityIds = remember(feedState.entries) { viewModel.activityNotOwnedIds() }
     val uploads by viewModel.uploads.collectAsStateWithLifecycle()
+    val moveJobs by viewModel.moveJobs.collectAsStateWithLifecycle()
     val user by shell.user.collectAsStateWithLifecycle()
     val unread by shell.unreadNotifications.collectAsStateWithLifecycle()
     val storage by shell.storage.collectAsStateWithLifecycle()
@@ -1271,6 +1272,17 @@ fun BrowseScreen(
                     // Automáticos screen, not in this global banner, so the
                     // browser only sees user-initiated uploads here.
                     val browserUploads = uploads.filterNot { it.mobileBackup }
+                    Column {
+                    co.golink.tester.ui.components.MoveProgressBanner(
+                        jobs = moveJobs,
+                        onRetry = viewModel::retryMove,
+                        onDismiss = viewModel::dismissMove,
+                        onOpenFolder = { job ->
+                            viewModel.dismissMove(job.id)
+                            val id = job.toId
+                            if (id != null) viewModel.openFolderById(id, job.toName) else viewModel.openRoot()
+                        },
+                    )
                     UploadProgressBanner(
                         tasks = browserUploads,
                         onDismiss = viewModel::clearAllUploads,
@@ -1281,6 +1293,7 @@ fun BrowseScreen(
                         onSkip = viewModel::skipConflict,
                         onViewFiles = { viewModel.refresh(); viewModel.dismissCompletedUploads() },
                     )
+                    }
                 }
             }
             }
@@ -1571,7 +1584,7 @@ fun BrowseScreen(
         ActionDialog.CreateFolder -> co.golink.tester.ui.components.dialogs.CreateFolderDialog(
             location = state.crumbs.lastOrNull()?.name ?: "O meu Drive".tr(),
             onDismiss = { activeDialog = ActionDialog.None },
-            onCreate = { name, color -> viewModel.createFolder(name, color) },
+            onCreate = { name, color, emoji -> viewModel.createFolder(name, color, emoji) },
         )
         ActionDialog.CreateTextFile -> co.golink.tester.ui.components.dialogs.CreateTextFileDialog(
             location = state.crumbs.lastOrNull()?.name ?: "O meu Drive".tr(),
@@ -1591,6 +1604,7 @@ fun BrowseScreen(
         ActionDialog.Rename -> actionTarget?.let { target ->
             co.golink.tester.ui.components.dialogs.EditItemDialog(
                 item = target,
+                location = state.crumbs.lastOrNull()?.name ?: "O meu Drive".tr(),
                 onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
                 onSave = { name, appearance -> viewModel.rename(target, name, appearance) },
             )
@@ -1614,32 +1628,11 @@ fun BrowseScreen(
                 )
             }
         }
-        ActionDialog.CameraMode -> {
-            androidx.compose.material3.AlertDialog(
-                onDismissRequest = { activeDialog = ActionDialog.None },
-                icon = { Icon(Icons.Outlined.PhotoCamera, contentDescription = null) },
-                title = { Text("Câmara".tr()) },
-                text = {
-                    Column {
-                        listOf(false to "Tirar foto".tr(), true to "Gravar vídeo".tr()).forEach { (video, label) ->
-                            androidx.compose.material3.ListItem(
-                                headlineContent = { Text(label) },
-                                leadingContent = {
-                                    Icon(if (video) Icons.Outlined.Videocam else Icons.Outlined.PhotoCamera, contentDescription = null)
-                                },
-                                colors = androidx.compose.material3.ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
-                                modifier = Modifier.clickable {
-                                    activeDialog = ActionDialog.None
-                                    launchCamera(video)
-                                },
-                            )
-                        }
-                    }
-                },
-                confirmButton = {},
-                dismissButton = { TextButton(onClick = { activeDialog = ActionDialog.None }) { Text("Cancelar".tr()) } },
-            )
-        }
+        ActionDialog.CameraMode -> co.golink.tester.ui.components.dialogs.CameraModeSheet(
+            location = state.crumbs.lastOrNull()?.name ?: "O meu Drive".tr(),
+            onDismiss = { activeDialog = ActionDialog.None },
+            onPick = { video -> launchCamera(video) },
+        )
         ActionDialog.CameraDestination -> {
             val uri = cameraUri
             if (uri != null) {
@@ -1673,8 +1666,22 @@ fun BrowseScreen(
             val excludeId = actionTarget?.id
             val count = if (multi) viewModel.selectedItems().size else 1
             if (count > 0) {
+                // Dentro de uma pasta de equipa: só destinos dessa equipa e sem raiz
+                // (o servidor recusa o resto). Mover a própria raiz = dissolver (à parte).
+                val movingItems = if (multi) viewModel.selectedItems() else listOfNotNull(actionTarget)
+                val teamScope = remember(state.mode, state.navigationTree, movingItems) {
+                    val currentId = when (val m = state.mode) {
+                        is BrowseMode.TeamFolder -> m.id
+                        is BrowseMode.SharedWithMe -> m.id
+                        else -> null
+                    }
+                    if (currentId == null || movingItems.any { (it as? BrowseItem.Folder)?.isTeamRoot == true }) null
+                    else teamScopeSection(state.navigationTree, currentId)
+                }
                 MoveDestinationDialog(
-                    sections = state.navigationTree,
+                    sections = teamScope?.let { listOf(it) } ?: state.navigationTree,
+                    allowRoot = teamScope == null,
+                    subtitle = if (teamScope != null) "Só dentro desta pasta de equipa".tr() else "Escolhe a pasta de destino".tr(),
                     excludeId = excludeId,
                     onDismiss = { activeDialog = ActionDialog.None; actionTarget = null },
                     onConfirm = { destinationId ->
@@ -2804,3 +2811,27 @@ private data class PendingTeamMove(
     val destinationId: String?,
     val roots: List<BrowseItem.Folder>,
 )
+
+
+/**
+ * Secção só com a raiz da equipa que contém [folderId] (as raízes de equipa são
+ * as pastas de topo das secções). null se não estiver em nenhuma.
+ */
+private fun teamScopeSection(
+    tree: List<co.golink.tester.domain.browse.NavigationSection>,
+    folderId: String,
+): co.golink.tester.domain.browse.NavigationSection? {
+    fun contains(f: co.golink.tester.domain.browse.NavFolder): Boolean = f.id == folderId || f.folders.any { contains(it) }
+    tree.forEach { section ->
+        section.folders.firstOrNull { it.team_folder == true && contains(it) }?.let { root ->
+            return co.golink.tester.domain.browse.NavigationSection(
+                location = "team",
+                name = root.name,
+                folders = listOf(root),
+                isMovable = true,
+                isOpen = true,
+            )
+        }
+    }
+    return null
+}

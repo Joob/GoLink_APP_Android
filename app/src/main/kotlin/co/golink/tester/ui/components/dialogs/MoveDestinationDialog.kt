@@ -67,6 +67,8 @@ fun MoveDestinationDialog(
     initialId: String? = null,
     // Nome da pasta inicial, p/ a mostrar fixada se não estiver na árvore.
     initialLabel: String? = null,
+    // false: sem "raiz" (itens de uma equipa só se movem dentro dela).
+    allowRoot: Boolean = true,
 ) {
     var selectedId by remember { mutableStateOf(initialId) }
     val initialPath = remember(sections, initialId) {
@@ -160,7 +162,7 @@ fun MoveDestinationDialog(
                 Spacer(Modifier.height(8.dp))
 
                 Column(modifier = Modifier.heightIn(min = 200.dp, max = 380.dp)) {
-                    RootRow(selected = selectedId == null) { selectedId = null }
+                    if (allowRoot) RootRow(selected = selectedId == null) { selectedId = null }
                     LazyColumn(state = listState) {
                         if (pinned) item(key = "pinned-initial") {
                             RowBase(
@@ -217,6 +219,7 @@ fun MoveDestinationDialog(
                     Spacer(Modifier.width(8.dp))
                     Button(
                         onClick = { onConfirm(selectedId); onDismiss() },
+                        enabled = allowRoot || selectedId != null,
                         shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),

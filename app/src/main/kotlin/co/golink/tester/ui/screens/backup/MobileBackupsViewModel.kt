@@ -14,8 +14,10 @@ import co.golink.tester.domain.teams.TeamInvitation
 import co.golink.tester.data.upload.UploadManager
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.flow.sample
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.delay
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.ShareInfo
 import co.golink.tester.domain.browse.NavigationSection
@@ -90,6 +92,7 @@ class MobileBackupsViewModel @Inject constructor(
     private val backupPreferences: AutoBackupPreferences,
     private val fileViewerSession: FileViewerSession,
     private val uploadManager: UploadManager,
+    private val moveManager: co.golink.tester.data.files.MoveManager,
     private val viewPreferences: co.golink.tester.data.settings.ViewPreferences,
     private val teamsRepository: TeamsRepository,
     private val uploadRequestRepository: UploadRequestRepository,
@@ -133,19 +136,21 @@ class MobileBackupsViewModel @Inject constructor(
         // telemóvel — senão apareciam as pastas de todos misturadas.
         loadSummary()
         observeUploadsForCounts()
+        viewModelScope.launch { moveManager.completedTick.collect { if (it > 0) refresh() } }
     }
 
-    // Contagens (e lista) quase instantâneas: assim que cada upload de backup
-    // termina, o completedTick dispara e recarregamos. Amostrado a 2 s para não
-    // martelar a rede durante um backup grande.
-    @OptIn(FlowPreview::class)
+    // Lista e contagens ao vivo: cada upload concluído (backup automático ou
+    // manual) recarrega logo. O primeiro tick é imediato; durante um backup
+    // grande os seguintes juntam-se (conflate) e há no máximo um a cada 3 s.
     private fun observeUploadsForCounts() {
         viewModelScope.launch {
-            // Só uploads de backup, e a cada 10 s: durante um backup grande isto
-            // eram ~7 pedidos (contagens, resumo e lista com nomes E2E) a cada 2 s.
-            uploadManager.completedBackupTick.sample(10_000).collect { t ->
-                if (t > 0) refresh()
-            }
+            merge(uploadManager.completedBackupTick, uploadManager.completedTick)
+                .filter { it > 0 }
+                .conflate()
+                .collect {
+                    refresh()
+                    delay(3_000)
+                }
         }
     }
 
@@ -263,36 +268,53 @@ class MobileBackupsViewModel @Inject constructor(
         val targets = selectedItems()
         if (targets.isEmpty()) return
         exitSelectMode()
-        _state.update { it.copy(processing = "A mover…".tr()) }
-        viewModelScope.launch {
-            filesRepository.move(targets, destinationId)
-                .onSuccess {
-                    _state.update { it.copy(processing = null, toast = "Movido") }
-                    load()
-                }
-                .onFailure { t -> _state.update { it.copy(processing = null, toast = "Falha: ${t.message ?: "erro"}") } }
-        }
+        startMove(targets, destinationId)
+    }
+
+    val moveJobs = moveManager.jobs
+
+    fun retryMove(id: String) = moveManager.retry(id)
+
+    fun dismissMove(id: String) = moveManager.dismiss(id)
+
+    /** Painel "A mover…" (um pedido por lote); a lista recarrega no completedTick. */
+    private fun startMove(items: List<BrowseItem>, destinationId: String?) {
+        val name = co.golink.tester.data.files.MoveManager.folderName(_state.value.navigationTree, destinationId)
+            ?: (if (destinationId == null) "O meu Drive".tr() else "pasta".tr())
+        moveManager.move(items, destinationId, name)
     }
 
     fun deleteSelected() {
         val targets = selectedItems()
         if (targets.isEmpty()) return
         exitSelectMode()
-        _state.update { it.copy(processing = "A eliminar…".tr()) }
+        deleteOptimistic(targets)
+    }
+
+    // Ids a sair: escondidos logo da lista (e de recargas a meio) até o servidor responder.
+    private val pendingDeletes = mutableSetOf<String>()
+
+    /** Apagar sai logo do ecrã; se falhar, volta com o recarregamento. */
+    private fun deleteOptimistic(targets: List<BrowseItem>) {
+        val ids = targets.map { it.id }.toSet()
+        pendingDeletes += ids
+        _state.update { it.copy(items = it.items.filterNot { i -> i.id in ids }) }
         viewModelScope.launch {
-            filesRepository.delete(targets, permanent = false)
-                .onSuccess {
-                    _state.update { it.copy(processing = null, toast = "Movido para o lixo".tr()) }
-                    load()
-                }
-                .onFailure { t -> _state.update { it.copy(processing = null, toast = "Falha: ${t.message ?: "erro"}") } }
+            val result = filesRepository.delete(targets, permanent = false)
+            pendingDeletes -= ids
+            result
+                .onSuccess { _state.update { it.copy(toast = "Movido para o lixo".tr()) } }
+                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message ?: "erro"}") } }
+            refresh()
         }
     }
 
     fun refresh() {
         // Called on every ON_RESUME. If a list load is already running, don't
         // start another — just let it finish (avoids the resume->reload loop).
-        if (loadJob?.isActive != true) load()
+        // A correr: marca para recarregar no fim (senão perdia-se o upload/apagar
+        // que aconteceu a meio do pedido).
+        if (loadJob?.isActive == true) reloadPending = true else load()
         loadCounts()
         loadSummary()
     }
@@ -354,17 +376,7 @@ class MobileBackupsViewModel @Inject constructor(
         }
     }
 
-    fun delete(item: BrowseItem) {
-        _state.update { it.copy(processing = "A eliminar…".tr()) }
-        viewModelScope.launch {
-            filesRepository.delete(listOf(item), permanent = false)
-                .onSuccess {
-                    _state.update { it.copy(processing = null, toast = "Movido para o lixo".tr()) }
-                    load()
-                }
-                .onFailure { t -> _state.update { it.copy(processing = null, toast = "Falha: ${t.message ?: "erro"}") } }
-        }
-    }
+    fun delete(item: BrowseItem) = deleteOptimistic(listOf(item))
 
     fun convertToTeamFolder(folderId: String, invitations: List<TeamInvitation>, onDone: (String?) -> Unit = {}) {
         viewModelScope.launch {
@@ -401,17 +413,7 @@ class MobileBackupsViewModel @Inject constructor(
         }
     }
 
-    fun move(item: BrowseItem, destinationId: String?) {
-        _state.update { it.copy(processing = "A mover…".tr()) }
-        viewModelScope.launch {
-            filesRepository.move(listOf(item), destinationId)
-                .onSuccess {
-                    _state.update { it.copy(processing = null, toast = "Movido") }
-                    load()
-                }
-                .onFailure { t -> _state.update { it.copy(processing = null, toast = "Falha: ${t.message ?: "erro"}") } }
-        }
-    }
+    fun move(item: BrowseItem, destinationId: String?) = startMove(listOf(item), destinationId)
 
     // ---- Partilha (espelha o fluxo do BrowseViewModel) ----
 
@@ -520,7 +522,10 @@ class MobileBackupsViewModel @Inject constructor(
         }
     }
 
+    private var reloadPending = false
+
     private fun load() {
+        reloadPending = false
         if (!deviceResolved) {
             _state.update { it.copy(isRefreshing = false) }
             return
@@ -546,7 +551,8 @@ class MobileBackupsViewModel @Inject constructor(
                     // fora do main thread para não bloquear a UI em listas grandes;
                     // a ordenação final é feita na composição consoante o sortMode.
                     val deduped = withContext(Dispatchers.Default) { items.distinctBy { it.id } }
-                    _state.update { it.copy(items = deduped, isLoading = false, isRefreshing = false) }
+                    _state.update { it.copy(items = deduped.filterNot { i -> i.id in pendingDeletes }, isLoading = false, isRefreshing = false) }
+                    if (reloadPending) load()
                 }
                 .onFailure { t ->
                     // Cancelamento (troca de aba, navegar para o viewer e voltar,

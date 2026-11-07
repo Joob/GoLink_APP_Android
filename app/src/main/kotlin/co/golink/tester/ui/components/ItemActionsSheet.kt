@@ -1,12 +1,7 @@
 package co.golink.tester.ui.components
 
-import androidx.compose.material.icons.outlined.GroupRemove
-import androidx.compose.material.icons.outlined.GroupAdd
-import androidx.compose.material.icons.automirrored.outlined.Logout
-import androidx.compose.material.icons.outlined.Upload
-import androidx.compose.material.icons.outlined.ContentCopy
-import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,27 +11,37 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.GroupAdd
+import androidx.compose.material.icons.outlined.GroupRemove
 import androidx.compose.material.icons.outlined.Groups
-import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Link
-import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.PersonAddAlt
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.RestoreFromTrash
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -50,7 +55,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import co.golink.tester.domain.browse.BrowseItem
+import co.golink.tester.ui.i18n.tr
+
+private val Amber = Color(0xFFF59E0B)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -103,12 +112,18 @@ fun ItemActionsSheet(
         },
     ) {
         Column(modifier = Modifier.padding(bottom = 24.dp)) {
-            SheetHeader(item)
-
             val folder = item as? BrowseItem.Folder
             val danger = MaterialTheme.colorScheme.error
             // Partilhas sem link público (equipa/utilizador) ou expiradas/esgotadas não têm o que copiar.
             val copyLink = onCopyLink?.takeIf { item.share?.let { s -> s.active && !s.link.isNullOrBlank() } == true }
+
+            SheetHeader(
+                item = item,
+                isFavourite = isFavourite,
+                onToggleFavourite = if (!inTrash && folder != null && canFavourite) ({ onToggleFavourite(); onDismiss() }) else null,
+                onEditIcon = if (!inTrash && canEdit) ({ onRename(); onDismiss() }) else null,
+                onClose = onDismiss,
+            )
 
             if (inTrash) {
                 // Lixo: restaurar, detalhes e eliminar de vez.
@@ -118,53 +133,47 @@ fun ItemActionsSheet(
                         Tile(Icons.Outlined.Info, "Detalhes".tr()) { onDetails(); onDismiss() },
                     ),
                 )
-                Spacer(Modifier.height(10.dp))
-                ActionGroup {
-                    ActionRow(Icons.Outlined.DeleteOutline, "Eliminar para sempre".tr(), tint = danger, showDivider = false) { onPermanentDelete(); onDismiss() }
-                }
+                DangerFooter(Icons.Outlined.DeleteOutline, "Eliminar para sempre".tr(), danger) { onPermanentDelete(); onDismiss() }
             } else {
                 // Ações rápidas em quadrados (Partilhar em destaque), como no mockup.
                 val tiles = buildList {
-                    onShare?.let { share -> add(Tile(Icons.Outlined.Link, (if (isShared) "Partilha" else "Partilhar").tr(), primary = true) { share(); onDismiss() }) }
+                    onShare?.let { share -> add(Tile(Icons.Outlined.Share, (if (isShared) "Partilha" else "Partilhar").tr(), primary = true) { share(); onDismiss() }) }
                     // Sem partilhar (não é o dono): Transferir fica em destaque.
                     add(Tile(Icons.Outlined.Download, "Transferir".tr(), primary = onShare == null) { onDownload(); onDismiss() })
-                    when {
-                        folder != null && canFavourite -> add(
-                            Tile(if (isFavourite) Icons.Outlined.Star else Icons.Outlined.StarBorder, "Favorito".tr(), active = isFavourite) {
-                                onToggleFavourite(); onDismiss()
-                            },
-                        )
-                        // Pastas têm "Copiar link" na lista abaixo.
-                        folder == null && copyLink != null -> add(Tile(Icons.Outlined.ContentCopy, "Copiar link".tr()) { copyLink(); onDismiss() })
-                    }
+                    copyLink?.let { copy -> add(Tile(Icons.Outlined.ContentCopy, "Copiar link".tr()) { copy(); onDismiss() }) }
                     add(Tile(Icons.Outlined.Info, "Detalhes".tr()) { onDetails(); onDismiss() })
                 }
                 QuickTiles(tiles)
 
-                // Lista: editar, mover, colaborar, equipa.
-                val rows = buildList<@Composable (Boolean) -> Unit> {
-                    if (canEdit) {
-                        add { d -> ActionRow(Icons.Outlined.Edit, (if (folder != null) "Editar nome e ícone" else "Editar nome").tr(), showDivider = d) { onRename(); onDismiss() } }
-                        if (canMove) add { d -> ActionRow(Icons.AutoMirrored.Outlined.DriveFileMove, "Mover".tr(), "Ou copiar para outra pasta".tr(), showDivider = d) { onMove(); onDismiss() } }
+                // Organizar: nome/ícone e mover.
+                if (canEdit) {
+                    SectionLabel("Organizar".tr())
+                    if (folder != null) {
+                        ActionRow(Icons.Outlined.Edit, "Nome e ícone".tr(), "Nome, cor ou emoji".tr()) { onRename(); onDismiss() }
+                    } else {
+                        ActionRow(Icons.Outlined.Edit, "Editar nome".tr()) { onRename(); onDismiss() }
                     }
-                    if (folder != null && copyLink != null) {
-                        add { d -> ActionRow(Icons.Outlined.ContentCopy, "Copiar link".tr(), showDivider = d) { copyLink(); onDismiss() } }
-                    }
+                    if (canMove) ActionRow(Icons.AutoMirrored.Outlined.DriveFileMove, "Mover ou copiar".tr(), "Para outra pasta".tr()) { onMove(); onDismiss() }
+                }
+
+                // Trabalhar com outros: pedidos de ficheiros e equipa.
+                val collab = buildList<@Composable () -> Unit> {
                     if (folder != null && showFolderCollaboration && canEdit) {
-                        add { d -> ActionRow(Icons.Outlined.Upload, "Pedir ficheiros".tr(), "Outros carregam para esta pasta".tr(), showDivider = d) { onFileRequest(); onDismiss() } }
+                        add { ActionRow(Icons.Outlined.Download, "Pedir ficheiros".tr(), "Outros carregam, mas não veem a pasta".tr()) { onFileRequest(); onDismiss() } }
                         if (!folder.isTeamFolder) {
-                            add { d -> ActionRow(Icons.Outlined.Groups, "Transformar em pasta de equipa".tr(), "Trabalhar com outras pessoas".tr(), showDivider = d) { onConvertToTeamFolder(); onDismiss() } }
+                            add { ActionRow(Icons.Outlined.PersonAddAlt, "Transformar em pasta de equipa".tr(), "Os membros recebem as suas próprias chaves de acesso".tr()) { onConvertToTeamFolder(); onDismiss() } }
                         }
                     }
-                    onEditTeam?.let { editTeam -> add { d -> ActionRow(Icons.Outlined.GroupAdd, "Gerir membros".tr(), "Adicionar pessoas e mudar permissões".tr(), showDivider = d) { editTeam(); onDismiss() } } }
-                    onLeaveTeam?.let { leave -> add { d -> ActionRow(Icons.AutoMirrored.Outlined.Logout, "Sair da pasta de equipa".tr(), tint = danger, showDivider = d) { leave(); onDismiss() } } }
-                    onDissolveTeam?.let { dissolve -> add { d -> ActionRow(Icons.Outlined.GroupRemove, "Dissolver equipa".tr(), tint = danger, showDivider = d) { dissolve(); onDismiss() } } }
-                    if (canEdit) add { d -> ActionRow(Icons.Outlined.DeleteOutline, "Mover para o lixo".tr(), tint = danger, showDivider = d) { onDelete(); onDismiss() } }
+                    onEditTeam?.let { editTeam -> add { ActionRow(Icons.Outlined.GroupAdd, "Gerir membros".tr(), "Adicionar pessoas e mudar permissões".tr()) { editTeam(); onDismiss() } } }
+                    onLeaveTeam?.let { leave -> add { ActionRow(Icons.AutoMirrored.Outlined.Logout, "Sair da pasta de equipa".tr(), tint = danger) { leave(); onDismiss() } } }
+                    onDissolveTeam?.let { dissolve -> add { ActionRow(Icons.Outlined.GroupRemove, "Dissolver equipa".tr(), tint = danger) { dissolve(); onDismiss() } } }
                 }
-                if (rows.isNotEmpty()) {
-                    Spacer(Modifier.height(10.dp))
-                    ActionGroup { rows.forEachIndexed { i, row -> row(i < rows.lastIndex) } }
+                if (collab.isNotEmpty()) {
+                    SectionLabel("Trabalhar com outros".tr())
+                    collab.forEach { it() }
                 }
+
+                if (canEdit) DangerFooter(Icons.Outlined.DeleteOutline, "Mover para o lixo".tr(), danger) { onDelete(); onDismiss() }
             }
         }
     }
@@ -174,7 +183,6 @@ private class Tile(
     val icon: ImageVector,
     val label: String,
     val primary: Boolean = false,
-    val active: Boolean = false,
     val onClick: () -> Unit,
 )
 
@@ -186,31 +194,26 @@ private fun QuickTiles(tiles: List<Tile>) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
     ) {
         tiles.forEach { tile ->
-            val primary = MaterialTheme.colorScheme.primary
-            val bg = if (tile.primary) primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-            val fg = when {
-                tile.primary -> MaterialTheme.colorScheme.onPrimary
-                tile.active -> Color(0xFFF59E0B)
-                else -> MaterialTheme.colorScheme.onSurface
-            }
+            val bg = if (tile.primary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+            val fg = if (tile.primary) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
                 modifier = Modifier
                     .weight(1f)
-                    .height(76.dp)
+                    .height(84.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(bg)
                     .clickable(onClick = tile.onClick)
                     .padding(horizontal = 4.dp),
             ) {
-                Icon(tile.icon, contentDescription = null, tint = fg, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.height(8.dp))
+                Icon(tile.icon, contentDescription = null, tint = fg, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.height(10.dp))
                 Text(
                     tile.label,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (tile.primary) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                    color = fg,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -220,77 +223,132 @@ private fun QuickTiles(tiles: List<Tile>) {
 }
 
 @Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text.uppercase(),
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 0.8.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 4.dp),
+    )
+}
+
+@Composable
 private fun ActionRow(
     icon: ImageVector,
     label: String,
     subtitle: String? = null,
     tint: Color = Color.Unspecified,
-    showDivider: Boolean = false,
     onClick: () -> Unit,
 ) {
-    val color = if (tint == Color.Unspecified) MaterialTheme.colorScheme.onSurface else tint
-    Column {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
+    val isDanger = tint != Color.Unspecified
+    val color = if (isDanger) tint else MaterialTheme.colorScheme.onSurface
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
             modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .clickable(onClick = onClick)
-                .padding(horizontal = 8.dp, vertical = if (subtitle != null) 10.dp else 14.dp),
+                .size(36.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(if (isDanger) tint.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
         ) {
-            Icon(icon, contentDescription = null, tint = if (tint == Color.Unspecified) MaterialTheme.colorScheme.onSurfaceVariant else tint, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(18.dp))
-            Column {
-                Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = color)
-                if (subtitle != null) {
-                    Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+            Icon(icon, contentDescription = null, tint = if (isDanger) tint else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(19.dp))
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (subtitle != null) {
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        if (showDivider) {
-            HorizontalDivider(
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
-                modifier = Modifier.padding(horizontal = 8.dp),
+        if (!isDanger) {
+            Icon(
+                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.size(20.dp),
             )
         }
     }
 }
 
+// Ação destrutiva separada no fim (lixo / eliminar de vez).
 @Composable
-private fun SheetHeader(item: BrowseItem) {
+private fun DangerFooter(icon: ImageVector, label: String, tint: Color, onClick: () -> Unit) {
+    HorizontalDivider(
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 6.dp),
+    )
+    ActionRow(icon, label, tint = tint, onClick = onClick)
+}
+
+@Composable
+private fun SheetHeader(
+    item: BrowseItem,
+    isFavourite: Boolean,
+    onToggleFavourite: (() -> Unit)?,
+    onEditIcon: (() -> Unit)?,
+    onClose: () -> Unit,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .padding(start = 20.dp, end = 12.dp, top = 16.dp, bottom = 16.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(52.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(((item as? BrowseItem.Folder)?.color?.let { parseHexColor(it) } ?: MaterialTheme.colorScheme.primary).copy(alpha = 0.12f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            when (item) {
-                is BrowseItem.Folder -> {
-                    if (!item.emoji.isNullOrBlank()) {
-                        Text(item.emoji, style = MaterialTheme.typography.titleLarge)
-                    } else {
-                        Icon(
-                            Icons.Filled.Folder,
-                            contentDescription = null,
-                            tint = parseHexColor(item.color) ?: MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(30.dp),
-                        )
+        Box {
+            Box(
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(((item as? BrowseItem.Folder)?.color?.let { parseHexColor(it) } ?: MaterialTheme.colorScheme.primary).copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                when (item) {
+                    is BrowseItem.Folder -> {
+                        if (!item.emoji.isNullOrBlank()) {
+                            Text(item.emoji, style = MaterialTheme.typography.titleLarge)
+                        } else {
+                            Icon(
+                                Icons.Filled.Folder,
+                                contentDescription = null,
+                                tint = parseHexColor(item.color) ?: MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(30.dp),
+                            )
+                        }
+                    }
+                    is BrowseItem.File -> {
+                        // Mesmo preview da linha (cifrados decifram em memória).
+                        if (item.type == "image" && (item.encrypted || !item.thumbnailUrl.isNullOrBlank())) {
+                            FilePreview(item, iconSize = 36.dp, modifier = Modifier.fillMaxSize())
+                        } else {
+                            FileTypeIcon(item, Modifier.height(36.dp))
+                        }
                     }
                 }
-                is BrowseItem.File -> {
-                    // Mesmo preview da linha (cifrados decifram em memória).
-                    if (item.type == "image" && (item.encrypted || !item.thumbnailUrl.isNullOrBlank())) {
-                        FilePreview(item, iconSize = 36.dp, modifier = Modifier.fillMaxSize())
-                    } else {
-                        FileTypeIcon(item, Modifier.height(36.dp))
-                    }
+            }
+            // Lápis no canto: atalho para nome/ícone.
+            if (onEditIcon != null) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .offset(x = 4.dp, y = 4.dp)
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                        .clickable(onClick = onEditIcon),
+                ) {
+                    Icon(Icons.Outlined.Edit, contentDescription = "Editar nome".tr(), tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(11.dp))
                 }
             }
         }
@@ -299,7 +357,7 @@ private fun SheetHeader(item: BrowseItem) {
             Text(
                 item.name,
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -323,22 +381,31 @@ private fun SheetHeader(item: BrowseItem) {
                     item.share != null -> Icons.Outlined.Public
                     else -> Icons.Outlined.Lock
                 }
-                Icon(stateIcon, contentDescription = null, tint = if (isPrivate) Color(0xFFF59E0B) else muted, modifier = Modifier.size(13.dp))
+                Icon(stateIcon, contentDescription = null, tint = if (isPrivate) Amber else muted, modifier = Modifier.size(13.dp))
                 Spacer(Modifier.width(3.dp))
                 Text(state, style = MaterialTheme.typography.bodySmall, color = muted, maxLines = 1)
             }
         }
-    }
-}
-
-@Composable
-private fun ActionGroup(content: @Composable () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp),
-    ) {
-        content()
+        if (onToggleFavourite != null) {
+            IconButton(onClick = onToggleFavourite) {
+                Icon(
+                    if (isFavourite) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                    contentDescription = "Favorito".tr(),
+                    tint = if (isFavourite) Amber else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .padding(start = 2.dp)
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                .clickable(onClick = onClose),
+        ) {
+            Icon(Icons.Outlined.Close, contentDescription = "Fechar".tr(), tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(18.dp))
+        }
     }
 }
 

@@ -32,7 +32,7 @@ class FilesRepository @Inject constructor(
 ) {
     // E2E Fase 2: cifra o nome no espaço privado (encryptName) quando há chave.
     // A resposta traz o placeholder → repomos o nome em claro que definimos.
-    suspend fun createFolder(name: String, parentId: String?, encryptName: Boolean = true, color: String? = null): Result<BrowseItem.Folder> = runCatching {
+    suspend fun createFolder(name: String, parentId: String?, encryptName: Boolean = true, color: String? = null, emoji: String? = null): Result<BrowseItem.Folder> = runCatching {
         val enc = if (encryptName && keys.canSealNames) keys.sealName(name) else null
         val response = api.createFolder(
             CreateFolderRequest(
@@ -40,6 +40,7 @@ class FilesRepository @Inject constructor(
                 parent_id = parentId,
                 name_encrypted = enc,
                 color = color,
+                emoji = emoji,
             )
         )
         check(response.isSuccessful) { "HTTP ${response.code()}" }
@@ -159,7 +160,12 @@ class FilesRepository @Inject constructor(
             items = items.map { ItemRef(it.id, if (it is BrowseItem.Folder) "folder" else "file") },
         )
         val response = api.move(payload)
-        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        if (!response.isSuccessful) {
+            // A mensagem do servidor (ex.: "within that team folder") decide o aviso.
+            val raw = runCatching { response.errorBody()?.string().orEmpty() }.getOrDefault("")
+            val msg = Regex("\"message\"\\s*:\\s*\"([^\"]*)\"").find(raw)?.groupValues?.get(1)
+            error(msg ?: "HTTP ${response.code()}")
+        }
     }
 
     suspend fun remoteUpload(urls: List<String>, parentId: String?): Result<Unit> = runCatching {
