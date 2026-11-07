@@ -33,6 +33,18 @@ class ViewPreferences @Inject constructor(
     fun setSortMode(scope: String, mode: SortMode) =
         prefs.edit { putString("${scope}_sort", mode.name) }
 
+    /** Folha "Ordenar e vista": pastas antes dos ficheiros (por defeito sim). */
+    fun foldersFirst(scope: String): Boolean = prefs.getBoolean("${scope}_folders_first", true)
+
+    fun setFoldersFirst(scope: String, value: Boolean) =
+        prefs.edit { putBoolean("${scope}_folders_first", value) }
+
+    /** Secções por mês quando ordenado por data (por defeito sim). */
+    fun groupByMonth(scope: String): Boolean = prefs.getBoolean("${scope}_group_by_month", true)
+
+    fun setGroupByMonth(scope: String, value: Boolean) =
+        prefs.edit { putBoolean("${scope}_group_by_month", value) }
+
     /** Nível de zoom por pinça (0 = lista grande … 4 = grelha de 5), por secção. */
     fun zoomLevel(scope: String, default: Int): Int =
         prefs.getInt("${scope}_zoom", default).coerceIn(ZOOM_MIN, ZOOM_MAX)

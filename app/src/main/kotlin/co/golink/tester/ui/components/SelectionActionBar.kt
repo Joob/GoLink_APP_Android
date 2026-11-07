@@ -20,6 +20,8 @@ import androidx.compose.material.icons.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -36,6 +38,11 @@ import androidx.compose.ui.unit.dp
  * Mover (restaurar) — a eliminação permanente é feita pelo Flush; nos restantes
  * ecrãs mostra Descarregar / Mover / Eliminar.
  */
+// Barra escura flutuante (mockup 2026-11), igual à da web.
+private val DockBg = androidx.compose.ui.graphics.Color(0xFF111827)
+private val DockFg = androidx.compose.ui.graphics.Color.White
+private val DockDanger = androidx.compose.ui.graphics.Color(0xFFF87171)
+
 @Composable
 fun SelectionActionBar(
     onDownload: () -> Unit,
@@ -50,31 +57,31 @@ fun SelectionActionBar(
     // Partilhar (só com 1 item) e Restaurar (Lixo).
     onShare: (() -> Unit)? = null,
     onRestore: (() -> Unit)? = null,
+    // Favorito: só quando a seleção tem pastas próprias.
+    onFavourite: (() -> Unit)? = null,
+    // O resumo pode viver na barra de topo da seleção (BrowseScreen).
+    showSummary: Boolean = true,
 ) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .navigationBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Surface(
-            color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(
-                1.dp,
-                MaterialTheme.colorScheme.outline.copy(alpha = 0.25f),
-            ),
-            shadowElevation = 1.dp,
+            color = DockBg,
+            shape = RoundedCornerShape(18.dp),
+            shadowElevation = 10.dp,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                // Quantos itens estão selecionados.
-                if (selectedCount > 0) {
+            Column(modifier = Modifier.fillMaxWidth().padding(top = if (showSummary && selectedCount > 0) 8.dp else 0.dp)) {
+                if (showSummary && selectedCount > 0) {
                     Text(
                         summary ?: if (selectedCount == 1) "1 ${"selecionado".tr()}"
                         else "$selectedCount ${"selecionados".tr()}",
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = DockFg.copy(alpha = 0.8f),
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 2.dp),
@@ -83,7 +90,7 @@ fun SelectionActionBar(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                        .padding(horizontal = 6.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceAround,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -92,14 +99,15 @@ fun SelectionActionBar(
                         // e eliminar de vez.
                         onRestore?.let { SelectionAction(Icons.Outlined.Restore, "Restaurar".tr(), it) }
                         SelectionAction(Icons.Outlined.DriveFileMove, "Mover".tr(), onMove)
-                        SelectionAction(Icons.Outlined.DeleteForever, "Eliminar".tr(), onDelete)
+                        SelectionAction(Icons.Outlined.DeleteForever, "Eliminar".tr(), onDelete, danger = true)
                     } else if (readOnly) {
                         SelectionAction(Icons.Outlined.Download, "Descarregar".tr(), onDownload)
                     } else {
+                        if (onShare != null) SelectionAction(Icons.Outlined.Link, "Partilhar".tr(), onShare, enabled = selectedCount == 1)
                         SelectionAction(Icons.Outlined.Download, "Descarregar".tr(), onDownload)
-                        if (onShare != null && selectedCount == 1) SelectionAction(Icons.Outlined.Link, "Partilhar".tr(), onShare)
                         SelectionAction(Icons.Outlined.DriveFileMove, "Mover".tr(), onMove)
-                        SelectionAction(Icons.Outlined.DeleteOutline, "Eliminar".tr(), onDelete)
+                        if (onFavourite != null) SelectionAction(Icons.Outlined.StarOutline, "Favorito".tr(), onFavourite)
+                        SelectionAction(Icons.Outlined.DeleteOutline, "Eliminar".tr(), onDelete, danger = true)
                     }
                 }
             }
@@ -112,16 +120,25 @@ fun SelectionAction(
     icon: ImageVector,
     label: String,
     onClick: () -> Unit,
+    danger: Boolean = false,
+    enabled: Boolean = true,
 ) {
+    val tint = (if (danger) DockDanger else DockFg).copy(alpha = if (enabled) 1f else 0.35f)
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .clickable { onClick() }
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(enabled = enabled) { onClick() }
+            .padding(horizontal = 8.dp, vertical = 6.dp),
     ) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp))
-        Spacer(Modifier.height(2.dp))
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface)
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.height(4.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            color = tint,
+            maxLines = 1,
+        )
     }
 }

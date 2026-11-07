@@ -72,7 +72,15 @@ fun viewModeFor(zoomLevel: Int): ViewMode = if (zoomLevel >= VP.ZOOM_GRID) ViewM
 
 /** Colunas da grelha por nível (2 → 2, 3 → 3, 4 → 5). */
 fun gridColumnsFor(zoomLevel: Int): Int = when (zoomLevel) { 3 -> 3; 4 -> 5; else -> 2 }
-enum class SortMode { ALPHA_ASC, ALPHA_DESC, DATE_DESC, DATE_ASC }
+enum class SortMode {
+    ALPHA_ASC, ALPHA_DESC, DATE_DESC, DATE_ASC, SIZE_DESC, SIZE_ASC, TYPE_ASC, TYPE_DESC;
+
+    val isDate get() = this == DATE_DESC || this == DATE_ASC
+    val isAlpha get() = this == ALPHA_ASC || this == ALPHA_DESC
+    val isSize get() = this == SIZE_DESC || this == SIZE_ASC
+    val isType get() = this == TYPE_ASC || this == TYPE_DESC
+    val isAscending get() = this == ALPHA_ASC || this == DATE_ASC || this == SIZE_ASC || this == TYPE_ASC
+}
 
 data class BrowseUiState(
     val mode: BrowseMode = BrowseMode.Folder(id = null, name = "Ficheiros".tr()),
@@ -93,6 +101,9 @@ data class BrowseUiState(
     /** Zoom por pinça: 0 lista grande, 1 lista, 2–4 grelha de 2/3/5 (por secção). */
     val zoomLevel: Int = 1,
     val sortMode: SortMode = SortMode.ALPHA_ASC,
+    /** Folha "Ordenar e vista": pastas primeiro / secções por mês (só com data). */
+    val foldersFirst: Boolean = true,
+    val groupByMonth: Boolean = true,
     val selectedIds: Set<String> = emptySet(),
     val selectMode: Boolean = false,
     val filesOnly: Boolean = false,
@@ -244,6 +255,8 @@ class BrowseViewModel @Inject constructor(
             it.copy(
                 viewMode = viewPreferences.viewMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BROWSE, ViewMode.LIST),
                 sortMode = viewPreferences.sortMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BROWSE, SortMode.ALPHA_ASC),
+                foldersFirst = viewPreferences.foldersFirst(VP.SCOPE_BROWSE),
+                groupByMonth = viewPreferences.groupByMonth(VP.SCOPE_BROWSE),
             )
         }
         // Zoom guardado por secção: ao trocar de secção (Files, Lixo…) repõe o seu nível.
@@ -1721,6 +1734,10 @@ class BrowseViewModel @Inject constructor(
             SortMode.ALPHA_DESC -> "name" to "DESC"
             SortMode.DATE_DESC -> "created_at" to "DESC"
             SortMode.DATE_ASC -> "created_at" to "ASC"
+            SortMode.SIZE_DESC -> "filesize" to "DESC"
+            SortMode.SIZE_ASC -> "filesize" to "ASC"
+            SortMode.TYPE_ASC -> "type" to "ASC"
+            SortMode.TYPE_DESC -> "type" to "DESC"
         }
         return co.golink.tester.domain.browse.BrowseQuery(type = s.typeFilter, sort = sort, direction = direction)
     }
@@ -1961,17 +1978,47 @@ class BrowseViewModel @Inject constructor(
         sortedWith(items, _state.value.sortMode)
 
     private fun sortedWith(items: List<BrowseItem>, mode: SortMode): List<BrowseItem> {
-        val foldersFirst = compareBy<BrowseItem> { it !is BrowseItem.Folder }
+        val byName = compareBy<BrowseItem, String>(String.CASE_INSENSITIVE_ORDER) { it.name }
         // CASE_INSENSITIVE_ORDER compara sem criar uma cópia em minúsculas por
         // elemento a cada comparação (o sort é refeito a cada página).
         val secondary: Comparator<BrowseItem> = when (mode) {
-            SortMode.ALPHA_ASC -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }
-            SortMode.ALPHA_DESC -> compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.name }
+            SortMode.ALPHA_ASC -> byName
+            SortMode.ALPHA_DESC -> byName.reversed()
             // ISO (ordenável); o createdAt é texto localizado ("16 out 2026").
             SortMode.DATE_DESC -> compareByDescending { it.createdAtIso ?: it.updatedAtIso ?: "" }
             SortMode.DATE_ASC -> compareBy { it.createdAtIso ?: it.updatedAtIso ?: "" }
+            SortMode.SIZE_DESC -> compareByDescending<BrowseItem> { sizeOf(it) }.then(byName)
+            SortMode.SIZE_ASC -> compareBy<BrowseItem> { sizeOf(it) }.then(byName)
+            // Mesma ordem do servidor (coluna type alfabética), desempate por nome.
+            SortMode.TYPE_ASC -> compareBy<BrowseItem> { typeOf(it) }.then(byName)
+            SortMode.TYPE_DESC -> compareByDescending<BrowseItem> { typeOf(it) }.then(byName)
         }
-        return items.sortedWith(foldersFirst.then(secondary))
+        if (!_state.value.foldersFirst) return items.sortedWith(secondary)
+        // Pastas: o servidor só as ordena por nome/data; com tipo ficam por nome.
+        val folderOrder = if (mode.isType) byName else secondary
+        val folders = items.filterIsInstance<BrowseItem.Folder>().sortedWith(folderOrder)
+        return folders + items.filter { it !is BrowseItem.Folder }.sortedWith(secondary)
+    }
+
+    private fun sizeOf(item: BrowseItem): Long = when (item) {
+        is BrowseItem.Folder -> item.filesizeBytes
+        is BrowseItem.File -> item.filesizeBytes
+    }
+
+    private fun typeOf(item: BrowseItem): String = when (item) {
+        is BrowseItem.Folder -> "folder"
+        is BrowseItem.File -> item.type
+    }
+
+    fun setFoldersFirst(value: Boolean) {
+        viewPreferences.setFoldersFirst(VP.SCOPE_BROWSE, value)
+        _state.update { it.copy(foldersFirst = value) }
+        _state.update { it.copy(items = if (it.mode == BrowseMode.Favourites) it.items else sorted(it.items)) }
+    }
+
+    fun setGroupByMonth(value: Boolean) {
+        viewPreferences.setGroupByMonth(VP.SCOPE_BROWSE, value)
+        _state.update { it.copy(groupByMonth = value) }
     }
 
     companion object {

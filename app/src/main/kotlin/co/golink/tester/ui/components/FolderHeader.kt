@@ -17,13 +17,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Link
@@ -167,25 +168,22 @@ fun FolderHeader(
                             )
                         }
                     }
-                    if (canFolderMenu) {
-                        Spacer(Modifier.width(4.dp))
-                        Surface(
-                            shape = RoundedCornerShape(9.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                            color = MaterialTheme.colorScheme.surface,
-                            modifier = Modifier.clickable(onClick = onFolderMenu),
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(start = 10.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
-                            ) {
-                                Text("Pasta".tr(), fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
-                                Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
-                            }
-                        }
+                }
+                BadgeLine(badge, statsLine(stats))
+            }
+            // Menu da pasta: botão redondo ⋮ (mockup 2026-11).
+            if (canFolderMenu) {
+                Spacer(Modifier.width(8.dp))
+                Surface(
+                    shape = CircleShape,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onFolderMenu),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "Pasta".tr(), modifier = Modifier.size(20.dp))
                     }
                 }
-                badge?.let { BadgeLine(it) }
             }
         }
 
@@ -211,18 +209,42 @@ private fun HeaderTile(folder: BrowseItem.Folder?, section: HeaderSection) {
     }
 }
 
-// "🔒 Privada" / "Partilhada" debaixo do título (sem contagens nem tamanho).
-@Composable
-private fun BadgeLine(badge: FolderBadge) {
-    val color = when (badge.tone) {
-        FolderBadge.Tone.Green -> MaterialTheme.colorScheme.primary
-        FolderBadge.Tone.Blue -> Color(0xFF2563EB)
-        FolderBadge.Tone.Gray -> MaterialTheme.colorScheme.onSurfaceVariant
+// "10 itens · 39.35 GB" (contagens de meta.stats).
+private fun statsLine(stats: BrowseStats?): String? {
+    val s = stats ?: return null
+    val total = s.folders + s.files
+    val parts = buildList {
+        if (total > 0) add(if (total == 1) "1 item".tr() else "%d itens".tr().format(total))
+        if (s.bytes > 0) add(co.golink.tester.ui.common.formatBytes(s.bytes))
     }
+    return parts.joinToString(" · ").ifEmpty { null }
+}
+
+// "🔒 Privada · 10 itens · 39.35 GB" debaixo do título.
+@Composable
+private fun BadgeLine(badge: FolderBadge?, stats: String?) {
+    if (badge == null && stats == null) return
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 3.dp)) {
-        Icon(badge.icon, contentDescription = null, tint = color, modifier = Modifier.size(12.dp))
-        Spacer(Modifier.width(3.dp))
-        Text(badge.label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
+        if (badge != null) {
+            val color = when (badge.tone) {
+                FolderBadge.Tone.Green -> MaterialTheme.colorScheme.primary
+                FolderBadge.Tone.Blue -> Color(0xFF2563EB)
+                FolderBadge.Tone.Gray -> muted
+            }
+            Icon(badge.icon, contentDescription = null, tint = color, modifier = Modifier.size(12.dp))
+            Spacer(Modifier.width(3.dp))
+            Text(badge.label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
+        }
+        if (stats != null) {
+            Text(
+                (if (badge != null) " · " else "") + stats,
+                fontSize = 12.sp,
+                color = muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

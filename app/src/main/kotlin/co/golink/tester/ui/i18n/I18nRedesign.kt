@@ -8,6 +8,21 @@ object I18nRedesign {
     private fun r(pt: String, en: String, fr: String, es: String) = arrayOf(pt, en, fr, es)
 
     private val rows: List<Array<String>> = listOf(
+        // Folha "Ordenar e vista" + seleção em cartões (mockup 2026-11)
+        r("Pesquisar em %s", "Search in %s", "Rechercher dans %s", "Buscar en %s"),
+        r("1 selecionado", "1 selected", "1 sélectionné", "1 seleccionado"),
+        r("%d selecionados", "%d selected", "%d sélectionnés", "%d seleccionados"),
+        r("Vista", "View", "Affichage", "Vista"),
+        r("Ordenar por", "Sort by", "Trier par", "Ordenar por"),
+        r("Mais antigos", "Oldest first", "Plus anciens", "Más antiguos"),
+        r("Mais recentes", "Newest first", "Plus récents", "Más recientes"),
+        r("Menores primeiro", "Smallest first", "Plus petits d'abord", "Más pequeños primero"),
+        r("Maiores primeiro", "Largest first", "Plus grands d'abord", "Más grandes primero"),
+        r("Pastas, imagens…", "Folders, images…", "Dossiers, images…", "Carpetas, imágenes…"),
+        r("Pastas primeiro", "Folders first", "Dossiers en premier", "Carpetas primero"),
+        r("Agrupar por mês", "Group by month", "Grouper par mois", "Agrupar por mes"),
+        r("Só ao ordenar por data", "Only when sorting by date", "Uniquement en triant par date", "Solo al ordenar por fecha"),
+        r("cifrado ponta a ponta", "end-to-end encrypted", "chiffré de bout en bout", "cifrado de extremo a extremo"),
         // Barra de ícones da gaveta (2026-10-29)
         r("Ajuda", "Help", "Aide", "Ayuda"),
         r("Recolher menu", "Collapse menu", "Réduire le menu", "Contraer menú"),

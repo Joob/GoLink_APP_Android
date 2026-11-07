@@ -28,6 +28,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.animation.slideInVertically
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
@@ -65,6 +69,8 @@ data class SpeedDialAction(
     val section: String? = null,
     /** Ícone com fundo tingido (true) ou neutro (false). */
     val accent: Boolean = true,
+    /** Botão direto na pilha do "+" (os restantes vão para "Mais opções"). */
+    val quick: Boolean = false,
     val onClick: () -> Unit,
 )
 
@@ -91,7 +97,11 @@ fun BoxScope.SpeedDialFab(
             single.onClick()
         }
     }
-    BackHandler(enabled = open) { onOpenChange(false) }
+    val quick = actions.filter { it.quick }
+    val rest = actions.filterNot { it.quick }
+    var showMore by remember { mutableStateOf(false) }
+    if (!open && showMore) showMore = false
+    BackHandler(enabled = open) { if (showMore && quick.isNotEmpty()) showMore = false else onOpenChange(false) }
 
     // Fundo escurecido: tocar fora fecha.
     AnimatedVisibility(
@@ -119,8 +129,22 @@ fun BoxScope.SpeedDialFab(
             .navigationBarsPadding()
             .padding(start = 16.dp, end = 16.dp, bottom = bottomOffset + 16.dp),
     ) {
+        if (quick.isNotEmpty()) {
+            val items = buildList {
+                if (rest.isNotEmpty()) add(
+                    SpeedDialAction(Icons.Filled.MoreHoriz, "Mais opções".tr(), Color.Unspecified, accent = false) { showMore = true },
+                )
+                addAll(quick.reversed())
+            }
+            QuickStack(items, visible = open && !showMore) { action ->
+                if (action.quick) {
+                    onOpenChange(false)
+                    action.onClick()
+                } else action.onClick()
+            }
+        }
         AnimatedVisibility(
-            visible = open,
+            visible = open && (quick.isEmpty() || showMore),
             enter = scaleIn(
                 animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
                 initialScale = 0.2f,
@@ -129,7 +153,7 @@ fun BoxScope.SpeedDialFab(
             exit = scaleOut(tween(140), targetScale = 0.2f, transformOrigin = TransformOrigin(1f, 1f)) +
                 fadeOut(tween(120)),
         ) {
-            MenuCard(actions) { action ->
+            MenuCard(if (quick.isEmpty()) actions else rest) { action ->
                 onOpenChange(false)
                 action.onClick()
             }
@@ -153,6 +177,74 @@ fun BoxScope.SpeedDialFab(
                 contentDescription = if (open) "Fechar menu".tr() else "Adicionar".tr(),
                 modifier = Modifier.size(28.dp).rotate(rotation),
             )
+        }
+    }
+}
+
+/** Pilha de botões rápidos (rótulo em pílula + botão quadrado), de cima para baixo. */
+@Composable
+private fun QuickStack(items: List<SpeedDialAction>, visible: Boolean, onClick: (SpeedDialAction) -> Unit) {
+    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        items.forEachIndexed { index, action ->
+            // Escalonado a partir do "+": o mais próximo entra primeiro.
+            val delay = (items.size - 1 - index) * 25
+            AnimatedVisibility(
+                visible = visible,
+                enter = slideInVertically(tween(200, delay)) { it / 2 } +
+                    fadeIn(tween(160, delay)) +
+                    scaleIn(tween(200, delay), initialScale = 0.6f, transformOrigin = TransformOrigin(1f, 0.5f)),
+                exit = fadeOut(tween(100)) + scaleOut(tween(120), targetScale = 0.6f, transformOrigin = TransformOrigin(1f, 0.5f)),
+            ) {
+                QuickRow(action) { onClick(action) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickRow(action: SpeedDialAction, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.93f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "quick-scale",
+    )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .scale(scale)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+    ) {
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 2.dp,
+        ) {
+            Text(
+                action.label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        // Alinha os botões de 44dp ao centro do "+" de 56dp.
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = if (action.accent) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant,
+            shadowElevation = 3.dp,
+            modifier = Modifier.padding(end = 6.dp).size(44.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    action.icon,
+                    contentDescription = null,
+                    tint = if (action.accent) action.tint else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
         }
     }
 }

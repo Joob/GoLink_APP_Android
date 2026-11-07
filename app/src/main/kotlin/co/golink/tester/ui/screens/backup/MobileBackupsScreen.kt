@@ -67,6 +67,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
@@ -189,9 +190,16 @@ fun MobileBackupsScreen(
                 title = {
                     Text(
                         if (state.selectMode) {
-                            if (state.selectedIds.size == 1) "1 ${"selecionado".tr()}"
-                            else "${state.selectedIds.size} ${"selecionados".tr()}"
+                            // "3 selecionados · 40.40 GB" (mockup 2026-11, igual ao browser).
+                            val selected = state.items.filter { it.id in state.selectedIds }
+                            val n = selected.size
+                            val label = if (n == 1) "1 selecionado".tr() else "%d selecionados".tr().format(n)
+                            val bytes = selected.sumOf { if (it is BrowseItem.File) it.filesizeBytes else (it as BrowseItem.Folder).filesizeBytes }
+                            if (bytes > 0) "$label · ${co.golink.tester.ui.common.formatBytes(bytes)}" else label
                         } else state.folderStack.lastOrNull()?.name ?: "Backups Automáticos".tr(),
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        fontWeight = if (state.selectMode) androidx.compose.ui.text.font.FontWeight.Bold else null,
                     )
                 },
                 navigationIcon = {
@@ -207,8 +215,24 @@ fun MobileBackupsScreen(
                 },
                 actions = {
                     if (state.selectMode) {
-                        IconButton(onClick = { viewModel.selectAll() }) {
-                            Icon(Icons.Outlined.SelectAll, contentDescription = "Selecionar tudo".tr())
+                        val allSelected = state.items.isNotEmpty() && state.selectedIds.size >= state.items.size
+                        val green = MaterialTheme.colorScheme.primary
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .padding(end = 12.dp)
+                                .height(36.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(green.copy(alpha = 0.14f))
+                                .clickable { if (allSelected) viewModel.clearSelection() else viewModel.selectAll() }
+                                .padding(horizontal = 14.dp),
+                        ) {
+                            Text(
+                                if (allSelected) "Desmarcar todos".tr() else "Selecionar tudo".tr(),
+                                color = green,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                fontSize = 13.sp,
+                            )
                         }
                     } else {
                         IconButton(onClick = onOpenNotifications) {
@@ -228,13 +252,19 @@ fun MobileBackupsScreen(
                                     contentDescription = "Vista e ordenação".tr(),
                                 )
                             }
-                            MobileViewSortMenu(
-                                expanded = viewSortOpen,
-                                onDismiss = { viewSortOpen = false },
+                            if (viewSortOpen) co.golink.tester.ui.components.ViewSortSheet(
                                 viewMode = state.viewMode,
                                 sortMode = state.sortMode,
-                                onSetViewMode = { viewModel.setViewMode(it); viewSortOpen = false },
-                                onSetSortMode = { viewModel.setSortMode(it); viewSortOpen = false },
+                                foldersFirst = state.foldersFirst,
+                                groupByMonth = state.groupByMonth,
+                                onDismiss = { viewSortOpen = false },
+                                onApply = { view, sort, ff, gbm ->
+                                    viewSortOpen = false
+                                    if (view != state.viewMode) viewModel.setViewMode(view)
+                                    if (ff != state.foldersFirst) viewModel.setFoldersFirst(ff)
+                                    if (gbm != state.groupByMonth) viewModel.setGroupByMonth(gbm)
+                                    if (sort != state.sortMode) viewModel.setSortMode(sort)
+                                },
                             )
                         }
                         IconButton(onClick = { viewModel.enterSelectMode() }) {
@@ -250,7 +280,7 @@ fun MobileBackupsScreen(
         snackbarHost = { SnackbarHost(snackbarHost) },
         bottomBar = {
             Column {
-                if (state.selectMode && state.selectedIds.isNotEmpty()) {
+                if (state.selectMode) {
                     SelectionActionBar(
                         onDownload = { viewModel.downloadSelected() },
                         onMove = {
@@ -263,6 +293,7 @@ fun MobileBackupsScreen(
                             activeDialog = BackupItemDialog.Delete
                         },
                         selectedCount = state.selectedIds.size,
+                        showSummary = false,
                     )
                 }
                 // When the backup feature is off we keep the file list visible —
@@ -342,14 +373,14 @@ fun MobileBackupsScreen(
                     // Mesmo formato dos Ficheiros: "Pastas" (cartões compactos /
                     // mosaicos / chips com nome) + secções por dia/mês/ano, recolhíveis.
                     val zoom = state.zoomLevel
-                    val byDate = state.sortMode == SortMode.DATE_DESC || state.sortMode == SortMode.DATE_ASC
+                    val byDate = state.sortMode.isDate && state.groupByMonth
                     val granularity = when (zoom) {
                         0 -> co.golink.tester.ui.screens.browse.DateGroup.DAY
                         4 -> co.golink.tester.ui.screens.browse.DateGroup.YEAR
                         else -> co.golink.tester.ui.screens.browse.DateGroup.MONTH
                     }
-                    val sections = remember(state.items, state.sortMode, granularity) {
-                        co.golink.tester.ui.screens.browse.browseSections(sortBackupItems(state.items, state.sortMode), byDate, granularity)
+                    val sections = remember(state.items, state.sortMode, granularity, byDate, state.foldersFirst) {
+                        co.golink.tester.ui.screens.browse.browseSections(sortBackupItems(state.items, state.sortMode), byDate, granularity, state.foldersFirst)
                     }
                     // Barra de tamanho: escala pelo maior item da lista (pastas incluídas, como na web).
                     val listMaxBytes = remember(state.items) {
@@ -415,6 +446,7 @@ fun MobileBackupsScreen(
                                         co.golink.tester.ui.screens.browse.MonthHeader(
                                             section.title, section.count, Modifier.padding(top = 8.dp, bottom = 2.dp),
                                             collapsed = isCollapsed, onToggle = { toggle(section.key) },
+                                            size = section.size,
                                         )
                                     }
                                 }
@@ -747,7 +779,19 @@ internal fun sortBackupItems(items: List<BrowseItem>, sort: SortMode): List<Brow
     SortMode.ALPHA_DESC -> items.sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.name })
     SortMode.DATE_DESC -> items.sortedByDescending { sortStamp(it) }
     SortMode.DATE_ASC -> items.sortedBy { sortStamp(it) }
+    // Tamanho/tipo (folha "Ordenar e vista"), desempate pelo nome.
+    SortMode.SIZE_DESC -> items.sortedWith(compareByDescending<BrowseItem> { sizeStamp(it) }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+    SortMode.SIZE_ASC -> items.sortedWith(compareBy<BrowseItem> { sizeStamp(it) }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+    SortMode.TYPE_ASC -> items.sortedWith(compareBy<BrowseItem> { typeStamp(it) }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+    SortMode.TYPE_DESC -> items.sortedWith(compareByDescending<BrowseItem> { typeStamp(it) }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name })
 }
+
+private fun sizeStamp(item: BrowseItem): Long = when (item) {
+    is BrowseItem.Folder -> item.filesizeBytes
+    is BrowseItem.File -> item.filesizeBytes
+}
+
+private fun typeStamp(item: BrowseItem): String = (item as? BrowseItem.File)?.type ?: "folder"
 
 // Chave de ordenação por data: usa o ISO-8601 (UTC), ordenável por texto. Os
 // campos createdAt/updatedAt são strings localizadas ("25. Jul. 2026, 03:00") e
@@ -755,73 +799,6 @@ internal fun sortBackupItems(items: List<BrowseItem>, sort: SortMode): List<Brow
 // para não rebentar — esses caem no fim de forma estável.
 private fun sortStamp(item: BrowseItem): String =
     item.createdAtIso ?: item.updatedAtIso ?: ""
-
-// Menu de Vista/Ordenação (igual ao browser, mas com cabeçalhos traduzidos).
-@Composable
-private fun MobileViewSortMenu(
-    expanded: Boolean,
-    onDismiss: () -> Unit,
-    viewMode: ViewMode,
-    sortMode: SortMode,
-    onSetViewMode: (ViewMode) -> Unit,
-    onSetSortMode: (SortMode) -> Unit,
-) {
-    DropdownMenu(
-        expanded = expanded,
-        onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(20.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 0.dp,
-        shadowElevation = 16.dp,
-        modifier = Modifier.widthIn(min = 250.dp).padding(vertical = 4.dp),
-    ) {
-        MenuSectionHeader("Visualizar".tr().uppercase())
-        val targetView = if (viewMode == ViewMode.GRID) ViewMode.LIST else ViewMode.GRID
-        DropdownMenuItem(
-            text = { Text(if (targetView == ViewMode.GRID) "Vista em grelha".tr() else "Vista em lista".tr(), style = MaterialTheme.typography.bodyMedium) },
-            leadingIcon = {
-                MenuIconBox(active = false) {
-                    Icon(
-                        if (targetView == ViewMode.GRID) Icons.Outlined.GridView else Icons.Outlined.ViewList,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-            },
-            onClick = { onSetViewMode(targetView) },
-        )
-        HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-        MenuSectionHeader("Ordenação".tr().uppercase())
-        val dateActive = sortMode == SortMode.DATE_DESC || sortMode == SortMode.DATE_ASC
-        val alphaActive = sortMode == SortMode.ALPHA_ASC || sortMode == SortMode.ALPHA_DESC
-        DropdownMenuItem(
-            text = { Text("Ordenar por data".tr(), style = MaterialTheme.typography.bodyMedium, color = if (dateActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
-            leadingIcon = {
-                MenuIconBox(active = dateActive) {
-                    Icon(Icons.Outlined.CalendarMonth, contentDescription = null, tint = if (dateActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
-                }
-            },
-            trailingIcon = if (dateActive) {
-                { Icon(if (sortMode == SortMode.DATE_ASC) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
-            } else null,
-            onClick = { onSetSortMode(if (sortMode == SortMode.DATE_DESC) SortMode.DATE_ASC else SortMode.DATE_DESC) },
-        )
-        DropdownMenuItem(
-            text = { Text("Ordenar alfabeticamente".tr(), style = MaterialTheme.typography.bodyMedium, color = if (alphaActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
-            leadingIcon = {
-                MenuIconBox(active = alphaActive) {
-                    Icon(Icons.Outlined.SortByAlpha, contentDescription = null, tint = if (alphaActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
-                }
-            },
-            trailingIcon = if (alphaActive) {
-                { Icon(if (sortMode == SortMode.ALPHA_ASC) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
-            } else null,
-            onClick = { onSetSortMode(if (sortMode == SortMode.ALPHA_ASC) SortMode.ALPHA_DESC else SortMode.ALPHA_ASC) },
-        )
-        Spacer(Modifier.height(4.dp))
-    }
-}
 
 @Composable
 private fun MenuSectionHeader(text: String) {

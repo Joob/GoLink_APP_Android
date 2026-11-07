@@ -92,6 +92,9 @@ import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.PeopleAlt
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.UploadFile
@@ -740,6 +743,18 @@ fun BrowseScreen(
         Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             topBar = {
+                if (state.selectMode && !e2eLocked) {
+                    // Modo de seleção (mockup 2026-11): ✕ · "N selecionados · tamanho" · Selecionar tudo.
+                    val visible = if (state.filesOnly) state.items.filterIsInstance<BrowseItem.File>() else state.items
+                    val selected = state.items.filter { it.id in state.selectedIds }
+                    SelectionTopBar(
+                        title = selectionTitle(selected),
+                        allSelected = visible.isNotEmpty() && selected.size >= visible.size,
+                        onClose = viewModel::exitSelectMode,
+                        onSelectAll = viewModel::selectAll,
+                        onDeselectAll = viewModel::clearSelection,
+                    )
+                } else
                 TopAppBar(
                     title = {
                         // E2E trancado: sem breadcrumb (esconde o nome da pasta).
@@ -794,7 +809,7 @@ fun BrowseScreen(
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 Column {
-                    if (state.selectMode && state.selectedIds.isNotEmpty()) {
+                    if (state.selectMode) {
                         SelectionActionBar(
                             onDownload = downloadSelected,
                             onMove = moveSelected,
@@ -808,6 +823,17 @@ fun BrowseScreen(
                                 viewModel.selectedItems().firstOrNull()?.let { itemAccess(it, state, viewModel.currentUserId(), notOwnedActivityIds, foreignActivityIds).mine } == true
                             ) openShareForSelected else null,
                             onRestore = { viewModel.restoreSelected() },
+                            onFavourite = if (state.items.any { it.id in state.selectedIds && canFavourite(it, state.mode) }) {
+                                {
+                                    val favIds = favourites.map { it.id }.toSet()
+                                    state.items
+                                        .filter { it.id in state.selectedIds && canFavourite(it, state.mode) && it.id !in favIds }
+                                        .filterIsInstance<BrowseItem.Folder>()
+                                        .forEach(viewModel::toggleFavourite)
+                                    viewModel.exitSelectMode()
+                                }
+                            } else null,
+                            showSummary = false,
                         )
                     }
                 }
@@ -870,12 +896,21 @@ fun BrowseScreen(
                         },
                     )
                 }
-                SearchRow(
+                if (!state.selectMode) SearchRow(
                     onOpenSearch = viewModel::openSearchSheet,
                     viewMode = state.viewMode,
                     sortMode = state.sortMode,
+                    foldersFirst = state.foldersFirst,
+                    groupByMonth = state.groupByMonth,
+                    placeholder = if (hasFolderHeader(state)) {
+                        "Pesquisar em %s".tr().format(
+                            if (isInsideFolder(state.mode)) state.root?.name ?: state.crumbs.lastOrNull()?.name.orEmpty() else sectionTitle(state.mode),
+                        )
+                    } else "Pesquisar ficheiros e pastas".tr(),
                     onSetViewMode = viewModel::setViewMode,
                     onSetSortMode = viewModel::setSortMode,
+                    onSetFoldersFirst = viewModel::setFoldersFirst,
+                    onSetGroupByMonth = viewModel::setGroupByMonth,
                     showViewControls = state.mode != BrowseMode.Latest,
                 )
                 // Resultados vão aparecendo; a barra indica que ainda chegam mais.
@@ -893,19 +928,6 @@ fun BrowseScreen(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                     )
                 }
-                if (state.selectMode) QuickActionsChips(
-                    filesOnly = state.filesOnly,
-                    inSelectionMode = state.selectMode,
-                    viewMode = state.viewMode,
-                    onSearchFocus = viewModel::openSearchSheet,
-                    onToggleFilesOnly = viewModel::toggleFilesOnly,
-                    onUpload = { filePicker.launch(arrayOf("*/*")) },
-                    onSelectMode = { viewModel.enterSelectMode() },
-                    onSelectAll = viewModel::selectAll,
-                    onDeselectAll = viewModel::clearSelection,
-                    onDone = viewModel::exitSelectMode,
-                    onView = viewModel::toggleViewMode,
-                )
                 // Lixo: aviso de retenção entre a barra e a lista (como na web) —
                 // o servidor apaga de vez o que lá está há mais de N dias.
                 val trashRetentionDays by viewModel.trashRetentionDays.collectAsStateWithLifecycle()
@@ -1014,12 +1036,12 @@ fun BrowseScreen(
                             // Secções recolhíveis (Pastas / meses / Ficheiros), como na web.
                             var collapsed by remember(state.mode) { mutableStateOf(setOf<String>()) }
                             val toggleSection: (String) -> Unit = { k -> collapsed = if (k in collapsed) collapsed - k else collapsed + k }
-                            val byDate = state.sortMode == SortMode.DATE_DESC || state.sortMode == SortMode.DATE_ASC
+                            val byDate = state.sortMode.isDate && state.groupByMonth
                             // Pinça (estilo Google Fotos): 0 lista grande (por dia) · 1 lista · 2–3 grelha
                             // (por mês) · 4 grelha de 5 (por ano, pastas em chips).
                             val zoom = state.zoomLevel
                             val granularity = when (zoom) { 0 -> DateGroup.DAY; 4 -> DateGroup.YEAR; else -> DateGroup.MONTH }
-                            val sections = remember(displayed, byDate, granularity) { browseSections(displayed, byDate, granularity) }
+                            val sections = remember(displayed, byDate, granularity, state.foldersFirst) { browseSections(displayed, byDate, granularity, state.foldersFirst) }
                             // Barra de tamanho: escala pelo maior item da lista (pastas incluídas, como na web).
                             val listMaxBytes = remember(displayed) {
                                 displayed.maxOfOrNull { if (it is BrowseItem.Folder) it.filesizeBytes else (it as BrowseItem.File).filesizeBytes } ?: 0L
@@ -1183,6 +1205,7 @@ fun BrowseScreen(
                                                 Modifier.padding(top = 8.dp, bottom = 2.dp),
                                                 collapsed = isCollapsed,
                                                 onToggle = { toggleSection(section.key) },
+                                                size = section.size,
                                             )
                                         }
                                     }
@@ -1211,11 +1234,13 @@ fun BrowseScreen(
                                     // Rodapé "N itens" (como a tabela da web), só com a lista completa.
                                     if (!state.isLoadingMore && state.currentPage >= state.lastPage) {
                                         item(key = "list-footer") {
+                                            val allEncrypted = displayed.isNotEmpty() && displayed.filterIsInstance<BrowseItem.File>().let { f -> f.isNotEmpty() && f.all { it.encrypted } }
                                             Text(
-                                                "%d itens".tr().format(displayed.size),
+                                                "%d itens".tr().format(displayed.size) + if (allEncrypted) " · " + "cifrado ponta a ponta".tr() else "",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.padding(start = 4.dp, top = 4.dp),
+                                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                                             )
                                         }
                                     }
@@ -1298,10 +1323,10 @@ fun BrowseScreen(
                             activeDialog = ActionDialog.CreateTeamFolder
                         },
                     ) else listOfNotNull(
-                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.PhotoCamera, "Câmara".tr(), primary, "Foto ou vídeo".tr(), up) {
+                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.PhotoCamera, "Câmara".tr(), primary, "Foto ou vídeo".tr(), up, quick = true) {
                             if (viewModel.allowUpload()) activeDialog = ActionDialog.CameraMode
                         },
-                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.FileUpload, "Carregar ficheiros".tr(), primary, "Do telemóvel".tr(), up) {
+                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.FileUpload, "Carregar ficheiros".tr(), primary, "Do telemóvel".tr(), up, quick = true) {
                             filePicker.launch(arrayOf("*/*"))
                         },
                         co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.DriveFolderUpload, "Carregar pasta".tr(), primary, "Mantém a estrutura".tr(), up) {
@@ -1310,7 +1335,7 @@ fun BrowseScreen(
                         co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.Link, "Carregar por ligação".tr(), primary, "Importar a partir de links".tr(), up) {
                             activeDialog = ActionDialog.RemoteUpload
                         },
-                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.CreateNewFolder, "Nova pasta".tr(), primary, "Organize os ficheiros".tr(), mk, accent = false) {
+                        co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.CreateNewFolder, "Nova pasta".tr(), primary, "Organize os ficheiros".tr(), mk, quick = true) {
                             if (viewModel.allowCreateFolder()) activeDialog = ActionDialog.CreateFolder
                         },
                         co.golink.tester.ui.components.SpeedDialAction(Icons.Outlined.Article, "Novo documento".tr(), primary, "Word (.docx)".tr(), mk, accent = false) {
@@ -1899,22 +1924,38 @@ internal data class MonthSection(
     val count: String?,
     val items: List<BrowseItem>,
     val folders: Boolean = false,
+    /** Total da secção ("39.34 GB"), à direita do título. */
+    val size: String? = null,
 )
 
-// Secções (grelha e lista, como na web): "Pastas" à cabeça; ficheiros por mês
-// quando ordenado por data, senão numa secção "Ficheiros" (só se houver pastas).
-internal fun browseSections(items: List<BrowseItem>, byDate: Boolean, granularity: DateGroup = DateGroup.MONTH): List<MonthSection> {
-    val folders = items.filterIsInstance<BrowseItem.Folder>()
-    val files = items.filterIsInstance<BrowseItem.File>()
+private fun bytesOf(item: BrowseItem): Long = when (item) {
+    is BrowseItem.Folder -> item.filesizeBytes
+    is BrowseItem.File -> item.filesizeBytes
+}
+
+private fun sizeLabel(items: List<BrowseItem>): String? =
+    items.sumOf { bytesOf(it) }.takeIf { it > 0 }?.let { co.golink.tester.ui.common.formatBytes(it) }
+
+// Secções (grelha e lista, como na web): "Pastas" à cabeça (se foldersFirst);
+// itens por mês quando ordenado por data, senão numa secção "Ficheiros".
+// Sem foldersFirst as pastas entram nos meses/na secção única pela ordem da lista.
+internal fun browseSections(
+    items: List<BrowseItem>,
+    byDate: Boolean,
+    granularity: DateGroup = DateGroup.MONTH,
+    foldersFirst: Boolean = true,
+): List<MonthSection> {
+    val folders = if (foldersFirst) items.filterIsInstance<BrowseItem.Folder>() else emptyList()
+    val files = if (foldersFirst) items.filterIsInstance<BrowseItem.File>() else items
     val out = mutableListOf<MonthSection>()
     if (folders.isNotEmpty()) {
         val n = folders.size
-        out += MonthSection("folders", "Pastas".tr(), if (n == 1) "1 pasta".tr() else "%d pastas".tr().format(n), folders, folders = true)
+        out += MonthSection("folders", "Pastas".tr(), if (n == 1) "1 pasta".tr() else "%d pastas".tr().format(n), folders, folders = true, size = sizeLabel(folders))
     }
     if (files.isEmpty()) return out
     if (!byDate) {
         out += if (folders.isEmpty()) MonthSection("files", null, null, files)
-        else MonthSection("files", "Ficheiros".tr(), typeBreakdown(files), files)
+        else MonthSection("files", "Ficheiros".tr(), typeBreakdown(files), files, size = sizeLabel(files))
         return out
     }
     val (len, prefix) = when (granularity) { DateGroup.DAY -> 10 to "d-"; DateGroup.MONTH -> 7 to "m-"; DateGroup.YEAR -> 4 to "y-" }
@@ -1925,18 +1966,19 @@ internal fun browseSections(items: List<BrowseItem>, byDate: Boolean, granularit
             DateGroup.MONTH -> co.golink.tester.ui.common.formatMonth(iso)
             DateGroup.YEAR -> k
         }.ifEmpty { "—" }
-        out += MonthSection(prefix + k, title, typeBreakdown(group), group)
+        out += MonthSection(prefix + k, title, typeBreakdown(group), group, size = sizeLabel(group))
     }
     return out
 }
 
 // "6 vídeos, 1 documento" (contagem por tipo, como na web).
-private fun typeBreakdown(files: List<BrowseItem.File>): String {
-    val order = listOf("video", "image", "audio", "doc")
-    val counts = files.groupingBy { if (it.type in order) it.type else "doc" }.eachCount()
+private fun typeBreakdown(files: List<BrowseItem>): String {
+    val order = listOf("folder", "video", "image", "audio", "doc")
+    val counts = files.groupingBy { (it as? BrowseItem.File)?.type?.takeIf { t -> t in order } ?: if (it is BrowseItem.Folder) "folder" else "doc" }.eachCount()
     return order.mapNotNull { t ->
         val n = counts[t] ?: return@mapNotNull null
         when (t) {
+            "folder" -> if (n == 1) "1 pasta".tr() else "%d pastas".tr().format(n)
             "video" -> if (n == 1) "1 vídeo".tr() else "%d vídeos".tr().format(n)
             "image" -> if (n == 1) "1 imagem".tr() else "%d imagens".tr().format(n)
             "audio" -> if (n == 1) "1 áudio".tr() else "%d áudios".tr().format(n)
@@ -1953,6 +1995,7 @@ internal fun MonthHeader(
     modifier: Modifier = Modifier,
     collapsed: Boolean = false,
     onToggle: (() -> Unit)? = null,
+    size: String? = null,
 ) {
     val rotation by androidx.compose.animation.core.animateFloatAsState(if (collapsed) -90f else 0f, label = "sec-chevron")
     Row(
@@ -1985,7 +2028,13 @@ internal fun MonthHeader(
             )
         }
         Spacer(Modifier.width(10.dp))
-        androidx.compose.material3.HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
+        if (size != null) {
+            // Lista em cartões (mockup 2026-11): total da secção à direita, sem linha.
+            Spacer(Modifier.weight(1f))
+            Text(size, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        } else {
+            androidx.compose.material3.HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
+        }
     }
 }
 
@@ -2078,111 +2127,52 @@ private fun topBarTitle(state: BrowseUiState): String = when (val mode = state.m
     is BrowseMode.SharedWithMe -> mode.name
 }
 
+// "3 selecionados · 40.40 GB" (barra de topo da seleção).
+private fun selectionTitle(selected: List<BrowseItem>): String {
+    val n = selected.size
+    val label = if (n == 1) "1 selecionado".tr() else "%d selecionados".tr().format(n)
+    val bytes = selected.sumOf { if (it is BrowseItem.File) it.filesizeBytes else (it as BrowseItem.Folder).filesizeBytes }
+    return if (bytes > 0) "$label · ${co.golink.tester.ui.common.formatBytes(bytes)}" else label
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SelectionTopBar(
-    count: Int,
+    title: String,
+    allSelected: Boolean,
     onClose: () -> Unit,
-    onOpen: () -> Unit,
-    onShare: () -> Unit,
-    onMove: () -> Unit,
-    onRename: () -> Unit,
-    onDownload: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    Column(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
-        TopAppBar(
-            title = { Text("$count selecionado") },
-            navigationIcon = {
-                IconButton(onClick = onClose) {
-                    Icon(Icons.Filled.Close, contentDescription = "Limpar selecção".tr())
-                }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = MaterialTheme.colorScheme.surface,
-            ),
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            SelectionAction(Icons.Outlined.OpenInNew, "Abrir".tr(), onOpen)
-            SelectionAction(Icons.Outlined.Share, "Partilhar".tr(), onShare)
-            SelectionAction(Icons.Outlined.DriveFileMove, "Mover".tr(), onMove)
-            SelectionAction(Icons.Outlined.DriveFileRenameOutline, "Renomear".tr(), onRename)
-            SelectionAction(Icons.Outlined.Download, "Descarregar".tr(), onDownload)
-            SelectionAction(Icons.Outlined.Delete, "Eliminar".tr(), onDelete)
-        }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
-    }
-}
-
-@Composable
-private fun QuickActionsChips(
-    filesOnly: Boolean,
-    inSelectionMode: Boolean,
-    viewMode: ViewMode,
-    onSearchFocus: () -> Unit,
-    onToggleFilesOnly: () -> Unit,
-    onUpload: () -> Unit,
-    onSelectMode: () -> Unit,
     onSelectAll: () -> Unit,
     onDeselectAll: () -> Unit,
-    onDone: () -> Unit,
-    onView: () -> Unit,
 ) {
-    val viewIcon = if (viewMode == ViewMode.GRID) Icons.Outlined.ViewList else Icons.Outlined.GridView
-    val viewLabel = if (viewMode == ViewMode.GRID) "Lista".tr() else "Grelha".tr()
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        if (inSelectionMode) {
-            ActionChip(icon = Icons.Outlined.CheckBox, label = "Selecionar tudo".tr(), onClick = onSelectAll, large = true)
-            ActionChip(icon = Icons.Outlined.DisabledByDefault, label = "Desmarcar todos".tr(), onClick = onDeselectAll, large = true)
-            ActionChip(icon = Icons.Outlined.Check, label = "Feito".tr(), onClick = onDone, large = true)
-        } else {
-            ActionChip(icon = Icons.Outlined.CheckBox, label = "Selecionar", onClick = onSelectMode, large = true)
-            ActionChip(icon = viewIcon, label = viewLabel, onClick = onView, large = true)
-        }
-    }
-}
-
-@Composable
-private fun ActionChip(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    selected: Boolean = false,
-    large: Boolean = false,
-    onClick: () -> Unit,
-) {
-    val bg = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface
-    val border = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-    val content = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-    val hPad = if (large) 16.dp else 12.dp
-    val vPad = if (large) 12.dp else 8.dp
-    val iconSize = if (large) 22.dp else 18.dp
-    val spacing = if (large) 8.dp else 6.dp
-    val textStyle = if (large) MaterialTheme.typography.titleSmall else MaterialTheme.typography.labelLarge
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(bg)
-            .border(1.dp, border, RoundedCornerShape(20.dp))
-            .clickable { onClick() }
-            .padding(horizontal = hPad, vertical = vPad),
-    ) {
-        Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(iconSize))
-        Spacer(Modifier.width(spacing))
-        Text(label, style = textStyle, color = content)
-    }
+    TopAppBar(
+        title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold, fontSize = 18.sp) },
+        navigationIcon = {
+            IconButton(onClick = onClose) {
+                Icon(Icons.Filled.Close, contentDescription = "Limpar selecção".tr())
+            }
+        },
+        actions = {
+            val green = MaterialTheme.colorScheme.primary
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .padding(end = 12.dp)
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(green.copy(alpha = 0.14f))
+                    .clickable { if (allSelected) onDeselectAll() else onSelectAll() }
+                    .padding(horizontal = 14.dp),
+            ) {
+                Text(
+                    if (allSelected) "Desmarcar todos".tr() else "Selecionar tudo".tr(),
+                    color = green,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                )
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -2191,10 +2181,17 @@ private fun SearchRow(
     onOpenSearch: () -> Unit,
     viewMode: ViewMode,
     sortMode: SortMode,
+    foldersFirst: Boolean,
+    groupByMonth: Boolean,
+    placeholder: String,
     onSetViewMode: (ViewMode) -> Unit,
     onSetSortMode: (SortMode) -> Unit,
+    onSetFoldersFirst: (Boolean) -> Unit,
+    onSetGroupByMonth: (Boolean) -> Unit,
     showViewControls: Boolean = true,
 ) {
+    val outline = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+    var sheetOpen by remember { mutableStateOf(false) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -2207,142 +2204,84 @@ private fun SearchRow(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .weight(1f)
-                .height(50.dp)
-                .clip(RoundedCornerShape(14.dp))
+                .height(46.dp)
+                .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surface)
-                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
+                .border(1.dp, outline, RoundedCornerShape(12.dp))
                 .clickable(onClick = onOpenSearch)
-                .padding(horizontal = 14.dp),
+                .padding(horizontal = 12.dp),
         ) {
-            Icon(
-                Icons.Filled.Search,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(12.dp))
+            Icon(Icons.Filled.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
             Text(
-                "Pesquisar ficheiros e pastas".tr(),
+                placeholder,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
         if (!showViewControls) return@Row
-        var menuOpen by remember { mutableStateOf(false) }
+        // "⇅ Data ↓" → folha Ordenar e vista.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .height(46.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .border(1.dp, outline, RoundedCornerShape(12.dp))
+                .clickable { sheetOpen = true }
+                .padding(horizontal = 12.dp),
+        ) {
+            Icon(Icons.Filled.SwapVert, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(4.dp))
+            Text(sortFieldLabel(sortMode), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            Spacer(Modifier.width(2.dp))
+            Icon(
+                if (sortMode.isAscending) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward,
+                contentDescription = null,
+                modifier = Modifier.size(15.dp),
+            )
+        }
         Box(
             modifier = Modifier
-                .size(52.dp)
-                .clip(RoundedCornerShape(14.dp))
+                .size(46.dp)
+                .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surface)
-                .border(
-                    1.dp,
-                    MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                    RoundedCornerShape(14.dp),
-                )
-                .clickable { menuOpen = true },
+                .border(1.dp, outline, RoundedCornerShape(12.dp))
+                .clickable { onSetViewMode(if (viewMode == ViewMode.GRID) ViewMode.LIST else ViewMode.GRID) },
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 if (viewMode == ViewMode.GRID) Icons.Outlined.ViewList else Icons.Outlined.GridView,
-                contentDescription = "Vista e ordenação".tr(),
-                tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(22.dp),
-            )
-            ViewSortMenu(
-                expanded = menuOpen,
-                onDismiss = { menuOpen = false },
-                viewMode = viewMode,
-                sortMode = sortMode,
-                onSetViewMode = { onSetViewMode(it); menuOpen = false },
-                onSetSortMode = { onSetSortMode(it); menuOpen = false },
+                contentDescription = if (viewMode == ViewMode.GRID) "Vista em lista".tr() else "Vista em grelha".tr(),
+                modifier = Modifier.size(20.dp),
             )
         }
     }
+    if (sheetOpen) {
+        co.golink.tester.ui.components.ViewSortSheet(
+            viewMode = viewMode,
+            sortMode = sortMode,
+            foldersFirst = foldersFirst,
+            groupByMonth = groupByMonth,
+            onDismiss = { sheetOpen = false },
+            onApply = { view, sort, ff, gbm ->
+                sheetOpen = false
+                if (view != viewMode) onSetViewMode(view)
+                if (ff != foldersFirst) onSetFoldersFirst(ff)
+                if (gbm != groupByMonth) onSetGroupByMonth(gbm)
+                if (sort != sortMode) onSetSortMode(sort)
+            },
+        )
+    }
 }
 
-@Composable
-private fun ViewSortMenu(
-    expanded: Boolean,
-    onDismiss: () -> Unit,
-    viewMode: ViewMode,
-    sortMode: SortMode,
-    onSetViewMode: (ViewMode) -> Unit,
-    onSetSortMode: (SortMode) -> Unit,
-) {
-    DropdownMenu(
-        expanded = expanded,
-        onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(20.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 0.dp,
-        shadowElevation = 16.dp,
-        modifier = Modifier.widthIn(min = 250.dp).padding(vertical = 4.dp),
-    ) {
-        Text(
-            "Visualizar".tr().uppercase(),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = androidx.compose.ui.unit.TextUnit(0.8f, androidx.compose.ui.unit.TextUnitType.Sp),
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 2.dp),
-        )
-        val targetView = if (viewMode == ViewMode.GRID) ViewMode.LIST else ViewMode.GRID
-        DropdownMenuItem(
-            text = { Text(if (targetView == ViewMode.GRID) "Vista em grelha".tr() else "Vista em lista".tr(), style = MaterialTheme.typography.bodyMedium) },
-            leadingIcon = {
-                Box(
-                    modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        if (targetView == ViewMode.GRID) Icons.Outlined.GridView else Icons.Outlined.ViewList,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-            },
-            onClick = { onSetViewMode(targetView) },
-        )
-        HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-        Text(
-            "Ordenação".tr().uppercase(),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = androidx.compose.ui.unit.TextUnit(0.8f, androidx.compose.ui.unit.TextUnitType.Sp),
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 2.dp),
-        )
-        val dateActive = sortMode == SortMode.DATE_DESC || sortMode == SortMode.DATE_ASC
-        val alphaActive = sortMode == SortMode.ALPHA_ASC || sortMode == SortMode.ALPHA_DESC
-        DropdownMenuItem(
-            text = { Text("Ordenar por data".tr(), style = MaterialTheme.typography.bodyMedium, color = if (dateActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
-            leadingIcon = {
-                Box(
-                    modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(if (dateActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant),
-                    contentAlignment = Alignment.Center,
-                ) { Icon(Icons.Outlined.CalendarMonth, contentDescription = null, tint = if (dateActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp)) }
-            },
-            trailingIcon = if (dateActive) {
-                { Icon(if (sortMode == SortMode.DATE_ASC) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
-            } else null,
-            // Voltar a escolher o mesmo critério inverte o sentido da ordenação
-            onClick = { onSetSortMode(if (sortMode == SortMode.DATE_DESC) SortMode.DATE_ASC else SortMode.DATE_DESC) },
-        )
-        DropdownMenuItem(
-            text = { Text("Ordenar alfabeticamente".tr(), style = MaterialTheme.typography.bodyMedium, color = if (alphaActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface) },
-            leadingIcon = {
-                Box(
-                    modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(if (alphaActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant),
-                    contentAlignment = Alignment.Center,
-                ) { Icon(Icons.Outlined.SortByAlpha, contentDescription = null, tint = if (alphaActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp)) }
-            },
-            trailingIcon = if (alphaActive) {
-                { Icon(if (sortMode == SortMode.ALPHA_ASC) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp)) }
-            } else null,
-            onClick = { onSetSortMode(if (sortMode == SortMode.ALPHA_ASC) SortMode.ALPHA_DESC else SortMode.ALPHA_ASC) },
-        )
-        Spacer(Modifier.height(4.dp))
-    }
+internal fun sortFieldLabel(mode: SortMode): String = when {
+    mode.isAlpha -> "Nome".tr()
+    mode.isSize -> "Tamanho".tr()
+    mode.isType -> "Tipo".tr()
+    else -> "Data".tr()
 }
 
 @Composable

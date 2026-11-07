@@ -70,6 +70,9 @@ data class MobileBackupsState(
     val viewMode: ViewMode = ViewMode.LIST,
     val zoomLevel: Int = 1,
     val sortMode: SortMode = SortMode.DATE_DESC,
+    // Folha "Ordenar e vista" (igual ao browser).
+    val foldersFirst: Boolean = true,
+    val groupByMonth: Boolean = true,
     // Cartões dos telemóveis (o deste aparelho vem marcado `current`).
     val summary: co.golink.tester.domain.backup.BackupSummary? = null,
     val pausingDevice: Boolean = false,
@@ -122,6 +125,8 @@ class MobileBackupsViewModel @Inject constructor(
                 ),
                 viewMode = viewPreferences.viewMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, ViewMode.LIST),
                 sortMode = viewPreferences.sortMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, SortMode.DATE_DESC),
+                foldersFirst = viewPreferences.foldersFirst(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP),
+                groupByMonth = viewPreferences.groupByMonth(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP),
             )
         }
         // A lista e as contagens só arrancam depois de o resumo escolher o
@@ -229,6 +234,16 @@ class MobileBackupsViewModel @Inject constructor(
         viewPreferences.setSortMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, mode)
         _state.update { it.copy(sortMode = mode) }
     }
+
+    fun setFoldersFirst(value: Boolean) {
+        viewPreferences.setFoldersFirst(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, value)
+        _state.update { it.copy(foldersFirst = value) }
+    }
+    fun setGroupByMonth(value: Boolean) {
+        viewPreferences.setGroupByMonth(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, value)
+        _state.update { it.copy(groupByMonth = value) }
+    }
+    fun clearSelection() = _state.update { it.copy(selectedIds = emptySet()) }
 
     fun enterSelectMode() = _state.update { it.copy(selectMode = true) }
     fun exitSelectMode() = _state.update { it.copy(selectMode = false, selectedIds = emptySet()) }

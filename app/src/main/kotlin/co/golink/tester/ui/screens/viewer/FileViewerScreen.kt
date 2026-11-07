@@ -21,6 +21,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.positionChange
@@ -646,6 +647,19 @@ private fun ImageViewer(
                         }
                     } while (event.changes.any { it.pressed })
                 }
+            }
+            // Duplo toque: amplia 2,5× no ponto tocado; se já ampliada, volta a 1×.
+            .pointerInput(file.id) {
+                detectTapGestures(onDoubleTap = { tap ->
+                    if (zoomState.value > 1.01f) {
+                        onZoomChangeState.value(1f)
+                    } else {
+                        val target = 2.5f
+                        offsetX = clampPan((size.width / 2f - tap.x) * (target - 1f), size.width, target)
+                        offsetY = clampPan((size.height / 2f - tap.y) * (target - 1f), size.height, target)
+                        onZoomChangeState.value(target)
+                    }
+                })
             },
         contentAlignment = Alignment.Center,
     ) {

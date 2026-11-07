@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
@@ -179,50 +180,49 @@ fun BrowseItemRow(
     // Substitui os cliques (ex.: arrastar para pasta, ver dragToFolderClicks).
     clicks: Modifier? = null,
 ) {
+    // Cartão branco (mockup 2026-11): selecionado = contorno 2dp + fundo do tema e ✓ redondo.
+    val isSel = selected && selectionMode
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .itemClicks(onClick, onLongClick, clicks),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = selectionContainer(selected && selectionMode)),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = selectionContainer(isSel)),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = selectionBorder(selected && selectionMode),
+        border = androidx.compose.foundation.BorderStroke(2.dp, if (isSel) MaterialTheme.colorScheme.primary else Color.Transparent),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 12.dp, end = 2.dp, top = if (large) 12.dp else 10.dp, bottom = if (large) 12.dp else 10.dp),
+                .padding(start = 10.dp, end = 2.dp, top = if (large) 12.dp else 8.dp, bottom = if (large) 12.dp else 8.dp),
         ) {
             if (selectionMode) {
-                Checkbox(checked = selected, onCheckedChange = { onClick() }, modifier = Modifier.size(32.dp))
-                Spacer(Modifier.width(6.dp))
+                SelectCircle(selected)
+                Spacer(Modifier.width(10.dp))
             }
-            Leading(item, large)
+            Leading(item, large, tile = !large)
             Spacer(Modifier.width(if (large) 14.dp else 12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     item.name,
                     style = if (large) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
                     maxLines = if (large) 2 else 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.height(4.dp))
-                // Como na web: pílula do tipo · detalhe · "há X dias".
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TypePill(item)
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        listOf(rowDetail(item), relativeAgo(rowDateIso(item)))
-                            .filter { it.isNotEmpty() }.joinToString(" · "),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                SizeBarLine(item, maxBytes)
+                Spacer(Modifier.height(3.dp))
+                // "5 itens · 7 mai 2026" / "JPG · 7 jul 2026".
+                Text(
+                    listOf(cardDetail(item), co.golink.tester.ui.common.formatDay(rowDateIso(item)))
+                        .filter { it.isNotEmpty() }.joinToString(" · "),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontSize = 12.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 val members = (item as? BrowseItem.Folder)?.members.orEmpty()
                 if (item is BrowseItem.Folder && members.isNotEmpty()) {
                     Spacer(Modifier.height(4.dp))
@@ -232,19 +232,56 @@ fun BrowseItemRow(
                     )
                 }
             }
+            val bytes = when (item) {
+                is BrowseItem.Folder -> item.filesizeBytes
+                is BrowseItem.File -> item.filesizeBytes
+            }
+            Text(
+                if (bytes > 0) co.golink.tester.ui.common.formatBytes(bytes) else "—",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                modifier = Modifier.padding(start = 8.dp, end = if (selectionMode) 12.dp else 0.dp),
+            )
             if (onCopyLinkClick != null && !selectionMode) {
                 CopyLinkButton(onCopyLinkClick, Modifier.size(40.dp), iconSize = 18.dp)
             }
-            IconButton(onClick = onMoreClick, enabled = !selectionMode, modifier = Modifier.size(40.dp)) {
-                Icon(
-                    Icons.Filled.MoreVert,
-                    contentDescription = "Mais opções".tr(),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp),
-                )
+            if (!selectionMode) {
+                IconButton(onClick = onMoreClick, modifier = Modifier.size(40.dp)) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = "Mais opções".tr(),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
         }
     }
+}
+
+// Círculo de seleção (vazio / ✓ verde), como no mockup.
+@Composable
+private fun SelectCircle(checked: Boolean) {
+    val primary = MaterialTheme.colorScheme.primary
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(22.dp)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(if (checked) primary else Color.Transparent)
+            .border(2.dp, if (checked) primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.7f), androidx.compose.foundation.shape.CircleShape),
+    ) {
+        if (checked) Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+    }
+}
+
+// Pastas: "5 itens"; ficheiros: extensão ("JPG") ou estado da análise.
+private fun cardDetail(item: BrowseItem): String = when (item) {
+    is BrowseItem.Folder -> item.devicePath ?: item.itemCount?.let { if (it == 1) "1 item".tr() else "%d itens".tr().format(it) }.orEmpty()
+    is BrowseItem.File -> scanLabel(item)
+        ?: item.name.substringAfterLast('.', "").takeIf { it.isNotEmpty() && it.length <= 5 }?.uppercase()
+        ?: ""
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -738,7 +775,7 @@ internal fun MemberAvatar(
 }
 
 @Composable
-internal fun Leading(item: BrowseItem, large: Boolean = false) {
+internal fun Leading(item: BrowseItem, large: Boolean = false, tile: Boolean = false) {
     val boxSize = if (large) 68.dp else 44.dp
     val iconSize = if (large) 56.dp else 38.dp
     Box(modifier = Modifier.size(boxSize)) {
@@ -746,7 +783,10 @@ internal fun Leading(item: BrowseItem, large: Boolean = false) {
             is BrowseItem.Folder -> {
                 val tint = parseHexColor(item.color) ?: MaterialTheme.colorScheme.primary
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    // Lista em cartões: pasta num mosaico com a cor do tema (12%).
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(if (tile) Modifier.background(tint.copy(alpha = 0.12f), RoundedCornerShape(12.dp)) else Modifier),
                     contentAlignment = Alignment.Center,
                 ) {
                     if (!item.emoji.isNullOrBlank()) {
@@ -756,7 +796,7 @@ internal fun Leading(item: BrowseItem, large: Boolean = false) {
                             Icons.Filled.Folder,
                             contentDescription = null,
                             tint = tint,
-                            modifier = Modifier.size(iconSize),
+                            modifier = Modifier.size(if (tile) 24.dp else iconSize),
                         )
                     }
                 }
@@ -773,7 +813,7 @@ internal fun Leading(item: BrowseItem, large: Boolean = false) {
                             iconSize = iconSize,
                             modifier = Modifier
                                 .size(boxSize)
-                                .clip(RoundedCornerShape(8.dp)),
+                                .clip(RoundedCornerShape(if (tile) 12.dp else 8.dp)),
                         )
                     } else {
                         FileTypeIcon(item, Modifier.height(iconSize))
