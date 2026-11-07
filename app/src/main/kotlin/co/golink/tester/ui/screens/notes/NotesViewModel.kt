@@ -23,8 +23,6 @@ import javax.inject.Inject
 import javax.inject.Named
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -125,16 +123,6 @@ class NotesViewModel @Inject constructor(
 
     private val results = ConcurrentHashMap<Int, String>()
 
-    /** Pedidos da página atual: um novo carregamento cancela-os (os ids recomeçam na página). */
-    private var pageJob: Job = SupervisorJob(viewModelScope.coroutineContext[Job])
-
-    /** A WebView começou a carregar a página (inicial, Tentar de novo, reload): descarta o anterior. */
-    fun onPageStarted() {
-        pageJob.cancel()
-        pageJob = SupervisorJob(viewModelScope.coroutineContext[Job])
-        results.clear()
-    }
-
     /** wrapped_key de notas vistas nas respostas de /api/notes/… (as únicas que open_sealed abre). */
     private val noteKeys: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -177,7 +165,7 @@ class NotesViewModel @Inject constructor(
     }
 
     fun request(id: Int, method: String, args: String, onDone: (Int) -> Unit) {
-        viewModelScope.launch(pageJob) {
+        viewModelScope.launch {
             results[id] = try {
                 val a = withContext(Dispatchers.Default) {
                     runCatching { Json.parseToJsonElement(args).jsonObject }.getOrElse { JsonObject(emptyMap()) }
@@ -202,6 +190,10 @@ class NotesViewModel @Inject constructor(
                 errorJson(413, "too_large")
             }
             onDone(id)
+            // Ids únicos por carregamento (notesBridge.js): o que a página não levar
+            // (resposta da página anterior a um reload) sai daqui sem a afetar.
+            kotlinx.coroutines.delay(60_000)
+            results.remove(id)
         }
     }
 

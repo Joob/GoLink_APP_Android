@@ -430,10 +430,6 @@ private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose
                             return true
                         }
 
-                        override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
-                            vm.onPageStarted()
-                        }
-
                         override fun onPageFinished(view: WebView, url: String) {
                             // Os scripts já correram: sem window.GoLinkNotes a página não arrancou
                             // (bundle em falta no servidor / erro de JS) — mostra o erro, não branco.
