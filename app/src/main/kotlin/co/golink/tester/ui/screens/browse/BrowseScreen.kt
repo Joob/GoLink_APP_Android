@@ -678,10 +678,9 @@ fun BrowseScreen(
         }
         val moveSelected: () -> Unit = MoveSelected@{
             val sel = viewModel.selectedItems()
-            // Raízes de equipa de outro dono não se movem (o servidor dá 403).
-            val me = viewModel.currentUserId()
-            if (sel.any { it is BrowseItem.Folder && it.isTeamRoot == true && it.ownerId != me }) {
-                viewModel.showToast("Só o dono pode mover uma pasta de equipa.".tr())
+            // Pastas de equipa (raízes) não se movem, nem pelo dono.
+            if (sel.any { it is BrowseItem.Folder && it.isTeamRoot == true }) {
+                viewModel.showToast(co.golink.tester.data.files.MoveManager.TEAM_ROOT_MESSAGE.tr())
                 return@MoveSelected
             }
             viewModel.loadNavigationTree()
@@ -1532,7 +1531,8 @@ fun BrowseScreen(
             onCopyLink = if (canCopyLinks && mine && target.id !in foreignActivityIds) { { viewModel.copyShareLink(target) } } else null,
             canEdit = access.canEdit,
             // Raiz de equipa: só o dono move (o servidor dá 403 aos membros).
-            canMove = folder?.isTeamRoot != true || folder.ownerId == me,
+            // Pastas de equipa (raízes) não se movem; o resto só dentro da equipa.
+            canMove = folder?.isTeamRoot != true,
             onConvertToTeamFolder = { actionTarget = target; activeDialog = ActionDialog.ConvertToTeamFolder },
             onFileRequest = { actionTarget = target; activeDialog = ActionDialog.FileRequest },
             // Pedir ficheiros / transformar: o servidor exige ser o dono (Gate owner).
@@ -1833,7 +1833,7 @@ fun BrowseScreen(
                 onDownload = if (state.mode == BrowseMode.Trash) null else {
                     { viewModel.downloadItem(target) }
                 },
-                onMove = if (!access.canEdit || state.mode == BrowseMode.Trash) null else {
+                onMove = if (!access.canEdit || state.mode == BrowseMode.Trash || (target as? BrowseItem.Folder)?.isTeamRoot == true) null else {
                     {
                         viewModel.loadNavigationTree()
                         actionTarget = target

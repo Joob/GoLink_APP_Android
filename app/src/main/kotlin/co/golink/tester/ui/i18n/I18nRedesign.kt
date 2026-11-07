@@ -109,6 +109,7 @@ object I18nRedesign {
         r("Verifica a ligação e tenta de novo", "Check your connection and try again", "Vérifiez votre connexion et réessayez", "Revisa la conexión y vuelve a intentarlo"),
         r("+ %d itens", "+ %d items", "+ %d éléments", "+ %d elementos"),
         r("pasta", "folder", "dossier", "carpeta"),
+        r("As pastas de equipa não se movem. Podes mover os itens dentro delas.", "Team folders can't be moved. You can move the items inside them.", "Les dossiers d'équipe ne peuvent pas être déplacés. Vous pouvez déplacer les éléments qu'ils contiennent.", "Las carpetas de equipo no se pueden mover. Puedes mover los elementos que contienen."),
         r("Só dentro desta pasta de equipa", "Only within this team folder", "Uniquement dans ce dossier d'équipe", "Solo dentro de esta carpeta de equipo"),
         r("Os itens de uma pasta de equipa só podem ser movidos dentro dessa equipa.", "Items in a team folder can only be moved within that team.", "Les éléments d'un dossier d'équipe ne peuvent être déplacés qu'à l'intérieur de cette équipe.", "Los elementos de una carpeta de equipo solo se pueden mover dentro de ese equipo."),
         r("Uma pasta de equipa não pode ir para dentro de outra.", "A team folder can't go inside another team folder.", "Un dossier d'équipe ne peut pas aller dans un autre.", "Una carpeta de equipo no puede ir dentro de otra."),

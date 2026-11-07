@@ -80,16 +80,18 @@ class MoveManager @Inject constructor(
                     val msg = t.message.orEmpty()
                     // Recusas definitivas do servidor: sem "Tentar de novo".
                     val outOfTeam = msg.contains("within that team folder", ignoreCase = true)
-                    val teamInto = !outOfTeam && msg.contains("team folder", ignoreCase = true)
+                    val rootMove = msg.contains("team folders can't be moved", ignoreCase = true)
+                    val teamInto = !outOfTeam && !rootMove && msg.contains("team folder", ignoreCase = true)
                     update(id) {
                         it.copy(
                             state = MoveJob.State.Failed,
                             error = when {
                                 outOfTeam -> TEAM_SCOPE_MESSAGE
+                                rootMove -> TEAM_ROOT_MESSAGE
                                 teamInto -> TEAM_INTO_TEAM_MESSAGE
                                 else -> msg
                             },
-                            retryable = !outOfTeam && !teamInto,
+                            retryable = !outOfTeam && !teamInto && !rootMove,
                         )
                     }
                 }
@@ -103,6 +105,7 @@ class MoveManager @Inject constructor(
         private const val DONE_LINGER_MS = 4_000L
         // Chaves i18n (o banner traduz com .tr()).
         const val TEAM_SCOPE_MESSAGE = "Os itens de uma pasta de equipa só podem ser movidos dentro dessa equipa."
+        const val TEAM_ROOT_MESSAGE = "As pastas de equipa não se movem. Podes mover os itens dentro delas."
         const val TEAM_INTO_TEAM_MESSAGE = "Uma pasta de equipa não pode ir para dentro de outra."
 
         /** Nome da pasta destino na árvore de navegação (null = raiz). */

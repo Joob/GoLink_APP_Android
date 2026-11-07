@@ -840,6 +840,11 @@ class BrowseViewModel @Inject constructor(
     /** Um só pedido para o lote, com painel "A mover…" (sem toasts). */
     private fun startMove(items: List<BrowseItem>, toFolderId: String?, folderName: String?) {
         if (items.isEmpty()) return
+        // Pastas de equipa (raízes) não se movem (arrastar incluído); o servidor recusa.
+        if (items.any { it is BrowseItem.Folder && it.isTeamRoot == true }) {
+            _state.update { it.copy(toast = co.golink.tester.data.files.MoveManager.TEAM_ROOT_MESSAGE.tr()) }
+            return
+        }
         val name = folderName
             ?: co.golink.tester.data.files.MoveManager.folderName(_state.value.navigationTree, toFolderId)
             ?: (if (toFolderId == null) "O meu Drive".tr() else "pasta".tr())
