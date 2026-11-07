@@ -123,6 +123,14 @@ class NotesViewModel @Inject constructor(
 
     private val results = ConcurrentHashMap<Int, String>()
 
+    /** Últimas mensagens da consola da página (diagnóstico do ecrã em branco). */
+    val consoleLog = java.util.concurrent.ConcurrentLinkedDeque<String>()
+
+    fun logConsole(line: String) {
+        consoleLog.addLast(line.take(400))
+        while (consoleLog.size > 25) consoleLog.pollFirst()
+    }
+
     /** A página já tem algo à vista (notas carregadas, ou o seu erro): a app tira o indicador. */
     private val _pageReady = MutableStateFlow(false)
     val pageReady: StateFlow<Boolean> = _pageReady.asStateFlow()

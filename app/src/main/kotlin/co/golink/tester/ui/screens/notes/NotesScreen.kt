@@ -74,6 +74,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
@@ -378,6 +379,32 @@ private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose
     val pageReady by vm.pageReady.collectAsStateWithLifecycle()
     // Página que nunca avisa (bundle antigo no servidor): ao fim de 15 s mostra o que houver.
     var readyTimeout by remember { mutableStateOf(false) }
+    // Diagnóstico: depois de tirar o indicador, mede a página e a WebView; se não houver
+    // nada à vista, mostra no ecrã o estado e a consola (sem adb não há outra forma de ver).
+    var diag by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(loading, pageReady, readyTimeout, failed) {
+        diag = null
+        if (loading || failed || !(pageReady || readyTimeout)) return@LaunchedEffect
+        kotlinx.coroutines.delay(2_500)
+        val view = webView ?: return@LaunchedEffect
+        val native = "webview=${view.width}x${view.height} attached=${view.isAttachedToWindow} shown=${view.isShown} alpha=${view.alpha} " +
+            "layer=${view.layerType} ready=$pageReady timeout=$readyTimeout"
+        view.evaluateJavascript(NOTES_PROBE) { raw ->
+            val probe = runCatching { org.json.JSONObject(org.json.JSONTokener(raw).nextValue() as String) }.getOrNull()
+            val text = probe?.optInt("text") ?: 0
+            val appH = probe?.optDouble("appH") ?: 0.0
+            if (probe == null || text == 0 || appH < 1 || view.height == 0 || !view.isShown) {
+                diag = buildString {
+                    appendLine("Notes · diagnóstico (ecrã sem conteúdo)")
+                    appendLine(native)
+                    appendLine(probe?.toString(1) ?: "probe=$raw")
+                    appendLine("— consola —")
+                    vm.consoleLog.forEach { appendLine(it) }
+                }
+                android.util.Log.w("NotesWebView", diag!!)
+            }
+        }
+    }
     LaunchedEffect(loading, pageReady) {
         readyTimeout = false
         if (!loading && !pageReady) {
@@ -425,8 +452,10 @@ private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose
                     // Erros de JS da página no Logcat (tag NotesWebView).
                     webChromeClient = object : android.webkit.WebChromeClient() {
                         override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
+                            val line = "${m.messageLevel()}: ${m.message()} (${m.sourceId().substringAfterLast('/')}:${m.lineNumber()})"
+                            vm.logConsole(line)
                             if (m.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.ERROR || m.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.WARNING) {
-                                android.util.Log.w("NotesWebView", "${m.message()} (${m.sourceId()}:${m.lineNumber()})")
+                                android.util.Log.w("NotesWebView", line)
                             }
                             return true
                         }
@@ -492,6 +521,24 @@ private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose
                 view.destroy()
             },
         )
+
+        diag?.let { text ->
+            Column(
+                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(16.dp)
+                    .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+            ) {
+                Text(text, fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, color = Color(0xFF9F1239))
+                Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(onClick = { diag = null }) { Text(nt("close")) }
+                    Button(onClick = {
+                        diag = null
+                        loading = true
+                        vm.onPageLoading()
+                        webView?.loadUrl(vm.notesUrl)
+                    }) { Text(nt("retry")) }
+                }
+            }
+        }
 
         if (failed) {
             Column(
@@ -645,3 +692,16 @@ private class NotesBridge(
     @JavascriptInterface
     fun toast(message: String) = vm.toast(message)
 }
+
+/** Estado da página para o diagnóstico (devolve uma string JSON). */
+private const val NOTES_PROBE = """(function(){try{
+var a=document.getElementById('app'),r=a?a.getBoundingClientRect():{width:0,height:0};
+var t=((a&&a.innerText)||'').trim();
+var c=document.elementFromPoint(innerWidth/2,innerHeight/2);
+var css=[].slice.call(document.styleSheets).map(function(s){try{return (s.href||'inline').split('/').pop()+':'+s.cssRules.length}catch(e){return (s.href||'inline').split('/').pop()+':x'}}).join(',');
+var cs=a?getComputedStyle(a):null;
+return JSON.stringify({text:t.length,sample:t.slice(0,120),appW:r.width,appH:r.height,vw:innerWidth,vh:innerHeight,dpr:devicePixelRatio,
+hash:location.hash,booted:!!window.GoLinkNotes,html:document.documentElement.className,bodyBg:getComputedStyle(document.body).backgroundColor,
+appColor:cs&&cs.color,appOpacity:cs&&cs.opacity,center:c?(c.tagName+'.'+String(c.className).slice(0,80)):null,
+nodes:document.getElementsByTagName('*').length,css:css,ua:navigator.userAgent})
+}catch(e){return JSON.stringify({error:String(e)})}})()"""
