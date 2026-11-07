@@ -23,6 +23,8 @@ import javax.inject.Inject
 import javax.inject.Named
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -89,6 +91,7 @@ class NotesViewModel @Inject constructor(
     @Named("authed") private val httpClient: OkHttpClient,
     private val keys: E2EKeyManager,
     private val sessionManager: SessionManager,
+    private val userRepository: co.golink.tester.data.user.UserRepository,
     private val attachments: CalendarAttachments,
     private val calendar: CalendarRepository,
     private val viewerSession: FileViewerSession,
@@ -122,31 +125,37 @@ class NotesViewModel @Inject constructor(
 
     private val results = ConcurrentHashMap<Int, String>()
 
+    /** Pedidos da página atual: um novo carregamento cancela-os (os ids recomeçam na página). */
+    private var pageJob: Job = SupervisorJob(viewModelScope.coroutineContext[Job])
+
+    /** A WebView começou a carregar a página (inicial, Tentar de novo, reload): descarta o anterior. */
+    fun onPageStarted() {
+        pageJob.cancel()
+        pageJob = SupervisorJob(viewModelScope.coroutineContext[Job])
+        results.clear()
+    }
+
     /** wrapped_key de notas vistas nas respostas de /api/notes/… (as únicas que open_sealed abre). */
     private val noteKeys: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     private fun rememberWrappedKeys(path: String, body: String) {
-        // Respostas com conteúdo (relay, versões) são grandes e não trazem chaves.
-        if (body.length > 4_000_000 || "/collab" in path || path.endsWith("/content") || "/versions/" in path) return
+        // Respostas com conteúdo (relay, versões) não trazem chaves.
+        if ("/collab" in path || path.endsWith("/content") || "/versions/" in path) return
         if (!body.contains("\"wrapped_key\"")) return
-        fun walk(e: JsonElement) {
-            when (e) {
-                is JsonObject -> e.forEach { (k, v) ->
-                    if (k == "wrapped_key" && v is JsonPrimitive && v.isString) noteKeys += v.content else walk(v)
-                }
-                is JsonArray -> e.forEach { walk(it) }
-                else -> Unit
-            }
-        }
-        runCatching { walk(Json.parseToJsonElement(body)) }
+        // Varrimento sem parse (listas grandes); base64 não tem aspas nem escapes.
+        WRAPPED_KEY.findAll(body).forEach { noteKeys += it.groupValues[1].replace("\\/", "/") }
     }
 
     private class BridgeError(val status: Int, override val message: String? = null) : RuntimeException(message)
 
     fun infoJson(dark: Boolean): String {
-        val user = (sessionManager.state.value as? AuthState.Authenticated)?.user
+        // Mesmo critério do ecrã (userRepository.me): sessão restaurada sem rede ainda não está Authenticated.
+        val user = (sessionManager.state.value as? AuthState.Authenticated)?.user ?: userRepository.me.value
         val publicKey = keys.ownPublicKeyB64()
-        if (user == null || publicKey == null) return "null"
+        if (user == null || publicKey == null) {
+            android.util.Log.w("NotesWebView", "info() null: user=${user != null} publicKey=${publicKey != null}")
+            return "null"
+        }
         return buildJsonObject {
             put("locale", I18n.lang)
             put("dark", dark)
@@ -168,7 +177,7 @@ class NotesViewModel @Inject constructor(
     }
 
     fun request(id: Int, method: String, args: String, onDone: (Int) -> Unit) {
-        viewModelScope.launch {
+        viewModelScope.launch(pageJob) {
             results[id] = try {
                 val a = withContext(Dispatchers.Default) {
                     runCatching { Json.parseToJsonElement(args).jsonObject }.getOrElse { JsonObject(emptyMap()) }
@@ -227,7 +236,7 @@ class NotesViewModel @Inject constructor(
         }
         "sidebar" -> {
             _sidebar.value = parseSidebar(args)
-            args["route"]?.jsonPrimitive?.contentOrNull?.let { currentPath = it }
+            args["route"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() }?.let { currentPath = it }
             JsonNull
         }
         "flushed" -> {
@@ -439,3 +448,5 @@ class NotesViewModel @Inject constructor(
         super.onCleared()
     }
 }
+
+private val WRAPPED_KEY = Regex("\"wrapped_key\"\\s*:\\s*\"([^\"]+)\"")

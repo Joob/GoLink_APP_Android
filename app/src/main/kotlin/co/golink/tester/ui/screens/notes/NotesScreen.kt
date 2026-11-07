@@ -281,7 +281,8 @@ fun NotesScreen(
                         }
                     }
                 } else null,
-                onNewNote = if (e2eUnlocked) go { run("newNote(${sidebar.notebook?.takeIf { sidebar.section == "NotesNotebook" }?.let(::js) ?: "null"})") } else null,
+                // Fica nas Notes: não passa pelo caminho de saída (flushThen / pendingLeave).
+                onNewNote = if (e2eUnlocked) ({ closeDrawer(); run("newNote(${sidebar.notebook?.takeIf { sidebar.section == "NotesNotebook" }?.let(::js) ?: "null"})"); Unit }) else null,
             )
         },
     ) {
@@ -409,17 +410,40 @@ private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose
 
                     addJavascriptInterface(NotesBridge(vm, dark) { webView }, "GoLinkNotesHost")
 
+                    // Erros de JS da página no Logcat (tag NotesWebView).
+                    webChromeClient = object : android.webkit.WebChromeClient() {
+                        override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
+                            if (m.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.ERROR || m.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.WARNING) {
+                                android.util.Log.w("NotesWebView", "${m.message()} (${m.sourceId()}:${m.lineNumber()})")
+                            }
+                            return true
+                        }
+                    }
+
                     webViewClient = object : WebViewClient() {
                         // Só a página das Notes corre aqui (é a que tem a ponte); ligações das notas abrem fora.
                         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                             val url = request.url
-                            if (url.host == pageUri.host && url.path == pageUri.path) return false
+                            // A página (mesmo depois de redirecionada: www/apex, barra final) carrega aqui.
+                            if (url.path?.trimEnd('/') == pageUri.path?.trimEnd('/') && (url.host == pageUri.host || request.isRedirect)) return false
                             runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                             return true
                         }
 
+                        override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                            vm.onPageStarted()
+                        }
+
                         override fun onPageFinished(view: WebView, url: String) {
-                            loading = false
+                            // Os scripts já correram: sem window.GoLinkNotes a página não arrancou
+                            // (bundle em falta no servidor / erro de JS) — mostra o erro, não branco.
+                            view.evaluateJavascript("typeof window.GoLinkNotes === 'object' ? 1 : 0") { booted ->
+                                if (booted != "1") {
+                                    android.util.Log.w("NotesWebView", "página não arrancou: $url")
+                                    failed = true
+                                }
+                                loading = false
+                            }
                         }
 
                         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
