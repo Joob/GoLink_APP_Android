@@ -219,7 +219,11 @@ private fun MonthCell(
 private fun DayListCard(inst: CalInstance, calendars: List<CalInfo>, onClick: () -> Unit) {
     val ev = inst.event
     val color = eventColor(ev, calendars)
-    val calName = if (ev.holiday) "Feriado".tr() else calendars.firstOrNull { it.id == ev.calendarId }?.name ?: "Convite".tr()
+    val calName = when {
+        ev.holiday -> "Feriado".tr()
+        ev.noteId != null -> ev.data.notes.ifBlank { co.golink.tester.ui.i18n.nt("title") }
+        else -> calendars.firstOrNull { it.id == ev.calendarId }?.name ?: "Convite".tr()
+    }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier

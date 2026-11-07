@@ -95,6 +95,8 @@ fun CalendarScreen(
     onOpenBilling: () -> Unit,
     onOpenHelp: (supportStaff: Boolean) -> Unit,
     onOpenFile: (String) -> Unit,
+    /** Caixa de uma nota tocada (sobreposição das Notes). */
+    onOpenNote: (String) -> Unit = {},
     /** Hambúrguer das Notificações: abrir a gaveta ao voltar. */
     openDrawerRequest: Boolean = false,
     onDrawerRequestHandled: () -> Unit = {},
@@ -150,10 +152,11 @@ fun CalendarScreen(
 
     // Anexo: viewer (pela pasta-mãe) ou link de partilha no browser.
     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
-    LaunchedEffect(state.openFileId, state.openUrl) {
+    LaunchedEffect(state.openFileId, state.openUrl, state.openNoteId) {
         state.openFileId?.let(onOpenFile)
         state.openUrl?.let { runCatching { uriHandler.openUri(it) } }
-        if (state.openFileId != null || state.openUrl != null) viewModel.consumeOpenFile()
+        state.openNoteId?.let(onOpenNote)
+        if (state.openFileId != null || state.openUrl != null || state.openNoteId != null) viewModel.consumeOpenFile()
     }
 
     LaunchedEffect(state.toast) {
@@ -188,7 +191,7 @@ fun CalendarScreen(
                         else -> go { onOpenArea(area) }()
                     }
                 },
-                areas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea),
+                areas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Notes, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea),
                 sections = emptyList(),
                 unreadNotifications = unread,
                 onOpenNotifications = go(onOpenNotifications),

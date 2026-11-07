@@ -28,6 +28,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import okhttp3.ResponseBody.Companion.toResponseBody
 import retrofit2.Response
 
 /** Passkey da conta (Definições › Segurança). */
@@ -50,6 +51,8 @@ sealed class PasskeyError(message: String) : Exception(message) {
     /** 423 em conta sem password (login social): é preciso um login recente. */
     class ReauthRequired : PasskeyError("Por segurança, termina sessão e volta a entrar; depois adiciona a passkey nos 15 minutos seguintes.")
     class Unavailable(message: String) : PasskeyError(message)
+    /** A passkey escolhida foi apagada na conta mas continua no gestor de passwords. */
+    class UnknownOnServer : PasskeyError("Esta passkey já não existe na tua conta. Remove-a do gestor de passwords e entra de outra forma.")
 }
 
 /**
@@ -106,10 +109,10 @@ class PasskeyRepository @Inject constructor(
         passkeyToken: String?,
         deviceName: String?,
     ): Result<Unit> = runCatching {
-        val optionsResponse = api.registerOptions(buildJsonObject {
-            if (!passkeyToken.isNullOrBlank()) put("passkey_token", passkeyToken)
-            else if (!password.isNullOrBlank()) put("password", password)
-        })
+        // O servidor valida a confirmação no options e gasta-a no store:
+        // cancelar o diálogo do sistema não obriga a confirmar outra vez.
+        val confirmation = confirmationBody(password, passkeyToken)
+        val optionsResponse = api.registerOptions(confirmation)
         if (optionsResponse.code() == 423) {
             throw if (optionsResponse.peekFlag("reauth_required")) PasskeyError.ReauthRequired()
             else PasskeyError.ConfirmationRequired()
@@ -133,12 +136,20 @@ class PasskeyRepository @Inject constructor(
         }
 
         val response = api.register(buildJsonObject {
+            confirmation.forEach { (k, v) -> put(k, v) }
             put("credential", registration)
             if (!deviceName.isNullOrBlank()) put("name", deviceName.take(80))
         })
         if (!response.isSuccessful) {
-            if (response.code() == 422 && response.peekFlag("duplicate")) throw PasskeyError.Duplicate()
-            throw errorParser.parse(response)
+            if (response.code() == 423) {
+                throw if (response.peekFlag("reauth_required")) PasskeyError.ReauthRequired()
+                else PasskeyError.ConfirmationRequired()
+            }
+            // O corpo de erro só se lê uma vez: a flag e o parser usam a mesma cópia
+            // (senão a password errada / token expirado perdia a mensagem do servidor).
+            val (raw, flags) = response.readErrorOnce()
+            if (response.code() == 422 && flags?.get("duplicate")?.jsonPrimitive?.booleanOrNull == true) throw PasskeyError.Duplicate()
+            throw errorParser.parse(Response.error<JsonObject>(response.code(), raw.toResponseBody(response.errorBody()?.contentType())))
         }
     }.recoverCatching { throw map(it) }
 
@@ -147,10 +158,23 @@ class PasskeyRepository @Inject constructor(
         if (!response.isSuccessful) throw errorParser.parse(response)
     }.recoverCatching { throw map(it) }
 
-    suspend fun delete(id: String): Result<Unit> = runCatching {
-        val response = api.delete(id)
+    /**
+     * Remove uma passkey. Como juntar, exige [password] ou [passkeyToken]
+     * (finalidade remove_passkey); contas sociais passam com login recente.
+     */
+    suspend fun delete(id: String, password: String? = null, passkeyToken: String? = null): Result<Unit> = runCatching {
+        val response = api.delete(id, confirmationBody(password, passkeyToken))
+        if (response.code() == 423) {
+            throw if (response.peekFlag("reauth_required")) PasskeyError.ReauthRequired()
+            else PasskeyError.ConfirmationRequired()
+        }
         if (!response.isSuccessful) throw errorParser.parse(response)
     }.recoverCatching { throw map(it) }
+
+    private fun confirmationBody(password: String?, passkeyToken: String?): JsonObject = buildJsonObject {
+        if (!passkeyToken.isNullOrBlank()) put("passkey_token", passkeyToken)
+        else if (!password.isNullOrBlank()) put("password", password)
+    }
 
     /**
      * Confirma a identidade com uma passkey da conta e devolve o
@@ -162,7 +186,7 @@ class PasskeyRepository @Inject constructor(
 
         val response = api.confirm(buildJsonObject {
             put("credential", credential)
-            // O token só serve para esta ação (password, email, delete_account, add_passkey).
+            // O token só serve para esta ação (password, email, delete_account, add_passkey, remove_passkey).
             put("purpose", purpose)
         })
         if (!response.isSuccessful) throw parseError(response)
@@ -194,11 +218,22 @@ class PasskeyRepository @Inject constructor(
 
     /** 422 passkey_failed → mensagem própria; resto (suspensa, email) via parser. */
     private fun parseError(response: Response<JsonObject>): Throwable {
-        val error = errorParser.parse(response)
+        // O corpo de erro só se lê uma vez: guarda-se para a flag e o parser.
+        val raw = runCatching { response.errorBody()?.string() }.getOrNull().orEmpty()
+        val body = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
+        if (response.code() == 422 && body?.get("unknown_credential")?.jsonPrimitive?.booleanOrNull == true) {
+            return PasskeyError.UnknownOnServer()
+        }
+        val error = errorParser.parse(Response.error<JsonObject>(response.code(), raw.toResponseBody(response.errorBody()?.contentType())))
         if (response.code() == 422 && error.message?.contains("passkey could not be verified", ignoreCase = true) == true) {
             return AuthError.InvalidCredentials("A passkey não foi aceite")
         }
         return error
+    }
+
+    private fun Response<*>.readErrorOnce(): Pair<String, JsonObject?> {
+        val raw = runCatching { errorBody()?.string() }.getOrNull().orEmpty()
+        return raw to runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
     }
 
     private fun Response<*>.peekFlag(name: String): Boolean = runCatching {

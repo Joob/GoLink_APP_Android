@@ -25,6 +25,8 @@ object AppLinkRouter {
         data object NewTicket : Target
         data object Billing : Target
         data class Legacy(val pane: String) : Target
+        /** /notes/... → caminho dentro das Notes ("<id>", "all/<id>", "checklists"). */
+        data class Notes(val path: String) : Target
         data class Nav(val uri: Uri) : Target
     }
 
@@ -74,6 +76,7 @@ object AppLinkRouter {
             at(0) == "admin" && at(1) == "support" && at(2) == "tickets" && at(3) != null -> Target.Ticket(at(3)!!, admin = true)
             at(0) == "user" && at(1) == "settings" && at(2) == "billing" -> Target.Billing
             at(0) == "legacy" -> Target.Legacy(at(1) ?: "overview")
+            at(0) == "notes" -> Target.Notes(uri.pathSegments.drop(1).joinToString("/"))
             else -> null
         }
     }

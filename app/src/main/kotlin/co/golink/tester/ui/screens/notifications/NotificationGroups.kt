@@ -7,6 +7,7 @@ import androidx.compose.material.icons.outlined.CardGiftcard
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Event
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material.icons.outlined.PersonRemove
@@ -25,6 +26,7 @@ val NOTIFICATION_GROUPS: List<Pair<String, Set<String>>> = listOf(
     "security" to setOf("security-alert", "file-quarantined", "share-blocked", "abuse-report"),
     "sharing" to setOf("team-invitation", "team-ended", "file-comment"),
     "calendar" to setOf("calendar"),
+    "notes" to setOf("notes"),
     "legacy" to setOf("legacy"),
     "files" to setOf("file-request", "remote-upload-done"),
     "billing" to setOf("billing-alert", "payment-alert", "insufficient-balance", "storage-full", "subscription-created", "gift"),
@@ -38,6 +40,7 @@ fun groupLabel(group: String?): String = when (group) {
     "security" -> "Segurança".tr()
     "sharing" -> "Partilhas".tr()
     "calendar" -> "Calendário".tr()
+    "notes" -> co.golink.tester.ui.i18n.nt("title")
     "legacy" -> "Legacy".tr()
     "files" -> "Ficheiros".tr()
     "billing" -> "Faturação".tr()
@@ -66,6 +69,7 @@ fun notificationIcon(category: String?): NotificationIcon {
         "share-blocked", "abuse-report" -> rose(Icons.Outlined.WarningAmber)
         "storage-full" -> rose(Icons.Outlined.Storage)
         "calendar" -> rose(Icons.Outlined.Event)
+        "notes" -> amber(Icons.Outlined.Description)
         "legacy" -> tone(Icons.Outlined.Shield, 0xFF7C3AED, 0xFFEDE9FE, 0xFFA78BFA, 0xFF4C1D95)
         "team-invitation" -> tone(Icons.Outlined.PersonAdd, 0xFF4F46E5, 0xFFE0E7FF, 0xFF818CF8, 0xFF312E81)
         "team-ended" -> tone(Icons.Outlined.PersonRemove, 0xFF4F46E5, 0xFFE0E7FF, 0xFF818CF8, 0xFF312E81)

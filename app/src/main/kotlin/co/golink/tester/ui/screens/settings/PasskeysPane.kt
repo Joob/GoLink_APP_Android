@@ -53,11 +53,19 @@ data class PasskeysUiState(
     val passkeys: List<PasskeyInfo> = emptyList(),
     val loaded: Boolean = false,
     val busy: Boolean = false,
-    /** Criar passkey pediu confirmação (423): mostrar o diálogo. */
-    val needsConfirmation: Boolean = false,
+    /** Criar/remover pediu confirmação (423): mostrar o diálogo. */
+    val confirmFor: PasskeyAction? = null,
+    /** Erro dentro do diálogo de confirmação (ex.: password errada) — o diálogo fica aberto. */
+    val confirmError: String? = null,
     val message: String? = null,
     val isError: Boolean = false,
 )
+
+/** Ação que ficou à espera de confirmação (password ou outra passkey). */
+sealed interface PasskeyAction {
+    data object Add : PasskeyAction
+    data class Remove(val key: PasskeyInfo) : PasskeyAction
+}
 
 @HiltViewModel
 class PasskeysViewModel @Inject constructor(
@@ -79,25 +87,35 @@ class PasskeysViewModel @Inject constructor(
             .onFailure { _state.update { it.copy(loaded = true) } }
     }
 
+    /**
+     * passkey_token (add_passkey) ainda por gastar: o servidor só o gasta
+     * quando a passkey fica guardada, por isso cancelar o diálogo do sistema
+     * não obriga a confirmar outra vez.
+     */
+    private var addToken: String? = null
+
     /** Sem password/token primeiro; o servidor diz (423) se precisa de confirmação. */
     fun add(activity: Context, password: String? = null, passkeyToken: String? = null) {
         if (_state.value.busy) return
-        _state.update { it.copy(busy = true, message = null, needsConfirmation = false) }
+        if (passkeyToken != null) addToken = passkeyToken
+        _state.update { it.copy(busy = true, message = null, confirmFor = null) }
         viewModelScope.launch {
-            repository.register(activity, password, passkeyToken, deviceName())
+            repository.register(activity, password, if (password.isNullOrBlank()) addToken else null, deviceName())
                 .onSuccess {
+                    addToken = null
                     _state.update { it.copy(busy = false, message = "Passkey adicionada.".tr(), isError = false) }
                     load()
                     sessionManager.refreshUser()
                 }
                 .onFailure { t ->
+                    if (t is PasskeyError.ConfirmationRequired || t is PasskeyError.ReauthRequired) addToken = null
                     _state.update {
                         when (t) {
-                            is PasskeyError.ConfirmationRequired -> it.copy(busy = false, needsConfirmation = true)
+                            is PasskeyError.ConfirmationRequired -> it.copy(busy = false, confirmFor = PasskeyAction.Add)
                             is PasskeyError.Cancelled -> it.copy(busy = false)
                             is PasskeyError.ReauthRequired ->
                                 // Conta sem password mas com passkeys: confirma com uma delas.
-                                if (hasPasskeys.value) it.copy(busy = false, needsConfirmation = true)
+                                if (hasPasskeys.value) it.copy(busy = false, confirmFor = PasskeyAction.Add)
                                 else it.copy(busy = false, message = t.message.orEmpty().tr(), isError = true)
                             is PasskeyError.Duplicate -> it.copy(busy = false, message = "Este aparelho já tem uma passkey para a tua conta.".tr(), isError = true)
                             is co.golink.tester.domain.auth.AuthError.Validation ->
@@ -109,7 +127,7 @@ class PasskeysViewModel @Inject constructor(
         }
     }
 
-    fun dismissConfirmation() = _state.update { it.copy(needsConfirmation = false) }
+    fun dismissConfirmation() = _state.update { it.copy(confirmFor = null, confirmError = null) }
 
     fun rename(id: String, name: String) = viewModelScope.launch {
         if (name.isBlank()) return@launch
@@ -117,14 +135,32 @@ class PasskeysViewModel @Inject constructor(
             .onFailure { _state.update { it.copy(message = "Erro".tr(), isError = true) } }
     }
 
-    fun delete(id: String) = viewModelScope.launch {
-        repository.delete(id)
+    /** Remover também exige confirmação: o 1.º pedido vai sem nada e o 423 abre o diálogo. */
+    fun delete(key: PasskeyInfo, password: String? = null, passkeyToken: String? = null) = viewModelScope.launch {
+        // O diálogo (se aberto) fica até correr bem: password errada volta a pedir só a password.
+        _state.update { it.copy(message = null, confirmError = null) }
+        repository.delete(key.id, password, passkeyToken)
             .onSuccess {
-                _state.update { it.copy(message = "Passkey removida.".tr(), isError = false) }
+                _state.update { it.copy(confirmFor = null, message = "Passkey removida.".tr(), isError = false) }
                 load()
                 sessionManager.refreshUser()
             }
-            .onFailure { _state.update { it.copy(message = "Erro".tr(), isError = true) } }
+            .onFailure { t ->
+                _state.update {
+                    when (t) {
+                        is PasskeyError.ConfirmationRequired -> it.copy(confirmFor = it.confirmFor ?: PasskeyAction.Remove(key))
+                        // Conta sem password: confirma com uma passkey (a própria serve). Se até
+                        // essa confirmação foi recusada, só resta voltar a entrar.
+                        is PasskeyError.ReauthRequired ->
+                            if (passkeyToken == null) it.copy(confirmFor = it.confirmFor ?: PasskeyAction.Remove(key))
+                            else it.copy(confirmFor = null, message = "Por segurança, termina sessão e volta a entrar; depois remove a passkey nos 15 minutos seguintes.".tr(), isError = true)
+                        is co.golink.tester.domain.auth.AuthError.Validation ->
+                            if (it.confirmFor != null) it.copy(confirmError = "Password incorreta ou passkey inválida.".tr())
+                            else it.copy(message = "Password incorreta ou passkey inválida.".tr(), isError = true)
+                        else -> it.copy(confirmFor = null, message = "Erro".tr(), isError = true)
+                    }
+                }
+            }
     }
 
     /**
@@ -213,33 +249,44 @@ internal fun PasskeysSection(
         )
     }
 
-    if (state.needsConfirmation) {
-        var password by remember { mutableStateOf("") }
-        var error by remember { mutableStateOf<String?>(null) }
+    state.confirmFor?.let { action ->
+        var password by remember(action) { mutableStateOf("") }
+        var error by remember(action) { mutableStateOf<String?>(null) }
+        val removing = action as? PasskeyAction.Remove
         SettingsDialog(
             title = "Confirma a tua identidade".tr(),
-            message = if (socialiteAccount) null else "Para adicionar uma passkey, confirma com a password da conta.".tr(),
+            message = when {
+                socialiteAccount -> null
+                removing != null -> "Para remover uma passkey, confirma com a password da conta.".tr()
+                else -> "Para adicionar uma passkey, confirma com a password da conta.".tr()
+            },
             icon = Icons.Outlined.Key,
             confirmText = "Continuar".tr(),
             confirmEnabled = !socialiteAccount && password.isNotBlank(),
-            onConfirm = { viewModel.add(context, password = password) },
+            onConfirm = {
+                if (removing != null) viewModel.delete(removing.key, password = password)
+                else viewModel.add(context, password = password)
+            },
             onDismiss = viewModel::dismissConfirmation,
         ) {
             if (!socialiteAccount) SettingsField("Password atual".tr(), password, { password = it }, isPassword = true)
-            if (hasPasskeys) {
+            if (hasPasskeys || state.passkeys.isNotEmpty()) {
                 TextButton(
                     onClick = {
                         viewModel.confirm(
                             context,
-                            "add_passkey",
-                            onToken = { token -> viewModel.add(context, passkeyToken = token) },
+                            if (removing != null) "remove_passkey" else "add_passkey",
+                            onToken = { token ->
+                                if (removing != null) viewModel.delete(removing.key, passkeyToken = token)
+                                else viewModel.add(context, passkeyToken = token)
+                            },
                             onError = { error = it },
                         )
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Usar passkey em vez da password".tr(), color = SettingsAccent, fontWeight = FontWeight.SemiBold) }
             }
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            (error ?: state.confirmError)?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         }
     }
 
@@ -263,7 +310,7 @@ internal fun PasskeysSection(
             icon = Icons.Outlined.Delete,
             confirmText = "Remover".tr(),
             destructive = true,
-            onConfirm = { viewModel.delete(key.id); removing = null },
+            onConfirm = { viewModel.delete(key); removing = null },
             onDismiss = { removing = null },
         )
     }

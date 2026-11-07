@@ -42,6 +42,8 @@ data class CalEvent(
     val key: ByteArray?,
     /** Feriado (só leitura, não vem do servidor). */
     val holiday: Boolean = false,
+    /** Caixa de uma nota com data (só leitura; tocar abre a nota). */
+    val noteId: String? = null,
 ) {
     val id: String get() = raw.id
     val calendarId: String get() = raw.calendar_id
@@ -49,8 +51,8 @@ data class CalEvent(
     val repeat: String get() = raw.repeat
     val repeatUntil: String? get() = raw.repeat_until
     val repeatRule: RepeatRule by lazy { Recurrence.rule(raw.repeat, raw.repeat_interval, raw.repeat_days, raw.repeat_count) }
-    val canEdit: Boolean get() = !holiday && raw.can_edit && !locked
-    val canManage: Boolean get() = !holiday && raw.can_manage && !locked
+    val canEdit: Boolean get() = !holiday && noteId == null && raw.can_edit && !locked
+    val canManage: Boolean get() = !holiday && noteId == null && raw.can_manage && !locked
     val isGuest: Boolean get() = raw.role == "guest"
 
     /** Dia inteiro conta no fuso do aparelho; o resto no fuso do evento. */
@@ -58,7 +60,7 @@ data class CalEvent(
 
     override fun equals(other: Any?): Boolean =
         other is CalEvent && other.raw == raw && other.data == data && other.locked == locked &&
-            other.start == start && other.end == end && other.holiday == holiday
+            other.start == start && other.end == end && other.holiday == holiday && other.noteId == noteId
 
     override fun hashCode(): Int = raw.id.hashCode()
 }

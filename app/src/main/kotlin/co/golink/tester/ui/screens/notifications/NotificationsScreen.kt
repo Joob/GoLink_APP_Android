@@ -166,6 +166,7 @@ fun NotificationsScreen(
     onOpenSupportTicket: (id: String, admin: Boolean) -> Unit = { _, _ -> },
     onOpenCalendar: (event: String?, date: String?) -> Unit = { _, _ -> },
     onOpenLegacy: (pane: String) -> Unit = {},
+    onOpenNotes: (path: String) -> Unit = {},
     onOpenSettings: () -> Unit = {},
     viewModel: NotificationsViewModel = hiltViewModel(),
 ) {
@@ -212,6 +213,7 @@ fun NotificationsScreen(
     val openTicket by rememberUpdatedState(onOpenSupportTicket)
     val openCalendar by rememberUpdatedState(onOpenCalendar)
     val openLegacy by rememberUpdatedState(onOpenLegacy)
+    val openNotes by rememberUpdatedState(onOpenNotes)
     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     val actionOf = remember(uriHandler) {
         { n: Notification ->
@@ -221,6 +223,7 @@ fun NotificationsScreen(
                 { id, admin -> openTicket(id, admin) },
                 { e, d -> openCalendar(e, d) },
                 { pane -> openLegacy(pane) },
+                { path -> openNotes(path) },
                 { url -> runCatching { uriHandler.openUri(url) } },
             )
         }
@@ -603,6 +606,7 @@ private fun actionFor(
     openTicket: (String, Boolean) -> Unit,
     openCalendar: (String?, String?) -> Unit,
     openLegacy: (String) -> Unit,
+    openNotes: (String) -> Unit,
     openUrl: (String) -> Unit,
 ): (() -> Unit)? {
     if (n.category == "security-alert") return openSecurity
@@ -617,6 +621,12 @@ private fun actionFor(
         }
         if (segments.firstOrNull() == "legacy-invite") return { openLegacy("guarding") }
         return { openUrl(url) }
+    }
+    // Notes: /notes/<id> ou /notes/checklists (o texto da nota nunca vem na notificação).
+    if (n.category == "notes") {
+        val url = n.actionUrl ?: return { openNotes("") }
+        val segments = android.net.Uri.parse(url).pathSegments
+        return { openNotes(if (segments.firstOrNull() == "notes") segments.drop(1).joinToString("/") else "") }
     }
     // Calendário: o action traz /calendar?event=…&date=… (o título é genérico, o
     // verdadeiro está cifrado e só se vê ao abrir o evento). Cancelamentos não têm action.

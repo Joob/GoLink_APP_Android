@@ -123,6 +123,11 @@ object ApiModule {
 
     @Provides
     @Singleton
+    fun provideNotesApi(retrofit: Retrofit): co.golink.tester.network.NotesApi =
+        retrofit.create(co.golink.tester.network.NotesApi::class.java)
+
+    @Provides
+    @Singleton
     fun provideLegacyApi(retrofit: Retrofit): co.golink.tester.network.LegacyApi =
         retrofit.create(co.golink.tester.network.LegacyApi::class.java)
 }

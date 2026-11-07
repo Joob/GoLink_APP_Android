@@ -55,8 +55,14 @@ fun calendarColor(key: String?): Color = CALENDAR_COLORS[key] ?: CALENDAR_COLORS
 /** Feriados: roxo, como na web. */
 val HolidayColor = Color(0xFF8B5CF6)
 
-fun eventColor(event: CalEvent, calendars: List<CalInfo>): Color =
-    if (event.holiday) HolidayColor else calendarColor(calendars.firstOrNull { it.id == event.calendarId }?.color)
+/** Caixas das Notes: laranja, como na web. */
+val NoteTaskColor = Color(0xFFEA580C)
+
+fun eventColor(event: CalEvent, calendars: List<CalInfo>): Color = when {
+    event.holiday -> HolidayColor
+    event.noteId != null -> NoteTaskColor
+    else -> calendarColor(calendars.firstOrNull { it.id == event.calendarId }?.color)
+}
 
 /** Fundo tingido (cartões da agenda, chips de dia inteiro). */
 @Composable

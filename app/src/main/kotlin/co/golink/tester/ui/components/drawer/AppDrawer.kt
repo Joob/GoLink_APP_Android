@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.KeyboardDoubleArrowRight
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.CalendarToday
 import androidx.compose.material.icons.outlined.DarkMode
@@ -97,11 +98,12 @@ private val PanelWidth = 248.dp
 private val DrawerFullWidth = RailWidth + 1.dp + PanelWidth
 
 /** Áreas da barra de ícones (igual à sidebar da web). */
-enum class DrawerArea { Drive, Calendar, Legacy, Admin, Support }
+enum class DrawerArea { Drive, Calendar, Notes, Legacy, Admin, Support }
 
 fun DrawerArea.label(): String = when (this) {
     DrawerArea.Drive -> "Drive"
     DrawerArea.Calendar -> "Calendário".tr()
+    DrawerArea.Notes -> co.golink.tester.ui.i18n.nt("title")
     DrawerArea.Legacy -> "Legacy"
     DrawerArea.Admin -> "Admin"
     DrawerArea.Support -> "Suporte".tr()
@@ -232,6 +234,8 @@ fun ColumnScope.AppDrawerContent(
     areaContent: (@Composable ColumnScope.() -> Unit)? = null,
     /** Legacy: "Adicionar ao cofre" no topo do painel. */
     onAddToVault: (() -> Unit)? = null,
+    /** Notes: "Nova nota" no topo do painel. */
+    onNewNote: (() -> Unit)? = null,
     /** Fundo do painel (ex.: o cartão de estado do Legacy). */
     footerContent: (@Composable () -> Unit)? = null,
 ) {
@@ -272,6 +276,10 @@ fun ColumnScope.AppDrawerContent(
                     }
                 }
 
+                if (area == DrawerArea.Notes && onNewNote != null && lockedContent == null) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) { NewUploadButton(onNewNote, label = co.golink.tester.ui.i18n.nt("new_note")) }
+                }
+
                 if (area == DrawerArea.Legacy && onAddToVault != null && lockedContent == null) {
                     Column(Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) { NewUploadButton(onAddToVault, label = co.golink.tester.ui.i18n.lt("add_to_vault")) }
                 }
@@ -291,7 +299,7 @@ fun ColumnScope.AppDrawerContent(
                         .padding(horizontal = 14.dp)
                         .padding(bottom = 8.dp),
                 ) {
-                    if (lockedContent != null && (area == DrawerArea.Drive || area == DrawerArea.Calendar || area == DrawerArea.Legacy)) {
+                    if (lockedContent != null && (area == DrawerArea.Drive || area == DrawerArea.Calendar || area == DrawerArea.Notes || area == DrawerArea.Legacy)) {
                         lockedContent()
                     } else if (areaContent != null) {
                         areaContent()
@@ -605,6 +613,16 @@ private fun DrawerRail(
                 accent = Color(if (dark) 0xFFFB7185 else 0xFFE11D48),
             ) {
                 onAreaChange(DrawerArea.Calendar)
+            }
+        }
+        if (DrawerArea.Notes in areas) {
+            RailItem(
+                Icons.Outlined.Description,
+                DrawerArea.Notes.label(),
+                area == DrawerArea.Notes,
+                accent = Color(if (dark) 0xFFF59E0B else 0xFFD97706),
+            ) {
+                onAreaChange(DrawerArea.Notes)
             }
         }
         if (DrawerArea.Legacy in areas) {

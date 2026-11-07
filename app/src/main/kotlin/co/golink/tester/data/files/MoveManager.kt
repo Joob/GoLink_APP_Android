@@ -79,9 +79,12 @@ class MoveManager @Inject constructor(
                 .onFailure { t ->
                     val msg = t.message.orEmpty()
                     // Recusas definitivas do servidor: sem "Tentar de novo".
-                    val outOfTeam = msg.contains("within that team folder", ignoreCase = true)
-                    val rootMove = msg.contains("team folders can't be moved", ignoreCase = true)
-                    val teamInto = !outOfTeam && !rootMove && msg.contains("team folder", ignoreCase = true)
+                    // Código estável do servidor; o texto em inglês só como recurso
+                    // para servidores antigos.
+                    val code = (t as? MoveRefused)?.code
+                    val outOfTeam = code == "team_scope" || (code == null && msg.contains("within that team folder", ignoreCase = true))
+                    val rootMove = code == "team_root" || (code == null && msg.contains("team folders can't be moved", ignoreCase = true))
+                    val teamInto = code == null && !outOfTeam && !rootMove && msg.contains("team folder", ignoreCase = true)
                     update(id) {
                         it.copy(
                             state = MoveJob.State.Failed,

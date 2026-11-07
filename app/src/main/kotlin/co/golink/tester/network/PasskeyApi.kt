@@ -3,8 +3,8 @@ package co.golink.tester.network
 import kotlinx.serialization.json.JsonObject
 import retrofit2.Response
 import retrofit2.http.Body
-import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.HTTP
 import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.Path
@@ -29,14 +29,16 @@ interface PasskeyApi {
     @POST("api/user/passkeys/options")
     suspend fun registerOptions(@Body body: JsonObject): Response<JsonObject>
 
+    /** body: credential + o mesmo password/passkey_token do options (o token gasta-se aqui). */
     @POST("api/user/passkeys")
     suspend fun register(@Body body: JsonObject): Response<JsonObject>
 
     @PATCH("api/user/passkeys/{id}")
     suspend fun rename(@Path("id") id: String, @Body body: JsonObject): Response<JsonObject>
 
-    @DELETE("api/user/passkeys/{id}")
-    suspend fun delete(@Path("id") id: String): Response<Unit>
+    /** body: { password } ou { passkey_token } (finalidade remove_passkey); 423 = falta confirmar. */
+    @HTTP(method = "DELETE", path = "api/user/passkeys/{id}", hasBody = true)
+    suspend fun delete(@Path("id") id: String, @Body body: JsonObject): Response<Unit>
 
     // Confirmar com passkey em vez da password (devolve passkey_token, 5 min)
     @POST("api/user/passkeys/confirm/options")

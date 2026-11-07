@@ -96,6 +96,7 @@ class SignInViewModel @Inject constructor(
 
     private fun passkeyError(t: Throwable): String = when (t) {
         is co.golink.tester.data.auth.PasskeyError.NoPasskey -> "Não há passkeys para esta app neste aparelho".tr()
+        is co.golink.tester.data.auth.PasskeyError.UnknownOnServer -> t.message.orEmpty().tr()
         is co.golink.tester.data.auth.PasskeyError -> "Passkey indisponível neste aparelho".tr()
         is AuthError.InvalidCredentials -> "A passkey não foi aceite. Tenta de novo ou usa a password.".tr()
         else -> readableError(t)

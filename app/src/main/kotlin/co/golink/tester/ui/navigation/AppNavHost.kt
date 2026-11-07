@@ -99,6 +99,9 @@ object Routes {
     const val CALENDAR = "calendar?event={event}&date={date}"
     fun calendar(event: String? = null, date: String? = null) = "calendar?event=${event.orEmpty()}&date=${date.orEmpty()}"
     const val LEGACY = "legacy?pane={pane}"
+    const val NOTES = "notes?path={path}"
+    /** Caminho dentro das Notes: "all/<id>", "checklists", "<id>" (link de notificação)… */
+    fun notes(path: String = "") = "notes?path=${android.net.Uri.encode(path)}"
     fun legacy(pane: String = "overview") = "legacy?pane=$pane"
     // Páginas públicas do Legacy (App Links, sem sessão). "legacy_" ≠ "legacy?".
     const val LEGACY_OPEN = "legacy_open/{token}"
@@ -210,6 +213,7 @@ fun AppNavHost(
                 current.startsWith("admin") ||
                 current.startsWith("calendar") ||
                 current.startsWith("legacy") ||
+                current.startsWith("notes?") ||
                 current == Routes.NOTIFICATIONS ||
                 current.startsWith("viewer/")
         )
@@ -239,7 +243,7 @@ fun AppNavHost(
         val link = calendarLink ?: return@LaunchedEffect
         if (top != TopState.Authenticated) return@LaunchedEffect
         val route = currentRoute ?: return@LaunchedEffect
-        if (route != Routes.HOME && !route.startsWith("calendar") && route != Routes.NOTIFICATIONS && !route.startsWith("settings")) return@LaunchedEffect
+        if (route != Routes.HOME && !route.startsWith("calendar") && !route.startsWith("notes?") && route != Routes.NOTIFICATIONS && !route.startsWith("settings")) return@LaunchedEffect
         CalendarDeepLink.consume()
         // Nova entrada (os argumentos mudam); a anterior do calendário sai.
         navController.navigate(Routes.calendar(link.event, link.date)) { popUpTo(Routes.HOME) }
@@ -250,7 +254,7 @@ fun AppNavHost(
     LaunchedEffect(inboxLink, top, currentRoute) {
         if (!inboxLink || top != TopState.Authenticated) return@LaunchedEffect
         val route = currentRoute ?: return@LaunchedEffect
-        if (route != Routes.HOME && !route.startsWith("calendar") && route != Routes.NOTIFICATIONS && !route.startsWith("settings")) return@LaunchedEffect
+        if (route != Routes.HOME && !route.startsWith("calendar") && !route.startsWith("notes?") && route != Routes.NOTIFICATIONS && !route.startsWith("settings")) return@LaunchedEffect
         InboxDeepLink.consume()
         if (route != Routes.NOTIFICATIONS) navController.navigate(Routes.NOTIFICATIONS)
     }
@@ -281,7 +285,7 @@ fun AppNavHost(
             else -> true
         }
         val inApp = route == Routes.HOME || route == Routes.NOTIFICATIONS || route.startsWith("settings") ||
-            route.startsWith("calendar") || route.startsWith("support") || route.startsWith("legacy") ||
+            route.startsWith("calendar") || route.startsWith("support") || route.startsWith("legacy") || route.startsWith("notes?") ||
             route.startsWith("viewer/") || route.startsWith("team_invitation") || route.startsWith("verify_email")
         if (needsAuth && (!authed || !inApp)) return@LaunchedEffect
         val target = AppLinkRouter.consume() ?: return@LaunchedEffect
@@ -296,6 +300,7 @@ fun AppNavHost(
             AppLinkRouter.Target.NewTicket -> onTopOfHome(Routes.SUPPORT_NEW)
             AppLinkRouter.Target.Billing -> onTopOfHome(Routes.settings("billing"))
             is AppLinkRouter.Target.Legacy -> onTopOfHome(Routes.legacy(target.pane))
+            is AppLinkRouter.Target.Notes -> onTopOfHome(Routes.notes(target.path))
         }
     }
 
@@ -487,6 +492,7 @@ fun AppNavHost(
                     onOpenAdmin = { pane -> navController.navigate(Routes.admin(pane)) },
                     onOpenCalendar = { navController.navigate(Routes.calendar()) { launchSingleTop = true } },
                     onOpenLegacy = { navController.navigate(Routes.legacy()) { launchSingleTop = true } },
+                    onOpenNotes = { navController.navigate(Routes.notes()) { launchSingleTop = true } },
                     areaRequest = areaRequest?.let { name -> runCatching { co.golink.tester.ui.components.drawer.DrawerArea.valueOf(name) }.getOrNull() },
                     onAreaRequestHandled = { entry.savedStateHandle["drawer_area"] = null },
                     openDrawerRequest = drawerRequest,
@@ -542,6 +548,8 @@ fun AppNavHost(
                     onOpenArea = { area ->
                         if (area == co.golink.tester.ui.components.drawer.DrawerArea.Legacy) {
                             navController.navigate(Routes.legacy()) { popUpTo(Routes.HOME) }
+                        } else if (area == co.golink.tester.ui.components.drawer.DrawerArea.Notes) {
+                            navController.navigate(Routes.notes()) { popUpTo(Routes.HOME) }
                         } else {
                             backToHome(area.name)
                         }
@@ -552,6 +560,7 @@ fun AppNavHost(
                     onOpenBilling = { navController.navigate(Routes.settings("billing")) },
                     onOpenHelp = { staff -> navController.navigate(if (staff) Routes.SUPPORT_DASHBOARD else Routes.support(false)) },
                     onOpenFile = { id -> navController.navigate(Routes.viewer(id)) },
+                    onOpenNote = { id -> navController.navigate(Routes.notes("all/$id")) { popUpTo(Routes.HOME) } },
                     openDrawerRequest = drawerRequest,
                     onDrawerRequestHandled = { entry.savedStateHandle["open_drawer"] = false },
                 ) }
@@ -574,12 +583,55 @@ fun AppNavHost(
                     initialPane = entry.arguments?.getString("pane").orEmpty(),
                     onOpenDrive = { backToHome(null) },
                     onOpenCalendar = { navController.navigate(Routes.calendar()) { popUpTo(Routes.HOME) } },
-                    onOpenArea = { area -> backToHome(area.name) },
+                    onOpenArea = { area ->
+                        if (area == co.golink.tester.ui.components.drawer.DrawerArea.Notes) {
+                            navController.navigate(Routes.notes()) { popUpTo(Routes.HOME) }
+                        } else {
+                            backToHome(area.name)
+                        }
+                    },
                     onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
                     onOpenSettings = { navController.navigate(Routes.settings()) },
                     onOpenProfile = { navController.navigate(Routes.settings("profile")) },
                     onOpenBilling = { navController.navigate(Routes.settings("billing")) },
                     onOpenHelp = { staff -> navController.navigate(if (staff) Routes.SUPPORT_DASHBOARD else Routes.support(false)) },
+                    openDrawerRequest = drawerRequest,
+                    onDrawerRequestHandled = { entry.savedStateHandle["open_drawer"] = false },
+                )
+                co.golink.tester.ui.screens.encryption.E2EGate()
+            }
+        }
+        composable(
+            route = Routes.NOTES,
+            arguments = listOf(navArgument("path") { type = NavType.StringType; defaultValue = "" }),
+        ) { entry ->
+            val backToHome: (String?) -> Unit = { area ->
+                if (area != null) runCatching { navController.getBackStackEntry(Routes.HOME).savedStateHandle["drawer_area"] = area }
+                if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
+                    navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
+                }
+            }
+            val drawerRequest by entry.savedStateHandle.getStateFlow("open_drawer", false).collectAsState()
+            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+                co.golink.tester.ui.screens.notes.NotesScreen(
+                    onOpenDrive = { backToHome(null) },
+                    onOpenCalendar = { navController.navigate(Routes.calendar()) { popUpTo(Routes.HOME) } },
+                    onOpenArea = { area ->
+                        if (area == co.golink.tester.ui.components.drawer.DrawerArea.Legacy) {
+                            navController.navigate(Routes.legacy()) { popUpTo(Routes.HOME) }
+                        } else {
+                            backToHome(area.name)
+                        }
+                    },
+                    onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
+                    onOpenSettings = { navController.navigate(Routes.settings()) },
+                    onOpenProfile = { navController.navigate(Routes.settings("profile")) },
+                    onOpenBilling = { navController.navigate(Routes.settings("billing")) },
+                    onOpenHelp = { staff -> navController.navigate(if (staff) Routes.SUPPORT_DASHBOARD else Routes.support(false)) },
+                    onOpenFile = { id -> navController.navigate(Routes.viewer(id)) },
+                    // Por cima das Notes: Voltar no Calendário regressa à nota.
+                    onOpenEvent = { id -> navController.navigate(Routes.calendar(id)) },
+                    onBack = { backToHome(null) },
                     openDrawerRequest = drawerRequest,
                     onDrawerRequestHandled = { entry.savedStateHandle["open_drawer"] = false },
                 )
@@ -593,7 +645,7 @@ fun AppNavHost(
                 // ao que estava por baixo; vindo das Definições, abre a do Drive.
                 onOpenMenu = {
                     val previous = navController.previousBackStackEntry
-                    val hasDrawer = previous?.destination?.route.let { it == Routes.HOME || it == Routes.CALENDAR || it == Routes.LEGACY }
+                    val hasDrawer = previous?.destination?.route.let { it == Routes.HOME || it == Routes.CALENDAR || it == Routes.LEGACY || it == Routes.NOTES }
                     val target = if (hasDrawer) previous else runCatching { navController.getBackStackEntry(Routes.HOME) }.getOrNull()
                     if (target != null) {
                         target.savedStateHandle["open_drawer"] = true
@@ -606,6 +658,7 @@ fun AppNavHost(
                 onOpenSupportTicket = { id, admin -> navController.navigate(Routes.supportTicket(id, admin)) },
                 onOpenCalendar = { event, date -> navController.navigate(Routes.calendar(event, date)) },
                 onOpenLegacy = { pane -> navController.navigate(Routes.legacy(pane)) { popUpTo(Routes.HOME) } },
+                onOpenNotes = { path -> navController.navigate(Routes.notes(path)) { popUpTo(Routes.HOME) } },
                 onOpenSettings = { navController.navigate(Routes.settings()) },
             )
         }

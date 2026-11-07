@@ -112,6 +112,8 @@
                 <data android:pathPrefix="/platform/files" />
                 <data android:pathPrefix="/platform/team-folders" />
                 <data android:pathPrefix="/calendar" />
+                <data android:path="/notes" />
+                <data android:pathPrefix="/notes/" />
                 <data android:pathPrefix="/support/tickets" />
                 <data android:pathPrefix="/admin/support/tickets" />
                 <data android:pathPrefix="/user/settings/billing" />

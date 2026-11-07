@@ -163,8 +163,10 @@ class FilesRepository @Inject constructor(
         if (!response.isSuccessful) {
             // A mensagem do servidor (ex.: "within that team folder") decide o aviso.
             val raw = runCatching { response.errorBody()?.string().orEmpty() }.getOrDefault("")
-            val msg = Regex("\"message\"\\s*:\\s*\"([^\"]*)\"").find(raw)?.groupValues?.get(1)
-            error(msg ?: "HTTP ${response.code()}")
+            val body = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject }.getOrNull()
+            fun field(k: String) = (body?.get(k) as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+            // O MoveManager decide o aviso pelo código estável ("team_scope", "team_root").
+            throw MoveRefused(field("code"), field("message") ?: "HTTP ${response.code()}")
         }
     }
 
@@ -173,3 +175,6 @@ class FilesRepository @Inject constructor(
         check(response.isSuccessful) { "HTTP ${response.code()}" }
     }
 }
+
+/** Recusa do servidor ao mover: [code] estável (pode faltar em servidores antigos) + mensagem. */
+class MoveRefused(val code: String?, message: String) : Exception(message)

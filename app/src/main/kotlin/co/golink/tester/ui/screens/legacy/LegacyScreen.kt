@@ -183,7 +183,7 @@ fun LegacyScreen(
                         else -> go { onOpenArea(area) }()
                     }
                 },
-                areas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea),
+                areas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Notes, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea),
                 sections = legacySections(pane, legacy) { key -> closeDrawer(); pane = key },
                 unreadNotifications = unread,
                 onOpenNotifications = go(onOpenNotifications),

@@ -64,6 +64,8 @@ data class CalendarUiState(
     val openFileId: String? = null,
     /** Anexo sem acesso ao Drive mas com link de partilha: abre no browser. */
     val openUrl: String? = null,
+    /** Caixa de uma nota tocada: abre a nota (consumido pelo ecrã). */
+    val openNoteId: String? = null,
     /** Definições abertas: "new" ou o id do calendário. */
     val settings: String? = null,
     val calBusy: Boolean = false,
@@ -90,6 +92,7 @@ class CalendarViewModel @Inject constructor(
     private val attachments: co.golink.tester.data.calendar.CalendarAttachments,
     private val viewerSession: co.golink.tester.ui.screens.viewer.FileViewerSession,
     private val userRepository: co.golink.tester.data.user.UserRepository,
+    private val noteTasksRepo: co.golink.tester.data.notes.NotesTasksRepository,
 ) : ViewModel() {
     private val prefs = context.getSharedPreferences("calendar", Context.MODE_PRIVATE)
 
@@ -97,6 +100,10 @@ class CalendarViewModel @Inject constructor(
         CalendarUiState(view = runCatching { CalView.valueOf(prefs.getString("view", null) ?: "") }.getOrDefault(CalView.Month)),
     )
     val state: StateFlow<CalendarUiState> = _state
+
+    /** Caixas datadas das Notes no intervalo (antes de [instances], que as usa). */
+    private val _noteTasks = MutableStateFlow<List<co.golink.tester.data.notes.NoteTaskItem>>(emptyList())
+    private var noteTasksJob: Job? = null
 
     /**
      * Início da semana derivado do utilizador (não do singleton da UI, que é
@@ -159,8 +166,9 @@ class CalendarViewModel @Inject constructor(
         repo.calendars,
         _holidaysVisible,
         holidayCountry,
-        holidays,
-    ) { key, cals, showHolidays, country, holidayList ->
+        combine(holidays, _noteTasks) { h, n -> h to n },
+    ) { key, cals, showHolidays, country, overlay ->
+        val (holidayList, noteTasks) = overlay
         val visible = cals.filter { it.visible }.map { it.id }.toSet()
         val events = key.events.filter { e ->
             if (e.isGuest) e.raw.me?.status != "declined" else e.calendarId in visible
@@ -171,7 +179,8 @@ class CalendarViewModel @Inject constructor(
         val holidays = if (showHolidays && keys.isUnlocked) {
             co.golink.tester.domain.calendar.Holidays.overlapping(holidayList, from, to).map { holidayEvent(country, it, zone) }
         } else emptyList()
-        Recurrence.expand(events + holidays, CalendarDates.dayStart(from, zone), CalendarDates.dayStart(to, zone))
+        val tasks = if (keys.isUnlocked) noteTasks.filter { !it.dueDate.isBefore(from) && it.dueDate.isBefore(to) }.map { noteTaskEvent(it, zone) } else emptyList()
+        Recurrence.expand(events + holidays + tasks, CalendarDates.dayStart(from, zone), CalendarDates.dayStart(to, zone))
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private var loadJob: Job? = null
@@ -190,6 +199,7 @@ class CalendarViewModel @Inject constructor(
                 } else {
                     loadedRange = null
                     syncStamp = null
+                    _noteTasks.value = emptyList()
                     _state.update { it.copy(events = emptyList(), open = null, loaded = false) }
                 }
             }
@@ -221,6 +231,8 @@ class CalendarViewModel @Inject constructor(
     private var syncStamp: String? = null
 
     suspend fun syncLoop() {
+        // Ao voltar ao ecrã (ex.: das Notes), as caixas podem ter mudado.
+        refreshNoteTasks()
         while (true) {
             if (keys.isUnlocked) {
                 repo.syncStamp().onSuccess { v ->
@@ -249,6 +261,7 @@ class CalendarViewModel @Inject constructor(
             s.view == CalView.Agenda && prev.second == from && to.isAfter(prev.third)
         val fetchFrom = if (append) prev!!.third else from
         loadedRange = r
+        refreshNoteTasks()
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             if (!silent) _state.update { it.copy(loading = true) }
@@ -294,6 +307,10 @@ class CalendarViewModel @Inject constructor(
     }
 
     fun openInstance(instance: CalInstance?) {
+        instance?.event?.noteId?.let { noteId ->
+            _state.update { it.copy(openNoteId = noteId) }
+            return
+        }
         _state.update { it.copy(open = instance) }
         instance?.event?.let(::loadAttachmentFiles)
     }
@@ -532,7 +549,18 @@ class CalendarViewModel @Inject constructor(
         }
     }
 
-    fun consumeOpenFile() = _state.update { it.copy(openFileId = null, openUrl = null) }
+    fun consumeOpenFile() = _state.update { it.copy(openFileId = null, openUrl = null, openNoteId = null) }
+
+    // ---- Caixas das Notes (sobrepostas, só leitura) ----
+
+    private fun refreshNoteTasks() {
+        if (!keys.isUnlocked) return
+        val (from, to) = range(_state.value)
+        noteTasksJob?.cancel()
+        noteTasksJob = viewModelScope.launch {
+            noteTasksRepo.tasks(from, to).onSuccess { _noteTasks.value = it }
+        }
+    }
 
     private var searchJob: Job? = null
 
@@ -576,6 +604,26 @@ class CalendarViewModel @Inject constructor(
     fun consumeToast() = _state.update { it.copy(toast = null) }
 
     fun toast(msg: String) = _state.update { it.copy(toast = msg) }
+}
+
+/** Caixa de uma nota como evento de dia inteiro, só de leitura (laranja). */
+private fun noteTaskEvent(t: co.golink.tester.data.notes.NoteTaskItem, zone: ZoneId): CalEvent {
+    val raw = co.golink.tester.domain.calendar.EventDto(
+        id = "notetask-${t.noteId}-${t.uid}",
+        calendar_id = "notes",
+        starts_at = CalendarDates.allDayToIso(t.dueDate),
+        ends_at = CalendarDates.allDayToIso(t.dueDate.plusDays(1)),
+        all_day = true,
+    )
+    return CalEvent(
+        raw = raw,
+        start = CalendarDates.dayStart(t.dueDate, zone),
+        end = CalendarDates.dayStart(t.dueDate.plusDays(1), zone),
+        data = co.golink.tester.domain.calendar.EventPayload(title = (if (t.done) "☑ " else "☐ ") + t.text, notes = t.noteTitle),
+        locked = false,
+        key = null,
+        noteId = t.noteId,
+    )
 }
 
 /** Feriado como evento de dia inteiro, só de leitura (roxo). */
