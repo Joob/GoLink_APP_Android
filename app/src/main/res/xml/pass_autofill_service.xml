@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Serviço de preenchimento do Pass. Os browsers listados usam o modo de
+     compatibilidade em versões antigas (as recentes enviam o webDomain sozinhas). -->
+<autofill-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:supportsInlineSuggestions="true">
+    <compatibility-package android:name="com.android.chrome" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.chrome.beta" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.brave.browser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.microsoft.emmx" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.opera.browser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.sec.android.app.sbrowser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.vivaldi.browser" android:maxLongVersionCode="10000000000" />
+    <compatibility-package android:name="com.duckduckgo.mobile.android" android:maxLongVersionCode="10000000000" />
+</autofill-service>

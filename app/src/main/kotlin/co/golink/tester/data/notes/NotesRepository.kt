@@ -176,6 +176,14 @@ class NotesRepository @Inject constructor(
             _trash.value = null
             lastStamp = null
         }
+        // Lista carregada com o E2E ainda trancado (todas 🔒): ao desbloquear recarrega,
+        // senão o /sync seguinte só tomava o carimbo como base e ficavam trancadas.
+        bg.launch {
+            keys.unlocked.collect { open ->
+                val s = _state.value
+                if (open && (!s.loaded || s.notes.any { it.locked && !it.wrappedKey.isNullOrEmpty() })) refresh()
+            }
+        }
     }
 
     fun note(id: String): NoteItem? = _state.value.notes.firstOrNull { it.id == id } ?: _trash.value?.firstOrNull { it.id == id }
@@ -183,6 +191,8 @@ class NotesRepository @Inject constructor(
     // ---- lista ---------------------------------------------------------------
 
     suspend fun refresh(): Result<Unit> = runCatching {
+        // Trancado não há chaves: a lista vinha toda 🔒. O desbloqueio recarrega.
+        if (!keys.isUnlocked) return@runCatching
         loadMutex.withLock {
             coroutineScope {
                 val notes = async { http.get("/notes") }

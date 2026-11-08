@@ -297,6 +297,7 @@ fun BrowseScreen(
     onOpenCalendar: () -> Unit = {},
     onOpenLegacy: () -> Unit = {},
     onOpenNotes: () -> Unit = {},
+    onOpenPass: () -> Unit = {},
     /** Vindo do Calendário: abrir a gaveta já nesta área (Admin/Suporte). */
     areaRequest: DrawerArea? = null,
     onAreaRequestHandled: () -> Unit = {},
@@ -509,7 +510,7 @@ fun BrowseScreen(
     var drawerArea by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(DrawerArea.Drive) }
     if (secondaryArea == null && drawerArea != DrawerArea.Drive) drawerArea = DrawerArea.Drive
     // Toggle igual à sidebar da web: Drive | Calendário | Admin ou Suporte.
-    val drawerAreas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Notes, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea)
+    val drawerAreas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Notes, DrawerArea.Pass, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea)
     LaunchedEffect(areaRequest) {
         val req = areaRequest ?: return@LaunchedEffect
         if (req == secondaryArea) {
@@ -604,7 +605,7 @@ fun BrowseScreen(
             supportSection,
         )
         DrawerArea.Support -> listOf(supportSection)
-        DrawerArea.Calendar, DrawerArea.Notes, DrawerArea.Legacy -> emptyList()
+        DrawerArea.Calendar, DrawerArea.Notes, DrawerArea.Pass, DrawerArea.Legacy -> emptyList()
     }
 
     AdaptiveNavigationDrawer(
@@ -619,6 +620,7 @@ fun BrowseScreen(
                         DrawerArea.Calendar -> go(onOpenCalendar)()
                         DrawerArea.Legacy -> go(onOpenLegacy)()
                         DrawerArea.Notes -> go(onOpenNotes)()
+                        DrawerArea.Pass -> go(onOpenPass)()
                         else -> drawerArea = it
                     }
                 },

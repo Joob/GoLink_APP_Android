@@ -69,6 +69,27 @@
                 tools:node="remove" />
         </provider>
 
+        <!-- Pass: preenchimento de logins noutras apps e no browser. -->
+        <service
+            android:name=".data.pass.autofill.PassAutofillService"
+            android:exported="true"
+            android:label="GoLink Pass"
+            android:permission="android.permission.BIND_AUTOFILL_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.autofill.AutofillService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.autofill"
+                android:resource="@xml/pass_autofill_service" />
+        </service>
+        <activity
+            android:name=".ui.screens.pass.autofill.PassAutofillActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.VueFileManager" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

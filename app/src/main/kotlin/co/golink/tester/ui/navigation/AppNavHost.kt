@@ -100,6 +100,8 @@ object Routes {
     fun calendar(event: String? = null, date: String? = null) = "calendar?event=${event.orEmpty()}&date=${date.orEmpty()}"
     const val LEGACY = "legacy?pane={pane}"
     const val NOTES = "notes?path={path}"
+    const val PASS = "pass?pane={pane}"
+    fun pass(pane: String = "vault") = "pass?pane=$pane"
     /** Caminho dentro das Notes: "all/<id>", "checklists", "<id>" (link de notificação)… */
     fun notes(path: String = "") = "notes?path=${android.net.Uri.encode(path)}"
     fun legacy(pane: String = "overview") = "legacy?pane=$pane"
@@ -503,6 +505,7 @@ fun AppNavHost(
                     onOpenCalendar = { navController.navigate(Routes.calendar()) { launchSingleTop = true } },
                     onOpenLegacy = { navController.navigate(Routes.legacy()) { launchSingleTop = true } },
                     onOpenNotes = { navController.navigate(Routes.notes()) { launchSingleTop = true } },
+                    onOpenPass = { navController.navigate(Routes.pass()) { launchSingleTop = true } },
                     areaRequest = areaRequest?.let { name -> runCatching { co.golink.tester.ui.components.drawer.DrawerArea.valueOf(name) }.getOrNull() },
                     onAreaRequestHandled = { entry.savedStateHandle["drawer_area"] = null },
                     openDrawerRequest = drawerRequest,
@@ -560,6 +563,8 @@ fun AppNavHost(
                             navController.navigate(Routes.legacy()) { popUpTo(Routes.HOME) }
                         } else if (area == co.golink.tester.ui.components.drawer.DrawerArea.Notes) {
                             navController.navigate(Routes.notes()) { popUpTo(Routes.HOME) }
+                        } else if (area == co.golink.tester.ui.components.drawer.DrawerArea.Pass) {
+                            navController.navigate(Routes.pass()) { popUpTo(Routes.HOME) }
                         } else {
                             backToHome(area.name)
                         }
@@ -596,6 +601,8 @@ fun AppNavHost(
                     onOpenArea = { area ->
                         if (area == co.golink.tester.ui.components.drawer.DrawerArea.Notes) {
                             navController.navigate(Routes.notes()) { popUpTo(Routes.HOME) }
+                        } else if (area == co.golink.tester.ui.components.drawer.DrawerArea.Pass) {
+                            navController.navigate(Routes.pass()) { popUpTo(Routes.HOME) }
                         } else {
                             backToHome(area.name)
                         }
@@ -629,6 +636,8 @@ fun AppNavHost(
                     onOpenArea = { area ->
                         if (area == co.golink.tester.ui.components.drawer.DrawerArea.Legacy) {
                             navController.navigate(Routes.legacy()) { popUpTo(Routes.HOME) }
+                        } else if (area == co.golink.tester.ui.components.drawer.DrawerArea.Pass) {
+                            navController.navigate(Routes.pass()) { popUpTo(Routes.HOME) }
                         } else {
                             backToHome(area.name)
                         }
@@ -648,6 +657,40 @@ fun AppNavHost(
                 co.golink.tester.ui.screens.encryption.E2EGate()
             }
         }
+        composable(
+            route = Routes.PASS,
+            arguments = listOf(navArgument("pane") { type = NavType.StringType; defaultValue = "vault" }),
+        ) { entry ->
+            val backToHome: (String?) -> Unit = { area ->
+                if (area != null) runCatching { navController.getBackStackEntry(Routes.HOME).savedStateHandle["drawer_area"] = area }
+                if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
+                    navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
+                }
+            }
+            val drawerRequest by entry.savedStateHandle.getStateFlow("open_drawer", false).collectAsState()
+            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+                co.golink.tester.ui.screens.pass.PassScreen(
+                    initialPane = entry.arguments?.getString("pane").orEmpty(),
+                    onOpenDrive = { backToHome(null) },
+                    onOpenCalendar = { navController.navigate(Routes.calendar()) { popUpTo(Routes.HOME) } },
+                    onOpenArea = { area ->
+                        when (area) {
+                            co.golink.tester.ui.components.drawer.DrawerArea.Notes -> navController.navigate(Routes.notes()) { popUpTo(Routes.HOME) }
+                            co.golink.tester.ui.components.drawer.DrawerArea.Legacy -> navController.navigate(Routes.legacy()) { popUpTo(Routes.HOME) }
+                            else -> backToHome(area.name)
+                        }
+                    },
+                    onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
+                    onOpenSettings = { navController.navigate(Routes.settings()) },
+                    onOpenProfile = { navController.navigate(Routes.settings("profile")) },
+                    onOpenBilling = { navController.navigate(Routes.settings("billing")) },
+                    onOpenHelp = { staff -> navController.navigate(if (staff) Routes.SUPPORT_DASHBOARD else Routes.support(false)) },
+                    openDrawerRequest = drawerRequest,
+                    onDrawerRequestHandled = { entry.savedStateHandle["open_drawer"] = false },
+                )
+                co.golink.tester.ui.screens.encryption.E2EGate()
+            }
+        }
         composable(Routes.NOTIFICATIONS) {
             NotificationsScreen(
                 onBack = { navController.popBackStack() },
@@ -655,7 +698,7 @@ fun AppNavHost(
                 // ao que estava por baixo; vindo das Definições, abre a do Drive.
                 onOpenMenu = {
                     val previous = navController.previousBackStackEntry
-                    val hasDrawer = previous?.destination?.route.let { it == Routes.HOME || it == Routes.CALENDAR || it == Routes.LEGACY || it == Routes.NOTES }
+                    val hasDrawer = previous?.destination?.route.let { it == Routes.HOME || it == Routes.CALENDAR || it == Routes.LEGACY || it == Routes.NOTES || it == Routes.PASS }
                     val target = if (hasDrawer) previous else runCatching { navController.getBackStackEntry(Routes.HOME) }.getOrNull()
                     if (target != null) {
                         target.savedStateHandle["open_drawer"] = true

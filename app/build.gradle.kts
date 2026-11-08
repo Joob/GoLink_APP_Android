@@ -23,8 +23,8 @@ android {
         applicationId = "co.golink.tester"
         minSdk = 26
         targetSdk = 36
-        versionCode = 165
-        versionName = "3.82.0"
+        versionCode = 166
+        versionName = "3.83.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -132,6 +132,8 @@ dependencies {
 
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.biometric)
+    // Pass: sugestões de preenchimento no teclado (InlineSuggestionUi, Android 11+).
+    implementation("androidx.autofill:autofill:1.1.0")
     // Passkeys (WebAuthn) via Credential Manager; play-services para Android ≤ 13.
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play.services)

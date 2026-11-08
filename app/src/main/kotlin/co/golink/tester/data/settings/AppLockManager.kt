@@ -45,7 +45,9 @@ class AppLockManager @Inject constructor(
     val covered: StateFlow<Boolean> = _covered.asStateFlow()
 
     fun onPause() {
-        if (enabled) _covered.value = true
+        // Já bloqueada: a janela do bloqueio tapa tudo. O BiometricPrompt pausa a
+        // atividade e a camada opaca deixava o desfoque sem nada por trás.
+        if (enabled && !_locked.value) _covered.value = true
     }
 
     /** De volta sem passar por onStop (diálogos translúcidos): fecha a exceção. */

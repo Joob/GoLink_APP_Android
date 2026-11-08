@@ -374,7 +374,7 @@ fun NotesScreen(
                         else -> go { onOpenArea(area) }()
                     }
                 },
-                areas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Notes, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea),
+                areas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Notes, DrawerArea.Pass, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea),
                 sections = if (e2eUnlocked) notesSections(nativeSidebar, open) { closeDrawer(); dialog = it } else emptyList(),
                 unreadNotifications = unread,
                 onOpenNotifications = go(onOpenNotifications),
@@ -428,7 +428,13 @@ fun NotesScreen(
                                 vm = homeVm,
                                 showMenuButton = !isPermanentDrawer(),
                                 onMenu = { scope.launch { drawerState.open() } },
-                                onOpenNote = { if (!it.locked) openNote(it.id) },
+                                onOpenNote = {
+                                    when {
+                                        !it.locked -> openNote(it.id)
+                                        !e2eUnlocked -> gateVm.reopen()
+                                        else -> homeVm.refresh()
+                                    }
+                                },
                                 onNewNote = { nb -> newNote(nb) },
                                 onNotebookDialog = { dialog = NotebookDialog.Create },
                             )
