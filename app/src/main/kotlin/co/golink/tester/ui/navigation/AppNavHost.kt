@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -24,7 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.draw.blur
 import androidx.lifecycle.viewModelScope
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -324,14 +324,14 @@ fun AppNavHost(
         navDeepLink { uriPattern = "https://tester.golink.co/$path" },
     )
 
-    // Bloqueada: o conteúdo fica desfocado por trás da folha do PIN (Android 12+;
-    // antes disso o LockScreen tapa-o com um fundo opaco).
+    // Bloqueada: a janela do bloqueio desfoca o que está por trás (Android 12+,
+    // FLAG_BLUR_BEHIND); sem desfoque entre janelas o LockScreen é opaco.
     val lockedNow = locked && top == TopState.Authenticated
-    androidx.compose.foundation.layout.Box(
-        androidx.compose.ui.Modifier
-            .fillMaxSize()
-            .then(if (lockedNow) androidx.compose.ui.Modifier.blur(28.dp) else androidx.compose.ui.Modifier),
-    ) {
+    // A janela do bloqueio só é criada quando a app volta a desenhar: até ao seu
+    // 1.º frame, uma camada opaca na janela principal tapa o conteúdo.
+    var lockWindowReady by remember { mutableStateOf(false) }
+    if (!lockedNow) lockWindowReady = false
+    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
     NavHost(navController = navController, startDestination = Routes.SPLASH) {
         composable(Routes.SPLASH) { SplashScreen() }
         composable(Routes.LANDING) {
@@ -794,6 +794,11 @@ fun AppNavHost(
     if (top == TopState.Authenticated && !locked) {
         co.golink.tester.ui.components.DownloadPanel(Modifier.align(androidx.compose.ui.Alignment.BottomCenter))
     }
+    if (lockedNow && !lockWindowReady) {
+        androidx.compose.foundation.layout.Box(
+            Modifier.fillMaxSize().background(androidx.compose.material3.MaterialTheme.colorScheme.background),
+        )
+    }
     }
 
     // O bloqueio vai numa janela própria (Dialog): folhas e popups abertos são
@@ -811,6 +816,12 @@ fun AppNavHost(
             ),
         ) {
             LockWindowSetup()
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                // Dois frames: a janela do bloqueio já está desenhada antes de tirar a camada.
+                androidx.compose.runtime.withFrameNanos { }
+                androidx.compose.runtime.withFrameNanos { }
+                lockWindowReady = true
+            }
             AnimatedVisibility(
                 visibleState = lockVisible,
                 // Sem fade de entrada: ao voltar à app o conteúdo não pode aparecer nem um instante.

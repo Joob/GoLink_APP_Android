@@ -1,6 +1,5 @@
 package co.golink.tester.ui.screens.lock
 
-import android.app.Activity
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.biometric.BiometricManager
@@ -78,6 +77,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import co.golink.tester.ui.i18n.tr
 import co.golink.tester.ui.theme.LocalDarkTheme
@@ -95,45 +96,67 @@ fun LockScreen(
 ) {
     val context = LocalContext.current
     val error by viewModel.error.collectAsStateWithLifecycle()
+    val lockoutSeconds by viewModel.lockoutSeconds.collectAsStateWithLifecycle()
+    val verifying by viewModel.verifying.collectAsStateWithLifecycle()
     var pin by remember { mutableStateOf("") }
     val dark = LocalDarkTheme.current
 
     BackHandler { /* consume back — app stays locked */ }
 
-    val biometricAvailable = remember {
-        viewModel.biometricEnabled &&
-            BiometricManager.from(context)
-                .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
-    }
+    // Dentro do Dialog o LocalContext não é a atividade: subir pelos ContextWrapper.
+    val activity = remember(context) { context.findActivity() }
+    val biometricAvailable = remember { viewModel.biometricUsable }
     val pinAvailable = viewModel.pinEnabled
     // Com biometria abre logo a impressão digital; "Usar PIN" passa ao teclado.
     var usePin by remember { mutableStateOf(!biometricAvailable) }
+    var promptOpen by remember { mutableStateOf(false) }
+    var bioNotice by remember { mutableStateOf<String?>(null) }
+    // Sem PIN: o código do telemóvel serve de recurso (bloqueio da impressão digital).
+    val allowDeviceCredential = !pinAvailable && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
 
     fun triggerBiometric() {
-        val activity = context as? FragmentActivity ?: return
+        val fa = activity as? FragmentActivity ?: return
+        if (promptOpen) return
+        promptOpen = true
+        bioNotice = null
+        val info = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Desbloquear GoLink".tr())
+            .setSubtitle("Desbloqueia os teus ficheiros encriptados".tr())
+        if (allowDeviceCredential) {
+            info.setAllowedAuthenticators(
+                BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL,
+            )
+        } else {
+            info.setNegativeButtonText(if (pinAvailable) "Usar PIN".tr() else "Cancelar".tr())
+        }
         BiometricPrompt(
-            activity,
-            ContextCompat.getMainExecutor(context),
+            fa,
+            ContextCompat.getMainExecutor(fa),
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    promptOpen = false
                     viewModel.onBiometricSuccess()
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    if (errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON && pinAvailable) usePin = true
+                    promptOpen = false
+                    when (errorCode) {
+                        // Cancelado pelo sistema (app saiu) ou pelo utilizador: volta a abrir no ON_RESUME / no ícone.
+                        BiometricPrompt.ERROR_CANCELED, BiometricPrompt.ERROR_USER_CANCELED -> Unit
+                        BiometricPrompt.ERROR_NEGATIVE_BUTTON -> if (pinAvailable) usePin = true
+                        BiometricPrompt.ERROR_LOCKOUT, BiometricPrompt.ERROR_LOCKOUT_PERMANENT ->
+                            if (pinAvailable) usePin = true else bioNotice = errString.toString()
+                        else -> if (pinAvailable) usePin = true else bioNotice = errString.toString()
+                    }
                 }
             },
-        ).authenticate(
-            BiometricPrompt.PromptInfo.Builder()
-                .setTitle("Desbloquear GoLink".tr())
-                .setSubtitle("Desbloqueia os teus ficheiros encriptados".tr())
-                .setNegativeButtonText(if (pinAvailable) "Usar PIN".tr() else "Cancelar".tr())
-                .build(),
-        )
+        ).authenticate(info.build())
     }
 
-    LaunchedEffect(Unit) {
-        if (biometricAvailable) triggerBiometric()
+    // Abre a impressão digital ao mostrar e sempre que a app volta (o sistema
+    // cancela o pedido quando a app sai do ecrã).
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (biometricAvailable && !usePin) triggerBiometric()
     }
 
     // PIN errado: abana os pontos e limpa.
@@ -150,11 +173,18 @@ fun LockScreen(
         }
     }
 
+    val inputBlocked = error != null || verifying || lockoutSeconds > 0
     fun onDigit(d: String) {
-        if (pin.length < 4 && error == null) {
+        if (pin.length < 4 && !inputBlocked) {
             pin += d
-            if (pin.length == 4) viewModel.verifyPin(pin)
+            if (pin.length == 4) viewModel.submitPin(pin)
         }
+    }
+    val notice = when {
+        error != null -> error
+        lockoutSeconds > 60 -> "Demasiadas tentativas. Tenta daqui a %d min.".tr().format((lockoutSeconds + 59) / 60)
+        lockoutSeconds > 0 -> "Demasiadas tentativas. Aguarda %d s.".tr().format(lockoutSeconds)
+        else -> null
     }
 
     // Fundo: desfoque da janela de bloqueio no Android 12+ (tapa também folhas e
@@ -209,7 +239,7 @@ fun LockScreen(
                         .size(36.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .clickable { (context as? Activity)?.moveTaskToBack(true) },
+                        .clickable { activity?.moveTaskToBack(true) },
                 ) {
                     Icon(Icons.Filled.Close, contentDescription = "Fechar".tr(), modifier = Modifier.size(18.dp))
                 }
@@ -250,16 +280,17 @@ fun LockScreen(
                         if (pinMode) {
                             PinPane(
                                 pin = pin,
-                                error = error,
-                                shakeX = shake.value,
+                                error = notice,
+                                shakeX = { shake.value },
                                 keySize = keySize,
                                 showBiometric = biometricAvailable,
                                 onDigit = ::onDigit,
-                                onDelete = { if (pin.isNotEmpty() && error == null) pin = pin.dropLast(1) },
+                                onDelete = { if (pin.isNotEmpty() && !inputBlocked) pin = pin.dropLast(1) },
                                 onBiometric = ::triggerBiometric,
                             )
                         } else {
                             BiometricPane(
+                                notice = bioNotice,
                                 showUsePin = pinAvailable,
                                 onFingerprint = ::triggerBiometric,
                                 onUsePin = { usePin = true },
@@ -295,7 +326,7 @@ private fun Header(title: String) {
 private fun PinPane(
     pin: String,
     error: String?,
-    shakeX: Float,
+    shakeX: () -> Float,
     keySize: Dp,
     showBiometric: Boolean,
     onDigit: (String) -> Unit,
@@ -309,7 +340,7 @@ private fun PinPane(
         Row(
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.height(16.dp).offset { IntOffset(shakeX.dp.roundToPx(), 0) },
+            modifier = Modifier.height(16.dp).offset { IntOffset(shakeX().dp.roundToPx(), 0) },
         ) {
             repeat(4) { i -> PinDot(filled = i < pin.length, error = error != null) }
         }
@@ -366,7 +397,7 @@ private fun PinDot(filled: Boolean, error: Boolean) {
 }
 
 @Composable
-private fun BiometricPane(showUsePin: Boolean, onFingerprint: () -> Unit, onUsePin: () -> Unit) {
+private fun BiometricPane(notice: String?, showUsePin: Boolean, onFingerprint: () -> Unit, onUsePin: () -> Unit) {
     val primary = MaterialTheme.colorScheme.primary
     // Halo a respirar devagar à volta do sensor.
     val pulse = androidx.compose.animation.core.rememberInfiniteTransition(label = "fp-pulse")
@@ -399,7 +430,11 @@ private fun BiometricPane(showUsePin: Boolean, onFingerprint: () -> Unit, onUseP
             }
         }
         Spacer(Modifier.height(14.dp))
-        Text("Toca no sensor de impressão digital".tr(), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (notice != null) {
+            Text(notice, fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+        } else {
+            Text("Toca no sensor de impressão digital".tr(), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Spacer(Modifier.height(48.dp))
         if (showUsePin) {
             Text(
@@ -479,4 +514,10 @@ private fun GhostKey(size: Dp, onClick: () -> Unit, content: @Composable () -> U
             androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface,
         ) { content() }
     }
+}
+
+private tailrec fun android.content.Context.findActivity(): android.app.Activity? = when (this) {
+    is android.app.Activity -> this
+    is android.content.ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

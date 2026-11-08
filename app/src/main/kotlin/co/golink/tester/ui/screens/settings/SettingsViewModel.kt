@@ -395,14 +395,6 @@ class SettingsViewModel @Inject constructor(
         _state.update { it.copy(pinEnabled = true) }
     }
 
-    fun disablePin(pin: String): Boolean {
-        if (!securityPrefs.verifyPin(pin)) return false
-        securityPrefs.clearPin()
-        logger.log("Security", "PIN de bloqueio desactivado")
-        _state.update { it.copy(pinEnabled = false) }
-        return true
-    }
-
     /** Mudar o PIN: só com o PIN atual certo. */
     fun changePin(current: String, new: String): Boolean {
         if (!securityPrefs.verifyPin(current)) return false

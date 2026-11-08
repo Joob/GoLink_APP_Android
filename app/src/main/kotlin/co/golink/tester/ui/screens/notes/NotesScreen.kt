@@ -134,7 +134,7 @@ private fun notesSections(s: NotesSidebar, open: (String) -> Unit, onDialog: (No
             DrawerItem(nt("new_notebook"), Icons.Outlined.Add, onClick = { onDialog(NotebookDialog.Create) }),
             if (s.notebooks.isNotEmpty()) DrawerItem("%s · %s".format(nt("rename"), nt("delete")), Icons.Outlined.Edit, onClick = { onDialog(NotebookDialog.Manage) }) else null,
         )),
-        if (s.tags.isNotEmpty()) DrawerSection(nt("tags"), s.tags.take(40).map { (tag, count) ->
+        if (s.tags.isNotEmpty()) DrawerSection(nt("tags"), s.tags.map { (tag, count) ->
             item("#$tag", Icons.Outlined.Tag, s.section == "NotesTag" && s.tag == tag, "tag/" + Uri.encode(tag), count)
         }) else null,
         DrawerSection(null, listOf(
@@ -185,7 +185,21 @@ fun NotesScreen(
     var confirmLogout by remember { mutableStateOf(false) }
     var dialog by remember { mutableStateOf<NotebookDialog?>(null) }
 
-    fun run(script: String) = webView?.evaluateJavascript("window.GoLinkNotes && window.GoLinkNotes.$script", null)
+    // Página ainda a arrancar (sem window.GoLinkNotes): guarda o último pedido do menu e corre-o quando estiver pronta.
+    val pageReady by vm.pageReady.collectAsStateWithLifecycle()
+    var pendingRun by remember { mutableStateOf<String?>(null) }
+    fun run(script: String) {
+        val view = webView
+        if (view == null) { pendingRun = script; return }
+        view.evaluateJavascript("window.GoLinkNotes ? (window.GoLinkNotes.$script, 1) : 0") { if (it != "1") pendingRun = script }
+    }
+    LaunchedEffect(pageReady, webView, pendingRun) {
+        val script = pendingRun ?: return@LaunchedEffect
+        val view = webView ?: return@LaunchedEffect
+        if (!pageReady) return@LaunchedEffect
+        pendingRun = null
+        view.evaluateJavascript("window.GoLinkNotes && window.GoLinkNotes.$script", null)
+    }
 
     // Sair das Notes destrói a WebView: primeiro a página grava o que tem pendente
     // (responde com "flushed"); sem resposta em 3 s, sai na mesma.
@@ -216,7 +230,7 @@ fun NotesScreen(
     LaunchedEffect(Unit) {
         vm.events.collect { e ->
             when (e) {
-                NotesEvent.OpenMenu -> if (!permanent) drawerState.open()
+                NotesEvent.OpenMenu -> if (!permanent) scope.launch { drawerState.open() }
                 is NotesEvent.Toast -> Toast.makeText(context, e.message, Toast.LENGTH_SHORT).show()
                 is NotesEvent.OpenFile -> openFile(e.id)
                 is NotesEvent.OpenUrl -> runCatching { uriHandler.openUri(e.url) }
@@ -232,7 +246,20 @@ fun NotesScreen(
         when {
             drawerState.isOpen -> scope.launch { drawerState.close() }
             view == null -> onBack()
-            else -> view.evaluateJavascript("window.GoLinkNotes ? window.GoLinkNotes.back() : 0") { if (it != "1") leave(onBack) }
+            else -> {
+                // Renderer ocupado/preso: sem resposta em 1,5 s, sai na mesma (leave tem o seu limite de 3 s).
+                var answered = false
+                val timeout = scope.launch {
+                    kotlinx.coroutines.delay(1_500)
+                    if (!answered) { answered = true; leave(onBack) }
+                }
+                view.evaluateJavascript("window.GoLinkNotes ? window.GoLinkNotes.back() : 0") {
+                    if (answered) return@evaluateJavascript
+                    answered = true
+                    timeout.cancel()
+                    if (it != "1") leave(onBack)
+                }
+            }
         }
     }
 
@@ -299,7 +326,7 @@ fun NotesScreen(
                 }
                 !e2eUnlocked -> CenterMessage(Icons.Outlined.Lock, nt("no_e2e_title"), nt("no_e2e_text"), onMenu = { scope.launch { drawerState.open() } })
                 // Sessão ainda a restaurar: a página precisa do utilizador logo no arranque.
-                user == null -> Box(Modifier.fillMaxSize())
+                user == null && webView == null -> Box(Modifier.fillMaxSize())
                 // Este ramo só existe desbloqueado: um lock tira a WebView da composição
                 // e o desbloqueio seguinte cria outra (nada do estado anterior sobrevive).
                 else -> NotesWebView(vm, onView = { webView = it }, onClose = onBack, onMenu = { scope.launch { drawerState.open() } })
@@ -333,8 +360,11 @@ fun NotesScreen(
             onDismiss = { dialog = null },
             onSave = { name, color ->
                 dialog = null
-                if (name != d.notebook.name) run("renameNotebook(${js(d.notebook.id)}, ${js(name)})")
-                if (color != d.notebook.color) run("recolorNotebook(${js(d.notebook.id)}, ${js(color)})")
+                val newName = name.takeIf { it != d.notebook.name }
+                val newColor = color.takeIf { it != d.notebook.color }
+                if (newName != null || newColor != null) {
+                    run("updateNotebook(${js(d.notebook.id)}, ${newName?.let(::js) ?: "null"}, ${newColor?.let(::js) ?: "null"})")
+                }
             },
         )
         NotebookDialog.Manage -> ManageNotebooksSheet(
@@ -370,7 +400,9 @@ fun NotesScreen(
 @Composable
 private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose: () -> Unit, onMenu: () -> Unit) {
     val dark = LocalDarkTheme.current
+    val darkNow by rememberUpdatedState(dark)
     var webView by remember { mutableStateOf<WebView?>(null) }
+    LaunchedEffect(dark) { webView?.setBackgroundColor(if (dark) 0xFF151515.toInt() else 0xFFFFFFFF.toInt()) }
     var loading by remember { mutableStateOf(true) }
     var failed by remember { mutableStateOf(false) }
     var rendererGone by remember { mutableStateOf(false) }
@@ -446,7 +478,9 @@ private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose
                     settings.offscreenPreRaster = true
                     setBackgroundColor(if (dark) 0xFF151515.toInt() else 0xFFFFFFFF.toInt())
 
-                    addJavascriptInterface(NotesBridge(vm, dark) { webView }, "GoLinkNotesHost")
+                    val bridge = NotesBridge(vm, { darkNow }, this)
+                    tag = bridge
+                    addJavascriptInterface(bridge, "GoLinkNotesHost")
 
                     // Erros de JS da página no Logcat (tag NotesWebView).
                     webChromeClient = object : android.webkit.WebChromeClient() {
@@ -497,6 +531,7 @@ private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose
                         }
 
                         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                            (view.tag as? NotesBridge)?.view = null
                             webView = null
                             onView(null)
                             rendererGone = true
@@ -513,11 +548,28 @@ private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose
                 }
             },
             onRelease = { view ->
-                // A ponte deixa de responder a esta WebView (pedidos ainda em curso).
                 webView = null
                 onView(null)
-                view.removeJavascriptInterface("GoLinkNotesHost")
-                view.destroy()
+                // Saída sem leave() (lock E2E, ecrã descartado): a página grava o pendente antes
+                // de a WebView ser destruída (no máx. 3 s); a ponte continua a responder-lhe até lá.
+                val bridge = view.tag as? NotesBridge
+                val main = android.os.Handler(android.os.Looper.getMainLooper())
+                var destroyed = false
+                val destroy = Runnable {
+                    if (!destroyed) {
+                        destroyed = true
+                        bridge?.view = null
+                        bridge?.onFlushed = null
+                        view.removeJavascriptInterface("GoLinkNotesHost")
+                        view.destroy()
+                    }
+                }
+                if (bridge?.view == null) destroy.run()
+                else {
+                    bridge.onFlushed = { main.post(destroy) }
+                    view.evaluateJavascript("window.GoLinkNotes ? (window.GoLinkNotes.flushThen(0), 1) : 0") { if (it != "1") destroy.run() }
+                    main.postDelayed(destroy, 3_000)
+                }
             },
         )
 
@@ -668,16 +720,21 @@ private fun ManageNotebooksSheet(
  */
 private class NotesBridge(
     private val vm: NotesViewModel,
-    private val dark: Boolean,
-    private val webView: () -> WebView?,
+    private val dark: () -> Boolean,
+    /** null = já não responde (renderer morto / destruída). */
+    @Volatile var view: WebView?,
 ) {
+    /** WebView a sair: chamado quando a página confirma que gravou. */
+    @Volatile var onFlushed: (() -> Unit)? = null
+
     @JavascriptInterface
-    fun info(): String = vm.infoJson(dark)
+    fun info(): String = vm.infoJson(dark())
 
     @JavascriptInterface
     fun request(id: Int, method: String, args: String) {
         vm.request(id, method, args) { done ->
-            webView()?.post { webView()?.evaluateJavascript("window.__glnResolve && window.__glnResolve($done)", null) }
+            view?.post { view?.evaluateJavascript("window.__glnResolve && window.__glnResolve($done)", null) }
+            if (method == "flushed") onFlushed?.invoke()
         }
     }
 

@@ -121,7 +121,8 @@ class NotesViewModel @Inject constructor(
 
     class DrivePick(val exclude: Set<String>, val result: CompletableDeferred<List<BrowseItem.File>>)
 
-    private val results = ConcurrentHashMap<Int, String>()
+    /** Respostas à espera de take(): (instante, json). */
+    private val results = ConcurrentHashMap<Int, Pair<Long, String>>()
 
     /** Últimas mensagens da consola da página (diagnóstico do ecrã em branco). */
     val consoleLog = java.util.concurrent.ConcurrentLinkedDeque<String>()
@@ -175,15 +176,16 @@ class NotesViewModel @Inject constructor(
         }.toString()
     }
 
-    fun take(id: Int): String = results.remove(id) ?: """{"ok":false,"status":500}"""
+    fun take(id: Int): String = results.remove(id)?.second ?: """{"ok":false,"status":500}"""
 
     fun toast(message: String) {
         if (message.isNotBlank()) _events.tryEmit(NotesEvent.Toast(message))
     }
 
     fun request(id: Int, method: String, args: String, onDone: (Int) -> Unit) {
+        sweepResults()
         viewModelScope.launch {
-            results[id] = try {
+            val json = try {
                 val a = withContext(Dispatchers.Default) {
                     runCatching { Json.parseToJsonElement(args).jsonObject }.getOrElse { JsonObject(emptyMap()) }
                 }
@@ -206,12 +208,17 @@ class NotesViewModel @Inject constructor(
             } catch (e: OutOfMemoryError) {
                 errorJson(413, "too_large")
             }
+            results[id] = System.currentTimeMillis() to json
             onDone(id)
-            // Ids únicos por carregamento (notesBridge.js): o que a página não levar
-            // (resposta da página anterior a um reload) sai daqui sem a afetar.
-            kotlinx.coroutines.delay(60_000)
-            results.remove(id)
         }
+    }
+
+    // Ids únicos por carregamento (notesBridge.js): o que a página não levar
+    // (resposta da página anterior a um reload) sai daqui ao fim de 60 s.
+    private fun sweepResults() {
+        if (results.size < 32) return
+        val limit = System.currentTimeMillis() - 60_000
+        results.entries.removeIf { it.value.first < limit }
     }
 
     private fun errorJson(status: Int, message: String?) = buildJsonObject {
@@ -245,8 +252,8 @@ class NotesViewModel @Inject constructor(
             _pageReady.value = true
             JsonNull
         }
-        "open_name" -> JsonPrimitive(keys.openNameOrNull(args.string("sealed")) ?: throw BridgeError(422, "unreadable"))
-        "seal_name" -> JsonPrimitive(keys.sealName(args.string("name")) ?: throw BridgeError(403, "e2e_locked"))
+        "open_name" -> JsonPrimitive(withContext(Dispatchers.Default) { keys.openNameOrNull(args.string("sealed")) } ?: throw BridgeError(422, "unreadable"))
+        "seal_name" -> JsonPrimitive(withContext(Dispatchers.Default) { keys.sealName(args.string("name")) } ?: throw BridgeError(403, "e2e_locked"))
         "drive_pick" -> drivePick(args)
         "file_links" -> fileLinks(args)
         "file_open" -> {

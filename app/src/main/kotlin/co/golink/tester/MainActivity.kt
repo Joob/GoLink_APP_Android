@@ -15,6 +15,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import co.golink.tester.data.AppLogger
 import co.golink.tester.data.settings.AppLockManager
 import co.golink.tester.ui.navigation.AppNavHost
@@ -26,6 +28,7 @@ import javax.inject.Inject
 class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     @Inject lateinit var lockManager: AppLockManager
+    @Inject lateinit var securityPrefs: co.golink.tester.data.settings.AppSecurityPreferences
     @Inject lateinit var logger: AppLogger
     @Inject lateinit var legacyCheckin: co.golink.tester.data.legacy.LegacyCheckin
     @Inject lateinit var sessionManager: co.golink.tester.data.auth.SessionManager
@@ -60,6 +63,8 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             // Link de um email (App Link): abre o ecrã certo na app.
             co.golink.tester.ui.navigation.AppLinkRouter.from(intent, fromNewIntent = false)
         }
+        // Keystore/Tink do PIN fora da main thread (1.º PIN no bloqueio sem engasgo).
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) { securityPrefs.warmUp() }
         lifecycle.addObserver(LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> {
@@ -69,7 +74,11 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                     logger.log("App", "App em primeiro plano")
                 }
                 // Modo privado: sem miniatura nos recentes enquanto o bloqueio estiver ligado.
-                Lifecycle.Event.ON_RESUME, Lifecycle.Event.ON_PAUSE -> applyPrivacyMode()
+                Lifecycle.Event.ON_RESUME -> {
+                    lockManager.onResume()
+                    applyPrivacyMode()
+                }
+                Lifecycle.Event.ON_PAUSE -> applyPrivacyMode()
                 Lifecycle.Event.ON_STOP -> {
                     // Rodar o ecrã / mudar de tema recria a atividade: não é sair da app.
                     if (!isChangingConfigurations) lockManager.onBackground()

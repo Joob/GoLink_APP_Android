@@ -2783,23 +2783,26 @@ private fun AppSecurityPane(
         LogDialog(user = user, entries = logEntries, onClear = onClearLog, onDismiss = { showLog = false })
     }
 
-    val enableBiometric = {
+    fun confirmBiometric(title: String, subtitle: String, onOk: () -> Unit) {
         val executor = ContextCompat.getMainExecutor(context)
         BiometricPrompt(
             context as FragmentActivity,
             executor,
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    onBiometricToggle(true)
+                    onOk()
                 }
             },
         ).authenticate(
             BiometricPrompt.PromptInfo.Builder()
-                .setTitle("Activar biométrico".tr())
-                .setSubtitle("Confirma a tua identidade para activar".tr())
+                .setTitle(title)
+                .setSubtitle(subtitle)
                 .setNegativeButtonText("Cancelar".tr())
                 .build(),
         )
+    }
+    val enableBiometric = {
+        confirmBiometric("Activar biométrico".tr(), "Confirma a tua identidade para activar".tr()) { onBiometricToggle(true) }
     }
     val bioOn = biometricEnabled && biometricAvailable
     LaunchedEffect(Unit) { onLoadCacheSize() }
@@ -2810,6 +2813,9 @@ private fun AppSecurityPane(
             if (!lockOn) pinStep = 1
         } else if (hasPinSet) {
             showPinDisable = true
+        } else if (bioOn) {
+            // Só impressão digital: confirmar antes de desligar o bloqueio.
+            confirmBiometric("Desligar bloqueio".tr(), "Confirma a tua identidade para desligar".tr()) { onDisableAppLock(null) }
         } else {
             onDisableAppLock(null)
         }

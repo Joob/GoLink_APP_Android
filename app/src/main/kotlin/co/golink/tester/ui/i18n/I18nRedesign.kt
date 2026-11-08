@@ -470,6 +470,9 @@ object I18nRedesign {
         r("Introduz o PIN atual para desativar o bloqueio.", "Enter your current PIN to turn off the lock.", "Saisissez le PIN actuel pour désactiver le verrouillage.", "Introduce el PIN actual para desactivar el bloqueo."),
         r("Limpar cache?", "Clear cache?", "Vider le cache ?", "¿Borrar caché?"),
         r("PIN incorreto", "Wrong PIN", "PIN incorrect", "PIN incorrecto"),
+        r("Desligar bloqueio", "Turn off lock", "Désactiver le verrouillage", "Desactivar bloqueo"),
+        r("Confirma a tua identidade para desligar", "Confirm your identity to turn it off", "Confirmez votre identité pour désactiver", "Confirma tu identidad para desactivarlo"),
+        r("Demasiadas tentativas. Tenta daqui a %d min.", "Too many attempts. Try again in %d min.", "Trop de tentatives. Réessayez dans %d min.", "Demasiados intentos. Vuelve a intentarlo en %d min."),
         r("Por segurança, a configuração (código QR e códigos de recuperação) é feita no browser. Depois de ativar, toca em \"Atualizar estado\".", "For security, setup (QR code and recovery codes) is done in the browser. After turning it on, tap \"Refresh status\".", "Par sécurité, la configuration (code QR et codes de récupération) se fait dans le navigateur. Ensuite, touchez \"Actualiser l'état\".", "Por seguridad, la configuración (código QR y códigos de recuperación) se hace en el navegador. Después, toca \"Actualizar estado\"."),
         r("não apaga os teus ficheiros", "doesn't delete your files", "ne supprime pas vos fichiers", "no borra tus archivos"),
         // Sessões / atividade de segurança / encriptação
