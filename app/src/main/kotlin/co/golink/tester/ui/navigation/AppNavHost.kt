@@ -328,8 +328,7 @@ fun AppNavHost(
         navDeepLink { uriPattern = "https://tester.golink.co/$path" },
     )
 
-    // Bloqueada: a janela do bloqueio desfoca o que está por trás (Android 12+,
-    // FLAG_BLUR_BEHIND); sem desfoque entre janelas o LockScreen é opaco.
+    // Bloqueada: o LockScreen é opaco até ter a captura desfocada da janela principal.
     val lockedNow = locked && top == TopState.Authenticated
     // A janela do bloqueio só é criada quando a app volta a desenhar: até ao seu
     // 1.º frame, uma camada opaca na janela principal tapa o conteúdo.
@@ -386,10 +385,10 @@ fun AppNavHost(
             deepLinks = legacyLinks("legacy-open/{token}"),
         ) { entry ->
             androidx.activity.compose.BackHandler { backOrRestart() }
-            co.golink.tester.ui.screens.legacy.LegacyOpenScreen(
+            co.golink.tester.ui.components.drawer.AreaTheme(co.golink.tester.ui.components.drawer.DrawerArea.Legacy) { co.golink.tester.ui.screens.legacy.LegacyOpenScreen(
                 token = entry.arguments?.getString("token").orEmpty(),
                 onBack = { backOrRestart() },
-            )
+            ) }
         }
         composable(
             route = Routes.LEGACY_INVITE,
@@ -397,7 +396,7 @@ fun AppNavHost(
             deepLinks = legacyLinks("legacy-invite/{id}"),
         ) { entry ->
             androidx.activity.compose.BackHandler { backOrRestart() }
-            co.golink.tester.ui.screens.legacy.LegacyInviteScreen(
+            co.golink.tester.ui.components.drawer.AreaTheme(co.golink.tester.ui.components.drawer.DrawerArea.Legacy) { co.golink.tester.ui.screens.legacy.LegacyInviteScreen(
                 id = entry.arguments?.getString("id").orEmpty(),
                 authenticated = top == TopState.Authenticated,
                 onOpenGuarding = { openGuarding() },
@@ -410,7 +409,7 @@ fun AppNavHost(
                     navController.navigate(Routes.REGISTER)
                 },
                 onBack = { backOrRestart() },
-            )
+            ) }
         }
         composable(
             route = Routes.LEGACY_CHECKIN,
@@ -418,10 +417,10 @@ fun AppNavHost(
             deepLinks = legacyLinks("legacy-checkin/{token}"),
         ) { entry ->
             androidx.activity.compose.BackHandler { backOrRestart() }
-            co.golink.tester.ui.screens.legacy.LegacyCheckinScreen(
+            co.golink.tester.ui.components.drawer.AreaTheme(co.golink.tester.ui.components.drawer.DrawerArea.Legacy) { co.golink.tester.ui.screens.legacy.LegacyCheckinScreen(
                 token = entry.arguments?.getString("token").orEmpty(),
                 onBack = { backOrRestart() },
-            )
+            ) }
         }
         composable(Routes.FORGOT) {
             ForgotPasswordScreen(onBack = { navController.popBackStack() })
@@ -594,7 +593,7 @@ fun AppNavHost(
             }
             val drawerRequest by entry.savedStateHandle.getStateFlow("open_drawer", false).collectAsState()
             androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
-                co.golink.tester.ui.screens.legacy.LegacyScreen(
+                co.golink.tester.ui.components.drawer.AreaTheme(co.golink.tester.ui.components.drawer.DrawerArea.Legacy) { co.golink.tester.ui.screens.legacy.LegacyScreen(
                     initialPane = entry.arguments?.getString("pane").orEmpty(),
                     onOpenDrive = { backToHome(null) },
                     onOpenCalendar = { navController.navigate(Routes.calendar()) { popUpTo(Routes.HOME) } },
@@ -614,7 +613,7 @@ fun AppNavHost(
                     onOpenHelp = { staff -> navController.navigate(if (staff) Routes.SUPPORT_DASHBOARD else Routes.support(false)) },
                     openDrawerRequest = drawerRequest,
                     onDrawerRequestHandled = { entry.savedStateHandle["open_drawer"] = false },
-                )
+                ) }
                 co.golink.tester.ui.screens.encryption.E2EGate()
             }
         }
@@ -630,7 +629,7 @@ fun AppNavHost(
             }
             val drawerRequest by entry.savedStateHandle.getStateFlow("open_drawer", false).collectAsState()
             androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
-                co.golink.tester.ui.screens.notes.NotesScreen(
+                co.golink.tester.ui.components.drawer.AreaTheme(co.golink.tester.ui.components.drawer.DrawerArea.Notes) { co.golink.tester.ui.screens.notes.NotesScreen(
                     onOpenDrive = { backToHome(null) },
                     onOpenCalendar = { navController.navigate(Routes.calendar()) { popUpTo(Routes.HOME) } },
                     onOpenArea = { area ->
@@ -653,7 +652,7 @@ fun AppNavHost(
                     onBack = { backToHome(null) },
                     openDrawerRequest = drawerRequest,
                     onDrawerRequestHandled = { entry.savedStateHandle["open_drawer"] = false },
-                )
+                ) }
                 co.golink.tester.ui.screens.encryption.E2EGate()
             }
         }
@@ -669,7 +668,7 @@ fun AppNavHost(
             }
             val drawerRequest by entry.savedStateHandle.getStateFlow("open_drawer", false).collectAsState()
             androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
-                co.golink.tester.ui.screens.pass.PassScreen(
+                co.golink.tester.ui.components.drawer.AreaTheme(co.golink.tester.ui.components.drawer.DrawerArea.Pass) { co.golink.tester.ui.screens.pass.PassScreen(
                     initialPane = entry.arguments?.getString("pane").orEmpty(),
                     onOpenDrive = { backToHome(null) },
                     onOpenCalendar = { navController.navigate(Routes.calendar()) { popUpTo(Routes.HOME) } },
@@ -687,7 +686,7 @@ fun AppNavHost(
                     onOpenHelp = { staff -> navController.navigate(if (staff) Routes.SUPPORT_DASHBOARD else Routes.support(false)) },
                     openDrawerRequest = drawerRequest,
                     onDrawerRequestHandled = { entry.savedStateHandle["open_drawer"] = false },
-                )
+                ) }
                 co.golink.tester.ui.screens.encryption.E2EGate()
             }
         }
@@ -871,7 +870,9 @@ fun AppNavHost(
             ),
         ) {
             LockWindowSetup()
-            androidx.compose.runtime.LaunchedEffect(Unit) {
+            // Chave no alvo: voltar a bloquear durante o fade de saída também tira a camada.
+            androidx.compose.runtime.LaunchedEffect(lockVisible.targetState) {
+                if (!lockVisible.targetState) return@LaunchedEffect
                 // Dois frames: a janela do bloqueio já está desenhada antes de tirar a camada.
                 androidx.compose.runtime.withFrameNanos { }
                 androidx.compose.runtime.withFrameNanos { }
@@ -890,9 +891,10 @@ fun AppNavHost(
 }
 
 /**
- * Janela do bloqueio: ecrã inteiro, sem escurecer nem animar a entrada e, no
- * Android 12+, desfoca tudo o que está por trás (incluindo folhas/popups — o blur
- * da janela principal não lhes chega). Herda o FLAG_SECURE da atividade.
+ * Janela do bloqueio: ecrã inteiro, sem escurecer nem animar a entrada. O fundo
+ * (opaco → captura desfocada) é do LockScreen e tapa também folhas/popups; sem
+ * FLAG_BLUR_BEHIND (fraco, irregular entre fabricantes e caro na GPU a cada frame).
+ * Herda o FLAG_SECURE da atividade.
  */
 @Composable
 private fun LockWindowSetup() {
@@ -919,10 +921,6 @@ private fun LockWindowSetup() {
         window.setWindowAnimations(0)
         window.setDimAmount(0f)
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
-            window.attributes = window.attributes.apply { blurBehindRadius = 80 }
-        }
         val secure = ((activity?.window?.attributes?.flags ?: 0) and android.view.WindowManager.LayoutParams.FLAG_SECURE) != 0
         if (secure) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE) else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
     }

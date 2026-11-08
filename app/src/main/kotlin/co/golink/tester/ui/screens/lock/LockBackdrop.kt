@@ -13,13 +13,14 @@ import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 
 /**
- * Fundo do bloqueio quando não há desfoque entre janelas (Android < 12, poupança
- * de bateria, aparelhos sem suporte): captura da janela principal, reduzida e
- * desfocada em software. null = falhou (fica o fundo opaco).
+ * Fundo do bloqueio: captura da janela principal já reduzida (o PixelCopy escala
+ * para o bitmap pequeno — sem alocar o ecrã inteiro) e desfocada em software.
+ * Forte o bastante para o texto ficar ilegível. null = falhou (fica o fundo opaco).
  */
 object LockBackdrop {
-    private const val SCALE = 10
-    private const val RADIUS = 6
+    private const val SCALE = 16
+    private const val RADIUS = 4
+    private const val PASSES = 3
 
     suspend fun capture(activity: Activity): ImageBitmap? {
         val window = activity.window ?: return null
@@ -27,31 +28,32 @@ object LockBackdrop {
         val w = decor.width
         val h = decor.height
         if (w <= 0 || h <= 0) return null
-        val full = runCatching { Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888) }.getOrNull() ?: return null
+        val small = runCatching {
+            Bitmap.createBitmap((w / SCALE).coerceAtLeast(1), (h / SCALE).coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        }.getOrNull() ?: return null
         val ok = suspendCancellableCoroutine { cont ->
             runCatching {
-                PixelCopy.request(window, full, { result -> if (cont.isActive) cont.resume(result == PixelCopy.SUCCESS) }, Handler(Looper.getMainLooper()))
+                PixelCopy.request(window, small, { result -> if (cont.isActive) cont.resume(result == PixelCopy.SUCCESS) }, Handler(Looper.getMainLooper()))
             }.onFailure { if (cont.isActive) cont.resume(false) }
         }
-        if (!ok) { full.recycle(); return null }
+        if (!ok) { small.recycle(); return null }
         return withContext(Dispatchers.Default) {
-            val small = Bitmap.createScaledBitmap(full, (w / SCALE).coerceAtLeast(1), (h / SCALE).coerceAtLeast(1), true)
-            full.recycle()
-            boxBlur(small, RADIUS)
-            boxBlur(small, RADIUS)
+            boxBlur(small, RADIUS, PASSES)
             small.asImageBitmap()
         }
     }
 
-    /** Box blur separável (2 passagens ≈ gaussiano), no próprio bitmap. */
-    private fun boxBlur(bmp: Bitmap, r: Int) {
+    /** Box blur separável (3 passagens ≈ gaussiano), no próprio bitmap. */
+    private fun boxBlur(bmp: Bitmap, r: Int, passes: Int) {
         val w = bmp.width
         val h = bmp.height
         val src = IntArray(w * h)
         bmp.getPixels(src, 0, w, 0, 0, w, h)
         val tmp = IntArray(w * h)
-        pass(src, tmp, w, h, r, horizontal = true)
-        pass(tmp, src, w, h, r, horizontal = false)
+        repeat(passes) {
+            pass(src, tmp, w, h, r, horizontal = true)
+            pass(tmp, src, w, h, r, horizontal = false)
+        }
         bmp.setPixels(src, 0, w, 0, 0, w, h)
     }
 

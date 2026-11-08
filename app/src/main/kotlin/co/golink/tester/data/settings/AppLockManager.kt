@@ -17,7 +17,13 @@ class AppLockManager @Inject constructor(
 ) {
     /** Biometria ligada e utilizável agora (sem impressões registadas não conta). */
     val biometricUsable: Boolean
-        get() = securityPrefs.biometricEnabled && canUseBiometric()
+        get() = securityPrefs.biometricEnabled && biometricHw
+
+    // canAuthenticate() é um binder: em cache, renovado a cada ON_START (impressões
+    // registadas/removidas nas definições do sistema obrigam a sair da app).
+    @Volatile private var biometricHw = canUseBiometric()
+
+    private fun refreshBiometric() { biometricHw = canUseBiometric() }
 
     /**
      * Bloqueio ligado: PIN, ou biometria utilizável. Biometria sem impressões
@@ -85,6 +91,10 @@ class AppLockManager @Inject constructor(
     }
 
     fun onForeground() {
+        refreshBiometric()
+        // O bloqueio deixou de existir (impressões removidas, sem PIN): sem isto ficava
+        // preso no ecrã de impressão digital sem saída (antes do Android 11).
+        if (!enabled) _locked.value = false
         val since = backgroundedAt
         val limit = if (externalOnBackground) EXTERNAL_GRACE_MS else securityPrefs.lockDelayMs
         backgroundedAt = 0L

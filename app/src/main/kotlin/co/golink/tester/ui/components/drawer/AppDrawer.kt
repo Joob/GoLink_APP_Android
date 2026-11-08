@@ -88,6 +88,7 @@ import co.golink.tester.ui.i18n.I18n
 import co.golink.tester.ui.i18n.tr
 import co.golink.tester.ui.theme.AppThemeMode
 import co.golink.tester.ui.theme.LocalDarkTheme
+import co.golink.tester.ui.theme.BrandGreen
 
 /** Largura a partir da qual a gaveta fica fixa à esquerda (tablets / paisagem larga). */
 private const val PERMANENT_DRAWER_MIN_WIDTH_DP = 840
@@ -109,6 +110,32 @@ fun DrawerArea.label(): String = when (this) {
     DrawerArea.Legacy -> "Legacy"
     DrawerArea.Admin -> "Admin"
     DrawerArea.Support -> "Suporte".tr()
+}
+
+/** Cores de uma área: destaque + contentor (como os .*-scope da web). */
+private class AreaColors(val accent: Color, val container: Color, val onContainer: Color)
+
+private fun DrawerArea.colors(dark: Boolean): AreaColors? = when (this) {
+    DrawerArea.Calendar -> if (dark) AreaColors(Color(0xFFFB7185), Color(0xFF881337), Color.White) else AreaColors(Color(0xFFE11D48), Color(0xFFFFE4E6), Color(0xFF9F1239))
+    DrawerArea.Notes -> if (dark) AreaColors(Color(0xFFF59E0B), Color(0xFF78350F), Color.White) else AreaColors(Color(0xFFD97706), Color(0xFFFEF3C7), Color(0xFF92400E))
+    DrawerArea.Pass -> if (dark) AreaColors(Color(0xFF6B8CFF), Color(0xFF1D2A4D), Color.White) else AreaColors(Color(0xFF2F5BE7), Color(0xFFE8EEFD), Color(0xFF1E3A8A))
+    DrawerArea.Legacy -> if (dark) AreaColors(Color(0xFFA78BFA), Color(0xFF4C1D95), Color.White) else AreaColors(Color(0xFF7C3AED), Color(0xFFEDE9FE), Color(0xFF5B21B6))
+    else -> null
+}
+
+/** Cor da área na barra de ícones; Drive/Admin/Suporte = verde da marca. */
+fun DrawerArea.accent(dark: Boolean): Color = colors(dark)?.accent ?: BrandGreen
+
+/**
+ * Tema da área: o primary passa a ser a cor do botão da área na barra, para o
+ * painel da gaveta, o conteúdo e os diálogos (web: .calendar-scope, .pass-scope…).
+ */
+@Composable
+fun AreaTheme(area: DrawerArea, content: @Composable () -> Unit) {
+    val c = area.colors(LocalDarkTheme.current) ?: return content()
+    val base = MaterialTheme.colorScheme
+    val scheme = remember(base, c.accent) { base.copy(primary = c.accent, primaryContainer = c.container, onPrimaryContainer = c.onContainer) }
+    MaterialTheme(colorScheme = scheme, typography = MaterialTheme.typography, shapes = MaterialTheme.shapes, content = content)
 }
 
 data class DrawerItem(
@@ -580,7 +607,7 @@ private fun DrawerRail(
             modifier = Modifier
                 .size(40.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.primary)
+                .background(BrandGreen)
                 .clickable(onClick = onHome),
         ) {
             Text("go", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
@@ -618,7 +645,7 @@ private fun DrawerRail(
                 Icons.Outlined.CalendarToday,
                 DrawerArea.Calendar.label(),
                 area == DrawerArea.Calendar,
-                accent = Color(if (dark) 0xFFFB7185 else 0xFFE11D48),
+                accent = DrawerArea.Calendar.accent(dark),
             ) {
                 onAreaChange(DrawerArea.Calendar)
             }
@@ -628,7 +655,7 @@ private fun DrawerRail(
                 Icons.Outlined.Description,
                 DrawerArea.Notes.label(),
                 area == DrawerArea.Notes,
-                accent = Color(if (dark) 0xFFF59E0B else 0xFFD97706),
+                accent = DrawerArea.Notes.accent(dark),
             ) {
                 onAreaChange(DrawerArea.Notes)
             }
@@ -638,7 +665,7 @@ private fun DrawerRail(
                 Icons.Outlined.Key,
                 DrawerArea.Pass.label(),
                 area == DrawerArea.Pass,
-                accent = Color(if (dark) 0xFF7B9BFF else 0xFF2F5BE7),
+                accent = DrawerArea.Pass.accent(dark),
             ) {
                 onAreaChange(DrawerArea.Pass)
             }
@@ -648,7 +675,7 @@ private fun DrawerRail(
                 Icons.Outlined.Shield,
                 DrawerArea.Legacy.label(),
                 area == DrawerArea.Legacy,
-                accent = Color(if (dark) 0xFFA78BFA else 0xFF7C3AED),
+                accent = DrawerArea.Legacy.accent(dark),
             ) {
                 onAreaChange(DrawerArea.Legacy)
             }
@@ -703,10 +730,11 @@ private fun RailItem(
     label: String,
     selected: Boolean,
     badge: Int = 0,
-    accent: Color = MaterialTheme.colorScheme.primary,
+    // Fora do primary: dentro de AreaTheme o primary já é a cor da área.
+    accent: Color = BrandGreen,
     onClick: () -> Unit,
 ) {
-    val primary = MaterialTheme.colorScheme.primary
+    val primary = BrandGreen
     val fg = if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,

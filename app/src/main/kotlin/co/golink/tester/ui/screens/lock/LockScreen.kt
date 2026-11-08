@@ -187,23 +187,13 @@ fun LockScreen(
         else -> null
     }
 
-    // Fundo: desfoque da janela de bloqueio no Android 12+ (tapa também folhas e
-    // popups abertos). Sem desfoque entre janelas (antes do 12, poupança de bateria,
-    // aparelhos sem suporte): captura da janela principal desfocada em software;
-    // até ela chegar (ou se falhar) o fundo é opaco — nunca se vê conteúdo nítido.
-    // O estado muda em direto (ex.: ligar a poupança de bateria com a app bloqueada).
-    var crossWindowBlur by remember { mutableStateOf(crossWindowBlurEnabled(context)) }
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        androidx.compose.runtime.DisposableEffect(context) {
-            val wm = context.getSystemService(android.content.Context.WINDOW_SERVICE) as? android.view.WindowManager
-            val listener = java.util.function.Consumer<Boolean> { crossWindowBlur = it }
-            wm?.addCrossWindowBlurEnabledListener(ContextCompat.getMainExecutor(context), listener)
-            onDispose { wm?.removeCrossWindowBlurEnabledListener(listener) }
-        }
-    }
+    // Fundo sempre nosso: captura da janela principal, reduzida e desfocada em
+    // software; até chegar (ou se falhar) o fundo é opaco. Não depende do desfoque
+    // do sistema (raio fraco em ecrãs densos, e há aparelhos que o anunciam mas
+    // não o desenham ou o cortam em transições — deixava o conteúdo à vista).
     var backdrop by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
-    LaunchedEffect(crossWindowBlur) {
-        if (crossWindowBlur || backdrop != null) return@LaunchedEffect
+    LaunchedEffect(Unit) {
+        if (backdrop != null) return@LaunchedEffect
         val act = activity ?: return@LaunchedEffect
         // Espera a camada opaca da janela principal sair (2.º frame do bloqueio) e redesenhar.
         repeat(3) { androidx.compose.runtime.withFrameNanos { } }
@@ -219,21 +209,22 @@ fun LockScreen(
     }
 
     Box(Modifier.fillMaxSize()) {
-        when {
-            crossWindowBlur -> Unit
-            backdrop != null -> androidx.compose.foundation.Image(
-                bitmap = backdrop!!,
+        val bd = backdrop
+        if (bd != null) {
+            androidx.compose.foundation.Image(
+                bitmap = bd,
                 contentDescription = null,
                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                 filterQuality = androidx.compose.ui.graphics.FilterQuality.High,
                 modifier = Modifier.fillMaxSize(),
             )
-            else -> Box(Modifier.fillMaxSize().background(opaque))
+        } else {
+            Box(Modifier.fillMaxSize().background(opaque))
         }
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(if (crossWindowBlur || backdrop != null) scrimTint else Color.Transparent)
+            .background(if (bd != null) scrimTint else Color.Transparent)
             // Bloqueia toques no conteúdo por trás.
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
         contentAlignment = Alignment.BottomCenter,
@@ -332,11 +323,6 @@ fun LockScreen(
     }
     }
 }
-
-private fun crossWindowBlurEnabled(context: android.content.Context): Boolean =
-    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-        (context.getSystemService(android.content.Context.WINDOW_SERVICE) as? android.view.WindowManager)
-            ?.isCrossWindowBlurEnabled == true
 
 // Movimento calmo: a folha sobe devagar e assenta sem ressalto.
 private const val SHEET_RISE_MS = 620

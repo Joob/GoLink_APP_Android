@@ -74,6 +74,9 @@ import co.golink.tester.ui.components.dialogs.ConfirmDialog
 import co.golink.tester.ui.components.drawer.AdaptiveNavigationDrawer
 import co.golink.tester.ui.components.drawer.AppDrawerContent
 import co.golink.tester.ui.components.drawer.DrawerArea
+import co.golink.tester.ui.components.drawer.DrawerItem
+import co.golink.tester.ui.components.drawer.DrawerSection
+import androidx.compose.material.icons.automirrored.outlined.ShowChart
 import co.golink.tester.ui.components.drawer.isPermanentDrawer
 import co.golink.tester.ui.i18n.I18n
 import co.golink.tester.ui.i18n.lt
@@ -185,7 +188,7 @@ fun LegacyScreen(
                     }
                 },
                 areas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Notes, DrawerArea.Pass, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea),
-                sections = emptyList(),
+                sections = if (e2eLocked || !legacy.loaded) emptyList() else legacySections(legacy, pane) { p -> closeDrawer(); pane = p },
                 unreadNotifications = unread,
                 onOpenNotifications = go(onOpenNotifications),
                 onHome = go { pane = "overview" },
@@ -355,6 +358,33 @@ fun LegacyScreen(
             onConfirm = { confirmLogout = false; shell.logout() },
         )
     }
+}
+
+/** Menu da gaveta, igual ao SidebarLegacyMenu da web. */
+private fun legacySections(legacy: LegacyState, pane: String, open: (String) -> Unit): List<DrawerSection> {
+    fun item(key: String, label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, count: Int? = null) =
+        DrawerItem(label, icon, selected = pane == key, count = count?.takeIf { it > 0 }, onClick = { open(key) })
+    val guarding = if (legacy.guardingCount > 0) DrawerSection(lt("section_guarding"), listOf(
+        item("guarding", lt("guarding"), Icons.Outlined.FavoriteBorder, legacy.guardingCount),
+    )) else null
+    // Sem cofre ainda: só "Para outros" (o resto abre o ecrã de boas-vindas).
+    if (legacy.vault == null) return listOfNotNull(guarding)
+    return listOfNotNull(
+        DrawerSection(lt("section_vault"), listOf(
+            item("overview", lt("overview"), Icons.Outlined.GridView),
+            item("items", lt("items"), Icons.Outlined.Lock, legacy.vaultItems.size),
+            item("messages", lt("messages"), Icons.Outlined.MailOutline, legacy.messages.size),
+        )),
+        DrawerSection(lt("section_people"), listOf(
+            item("guardians", lt("guardians"), Icons.Outlined.Shield, legacy.guardians.size),
+            item("recipients", lt("recipients"), Icons.Outlined.People, legacy.recipients.size),
+        )),
+        DrawerSection(lt("section_settings"), listOf(
+            item("timing", lt("timing"), Icons.Outlined.Schedule),
+            item("activity", lt("activity"), Icons.AutoMirrored.Outlined.ShowChart),
+        )),
+        guarding,
+    )
 }
 
 /** "● Active" ao lado do título no Overview. */

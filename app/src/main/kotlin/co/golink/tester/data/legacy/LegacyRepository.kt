@@ -42,8 +42,9 @@ data class LegacyState(
     val items: List<LegacyItem> = emptyList(),
     val guardingCount: Int = 0,
 ) {
-    val messages: List<LegacyItem> get() = items.filter { it.dto.type == "message" }
-    val vaultItems: List<LegacyItem> get() = items.filter { it.dto.type != "message" }
+    // Lidos várias vezes por recomposição (barra, segmentos, gaveta): filtra uma vez por estado.
+    val messages: List<LegacyItem> by lazy(LazyThreadSafetyMode.PUBLICATION) { items.filter { it.dto.type == "message" } }
+    val vaultItems: List<LegacyItem> by lazy(LazyThreadSafetyMode.PUBLICATION) { items.filter { it.dto.type != "message" } }
     val editable: Boolean get() = vault != null && vault.status in LEGACY_EDITABLE
     val keysToConfirm: List<LegacyGuardian> get() = guardians.filter { LegacyCrypto.keyState(it) in setOf("unverified", "changed") }
 }
