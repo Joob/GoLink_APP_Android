@@ -45,7 +45,6 @@ import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -300,7 +299,7 @@ fun NotesScreen(
                 }
                 !e2eUnlocked -> CenterMessage(Icons.Outlined.Lock, nt("no_e2e_title"), nt("no_e2e_text"), onMenu = { scope.launch { drawerState.open() } })
                 // Sessão ainda a restaurar: a página precisa do utilizador logo no arranque.
-                user == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(strokeWidth = 2.dp) }
+                user == null -> Box(Modifier.fillMaxSize())
                 // Este ramo só existe desbloqueado: um lock tira a WebView da composição
                 // e o desbloqueio seguinte cria outra (nada do estado anterior sobrevive).
                 else -> NotesWebView(vm, onView = { webView = it }, onClose = onBack, onMenu = { scope.launch { drawerState.open() } })
@@ -558,16 +557,12 @@ private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose
                 }
             }
         } else if (loading || (!pageReady && !readyTimeout)) {
-            // Tapa a página até ela ter algo à vista; o menu nativo fica sempre à mão (como no Calendar/Legacy).
+            // Tapa a página até ela ter algo à vista, sem spinner nem título (entra como o Calendar/Legacy); o menu nativo fica à mão.
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 if (!isPermanentDrawer()) {
                     IconButton(onClick = onMenu, modifier = Modifier.padding(4.dp)) {
                         Icon(Icons.Filled.Menu, contentDescription = "Menu")
                     }
-                }
-                Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(strokeWidth = 2.dp)
-                    Text(nt("title"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp))
                 }
             }
         }

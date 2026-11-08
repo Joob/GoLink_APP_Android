@@ -68,12 +68,21 @@ class E2EGateViewModel @Inject constructor(
         // o reopen() a partir do placeholder tem de voltar a abrir o prompt.
         if (mode != GateMode.Checking && mode != GateMode.Done) return
         viewModelScope.launch {
-            // Chave guardada neste dispositivo ("manter desbloqueado"): sem passphrase.
-            if (keys.hasDeviceKey && keys.restoreFromDevice()) {
-                mode = GateMode.Done
-                return@launch
+            // Sem rede (ex.: acabado de ligar o telemóvel) não se sabe se a conta já
+            // tem passphrase: espera em silêncio e volta a tentar, em vez de abrir
+            // o prompt como "Criar" para uma conta já configurada.
+            var wait = 1_000L
+            while (true) {
+                // Chave guardada neste dispositivo ("manter desbloqueado"): sem passphrase.
+                if (keys.hasDeviceKey && keys.restoreFromDevice()) {
+                    mode = GateMode.Done
+                    return@launch
+                }
+                val known = keys.checkConfigured()
+                if (known != null) { configured = known; break }
+                kotlinx.coroutines.delay(wait)
+                wait = (wait * 2).coerceAtMost(15_000L)
             }
-            configured = runCatching { keys.isConfigured() }.getOrDefault(false)
             mode = GateMode.Prompt
         }
     }
@@ -119,7 +128,7 @@ class E2EGateViewModel @Inject constructor(
         if (keys.isUnlocked) { mode = GateMode.Done; return }
         mode = GateMode.Prompt
         viewModelScope.launch {
-            configured = runCatching { keys.isConfigured() }.getOrDefault(configured)
+            configured = keys.checkConfigured() ?: (configured || keys.hasDeviceKey || keys.hasPinnedKey)
         }
     }
 

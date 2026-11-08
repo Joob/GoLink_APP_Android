@@ -100,7 +100,16 @@ class E2EKeyManager @Inject constructor(
     }
 
     /** true se já existe configuração E2E no servidor (para decidir setup vs unlock). */
-    suspend fun isConfigured(): Boolean = (api.get().body()?.configured == true).also { _configured.value = it }
+    suspend fun isConfigured(): Boolean = checkConfigured() ?: false
+
+    /**
+     * Como [isConfigured], mas null quando não se sabe (sem rede, HTTP de erro):
+     * logo após ligar o telemóvel a rede ainda não existe e "sem resposta" era
+     * lido como "por configurar" → o gate pedia para criar uma passphrase nova.
+     */
+    suspend fun checkConfigured(): Boolean? =
+        runCatching { api.get() }.getOrNull()?.takeIf { it.isSuccessful }?.body()?.configured
+            ?.also { _configured.value = it }
 
     /**
      * Como [configured], mas seguro em processos sem UI (ex.: backup automático):
@@ -111,7 +120,7 @@ class E2EKeyManager @Inject constructor(
      */
     suspend fun isConfiguredOrUnknown(): Boolean =
         if (_configured.value || isUnlocked) true
-        else runCatching { isConfigured() }.getOrDefault(true)
+        else checkConfigured() ?: true
 
     /**
      * Setup 1x (devolve a recovery key formatada) ou unlock com o segredo
