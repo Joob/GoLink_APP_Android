@@ -39,13 +39,26 @@ class AppLockManager @Inject constructor(
         if (enabled) expectReturnUntil = SystemClock.elapsedRealtime() + EXTERNAL_GRACE_MS
     }
 
+    // Camada opaca sobre o conteúdo entre ON_PAUSE e ON_RESUME: o sistema tira a
+    // captura da tarefa ao sair e mostrava-a ao voltar antes do bloqueio desenhar.
+    private val _covered = MutableStateFlow(false)
+    val covered: StateFlow<Boolean> = _covered.asStateFlow()
+
+    fun onPause() {
+        if (enabled) _covered.value = true
+    }
+
     /** De volta sem passar por onStop (diálogos translúcidos): fecha a exceção. */
     fun onResume() {
         expectReturnUntil = 0L
+        _covered.value = false
     }
 
     /** Esconder a app nos recentes: bloqueio ligado e a opção ativa. */
     val hideInRecents: Boolean get() = enabled && securityPrefs.hideInRecents
+
+    /** Sem atraso: sair bloqueia sempre, por isso a captura nunca deve mostrar conteúdo. */
+    val locksOnLeave: Boolean get() = enabled && securityPrefs.lockDelayMs <= 0L
 
     // Momento em que a app foi para segundo plano (0 = já bloqueada / sem bloqueio).
     private var backgroundedAt = 0L

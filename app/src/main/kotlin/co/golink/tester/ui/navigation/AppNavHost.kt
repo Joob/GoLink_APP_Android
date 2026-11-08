@@ -135,6 +135,7 @@ class RootGateViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, TopState.Loading)
 
     val locked: StateFlow<Boolean> = lockManager.locked
+    val covered: StateFlow<Boolean> = lockManager.covered
 }
 
 @Composable
@@ -144,6 +145,7 @@ fun AppNavHost(
 ) {
     val top by gate.state.collectAsState()
     val locked by gate.locked.collectAsState()
+    val covered by gate.covered.collectAsState()
     val currentEntry by navController.currentBackStackEntryAsState()
     var splashElapsed by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) {
@@ -332,7 +334,15 @@ fun AppNavHost(
     var lockWindowReady by remember { mutableStateOf(false) }
     if (!lockedNow) lockWindowReady = false
     androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
-    NavHost(navController = navController, startDestination = Routes.SPLASH) {
+    // O fade por defeito do Navigation (700 ms) atrasava cada troca de menu.
+    NavHost(
+        navController = navController,
+        startDestination = Routes.SPLASH,
+        enterTransition = { fadeIn(tween(160)) },
+        exitTransition = { fadeOut(tween(110)) },
+        popEnterTransition = { fadeIn(tween(160)) },
+        popExitTransition = { fadeOut(tween(110)) },
+    ) {
         composable(Routes.SPLASH) { SplashScreen() }
         composable(Routes.LANDING) {
             LandingScreen(
@@ -794,7 +804,9 @@ fun AppNavHost(
     if (top == TopState.Authenticated && !locked) {
         co.golink.tester.ui.components.DownloadPanel(Modifier.align(androidx.compose.ui.Alignment.BottomCenter))
     }
-    if (lockedNow && !lockWindowReady) {
+    // Também a sair da app (ON_PAUSE → ON_RESUME): a captura da tarefa (recentes e
+    // janela de arranque ao voltar) fica com esta camada, não com o conteúdo.
+    if ((lockedNow && !lockWindowReady) || (covered && top == TopState.Authenticated)) {
         androidx.compose.foundation.layout.Box(
             Modifier.fillMaxSize().background(androidx.compose.material3.MaterialTheme.colorScheme.background),
         )

@@ -66,6 +66,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalUriHandler
@@ -78,6 +80,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import co.golink.tester.ui.components.dialogs.ConfirmDialog
 import co.golink.tester.ui.components.dialogs.CreateSheetScaffold
@@ -166,6 +169,7 @@ fun NotesScreen(
     vm: NotesViewModel = hiltViewModel(),
     shell: BrowseShellViewModel = hiltViewModel(),
     gateVm: E2EGateViewModel = hiltViewModel(),
+    homeVm: NotesHomeViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
@@ -178,6 +182,32 @@ fun NotesScreen(
     val e2eLocked = e2eConfigured && !e2eUnlocked
     val sidebar by vm.sidebar.collectAsStateWithLifecycle()
     val drivePick by vm.drivePick.collectAsStateWithLifecycle()
+
+    val homeState by homeVm.state.collectAsStateWithLifecycle()
+    val homeSection by homeVm.section.collectAsStateWithLifecycle()
+    // A lista é nativa; o editor de uma nota ainda é a página (WebView), carregada por
+    // trás e só à vista com uma nota aberta. Fecha quando a página sai da nota.
+    var editorOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(homeVm.initialNoteId != null) }
+    var sawEditing by remember { mutableStateOf(false) }
+    // Rota da nota que acabámos de fechar: os eventos dela que cheguem atrasados (ainda
+    // editing=true) não podem contar para a nota seguinte — senão o false que vem a
+    // seguir fechava o editor novo. Esquece-se ao primeiro evento de outra rota.
+    var closedRoute by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(sidebar, editorOpen) {
+        val stale = closedRoute != null && sidebar.route == closedRoute
+        if (closedRoute != null && sidebar.route != closedRoute) closedRoute = null
+        if (!editorOpen) {
+            sawEditing = false
+        } else if (stale) {
+            // evento da nota anterior: ignora
+        } else if (sidebar.editing) {
+            sawEditing = true
+        } else if (sawEditing) {
+            sawEditing = false
+            editorOpen = false
+        }
+    }
+    LaunchedEffect(editorOpen) { if (!editorOpen) homeVm.syncNow() }
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -193,6 +223,32 @@ fun NotesScreen(
         if (view == null) { pendingRun = script; return }
         view.evaluateJavascript("window.GoLinkNotes ? (window.GoLinkNotes.$script, 1) : 0") { if (it != "1") pendingRun = script }
     }
+    fun openNote(id: String) {
+        sawEditing = false
+        editorOpen = true
+        run("navigate(${js("all/$id")})")
+    }
+    fun newNote(notebookId: String?) {
+        sawEditing = false
+        editorOpen = true
+        run("newNote(${notebookId?.let(::js) ?: "null"})")
+    }
+    fun closeEditor() {
+        if (sidebar.editing) closedRoute = sidebar.route
+        editorOpen = false
+        run("navigate(${js("all")})")
+    }
+
+    // /sync a cada 5 s com o ecrã visível; avisos da lista nativa.
+    val syncOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(syncOwner, e2eUnlocked) {
+        if (!e2eUnlocked) return@LaunchedEffect
+        syncOwner.repeatOnLifecycle(Lifecycle.State.STARTED) { homeVm.syncLoop() }
+    }
+    LaunchedEffect(Unit) {
+        homeVm.toasts.collect { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+    }
+
     LaunchedEffect(pageReady, webView, pendingRun) {
         val script = pendingRun ?: return@LaunchedEffect
         val view = webView ?: return@LaunchedEffect
@@ -240,27 +296,54 @@ fun NotesScreen(
         }
     }
 
-    // Voltar: gaveta → o que a página tiver aberto (popup, nota) → sair das Notes.
+    // Voltar: gaveta → o que o editor tiver aberto (popup, a nota) → secção Todas → sair das Notes.
     BackHandler {
         val view = webView
         when {
             drawerState.isOpen -> scope.launch { drawerState.close() }
-            view == null -> onBack()
-            else -> {
-                // Renderer ocupado/preso: sem resposta em 1,5 s, sai na mesma (leave tem o seu limite de 3 s).
+            editorOpen && view == null -> closeEditor()
+            editorOpen && view != null -> {
+                // Renderer ocupado/preso: sem resposta em 1,5 s, fecha o editor na mesma.
                 var answered = false
                 val timeout = scope.launch {
                     kotlinx.coroutines.delay(1_500)
-                    if (!answered) { answered = true; leave(onBack) }
+                    if (!answered) { answered = true; closeEditor() }
                 }
                 view.evaluateJavascript("window.GoLinkNotes ? window.GoLinkNotes.back() : 0") {
                     if (answered) return@evaluateJavascript
                     answered = true
                     timeout.cancel()
-                    if (it != "1") leave(onBack)
+                    // "1": a página fechou um popup ou a nota (editing=false fecha o editor).
+                    if (it != "1") closeEditor()
                 }
             }
+            homeSection != NotesSection.All -> homeVm.open(NotesSection.All)
+            else -> leave(onBack)
         }
+    }
+
+    // Menu (gaveta) a partir do estado nativo.
+    val nativeSidebar = remember(homeState, homeSection) {
+        val notes = homeState.notes
+        NotesSidebar(
+            section = when (homeSection) {
+                NotesSection.All -> "NotesAll"
+                NotesSection.Pinned -> "NotesPinned"
+                NotesSection.Shared -> "NotesShared"
+                is NotesSection.Notebook -> "NotesNotebook"
+                is NotesSection.Tag -> "NotesTag"
+                NotesSection.Checklists -> "NotesChecklists"
+                NotesSection.Search -> "NotesSearch"
+                NotesSection.History -> "NotesHistory"
+            },
+            notebook = (homeSection as? NotesSection.Notebook)?.id,
+            tag = (homeSection as? NotesSection.Tag)?.name,
+            all = notes.size,
+            pinned = notes.count { it.pinned },
+            shared = notes.count { it.shared },
+            notebooks = homeState.notebooks.map { nb -> NotesSidebar.Notebook(nb.id, nb.name, nb.color, notes.count { it.notebookId == nb.id }) },
+            tags = notes.flatMap { it.meta.tags }.groupingBy { it }.eachCount().toSortedMap(String.CASE_INSENSITIVE_ORDER).map { it.key to it.value },
+        )
     }
 
     val secondaryArea = when {
@@ -270,7 +353,11 @@ fun NotesScreen(
     }
     val closeDrawer: () -> Unit = { scope.launch { drawerState.close() } }
     val go: (() -> Unit) -> () -> Unit = { action -> { closeDrawer(); leave(action) } }
-    val open: (String) -> Unit = { path -> closeDrawer(); run("navigate(${js(path)})") }
+    val open: (String) -> Unit = { path ->
+        closeDrawer()
+        if (editorOpen) closeEditor()
+        homeVm.open(NotesSection.parse(path).first)
+    }
 
     AdaptiveNavigationDrawer(
         permanent = isPermanentDrawer(),
@@ -288,7 +375,7 @@ fun NotesScreen(
                     }
                 },
                 areas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Notes, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea),
-                sections = if (e2eUnlocked) notesSections(sidebar, open) { closeDrawer(); dialog = it } else emptyList(),
+                sections = if (e2eUnlocked) notesSections(nativeSidebar, open) { closeDrawer(); dialog = it } else emptyList(),
                 unreadNotifications = unread,
                 onOpenNotifications = go(onOpenNotifications),
                 onHome = { open("all") },
@@ -309,7 +396,7 @@ fun NotesScreen(
                     }
                 } else null,
                 // Fica nas Notes: não passa pelo caminho de saída (flushThen / pendingLeave).
-                onNewNote = if (e2eUnlocked) ({ closeDrawer(); run("newNote(${sidebar.notebook?.takeIf { sidebar.section == "NotesNotebook" }?.let(::js) ?: "null"})"); Unit }) else null,
+                onNewNote = if (e2eUnlocked) ({ closeDrawer(); newNote((homeSection as? NotesSection.Notebook)?.id); Unit }) else null,
             )
         },
     ) {
@@ -325,11 +412,29 @@ fun NotesScreen(
                     Button(onClick = gateVm::reopen, shape = RoundedCornerShape(12.dp)) { Text("Desbloquear".tr()) }
                 }
                 !e2eUnlocked -> CenterMessage(Icons.Outlined.Lock, nt("no_e2e_title"), nt("no_e2e_text"), onMenu = { scope.launch { drawerState.open() } })
-                // Sessão ainda a restaurar: a página precisa do utilizador logo no arranque.
-                user == null && webView == null -> Box(Modifier.fillMaxSize())
                 // Este ramo só existe desbloqueado: um lock tira a WebView da composição
                 // e o desbloqueio seguinte cria outra (nada do estado anterior sobrevive).
-                else -> NotesWebView(vm, onView = { webView = it }, onClose = onBack, onMenu = { scope.launch { drawerState.open() } })
+                else -> Box(Modifier.fillMaxSize()) {
+                    // Sessão ainda a restaurar: a página precisa do utilizador logo no arranque.
+                    if (user != null || webView != null) {
+                        Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (editorOpen) 1f else 0f }) {
+                            NotesWebView(vm, visible = editorOpen, onView = { webView = it }, onClose = { closeEditor() }, onMenu = { scope.launch { drawerState.open() } })
+                        }
+                    }
+                    if (!editorOpen) {
+                        // pointerInput: os toques não passam para a WebView escondida por baixo.
+                        Box(Modifier.fillMaxSize().pointerInput(Unit) {}) {
+                            NotesHome(
+                                vm = homeVm,
+                                showMenuButton = !isPermanentDrawer(),
+                                onMenu = { scope.launch { drawerState.open() } },
+                                onOpenNote = { if (!it.locked) openNote(it.id) },
+                                onNewNote = { nb -> newNote(nb) },
+                                onNotebookDialog = { dialog = NotebookDialog.Create },
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -351,7 +456,7 @@ fun NotesScreen(
             initialName = "",
             initialColor = "blue",
             onDismiss = { dialog = null },
-            onSave = { name, color -> dialog = null; run("createNotebook(${js(name)}, ${js(color)})") },
+            onSave = { name, color -> dialog = null; homeVm.createNotebook(name, color) },
         )
         is NotebookDialog.Edit -> NotebookSheet(
             title = nt("rename"),
@@ -362,13 +467,11 @@ fun NotesScreen(
                 dialog = null
                 val newName = name.takeIf { it != d.notebook.name }
                 val newColor = color.takeIf { it != d.notebook.color }
-                if (newName != null || newColor != null) {
-                    run("updateNotebook(${js(d.notebook.id)}, ${newName?.let(::js) ?: "null"}, ${newColor?.let(::js) ?: "null"})")
-                }
+                if (newName != null || newColor != null) homeVm.updateNotebook(d.notebook.id, newName, newColor)
             },
         )
         NotebookDialog.Manage -> ManageNotebooksSheet(
-            notebooks = sidebar.notebooks,
+            notebooks = nativeSidebar.notebooks,
             onDismiss = { dialog = null },
             onEdit = { dialog = NotebookDialog.Edit(it) },
             onDelete = { dialog = NotebookDialog.Delete(it) },
@@ -379,7 +482,7 @@ fun NotesScreen(
             confirmText = nt("delete"),
             destructive = true,
             onDismiss = { dialog = null },
-            onConfirm = { dialog = null; run("deleteNotebook(${js(d.notebook.id)})") },
+            onConfirm = { dialog = null; homeVm.deleteNotebook(d.notebook.id) },
         )
         null -> Unit
     }
@@ -398,7 +501,7 @@ fun NotesScreen(
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose: () -> Unit, onMenu: () -> Unit) {
+private fun NotesWebView(vm: NotesViewModel, visible: Boolean, onView: (WebView?) -> Unit, onClose: () -> Unit, onMenu: () -> Unit) {
     val dark = LocalDarkTheme.current
     val darkNow by rememberUpdatedState(dark)
     var webView by remember { mutableStateOf<WebView?>(null) }
@@ -413,9 +516,19 @@ private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose
     // Diagnóstico: depois de tirar o indicador, mede a página e a WebView; se não houver
     // nada à vista, mostra no ecrã o estado e a consola (sem adb não há outra forma de ver).
     var diag by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(loading, pageReady, readyTimeout, failed) {
+    // Escondida atrás da lista nativa, a página finge estar em segundo plano: o listSync
+    // da web pára o /sync de 5 s (a lista nativa já faz o seu) e o WebView pausa o que pode.
+    // Ao voltar a ficar visível, o visibilitychange faz logo um sync.
+    LaunchedEffect(visible, pageReady, loading, webView) {
+        val view = webView ?: return@LaunchedEffect
+        if (loading) return@LaunchedEffect
+        view.evaluateJavascript(hiddenScript(!visible), null)
+        if (visible) view.onResume() else view.onPause()
+    }
+    LaunchedEffect(loading, pageReady, readyTimeout, failed, visible) {
         diag = null
-        if (loading || failed || !(pageReady || readyTimeout)) return@LaunchedEffect
+        // Escondida (lista nativa à frente) não há nada para ver: sem diagnóstico.
+        if (!visible || loading || failed || !(pageReady || readyTimeout)) return@LaunchedEffect
         kotlinx.coroutines.delay(2_500)
         val view = webView ?: return@LaunchedEffect
         val native = "webview=${view.width}x${view.height} attached=${view.isAttachedToWindow} shown=${view.isShown} alpha=${view.alpha} " +
@@ -547,6 +660,7 @@ private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose
                     onView(this)
                 }
             },
+            update = { view -> view.visibility = if (visible) android.view.View.VISIBLE else android.view.View.INVISIBLE },
             onRelease = { view ->
                 webView = null
                 onView(null)
@@ -573,7 +687,7 @@ private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose
             },
         )
 
-        diag?.let { text ->
+        if (visible) diag?.let { text ->
             Column(
                 Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(16.dp)
                     .verticalScroll(androidx.compose.foundation.rememberScrollState()),
@@ -591,7 +705,9 @@ private fun NotesWebView(vm: NotesViewModel, onView: (WebView?) -> Unit, onClose
             }
         }
 
-        if (failed) {
+        if (!visible) {
+            // Carrega por trás; os avisos só fazem sentido com o editor à vista.
+        } else if (failed) {
             Column(
                 modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(24.dp),
                 verticalArrangement = Arrangement.Center,
@@ -757,3 +873,12 @@ hash:location.hash,booted:!!window.GoLinkNotes,html:document.documentElement.cla
 appColor:cs&&cs.color,appOpacity:cs&&cs.opacity,center:c?(c.tagName+'.'+String(c.className).slice(0,80)):null,
 nodes:document.getElementsByTagName('*').length,css:css,ua:navigator.userAgent})
 }catch(e){return JSON.stringify({error:String(e)})}})()"""
+
+/** Sobrepõe document.hidden/visibilityState na página e avisa os ouvintes. */
+private fun hiddenScript(hidden: Boolean): String = """
+(function(h){try{
+  Object.defineProperty(document,'hidden',{configurable:true,get:function(){return h}});
+  Object.defineProperty(document,'visibilityState',{configurable:true,get:function(){return h?'hidden':'visible'}});
+  document.dispatchEvent(new Event('visibilitychange'));
+}catch(e){}})($hidden)
+""".trimIndent()

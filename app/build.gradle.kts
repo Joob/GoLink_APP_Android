@@ -23,8 +23,8 @@ android {
         applicationId = "co.golink.tester"
         minSdk = 26
         targetSdk = 36
-        versionCode = 164
-        versionName = "3.81.1"
+        versionCode = 165
+        versionName = "3.82.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -142,6 +142,10 @@ dependencies {
     // com o libsodium do PHP/JS. AES-256-GCM do codec usa o javax.crypto.
     implementation("com.goterl:lazysodium-android:5.1.0@aar")
     implementation("net.java.dev.jna:jna:5.14.0@aar")
+
+    // Notes nativas: QuickJS corre o assets/notes-core.js (Yjs + y-prosemirror, gerado no repo web
+    // por ops/notes-core) — o mesmo formato do editor da web, sem WebView.
+    implementation("wang.harlon.quickjs:wrapper-android:3.2.0")
 
     testImplementation("junit:junit:4.13.2")
 }

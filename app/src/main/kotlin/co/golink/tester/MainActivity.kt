@@ -65,6 +65,12 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         }
         // Keystore/Tink do PIN fora da main thread (1.º PIN no bloqueio sem engasgo).
         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) { securityPrefs.warmUp() }
+        // Carrega o motor da WebView quando a UI fica parada: a 1.ª entrada nas Notes
+        // (e no editor) deixa de pagar essa inicialização (centenas de ms).
+        android.os.Looper.myQueue().addIdleHandler {
+            runCatching { android.webkit.WebSettings.getDefaultUserAgent(applicationContext) }
+            false
+        }
         lifecycle.addObserver(LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> {
@@ -78,7 +84,10 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                     lockManager.onResume()
                     applyPrivacyMode()
                 }
-                Lifecycle.Event.ON_PAUSE -> applyPrivacyMode()
+                Lifecycle.Event.ON_PAUSE -> {
+                    lockManager.onPause()
+                    applyPrivacyMode()
+                }
                 Lifecycle.Event.ON_STOP -> {
                     // Rodar o ecrã / mudar de tema recria a atividade: não é sair da app.
                     if (!isChangingConfigurations) lockManager.onBackground()
@@ -106,7 +115,9 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
     private fun applyPrivacyMode() {
         val on = lockManager.hideInRecents
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            setRecentsScreenshotEnabled(!on)
+            // Folhas/popups são janelas próprias (a camada não as tapa): sem captura,
+            // ao voltar o sistema mostra o splash em vez do conteúdo.
+            setRecentsScreenshotEnabled(!(on || lockManager.locksOnLeave))
         } else if (on) {
             window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         } else {

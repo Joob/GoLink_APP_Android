@@ -62,6 +62,10 @@ data class NotesSidebar(
     val shared: Int = 0,
     val notebooks: List<Notebook> = emptyList(),
     val tags: List<Pair<String, Int>> = emptyList(),
+    /** A página tem uma nota aberta (rota com :id). */
+    val editing: Boolean = false,
+    /** Rota da página quando mandou este estado (distingue eventos atrasados). */
+    val route: String? = null,
 ) {
     data class Notebook(val id: String, val name: String, val color: String, val count: Int)
 }
@@ -470,6 +474,8 @@ class NotesViewModel @Inject constructor(
                 val t = e as? JsonObject ?: return@mapNotNull null
                 (t.s("name") ?: return@mapNotNull null) to t.i("count")
             },
+            editing = o["editing"]?.jsonPrimitive?.booleanOrNull == true,
+            route = o.s("route"),
         )
     }
 
