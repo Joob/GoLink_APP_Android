@@ -137,17 +137,18 @@ fun LegacyCard(
     modifier: Modifier = Modifier,
     border: Color? = null,
     onClick: (() -> Unit)? = null,
+    contentPadding: Int = 16,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Surface(
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, border ?: MaterialTheme.colorScheme.outline),
         modifier = modifier
             .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick) else Modifier),
+            .then(if (onClick != null) Modifier.clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick) else Modifier),
     ) {
-        Column(Modifier.padding(16.dp), content = content)
+        Column(Modifier.padding(contentPadding.dp), content = content)
     }
 }
 
@@ -281,137 +282,5 @@ fun LegacyStatusCard(vault: LegacyVaultDto) {
             Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
         }
         Text(text, fontSize = 11.sp, lineHeight = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
-    }
-}
-
-/** LegacyTimeline.vue. Simular é só visual: não fala com o servidor nem muda o temporizador. */
-@Composable
-fun LegacyTimeline(timeline: LegacyTimelineDto) {
-    var simulated by remember(timeline) { mutableStateOf<Int?>(null) }
-    val day = simulated ?: timeline.days_since
-    val r = timeline.reminders
-    data class Node(val key: String, val day: Int, val icon: ImageVector)
-    val nodes = listOf(
-        Node("today", 0, Icons.Outlined.Check),
-        Node("reminder", r.getOrElse(0) { 0 }, Icons.Outlined.NotificationsNone),
-        Node("second", r.getOrElse(1) { 0 }, Icons.Outlined.NotificationsNone),
-        Node("final", r.getOrElse(2) { 0 }, Icons.Outlined.Schedule),
-        Node("guardians", timeline.guardians_day, Icons.Outlined.Shield),
-        Node("opens", timeline.opens_day, Icons.Outlined.LockOpen),
-    )
-    val spots = nodes.size - 1
-    // Os nós estão igualmente espaçados mas os dias não: interpola por troço.
-    val progress: Float = run {
-        val d = minOf(day, nodes[spots].day)
-        var i = 0
-        while (i < spots - 1 && d >= nodes[i + 1].day) i++
-        val span = (nodes[i + 1].day - nodes[i].day).coerceAtLeast(1)
-        ((i + minOf((d - nodes[i].day).toFloat() / span, 1f)) / spots).coerceIn(0f, 1f)
-    }
-    val stage = when {
-        day >= timeline.opens_day -> "opens"
-        day >= timeline.guardians_day -> "guardians"
-        r.isNotEmpty() && day >= r[0] -> "reminders"
-        else -> "quiet"
-    }
-    val sims = listOf(
-        null to lt("sim_today"),
-        (r.getOrElse(0) { 0 } + 1) to lt("day_n", "day" to r.getOrElse(0) { 0 } + 1),
-        (timeline.guardians_day + 1) to lt("day_n", "day" to timeline.guardians_day + 1),
-        timeline.opens_day to lt("day_n", "day" to timeline.opens_day),
-    )
-
-    LegacyCard {
-        CardTitle(lt("timeline_title"))
-        Text(lt("timeline_text", "days" to timeline.opens_day), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(10.dp))
-        co.golink.tester.ui.screens.admin.AdminSegmented(
-            options = sims.mapIndexed { i, (_, label) -> i to label },
-            selected = sims.indexOfFirst { it.first == simulated }.coerceAtLeast(0),
-            onSelect = { simulated = sims[it].first },
-        )
-        Spacer(Modifier.height(14.dp))
-
-        BoxWithConstraints(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-            val width = maxOf(maxWidth, 540.dp)
-            val nodeW = 84.dp
-            val track = width - nodeW
-            val primary = MaterialTheme.colorScheme.primary
-            Column(Modifier.width(width)) {
-                // "Estás aqui": encosta às margens nas pontas (centrada ficava cortada).
-                val labelX = (nodeW / 2 + track * progress - nodeW / 2).coerceIn(0.dp, width - nodeW)
-                Text(
-                    lt(if (simulated != null) "timeline_simulated" else "timeline_here"),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = primary,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.width(nodeW).offset(x = labelX),
-                )
-                Spacer(Modifier.height(4.dp))
-                Box(Modifier.fillMaxWidth()) {
-                    Box(
-                        Modifier
-                            .padding(start = nodeW / 2, top = 15.dp)
-                            .width(track)
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(MaterialTheme.colorScheme.outline),
-                    )
-                    Box(
-                        Modifier
-                            .padding(start = nodeW / 2, top = 15.dp)
-                            .width(track * progress)
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(primary),
-                    )
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        nodes.forEachIndexed { i, node ->
-                            val done = day >= node.day
-                            Column(Modifier.width(nodeW), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier
-                                        .size(34.dp)
-                                        .clip(CircleShape)
-                                        .background(if (done) primary else MaterialTheme.colorScheme.surface)
-                                        .border(2.dp, if (done) primary else MaterialTheme.colorScheme.outline, CircleShape),
-                                ) {
-                                    Icon(node.icon, contentDescription = null, tint = if (done) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(15.dp))
-                                }
-                                Text(
-                                    lt("node_${node.key}"),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    textAlign = TextAlign.Center,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(top = 6.dp),
-                                )
-                                Text(
-                                    if (i == 0) lt("day_zero") else lt("day_n", "day" to node.day),
-                                    fontSize = 10.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Text(
-            lt("stage_$stage", "days" to day),
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .padding(top = 10.dp)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f))
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-        )
     }
 }

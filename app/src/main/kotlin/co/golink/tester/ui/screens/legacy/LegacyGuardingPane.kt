@@ -144,7 +144,7 @@ fun LegacyGuardingPane(onToast: (LegacyToast) -> Unit, vm: LegacyGuardingViewMod
     LaunchedEffect(Unit) { vm.load() }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        LegacyHeader(lt("guarding"), lt("guarding_text"))
+        Text(lt("guarding_text"), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         val print = vm.ownFingerprint
         if (print.isNotEmpty() && state.rows.isNotEmpty()) {
             LegacyCard {

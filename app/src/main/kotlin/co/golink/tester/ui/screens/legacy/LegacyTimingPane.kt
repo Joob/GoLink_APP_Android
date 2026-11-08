@@ -1,6 +1,17 @@
 package co.golink.tester.ui.screens.legacy
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -34,14 +45,14 @@ import androidx.compose.ui.unit.sp
 import co.golink.tester.data.legacy.LegacyState
 import co.golink.tester.ui.components.dialogs.ConfirmDialog
 import co.golink.tester.ui.i18n.lt
-import co.golink.tester.ui.screens.admin.AdminSegmented
+import co.golink.tester.domain.legacy.LegacyTimelineDto
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-/** Timing.vue */
+/** Settings › Check-in & timing. */
 @Composable
 fun LegacyTimingPane(legacy: LegacyState, busy: Boolean, vm: LegacyViewModel) {
     val vault = legacy.vault ?: return
@@ -50,36 +61,39 @@ fun LegacyTimingPane(legacy: LegacyState, busy: Boolean, vm: LegacyViewModel) {
     var confirmDisarm by remember { mutableStateOf(false) }
     var pausing by remember { mutableStateOf(false) }
 
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        LegacyHeader(lt("timing"), lt("timing_text")) {
-            if (vault.status == "armed" || alarmed) StillHereButton(enabled = !busy, onClick = vm::checkin)
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LegacyCard {
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text("${vault.timeline.opens_day}", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(6.dp))
+                Text(lt("days_without"), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(bottom = 5.dp))
+            }
+            Text(lt("days_without_text", "days" to vault.release_after_days, "wait" to vault.wait_days), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(14.dp))
+            TimelineBar(vault.timeline, vault.release_after_days)
         }
 
-        LegacyTimeline(vault.timeline)
+        SectionLabel(lt("inactive_for"))
+        DaysChoice(listOf(30, 60, 90, 180), vault.release_after_days, editable) { d ->
+            vm.save(buildJsonObject { put("release_after_days", d) })
+        }
+        SectionLabel(lt("then_wait"))
+        DaysChoice(listOf(3, 7, 14), vault.wait_days, editable) { d ->
+            vm.save(buildJsonObject { put("wait_days", d) })
+        }
+        Text(lt("wait_hint"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-        LegacyCard {
-            CardTitle(lt("release_after_title"))
-            Text(lt("release_after_text"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
-            DaysChoice(listOf(30, 60, 90, 180), vault.release_after_days, editable) { d ->
-                vm.save(buildJsonObject { put("release_after_days", d) })
-            }
-            HorizontalDivider(Modifier.padding(vertical = 14.dp), color = MaterialTheme.colorScheme.outline)
-            CardTitle(lt("wait_title"))
-            Text(lt("wait_text"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
-            DaysChoice(listOf(3, 7, 14), vault.wait_days, editable) { d ->
-                vm.save(buildJsonObject { put("wait_days", d) })
-            }
-            HorizontalDivider(Modifier.padding(vertical = 14.dp), color = MaterialTheme.colorScheme.outline)
-            CardTitle(lt("counts_title"))
-            Text(lt("counts_text"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp, bottom = 4.dp))
+        SectionLabel(lt("counts_title"))
+        LegacyCard(contentPadding = 0) {
             listOf(
                 "web" to vault.checkin_web,
                 "android" to vault.checkin_android,
                 "email" to vault.checkin_email,
-            ).forEach { (channel, on) ->
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+            ).forEachIndexed { i, (channel, on) ->
+                if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
                     Column(Modifier.weight(1f)) {
-                        Text(lt("channel_$channel"), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
+                        Text(lt("channel_$channel"), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
                         Text(lt("channel_${channel}_hint"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(
@@ -90,28 +104,27 @@ fun LegacyTimingPane(legacy: LegacyState, busy: Boolean, vm: LegacyViewModel) {
                 }
             }
         }
+        Text(lt("counts_text"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
+        SectionLabel(lt("switch_title"))
         LegacyCard {
-            CardTitle(lt("switch_title"))
             val switchText = when {
                 vault.paused_until != null -> lt("paused_until", "date" to pickedDate(vault.paused_until))
                 vault.status == "armed" || alarmed -> lt("switch_${vault.status}")
                 else -> lt("switch_idle")
             }
-            Text(switchText, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
+            Text(switchText, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (vault.status == "armed" || alarmed) StillHereButton(enabled = !busy, onClick = vm::checkin)
                 if (vault.paused_until != null) {
                     OutlinedButton(onClick = vm::resume, enabled = !busy, shape = RoundedCornerShape(12.dp)) { Text(lt("resume")) }
                 } else if (vault.status == "armed") {
                     OutlinedButton(onClick = { pausing = true }, enabled = !busy, shape = RoundedCornerShape(12.dp)) { Text(lt("pause")) }
                 }
-                if (vault.status == "armed" || alarmed) {
-                    Button(
-                        onClick = { confirmDisarm = true },
-                        enabled = !busy,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    ) { Text(lt("disarm")) }
+            }
+            if (vault.status == "armed" || alarmed) {
+                TextButton(onClick = { confirmDisarm = true }, enabled = !busy, modifier = Modifier.padding(top = 4.dp)) {
+                    Text(lt("disarm"), color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -132,10 +145,56 @@ fun LegacyTimingPane(legacy: LegacyState, busy: Boolean, vm: LegacyViewModel) {
     }
 }
 
+/** Barra Today → Reminder → Wait starts → Opens, à escala dos dias. */
+@Composable
+private fun TimelineBar(t: LegacyTimelineDto, releaseAfter: Int) {
+    val total = t.opens_day.coerceAtLeast(1)
+    val reminder = t.reminders.firstOrNull()
+    data class Mark(val label: String, val day: Int, val color: Color)
+    val marks = listOfNotNull(
+        Mark(lt("sim_today"), t.days_since.coerceIn(0, total), LegacyGreen),
+        reminder?.let { Mark(lt("node_reminder"), it, Color(0xFF8B5CF6)) },
+        Mark(lt("bar_wait"), releaseAfter, LegacyAmber),
+        Mark(lt("bar_opens"), total, Color(0xFF6D28D9)),
+    )
+    val track = MaterialTheme.colorScheme.outline
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val w = maxWidth
+        val dot = 12.dp
+        fun x(day: Int) = (w - dot) * (day.toFloat() / total).coerceIn(0f, 1f)
+        Column {
+            Box(Modifier.fillMaxWidth().height(dot)) {
+                Box(Modifier.align(Alignment.CenterStart).fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(track))
+                // Espera em âmbar, o que já passou em verde.
+                Box(Modifier.align(Alignment.CenterStart).offset(x = x(releaseAfter) + dot / 2).width(w - dot - x(releaseAfter)).height(6.dp).background(LegacyAmber.copy(alpha = 0.45f)))
+                Box(Modifier.align(Alignment.CenterStart).width(x(t.days_since) + dot / 2).height(6.dp).clip(RoundedCornerShape(3.dp)).background(LegacyGreen.copy(alpha = 0.6f)))
+                marks.forEach { m ->
+                    Box(Modifier.offset(x = x(m.day)).size(dot).clip(CircleShape).background(m.color).border(2.dp, MaterialTheme.colorScheme.surface, CircleShape))
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                marks.forEachIndexed { i, m ->
+                    Column(
+                        Modifier.weight(1f),
+                        horizontalAlignment = when (i) {
+                            0 -> Alignment.Start
+                            marks.size - 1 -> Alignment.End
+                            else -> Alignment.CenterHorizontally
+                        },
+                    ) {
+                        Text(if (i == 0) lt("sim_today") else lt("day_n", "day" to m.day), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        Text(m.label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun DaysChoice(options: List<Int>, selected: Int, enabled: Boolean, onSelect: (Int) -> Unit) {
-    AdminSegmented(
-        options = options.map { it to lt("days_n", "days" to it) },
+    LegacySegmented(
+        options = options.map { it to lt("days_short", "days" to it) },
         selected = selected,
         onSelect = { if (enabled && it != selected) onSelect(it) },
     )
@@ -146,7 +205,7 @@ private const val MAX_PAUSE_DAYS = 179L // o servidor aceita 180 a contar de ago
 /** LegacyPausePopup.vue. O dia grava-se às 00:00 do servidor (UTC): a oeste, "amanhã" à noite já lá passou. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PauseDialog(onDismiss: () -> Unit, onPause: (String) -> Unit) {
+internal fun PauseDialog(onDismiss: () -> Unit, onPause: (String) -> Unit) {
     val today = LocalDate.now()
     val minDay = maxOf(LocalDate.now(ZoneOffset.UTC).plusDays(1), today.plusDays(1))
     val maxDay = today.plusDays(MAX_PAUSE_DAYS)

@@ -13,6 +13,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -137,8 +144,8 @@ fun LegacyDialogs(
             vm.addDriveItems(dialog.entries, ids, delay)
         }
         is LegacyDialog.Note -> NoteDialog(dialog.item, legacy, ui.busy, vm, onDismiss = close)
-        is LegacyDialog.ItemSettings -> ItemSettingsDialog(dialog.item, legacy, ui.busy, vm, onDismiss = close, onEditNote = { onDialog(LegacyDialog.Note(dialog.item)) })
-        is LegacyDialog.Message -> MessageDialog(dialog.item, legacy, ui.busy, vm, onDismiss = close)
+        is LegacyDialog.ItemSettings -> ItemSettingsDialog(dialog.item, legacy, ui.busy, vm, onDismiss = close, onEditNote = { onDialog(LegacyDialog.Note(dialog.item)) }, onRemove = { onDialog(LegacyDialog.Remove(dialog.item)) })
+        is LegacyDialog.Message -> MessageDialog(dialog.item, legacy, ui.busy, vm, onDismiss = close, onRemove = { onDialog(LegacyDialog.Remove(it)) })
         is LegacyDialog.Remove -> {
             val message = dialog.item.dto.type == "message"
             ConfirmDialog(
@@ -246,44 +253,61 @@ private fun EncryptedNote() {
     }
 }
 
-/** LegacyPeoplePicker.vue. */
-@Composable
-fun PeoplePicker(legacy: LegacyState, selected: List<String>, onChange: (List<String>) -> Unit) {
-    Column {
-        legacy.recipients.forEach { p ->
-            val on = p.dto.id in selected
-            val name = personName(p.meta, p.dto.email)
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { onChange(if (on) selected - p.dto.id else selected + p.dto.id) }
-                    .padding(vertical = 2.dp),
-            ) {
-                Checkbox(checked = on, onCheckedChange = { onChange(if (on) selected - p.dto.id else selected + p.dto.id) })
-                LegacyAvatar(name, p.dto.email)
-                Spacer(Modifier.width(10.dp))
-                Text(name, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                p.meta.str("relation")?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1) }
-            }
-        }
-        if (legacy.recipients.isEmpty()) Text(lt("no_recipients"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-/** Libertação: logo na abertura ou 30 dias depois, com "não antes de" opcional. */
+/**
+ * Libertação: logo na abertura ou 30 dias depois, com "não antes de" opcional.
+ * [dateOption]: as mensagens mostram "Numa data" como 3.ª opção (= 30 dias + data mínima).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReleaseFields(delay: Int, deliverOn: String, onDelay: (Int) -> Unit, onDeliverOn: (String) -> Unit, showDate: Boolean = true) {
+fun ReleaseFields(
+    delay: Int,
+    deliverOn: String,
+    onDelay: (Int) -> Unit,
+    onDeliverOn: (String) -> Unit,
+    showDate: Boolean = true,
+    dateOption: Boolean = false,
+    label: String = lt("when"),
+) {
     var picking by remember { mutableStateOf(false) }
-    FieldLabel(lt("release"))
-    AdminSegmented(
-        options = listOf(0 to lt("release_opens"), 30 to lt("release_later")),
-        selected = delay,
-        onSelect = onDelay,
+    var mode by remember { mutableStateOf(if (delay == 0) "opens" else if (dateOption && deliverOn.isNotEmpty()) "date" else "later") }
+    SectionLabel(label)
+    val options = buildList {
+        add("opens" to lt("release_opens"))
+        add("later" to lt("release_later"))
+        if (dateOption) add("date" to lt("release_date"))
+    }
+    LegacySegmented(
+        options = options,
+        selected = mode,
+        onSelect = {
+            mode = it
+            when (it) {
+                "opens" -> onDelay(0)
+                "later" -> { onDelay(30); if (dateOption) onDeliverOn("") }
+                else -> { onDelay(30); if (deliverOn.isEmpty()) picking = true }
+            }
+        },
     )
-    if (showDate && delay > 0) {
+    if (dateOption && mode == "date") {
+        // Cartão da data, como na maqueta (calendário + Change).
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                .padding(12.dp),
+        ) {
+            DateBadge(deliverOn)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(if (deliverOn.isEmpty()) lt("pick_date") else pickedDate(deliverOn), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Text(lt("release_date_hint"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            TextButton(onClick = { picking = true }) { Text(lt("change"), fontWeight = FontWeight.SemiBold) }
+        }
+    } else if (!dateOption && showDate && delay > 0) {
         FieldLabel(lt("deliver_on"))
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton(onClick = { picking = true }, shape = RoundedCornerShape(12.dp)) {
@@ -310,29 +334,48 @@ fun ReleaseFields(delay: Int, deliverOn: String, onDelay: (Int) -> Unit, onDeliv
     }
 }
 
+@Composable
+private fun DateBadge(day: String) {
+    val date = day.takeIf { it.isNotEmpty() }?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.width(44.dp).clip(RoundedCornerShape(10.dp)).border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(10.dp)),
+    ) {
+        Text(
+            date?.format(java.time.format.DateTimeFormatter.ofPattern("MMM", legacyLocale()))?.uppercase(legacyLocale()) ?: "—",
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            color = androidx.compose.ui.graphics.Color.White,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.primary).padding(vertical = 2.dp),
+        )
+        Text(date?.dayOfMonth?.toString() ?: "?", fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 3.dp))
+    }
+}
+
 private fun timing(delay: Int, deliverOn: String) =
     LegacyRepository.ItemTiming(delay, if (delay > 0 && deliverOn.isNotEmpty()) deliverOn else null)
 
 // ---- diálogos ----
 
-/** "Adicionar ao cofre": escolher a origem. */
+/** "Adicionar ao cofre": escolher a origem (folha inferior). */
 @Composable
 private fun AddToVaultDialog(onDismiss: () -> Unit, onChoose: (String) -> Unit) {
-    LegacyFormDialog(lt("add_to_vault"), onDismiss, footer = { TextButton(onClick = onDismiss) { Text(lt("cancel")) } }) {
+    LegacySheet(onDismiss, header = { Text(lt("add_to_vault"), fontSize = 18.sp, fontWeight = FontWeight.Bold) }) {
         listOf<Pair<String, ImageVector>>("drive" to Icons.Outlined.Storage, "note" to Icons.Outlined.Edit, "message" to Icons.Outlined.MailOutline).forEach { (key, icon) ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(14.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(14.dp))
                     .clickable { onChoose(key) }
                     .padding(12.dp),
             ) {
-                LegacyIconBox(icon)
+                LegacyIconBox(icon, size = 38)
                 Spacer(Modifier.width(12.dp))
                 Column {
-                    Text(lt("add_$key"), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text(lt("add_$key"), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     Text(lt("add_${key}_hint"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -359,8 +402,8 @@ private fun DrivePeopleDialog(
         },
     ) {
         Text(lt("add_selected", "count" to entries.size), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        FieldLabel(lt("who_receives"))
-        PeoplePicker(legacy, people) { people = it }
+        SectionLabel(lt("who_receives"))
+        PeopleChecklist(legacy, people) { people = it }
         ReleaseFields(delay, "", onDelay = { delay = it }, onDeliverOn = {}, showDate = false)
     }
 }
@@ -400,45 +443,123 @@ private fun NoteDialog(item: LegacyItem?, legacy: LegacyState, busy: Boolean, vm
             if (loading) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(20.dp).align(Alignment.Center))
         }
         if (item == null) {
-            FieldLabel(lt("who_receives"))
-            PeoplePicker(legacy, people) { people = it }
+            SectionLabel(lt("who_receives"))
+            PeopleChecklist(legacy, people) { people = it }
         }
         EncryptedNote()
     }
 }
 
-/** Editar quem recebe e quando (modal de Items.vue). */
+/** Lista de pessoas com caixa à direita (folha do item e "Para" da mensagem). */
 @Composable
-private fun ItemSettingsDialog(item: LegacyItem, legacy: LegacyState, busy: Boolean, vm: LegacyViewModel, onDismiss: () -> Unit, onEditNote: () -> Unit) {
+fun PeopleChecklist(legacy: LegacyState, selected: List<String>, onChange: (List<String>) -> Unit) {
+    if (legacy.recipients.isEmpty()) {
+        Text(lt("no_recipients"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(14.dp)),
+    ) {
+        legacy.recipients.forEachIndexed { i, p ->
+            val on = p.dto.id in selected
+            val name = personName(p.meta, p.dto.email)
+            if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onChange(if (on) selected - p.dto.id else selected + p.dto.id) }
+                    .padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            ) {
+                LegacyAvatar(name, p.dto.email, size = 32)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        listOfNotNull(p.meta.str("relation")?.takeIf { it.isNotBlank() }, if (legacy.guardians.any { it.dto.email.equals(p.dto.email, true) }) lt("role_guardian").lowercase(legacyLocale()) else null)
+                            .joinToString(" · ").ifEmpty { p.dto.email },
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Checkbox(checked = on, onCheckedChange = { onChange(if (on) selected - p.dto.id else selected + p.dto.id) })
+            }
+        }
+    }
+}
+
+/** Folha do item: quem recebe e quando (substitui o modal de Items.vue). */
+@Composable
+private fun ItemSettingsDialog(
+    item: LegacyItem,
+    legacy: LegacyState,
+    busy: Boolean,
+    vm: LegacyViewModel,
+    onDismiss: () -> Unit,
+    onEditNote: () -> Unit,
+    onRemove: () -> Unit,
+) {
     var people by remember(item) { mutableStateOf(item.dto.recipient_ids) }
     var delay by remember(item) { mutableStateOf(item.dto.delay_days) }
     var deliverOn by remember(item) { mutableStateOf(item.dto.deliver_at?.take(10).orEmpty()) }
-    LegacyFormDialog(
-        itemName(item),
+    LegacySheet(
         onDismiss,
-        footer = {
-            if (item.dto.type == "note") {
-                TextButton(onClick = onEditNote) { Text(lt("edit_note")) }
-                Spacer(Modifier.weight(1f))
+        header = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ItemIcon(item, size = 44)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(itemName(item), fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        listOfNotNull(itemDetail(item), item.dto.created_at?.let { lt("added_on", "date" to shortDate(it)) }).joinToString(" · "),
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
-            TextButton(onClick = onDismiss) { Text(lt("cancel")) }
+        },
+        footer = {
+            OutlinedButton(
+                onClick = onRemove,
+                enabled = !busy,
+                shape = RoundedCornerShape(12.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                modifier = Modifier.weight(1f),
+            ) { Text(lt("remove"), fontWeight = FontWeight.SemiBold) }
             Button(
                 onClick = { vm.saveItemSettings(item, people, timing(delay, deliverOn), onDismiss) },
                 enabled = !busy && people.isNotEmpty(),
                 shape = RoundedCornerShape(12.dp),
-            ) { Text(lt("save")) }
+                modifier = Modifier.weight(2f),
+            ) { Text(lt("done"), fontWeight = FontWeight.SemiBold) }
         },
     ) {
-        FieldLabel(lt("who_receives"))
-        PeoplePicker(legacy, people) { people = it }
+        SectionLabel("${lt("who_receives")} · ${lt("people_n", "count" to people.size)}")
+        PeopleChecklist(legacy, people) { people = it }
+        Spacer(Modifier.height(4.dp))
         ReleaseFields(delay, deliverOn, onDelay = { delay = it }, onDeliverOn = { deliverOn = it })
+        if (item.dto.type == "note") {
+            TextButton(onClick = onEditNote) {
+                Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(lt("edit_note"))
+            }
+        }
     }
 }
 
-/** Compor/editar mensagem (Messages.vue). */
+/** Editor de mensagem em ecrã inteiro (Messages.vue). */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun MessageDialog(editing: LegacyItem?, legacy: LegacyState, busy: Boolean, vm: LegacyViewModel, onDismiss: () -> Unit) {
+private fun MessageDialog(editing: LegacyItem?, legacy: LegacyState, busy: Boolean, vm: LegacyViewModel, onDismiss: () -> Unit, onRemove: (LegacyItem) -> Unit) {
     val attachable = legacy.vaultItems
     var subject by remember(editing) { mutableStateOf(editing?.meta?.str("subject").orEmpty()) }
     var body by remember(editing) { mutableStateOf("") }
@@ -448,6 +569,7 @@ private fun MessageDialog(editing: LegacyItem?, legacy: LegacyState, busy: Boole
     var deliverOn by remember(editing) { mutableStateOf(editing?.dto?.deliver_at?.take(10).orEmpty()) }
     var loading by remember(editing) { mutableStateOf(editing != null) }
     var confirmDiscard by remember { mutableStateOf(false) }
+    var pickingPeople by remember { mutableStateOf(false) }
     fun formState() = listOf(subject, body, people.sorted(), attached.sorted(), delay, deliverOn).toString()
     var baseline by remember(editing) { mutableStateOf(formState()) }
 
@@ -475,66 +597,178 @@ private fun MessageDialog(editing: LegacyItem?, legacy: LegacyState, busy: Boole
     val save: (String) -> Unit = { itemState ->
         vm.saveMessage(editing, subject, body, attachable.filter { it.dto.id in attached }, people, timing(delay, deliverOn), itemState, onDismiss)
     }
+    val chosen = legacy.recipients.filter { it.dto.id in people }
+    val canSave = !busy && !loading && subject.isNotBlank() && body.isNotEmpty()
 
-    LegacyFormDialog(
-        lt(if (editing != null) "edit_message" else "new_message"),
-        close,
-        footer = {
-            if (confirmDiscard) {
-                Text(lt("discard_message"), fontSize = 13.sp, modifier = Modifier.weight(1f))
-                TextButton(onClick = { confirmDiscard = false }) { Text(lt("keep_editing")) }
-                TextButton(onClick = onDismiss) { Text(lt("discard")) }
-            } else {
-                TextButton(onClick = { save("draft") }, enabled = !busy && !loading && subject.isNotBlank() && body.isNotEmpty()) { Text(lt("save_draft")) }
-                Button(
-                    onClick = { save("sealed") },
-                    enabled = !busy && !loading && people.isNotEmpty() && subject.isNotBlank() && body.isNotEmpty(),
-                    shape = RoundedCornerShape(12.dp),
-                ) { Text(lt("seal")) }
-            }
-        },
-    ) {
-        OutlinedTextField(subject, { if (it.length <= 160) subject = it }, label = { Text(lt("subject")) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        Box {
-            OutlinedTextField(body, { body = it }, label = { Text(lt("body")) }, enabled = !loading, minLines = 7, modifier = Modifier.fillMaxWidth())
-            if (loading) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(20.dp).align(Alignment.Center))
-        }
+    Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
+                // Topo: ‹ Message 🗑
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp)) {
+                    IconButton(onClick = close) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = lt("cancel")) }
+                    Text(lt(if (editing != null) "message" else "new_message"), fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    if (editing != null) {
+                        IconButton(onClick = { onRemove(editing) }, enabled = !busy) {
+                            Icon(Icons.Outlined.Delete, contentDescription = lt("remove"), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                Column(
+                    Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    if (editing != null) {
+                        val sealed = editing.dto.state == "sealed"
+                        Text(
+                            (if (sealed) "🔒 " else "✎ ") + lt("message_${editing.dto.state}"),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (sealed) LegacyGreen else ChipToneColor.warn(),
+                        )
+                    }
+                    LegacyCard(contentPadding = 0) {
+                        // Para
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+                            Text(lt("to"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(64.dp))
+                            if (chosen.isEmpty()) {
+                                Text(lt("nobody_yet"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                            } else {
+                                StackedAvatars(chosen.map { personName(it.meta, it.dto.email) to it.dto.email }, size = 24)
+                                Spacer(Modifier.width(6.dp))
+                                val first = chosen.first()
+                                Text(
+                                    personName(first.meta, first.dto.email) + (if (chosen.size > 1) " +${chosen.size - 1}" else first.meta.str("relation")?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            TextButton(onClick = { pickingPeople = true }, enabled = !loading) { Text(lt("change"), fontWeight = FontWeight.SemiBold) }
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                        // Assunto
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp)) {
+                            Text(lt("subject"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(64.dp))
+                            PlainField(subject, { if (it.length <= 160) subject = it }, singleLine = true, bold = true, modifier = Modifier.weight(1f))
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                        Box(Modifier.fillMaxWidth().heightIn(min = 220.dp).padding(14.dp)) {
+                            PlainField(body, { body = it }, enabled = !loading, placeholder = lt("body"), modifier = Modifier.fillMaxWidth())
+                            if (loading) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(20.dp).align(Alignment.Center))
+                        }
+                    }
 
-        FieldLabel(lt("attached"))
-        if (attachable.isEmpty()) {
-            Text(lt("attach_empty"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                attachable.forEach { item ->
-                    val on = item.dto.id in attached
-                    Text(
-                        itemName(item),
-                        fontSize = 12.sp,
-                        fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
-                        color = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .widthIn(max = 220.dp)
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(if (on) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface)
-                            .border(1.dp, if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, RoundedCornerShape(999.dp))
-                            .clickable(enabled = !loading) { if (on) attached.remove(item.dto.id) else attached.add(item.dto.id) }
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
-                    )
+                    SectionLabel(lt("attached"))
+                    if (attachable.isEmpty()) {
+                        Text(lt("attach_empty"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            attachable.forEach { item ->
+                                val on = item.dto.id in attached
+                                Text(
+                                    itemName(item),
+                                    fontSize = 12.sp,
+                                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
+                                    color = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .widthIn(max = 220.dp)
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(if (on) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface)
+                                        .border(1.dp, if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, RoundedCornerShape(999.dp))
+                                        .clickable(enabled = !loading) { if (on) attached.remove(item.dto.id) else attached.add(item.dto.id) }
+                                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                                )
+                            }
+                        }
+                        Text(lt("attach_hint"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (offSchedule.isNotEmpty()) {
+                        Text(lt("attach_timing", "names" to offSchedule), fontSize = 12.sp, color = ChipToneColor.warn())
+                    }
+
+                    ReleaseFields(delay, deliverOn, onDelay = { delay = it }, onDeliverOn = { deliverOn = it }, dateOption = true, label = lt("deliver"))
+                    Spacer(Modifier.height(4.dp))
+                }
+                // Rodapé fixo: selar + rascunho.
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+                    Button(
+                        onClick = { save("sealed") },
+                        enabled = canSave && people.isNotEmpty(),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().height(50.dp),
+                    ) {
+                        Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(lt("seal"), fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                        Text(
+                            lt("seal_hint", "names" to chosen.joinToString(", ") { personName(it.meta, it.dto.email) }.ifEmpty { "—" }),
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { save("draft") }, enabled = canSave) { Text(lt("save_draft")) }
+                    }
                 }
             }
-            Text(lt("attach_hint"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        if (offSchedule.isNotEmpty()) {
-            Text(lt("attach_timing", "names" to offSchedule), fontSize = 12.sp, color = ChipToneColor.warn())
         }
 
-        FieldLabel(lt("who_receives"))
-        PeoplePicker(legacy, people) { people = it }
-        ReleaseFields(delay, deliverOn, onDelay = { delay = it }, onDeliverOn = { deliverOn = it })
-        EncryptedNote()
+        if (pickingPeople) {
+            var picked by remember { mutableStateOf(people) }
+            LegacySheet(
+                onDismiss = { pickingPeople = false },
+                header = { Text(lt("who_receives"), fontSize = 18.sp, fontWeight = FontWeight.Bold) },
+                footer = {
+                    Button(onClick = { people = picked; pickingPeople = false }, shape = RoundedCornerShape(12.dp), modifier = Modifier.weight(1f)) { Text(lt("done")) }
+                },
+            ) { PeopleChecklist(legacy, picked) { picked = it } }
+        }
+        if (confirmDiscard) {
+            ConfirmDialog(
+                title = lt("discard_message"),
+                message = "",
+                confirmText = lt("discard"),
+                destructive = true,
+                onDismiss = { confirmDiscard = false },
+                onConfirm = { confirmDiscard = false; onDismiss() },
+            )
+        }
     }
+}
+
+/** Campo sem moldura (assunto e corpo da carta). */
+@Composable
+private fun PlainField(
+    value: String,
+    onChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    singleLine: Boolean = false,
+    bold: Boolean = false,
+    enabled: Boolean = true,
+    placeholder: String = "",
+) {
+    val color = MaterialTheme.colorScheme.onSurface
+    androidx.compose.foundation.text.BasicTextField(
+        value = value,
+        onValueChange = onChange,
+        enabled = enabled,
+        singleLine = singleLine,
+        textStyle = androidx.compose.ui.text.TextStyle(fontSize = if (singleLine) 14.sp else 15.sp, lineHeight = 22.sp, fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal, color = color),
+        cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+        modifier = modifier,
+        decorationBox = { inner ->
+            Box {
+                if (value.isEmpty() && placeholder.isNotEmpty()) Text(placeholder, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                inner()
+            }
+        },
+    )
 }
 
 private fun JsonObject.string(key: String): String = (this[key] as? JsonPrimitive)?.content.orEmpty()

@@ -1,7 +1,13 @@
 package co.golink.tester.ui.screens.legacy
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -23,7 +29,6 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.GridView
-import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MailOutline
 import androidx.compose.material.icons.outlined.People
@@ -69,8 +74,6 @@ import co.golink.tester.ui.components.dialogs.ConfirmDialog
 import co.golink.tester.ui.components.drawer.AdaptiveNavigationDrawer
 import co.golink.tester.ui.components.drawer.AppDrawerContent
 import co.golink.tester.ui.components.drawer.DrawerArea
-import co.golink.tester.ui.components.drawer.DrawerItem
-import co.golink.tester.ui.components.drawer.DrawerSection
 import co.golink.tester.ui.components.drawer.isPermanentDrawer
 import co.golink.tester.ui.i18n.I18n
 import co.golink.tester.ui.i18n.lt
@@ -82,28 +85,13 @@ import kotlinx.coroutines.launch
 /** Panes do Legacy (as rotas filhas de /legacy na web). */
 val LEGACY_PANES = listOf("overview", "items", "messages", "guardians", "recipients", "timing", "activity", "guarding")
 
-/** Menu da área Legacy, igual ao SidebarLegacyMenu.vue. */
-private fun legacySections(pane: String, legacy: LegacyState, open: (String) -> Unit): List<DrawerSection> {
-    fun item(key: String, icon: androidx.compose.ui.graphics.vector.ImageVector, count: Int? = null) =
-        DrawerItem(lt(key), icon, selected = pane == key, count = count?.takeIf { it > 0 }, onClick = { open(key) })
-    return listOfNotNull(
-        DrawerSection(lt("section_vault"), listOf(
-            item("overview", Icons.Outlined.GridView),
-            item("items", Icons.Outlined.Lock, legacy.vaultItems.size),
-            item("messages", Icons.Outlined.MailOutline, legacy.messages.size),
-        )),
-        DrawerSection(lt("section_people"), listOf(
-            item("guardians", Icons.Outlined.Shield, legacy.guardians.size),
-            item("recipients", Icons.Outlined.People, legacy.recipients.size),
-        )),
-        DrawerSection(lt("section_settings"), listOf(
-            item("timing", Icons.Outlined.Schedule),
-            item("activity", Icons.Outlined.History),
-        )),
-        if (legacy.guardingCount > 0) DrawerSection(lt("section_guarding"), listOf(
-            item("guarding", Icons.Outlined.FavoriteBorder, legacy.guardingCount),
-        )) else null,
-    )
+/** Separador da barra inferior de cada pane. */
+private fun tabOf(pane: String): LegacyTab = when (pane) {
+    "items", "messages" -> LegacyTab.Vault
+    "guardians", "recipients" -> LegacyTab.People
+    "timing", "activity" -> LegacyTab.Settings
+    "guarding" -> LegacyTab.Guarding
+    else -> LegacyTab.Overview
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -136,6 +124,17 @@ fun LegacyScreen(
     val e2eLocked = e2eConfigured && !e2eUnlocked
 
     var pane by rememberSaveable { mutableStateOf(initialPane.takeIf { it in LEGACY_PANES } ?: "overview") }
+    // Último segmento aberto em cada separador.
+    var vaultSub by rememberSaveable { mutableStateOf(if (pane == "messages") "messages" else "items") }
+    var peopleSub by rememberSaveable { mutableStateOf(if (pane == "recipients") "recipients" else "guardians") }
+    var settingsSub by rememberSaveable { mutableStateOf(if (pane == "activity") "activity" else "timing") }
+    LaunchedEffect(pane) {
+        when (pane) {
+            "items", "messages" -> vaultSub = pane
+            "guardians", "recipients" -> peopleSub = pane
+            "timing", "activity" -> settingsSub = pane
+        }
+    }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -167,6 +166,8 @@ fun LegacyScreen(
     val closeDrawer: () -> Unit = { scope.launch { drawerState.close() } }
     val go: (() -> Unit) -> () -> Unit = { action -> { closeDrawer(); action() } }
     val openPane: (String) -> Unit = { pane = it }
+    val tab = tabOf(pane)
+    val showTabs = !e2eLocked && legacy.loaded && (legacy.vault != null || legacy.guardingCount > 0)
 
     AdaptiveNavigationDrawer(
         permanent = isPermanentDrawer(),
@@ -184,7 +185,7 @@ fun LegacyScreen(
                     }
                 },
                 areas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Notes, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea),
-                sections = legacySections(pane, legacy) { key -> closeDrawer(); pane = key },
+                sections = emptyList(),
                 unreadNotifications = unread,
                 onOpenNotifications = go(onOpenNotifications),
                 onHome = go { pane = "overview" },
@@ -211,10 +212,64 @@ fun LegacyScreen(
     ) {
         Scaffold(
             snackbarHost = { SnackbarHost(snackbar) },
+            bottomBar = {
+                if (showTabs) {
+                    LegacyTabBar(
+                        tabs = listOfNotNull(
+                            Triple(LegacyTab.Overview, Icons.Outlined.GridView, lt("overview")),
+                            Triple(LegacyTab.Vault, Icons.Outlined.Lock, lt("section_vault")),
+                            Triple(LegacyTab.People, Icons.Outlined.People, lt("section_people")),
+                            Triple(LegacyTab.Settings, Icons.Outlined.Schedule, lt("section_settings")),
+                            if (legacy.guardingCount > 0) Triple(LegacyTab.Guarding, Icons.Outlined.FavoriteBorder, lt("guarding")) else null,
+                        ),
+                        selected = tab,
+                        badge = mapOf(LegacyTab.People to if (legacy.editable) legacy.keysToConfirm.size else 0),
+                        onSelect = { t ->
+                            pane = when (t) {
+                                LegacyTab.Overview -> "overview"
+                                LegacyTab.Vault -> vaultSub
+                                LegacyTab.People -> peopleSub
+                                LegacyTab.Settings -> settingsSub
+                                LegacyTab.Guarding -> "guarding"
+                            }
+                        },
+                    )
+                }
+            },
+            floatingActionButton = {
+                if (showTabs && legacy.editable && legacy.vault != null && tab == LegacyTab.Vault) {
+                    val message = pane == "messages"
+                    ExtendedFloatingActionButton(
+                        onClick = { dialog = if (message) LegacyDialog.Message(null) else LegacyDialog.Add },
+                        icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
+                        text = { Text(lt(if (message) "new_message" else "add_to_vault"), fontWeight = FontWeight.SemiBold) },
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        shape = RoundedCornerShape(16.dp),
+                    )
+                }
+            },
             containerColor = MaterialTheme.colorScheme.background,
             topBar = {
                 TopAppBar(
-                    title = { Text("Legacy", fontWeight = FontWeight.SemiBold) },
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                when (tab) {
+                                    LegacyTab.Vault -> lt("section_vault")
+                                    LegacyTab.People -> lt("section_people")
+                                    LegacyTab.Settings -> lt("section_settings")
+                                    LegacyTab.Guarding -> lt("guarding")
+                                    LegacyTab.Overview -> "Legacy"
+                                },
+                                fontWeight = FontWeight.Bold,
+                            )
+                            if (tab == LegacyTab.Overview) legacy.vault?.let { v ->
+                                Spacer(Modifier.width(10.dp))
+                                StatusPill(v)
+                            }
+                        }
+                    },
                     navigationIcon = {
                         if (!isPermanentDrawer()) {
                             IconButton(onClick = { scope.launch { drawerState.open() } }) {
@@ -245,8 +300,33 @@ fun LegacyScreen(
                         Modifier
                             .fillMaxSize()
                             .verticalScroll(scroll)
-                            .padding(PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 32.dp)),
+                            .padding(PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = if (tab == LegacyTab.Vault) 96.dp else 32.dp)),
                     ) {
+                        when (tab) {
+                            LegacyTab.Vault -> LegacySegmented(
+                                options = listOf(
+                                    "items" to "${lt("seg_items")} · ${legacy.vaultItems.size}",
+                                    "messages" to "${lt("messages")} · ${legacy.messages.size}",
+                                ),
+                                selected = pane,
+                                onSelect = { pane = it },
+                            )
+                            LegacyTab.People -> LegacySegmented(
+                                options = listOf(
+                                    "guardians" to "${lt("guardians")} · ${legacy.guardians.size}",
+                                    "recipients" to "${lt("recipients")} · ${legacy.recipients.size}",
+                                ),
+                                selected = pane,
+                                onSelect = { pane = it },
+                            )
+                            LegacyTab.Settings -> LegacySegmented(
+                                options = listOf("timing" to lt("timing"), "activity" to lt("activity")),
+                                selected = pane,
+                                onSelect = { pane = it },
+                            )
+                            else -> Unit
+                        }
+                        if (tab in setOf(LegacyTab.Vault, LegacyTab.People, LegacyTab.Settings)) Spacer(Modifier.height(14.dp))
                         when (pane) {
                             "items" -> LegacyItemsPane(legacy) { dialog = it }
                             "messages" -> LegacyMessagesPane(legacy) { dialog = it }
@@ -274,6 +354,27 @@ fun LegacyScreen(
             onDismiss = { confirmLogout = false },
             onConfirm = { confirmLogout = false; shell.logout() },
         )
+    }
+}
+
+/** "● Active" ao lado do título no Overview. */
+@Composable
+private fun StatusPill(vault: co.golink.tester.domain.legacy.LegacyVaultDto) {
+    val paused = vault.paused_until != null
+    val (label, color) = when {
+        paused -> lt("status_paused") to Color(0xFF64748B)
+        vault.status == "armed" -> lt("status_armed") to LegacyGreen
+        vault.status in setOf("notified", "released") -> lt("status_${vault.status}") to LegacyAmber
+        vault.status == "opened" -> lt("status_opened") to MaterialTheme.colorScheme.error
+        else -> lt("status_${vault.status}") to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(color.copy(alpha = 0.14f)).padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
+        Box(Modifier.size(6.dp).clip(CircleShape).background(color))
+        Spacer(Modifier.width(5.dp))
+        Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
     }
 }
 

@@ -20,7 +20,7 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -32,6 +32,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -39,11 +41,15 @@ import co.golink.tester.data.legacy.LegacyCrypto
 import co.golink.tester.data.legacy.LegacyEventRow
 import co.golink.tester.ui.i18n.lt
 import co.golink.tester.ui.screens.admin.AdminLoadMore
-import co.golink.tester.ui.screens.admin.AdminSegmented
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
+import java.time.Instant
+import java.time.LocalDate
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 private val CATEGORIES = listOf("all", "checkin", "vault", "people", "settings")
 
@@ -79,27 +85,25 @@ fun LegacyActivityPane(vm: LegacyActivityViewModel, checkins: Int, onToast: (Leg
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        LegacyHeader(lt("activity"), lt("activity_text")) {
-            OutlinedButton(
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) {
+                LegacyFilterChips(
+                    options = CATEGORIES.map { it to lt("log_$it") },
+                    selected = state.category,
+                    onSelect = { if (it != state.category) vm.setCategory(it) },
+                )
+            }
+            IconButton(
                 onClick = {
                     val name = if (state.category == "all") "legacy-activity.csv" else "legacy-activity-${state.category}.csv"
                     exportLauncher.launch(name)
                 },
                 enabled = state.rows.isNotEmpty() && !state.exporting,
-                shape = RoundedCornerShape(12.dp),
             ) {
-                Icon(Icons.Outlined.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(lt("export_csv"))
+                Icon(Icons.Outlined.FileDownload, contentDescription = lt("export_csv"), modifier = Modifier.size(20.dp))
             }
         }
-
-        AdminSegmented(
-            options = CATEGORIES.map { it to lt("log_$it") },
-            selected = state.category,
-            onSelect = { if (it != state.category) vm.setCategory(it) },
-        )
 
         when {
             state.loading && state.rows.isEmpty() -> Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
@@ -110,29 +114,56 @@ fun LegacyActivityPane(vm: LegacyActivityViewModel, checkins: Int, onToast: (Leg
                 OutlinedButton(onClick = { vm.load() }, shape = RoundedCornerShape(12.dp), modifier = Modifier.padding(top = 10.dp)) { Text(lt("retry")) }
             }
             state.rows.isEmpty() -> LegacyCard { Text(lt("no_activity"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            else -> LegacyCard {
-                state.rows.forEachIndexed { i, row ->
-                    if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                    Row(verticalAlignment = Alignment.Top, modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
-                        LegacyIconBox(
-                            when (row.category) {
-                                "checkin" -> Icons.Outlined.CheckCircle
-                                "people" -> Icons.Outlined.People
-                                "settings" -> Icons.Outlined.Settings
-                                else -> Icons.Outlined.Lock
-                            },
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(eventText(row), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
-                            Text(dateTime(row.createdAt), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
+            else -> {
+                val today = LocalDate.now()
+                state.rows.groupBy { groupOf(it.createdAt, today) }.forEach { (group, rows) ->
+                    SectionLabel(group.second, Modifier.padding(top = 6.dp))
+                    rows.forEach { row -> ActivityRow(row, today) }
                 }
             }
         }
 
         if (state.cursor != null) AdminLoadMore(loading = state.loading) { vm.load(state.cursor) }
+    }
+}
+
+private fun localDate(iso: String): LocalDate? = runCatching { OffsetDateTime.parse(iso).atZoneSameInstant(ZoneId.systemDefault()).toLocalDate() }.getOrNull()
+    ?: runCatching { Instant.parse(iso).atZone(ZoneId.systemDefault()).toLocalDate() }.getOrNull()
+
+/** Hoje / Esta semana / mês e ano. A chave ordena como as linhas (mais recentes primeiro). */
+private fun groupOf(iso: String, today: LocalDate): Pair<String, String> {
+    val day = localDate(iso) ?: return "?" to ""
+    return when {
+        day == today -> "today" to lt("group_today")
+        !day.isBefore(today.minusDays(6)) -> "week" to lt("group_week")
+        else -> day.withDayOfMonth(1).toString() to day.format(DateTimeFormatter.ofPattern(if (day.year == today.year) "LLLL" else "LLLL yyyy", legacyLocale()))
+    }
+}
+
+@Composable
+private fun ActivityRow(row: LegacyEventRow, today: LocalDate) {
+    val (icon, color) = when (row.category) {
+        "checkin" -> Icons.Outlined.CheckCircle to LegacyGreen
+        "people" -> Icons.Outlined.People to Color(0xFF7C3AED)
+        "settings" -> Icons.Outlined.Settings to Color(0xFF64748B)
+        else -> Icons.Outlined.Lock to Color(0xFFE11D48)
+    }
+    val day = localDate(row.createdAt)
+    val whenText = runCatching {
+        val at = OffsetDateTime.parse(row.createdAt).atZoneSameInstant(ZoneId.systemDefault())
+        if (day == today) at.format(DateTimeFormatter.ofPattern("HH:mm")) else at.format(DateTimeFormatter.ofPattern("d MMM", legacyLocale()))
+    }.getOrElse { dateTime(row.createdAt) }
+    LegacyCard(contentPadding = 12) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TintIcon(icon, color, size = 34)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(eventText(row), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                Text(lt("log_${row.category}"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(whenText, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
