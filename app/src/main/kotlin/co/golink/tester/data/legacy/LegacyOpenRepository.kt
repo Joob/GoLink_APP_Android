@@ -146,7 +146,7 @@ class LegacyOpenRepository @Inject constructor(
                 val zip = ZipOutputStream(out)
                 val used = HashSet<String>()
                 rows.forEach { row ->
-                    zip.putNextEntry(ZipEntry(uniquePath(row.path, used)))
+                    zip.putNextEntry(ZipEntry(downloader.uniqueZipPath(safeZipPath(row.path), used)))
                     decryptInto(token, item.dto.id, row, Counting(zip, count))
                     zip.closeEntry()
                 }
@@ -156,13 +156,14 @@ class LegacyOpenRepository @Inject constructor(
         }
     }
 
-    private fun uniquePath(path: String, used: HashSet<String>): String {
-        if (used.add(path)) return path
-        val dot = path.lastIndexOf('.')
-        val base = if (dot > 0) path.substring(0, dot) else path
-        val ext = if (dot > 0) path.substring(dot) else ""
-        var i = 1
-        while (!used.add("$base ($i)$ext")) i++
-        return "$base ($i)$ext"
-    }
+    /**
+     * O caminho vem decifrado do payload: sem `..`, `.`, raiz nem caracteres de controlo,
+     * para um extrator fraco não escrever fora da pasta (zip-slip).
+     */
+    private fun safeZipPath(path: String): String =
+        path.split('/', '\\')
+            .map { part -> part.filterNot { it.isISOControl() }.trim() }
+            .filter { it.isNotEmpty() && it != "." && it != ".." }
+            .joinToString("/")
+            .ifEmpty { "file" }
 }

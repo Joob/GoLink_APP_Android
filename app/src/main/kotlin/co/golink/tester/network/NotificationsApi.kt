@@ -13,6 +13,10 @@ interface NotificationsApi {
     @GET("api/notifications")
     suspend fun list(): Response<NotificationsResponse>
 
+    /** Só o contador (badge em segundo plano). 404 em servidores antigos. */
+    @GET("api/notifications/unread-count")
+    suspend fun unreadCount(): Response<co.golink.tester.domain.notifications.UnreadCountResponse>
+
     /**
      * [before]: só as notificações até esta data (as que o cliente já viu);
      * [ids]: as desse mesmo segundo que o cliente viu (as outras desse segundo ficam).

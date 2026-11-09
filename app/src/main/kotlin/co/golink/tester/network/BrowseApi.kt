@@ -26,6 +26,10 @@ interface BrowseApi {
     @GET("api/browse/mobile-backup/fingerprint")
     suspend fun mobileBackupFingerprint(): Response<FolderFingerprint>
 
+    /** Links públicos: muda ao criar/alterar/revogar um link e ao renomear/apagar o item. */
+    @GET("api/browse/share/fingerprint")
+    suspend fun sharedFingerprint(): Response<FolderFingerprint>
+
     @GET("api/browse/folders/{id}/fingerprint")
     suspend fun folderFingerprint(
         @Path("id") id: String,
@@ -63,11 +67,20 @@ interface BrowseApi {
         @Query("count_only") countOnly: Boolean? = null,
         // Só os ficheiros/pastas deste telemóvel (uuid ou "legacy"); null = todos.
         @Query("device_id") deviceId: String? = null,
+        // Ordenação no servidor (páginas coerentes), como nas outras listagens.
+        @Query("sort") sort: String? = null,
+        @Query("direction") direction: String? = null,
     ): Response<BrowseListResponse>
 
     // Cartões dos telemóveis (nome, último envio, totais, pausa por aparelho).
     @GET("api/browse/mobile-backup/summary")
     suspend fun mobileBackupSummary(): Response<co.golink.tester.domain.backup.BackupSummary>
+
+    /** Backup: quais destas upload_key já existem na conta (antes de enviar bytes). */
+    @POST("api/browse/mobile-backup/check")
+    suspend fun checkBackupUploadKeys(
+        @Body body: co.golink.tester.domain.backup.BackupKeysCheckBody,
+    ): Response<co.golink.tester.domain.backup.BackupKeysCheckResponse>
 
     @POST("api/browse/mobile-backup/devices/{id}/pause")
     suspend fun pauseBackupDevice(

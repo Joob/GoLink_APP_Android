@@ -24,6 +24,7 @@ import co.golink.tester.domain.admin.InviteItem
 import co.golink.tester.domain.admin.SuspendUserRequest
 import co.golink.tester.domain.user.User
 import co.golink.tester.network.AdminApi
+import co.golink.tester.ui.i18n.tr
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.serialization.json.Json
@@ -39,7 +40,7 @@ class AdminRepository @Inject constructor(
     suspend fun dashboard(days: Int = 45): Result<DashboardResponse> = runCatching {
         val response = api.dashboard(days)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
-        response.body() ?: error("Resposta vazia")
+        response.body() ?: error("Resposta vazia".tr())
     }
 
     suspend fun newbies(): Result<List<AdminUserItem>> = body { api.newbies() }.map { r -> r.data.map { it.toItem() } }
@@ -134,8 +135,10 @@ class AdminRepository @Inject constructor(
         response.body()?.data
     }
     suspend fun creditUser(id: String, amount: Double): Result<Unit> = unit { api.creditUser(id, co.golink.tester.domain.admin.AmountRequest(amount)) }
-    suspend fun transactions(page: Int = 1) =
-        body { api.transactions(page) }.map { r -> r.data.map { it.data } to r.meta.hasMore(page) }
+    /** Faturas filtradas no servidor ([state]/[search]) + contagens globais por estado. */
+    suspend fun transactions(page: Int = 1, state: String? = null, search: String? = null) =
+        body { api.transactions(page, state = state, search = search?.trim()?.ifBlank { null }, stats = 1) }
+            .map { r -> InvoicesPage(r.data.map { it.data }, r.meta.hasMore(page), r.meta?.stats) }
     suspend fun userTransactions(id: String, page: Int = 1) =
         body { api.userTransactions(id, page) }.map { r -> r.data.map { it.data } to r.meta.hasMore(page) }
     suspend fun refundTransaction(id: String): Result<Unit> = unit { api.refundTransaction(id) }
@@ -166,13 +169,13 @@ class AdminRepository @Inject constructor(
     private suspend fun <T> body(call: suspend () -> Response<T>): Result<T> = runCatching {
         val response = call()
         check(response.isSuccessful) { serverMessage(response) }
-        response.body() ?: error("Resposta vazia")
+        response.body() ?: error("Resposta vazia".tr())
     }
 
     suspend fun analytics(range: String = "7d"): Result<AnalyticsResponse> = runCatching {
         val response = api.analytics(range)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
-        response.body() ?: error("Resposta vazia")
+        response.body() ?: error("Resposta vazia".tr())
     }
 
     /** Página de utilizadores + totais dos separadores. [status]: null | active | suspended. */
@@ -183,7 +186,7 @@ class AdminRepository @Inject constructor(
     ): Result<UsersPage> = runCatching {
         val response = api.users(page, status, search?.trim()?.ifBlank { null })
         check(response.isSuccessful) { serverMessage(response) }
-        val body = response.body() ?: error("Resposta vazia")
+        val body = response.body() ?: error("Resposta vazia".tr())
         val items = body.data.map { it.toItem() }
         UsersPage(items, body.meta.hasMore(page), body.counts)
     }
@@ -191,7 +194,7 @@ class AdminRepository @Inject constructor(
     suspend fun deletedUsers(page: Int = 1, search: String? = null): Result<Pair<List<DeletedUserRow>, Boolean>> = runCatching {
         val response = api.deletedUsers(page, search?.trim()?.ifBlank { null })
         check(response.isSuccessful) { serverMessage(response) }
-        val body = response.body() ?: error("Resposta vazia")
+        val body = response.body() ?: error("Resposta vazia".tr())
         body.data to body.meta.hasMore(page)
     }
 
@@ -200,29 +203,39 @@ class AdminRepository @Inject constructor(
     suspend fun createUser(request: CreateUserRequest): Result<User> = runCatching {
         val response = api.createUser(request)
         check(response.isSuccessful) { serverMessage(response) }
-        User.fromResponse(response.body() ?: error("Resposta vazia"))
+        User.fromResponse(response.body() ?: error("Resposta vazia".tr()))
     }
 
     suspend fun user(id: String): Result<User> = runCatching {
         val response = api.user(id)
         check(response.isSuccessful) { serverMessage(response) }
-        User.fromResponse(response.body() ?: error("Resposta vazia"))
+        User.fromResponse(response.body() ?: error("Resposta vazia".tr()))
     }
 
-    suspend fun changeRole(id: String, role: String): Result<Unit> =
-        unit { api.changeRole(id, ChangeRoleRequest(RoleAttributes(role))) }
+    /** Promover a admin exige [password] do admin atual ou [passkeyToken] (finalidade change_role). */
+    suspend fun changeRole(id: String, role: String, password: String? = null, passkeyToken: String? = null): Result<Unit> =
+        unit {
+            api.changeRole(
+                id,
+                ChangeRoleRequest(
+                    attributes = RoleAttributes(role),
+                    password = password?.takeIf { passkeyToken.isNullOrBlank() && it.isNotEmpty() },
+                    passkey_token = passkeyToken?.takeIf { it.isNotBlank() },
+                ),
+            )
+        }
 
     suspend fun userStorage(id: String): Result<UserStorageData> = runCatching {
         val response = api.userStorage(id)
         check(response.isSuccessful) { serverMessage(response) }
-        response.body()?.data ?: error("Resposta vazia")
+        response.body()?.data ?: error("Resposta vazia".tr())
     }
 
     /** [gigabytes]: nova quota em GB (o backend aceita 1–9 dígitos). */
     suspend fun changeCapacity(id: String, gigabytes: Int): Result<UserStorageData> = runCatching {
         val response = api.changeCapacity(id, ChangeCapacityRequest(CapacityAttributes(gigabytes)))
         check(response.isSuccessful) { serverMessage(response) }
-        response.body()?.data ?: error("Resposta vazia")
+        response.body()?.data ?: error("Resposta vazia".tr())
     }
 
     suspend fun resetPassword(id: String): Result<Unit> = unit { api.resetPassword(id) }
@@ -244,7 +257,7 @@ class AdminRepository @Inject constructor(
     suspend fun auditLogs(page: Int = 1, action: String? = null, onlyFailed: Boolean = false): Result<Pair<List<AuditLogData>, Boolean>> = runCatching {
         val response = api.auditLogs(page, action?.trim()?.ifBlank { null }, if (onlyFailed) 1 else null)
         check(response.isSuccessful) { serverMessage(response) }
-        val body = response.body() ?: error("Resposta vazia")
+        val body = response.body() ?: error("Resposta vazia".tr())
         body.data.map { it.data } to body.meta.hasMore(page)
     }
 
@@ -280,8 +293,8 @@ class AdminRepository @Inject constructor(
 
     suspend fun inviteRegisters(page: Int = 1): Result<Pair<List<InviteItem>, Boolean>> = runCatching {
         val response = api.inviteRegisters(page)
-        check(response.isSuccessful) { "HTTP ${response.code()}" }
-        val body = response.body() ?: error("Resposta vazia")
+        check(response.isSuccessful) { serverMessage(response) }
+        val body = response.body() ?: error("Resposta vazia".tr())
         val items = body.data.map { envelope ->
             val a = envelope.data.attributes
             InviteItem(
@@ -298,12 +311,12 @@ class AdminRepository @Inject constructor(
 
     suspend fun createInvite(email: String): Result<Unit> = runCatching {
         val response = api.createInvite(CreateInviteRequest(emails = listOf(email)))
-        check(response.isSuccessful) { "HTTP ${response.code()}: ${response.errorBody()?.string()?.take(300)}" }
+        check(response.isSuccessful) { serverMessage(response) }
     }
 
     suspend fun deleteInvite(id: String): Result<Unit> = runCatching {
         val response = api.deleteInvite(id)
-        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        check(response.isSuccessful) { serverMessage(response) }
     }
 
     /** [unit]/[value] a null = suspensão indefinida. */
@@ -331,9 +344,12 @@ class AdminRepository @Inject constructor(
         val raw = runCatching { response.errorBody()?.string().orEmpty() }.getOrDefault("")
         // Respostas 202 de "erro" vêm no corpo normal, não no errorBody.
         val text = raw.ifBlank { runCatching { (response.body() as? okhttp3.ResponseBody)?.string().orEmpty() }.getOrDefault("") }
-        val parsed = runCatching {
-            json.decodeFromString(JsonObject.serializer(), text)["message"]?.jsonPrimitive?.content
-        }.getOrNull()
+        val obj = runCatching { json.decodeFromString(JsonObject.serializer(), text) }.getOrNull()
+        // Motivos conhecidos com texto traduzido (o message do servidor vem em inglês).
+        when (runCatching { obj?.get("reason")?.jsonPrimitive?.content }.getOrNull()) {
+            "active_subscription" -> return "Não é possível eliminar: o utilizador tem uma subscrição ativa.".tr()
+        }
+        val parsed = runCatching { obj?.get("message")?.jsonPrimitive?.content }.getOrNull()
         return parsed ?: "HTTP ${response.code()}"
     }
 }
@@ -342,4 +358,10 @@ data class UsersPage(
     val items: List<AdminUserItem>,
     val hasMore: Boolean,
     val counts: AdminUserCounts?,
+)
+
+data class InvoicesPage(
+    val items: List<co.golink.tester.domain.admin.TransactionData>,
+    val hasMore: Boolean,
+    val stats: co.golink.tester.domain.admin.InvoiceStats?,
 )

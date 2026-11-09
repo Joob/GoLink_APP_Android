@@ -11,7 +11,8 @@ import java.io.File
  */
 object PlaintextCache {
     // e2e_ cobre e2e_view_ (claro) e e2e_*.enc (ciphertext temporário dos uploads).
-    private val PREFIXES = listOf("e2e_", "viewer_pdf_", "newtext_")
+    // newdoc_: docx/xlsx criados no "+" ou "Guardar cópia" (UploadManager.createDocument).
+    private val PREFIXES = listOf("e2e_", "viewer_pdf_", "newtext_", "newdoc_")
 
     /** Apaga restos de sessões anteriores (crash, processo terminado). */
     fun sweep(context: Context, olderThan: Long = System.currentTimeMillis()) {

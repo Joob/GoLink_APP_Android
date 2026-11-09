@@ -27,7 +27,6 @@ object BackupNotifications {
     const val LOCKED_NOTIFICATION_ID = 7003
 
     fun ensureChannels(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         // Pelo nome e não por existir: quem já tem o canal fica com o idioma atual
         // (recriar só muda nome e descrição, não o que o utilizador configurou).
@@ -131,15 +130,21 @@ object BackupNotifications {
             .setContentIntent(openAppIntent(context))
             .build()
         NotificationManagerCompat.from(context).notify(RESULT_NOTIFICATION_ID, notification)
-        rememberAlert(context, RESULT_NOTIFICATION_ID, alertKey)
+        // Aviso sem chave (ex. "Backup completo"): só passa a ser o que está à
+        // vista — não apaga a dedup dos avisos de estado.
+        markShown(context, RESULT_NOTIFICATION_ID, alertKey)
+        if (alertKey != null) rememberAlert(context, RESULT_NOTIFICATION_ID, alertKey)
     }
 
     /** O estado de [alertKey] resolveu-se: retira o aviso e volta a poder alertar. */
     fun clearAlert(context: Context, alertKey: String) {
         val prefs = alertPrefs(context)
-        if (prefs.getString(keyOf(RESULT_NOTIFICATION_ID), null) != alertKey) return
-        prefs.edit().remove(keyOf(RESULT_NOTIFICATION_ID)).remove(atOf(RESULT_NOTIFICATION_ID)).apply()
-        NotificationManagerCompat.from(context).cancel(RESULT_NOTIFICATION_ID)
+        val edit = prefs.edit().remove(atOf(RESULT_NOTIFICATION_ID, alertKey))
+        // Só retira a notificação se for este o aviso à vista.
+        val shown = prefs.getString(keyOf(RESULT_NOTIFICATION_ID), null) == alertKey
+        if (shown) edit.remove(keyOf(RESULT_NOTIFICATION_ID))
+        edit.apply()
+        if (shown) NotificationManagerCompat.from(context).cancel(RESULT_NOTIFICATION_ID)
     }
 
     fun cancelProgress(context: Context) {
@@ -197,22 +202,34 @@ object BackupNotifications {
     /** Chamada após o unlock: o aviso deixou de fazer sentido. */
     fun cancelE2ELocked(context: Context) {
         NotificationManagerCompat.from(context).cancel(LOCKED_NOTIFICATION_ID)
-        rememberAlert(context, LOCKED_NOTIFICATION_ID, null)
+        alertPrefs(context).edit()
+            .remove(keyOf(LOCKED_NOTIFICATION_ID))
+            .remove(atOf(LOCKED_NOTIFICATION_ID, ALERT_E2E_LOCKED))
+            .remove(atOf(LOCKED_NOTIFICATION_ID, ALERT_E2E_NOT_CONFIGURED))
+            .apply()
     }
 
     // O worker corre a cada ~1 min (e em retry): sem isto o mesmo aviso voltava
     // a tocar em cada execução, mesmo depois de dispensado. Persistido porque
     // cada execução pode ser um processo novo.
+    // Uma entrada por chave: quota, falhas e limite do plano partilham o id da
+    // notificação, mas alternar entre eles já não volta a alertar a cada tick.
     private fun alreadyAlerted(context: Context, id: Int, alertKey: String): Boolean {
-        val prefs = alertPrefs(context)
-        return prefs.getString(keyOf(id), null) == alertKey &&
-            System.currentTimeMillis() - prefs.getLong(atOf(id), 0L) < REPEAT_AFTER_MS
+        val at = alertPrefs(context).getLong(atOf(id, alertKey), 0L)
+        return System.currentTimeMillis() - at in 0 until REPEAT_AFTER_MS
     }
 
-    private fun rememberAlert(context: Context, id: Int, alertKey: String?) {
+    private fun rememberAlert(context: Context, id: Int, alertKey: String) {
+        alertPrefs(context).edit()
+            .putString(keyOf(id), alertKey)
+            .putLong(atOf(id, alertKey), System.currentTimeMillis())
+            .apply()
+    }
+
+    // Que aviso está à vista neste id (null = um sem chave).
+    private fun markShown(context: Context, id: Int, alertKey: String?) {
         val edit = alertPrefs(context).edit()
-        if (alertKey == null) edit.remove(keyOf(id)).remove(atOf(id))
-        else edit.putString(keyOf(id), alertKey).putLong(atOf(id), System.currentTimeMillis())
+        if (alertKey == null) edit.remove(keyOf(id)) else edit.putString(keyOf(id), alertKey)
         edit.apply()
     }
 
@@ -220,7 +237,7 @@ object BackupNotifications {
         context.getSharedPreferences("backup_notifications", Context.MODE_PRIVATE)
 
     private fun keyOf(id: Int) = "alert_key_$id"
-    private fun atOf(id: Int) = "alert_at_$id"
+    private fun atOf(id: Int, alertKey: String) = "alert_at_${id}_$alertKey"
 
     const val ALERT_QUOTA = "quota"
     const val ALERT_FAILED = "failed"
@@ -242,7 +259,7 @@ object BackupNotifications {
             ?: return null
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or
-            (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+            PendingIntent.FLAG_IMMUTABLE
         return PendingIntent.getActivity(context, 0, launchIntent, flags)
     }
 }

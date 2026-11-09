@@ -1,6 +1,5 @@
 package co.golink.tester.ui.screens.pass
 
-import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -80,6 +79,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import co.golink.tester.data.pass.PassBiometricStore
 import co.golink.tester.ui.components.dialogs.ConfirmDialog
 import co.golink.tester.ui.components.drawer.AdaptiveNavigationDrawer
 import co.golink.tester.ui.components.drawer.AppDrawerContent
@@ -131,22 +131,17 @@ fun FragmentActivity.passBiometricPrompt(cipher: Cipher, title: String, onOk: (C
     )
 }
 
-/** Confirmação biométrica simples (reprompt), sem CryptoObject. */
-fun FragmentActivity.passBiometricConfirm(title: String, onOk: () -> Unit, onFail: () -> Unit) {
-    BiometricPrompt(
-        this,
-        ContextCompat.getMainExecutor(this),
-        object : BiometricPrompt.AuthenticationCallback() {
-            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) = onOk()
-            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) = onFail()
-        },
-    ).authenticate(
-        BiometricPrompt.PromptInfo.Builder()
-            .setTitle(title)
-            .setNegativeButtonText(pt("cancel"))
-            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-            .build(),
-    )
+/**
+ * Confirmação biométrica (reprompt) presa à chave do Keystore do Pass (CryptoObject): só passa
+ * se a K abrir, por isso uma impressão inscrita depois não serve. Sem biometria ligada ou com a
+ * chave invalidada → [onFail] (aí `bio.consumeInvalidated()` diz se mudou) e fica a passphrase.
+ */
+fun FragmentActivity.passBiometricConfirm(bio: PassBiometricStore, title: String, onOk: () -> Unit, onFail: () -> Unit) {
+    val cipher = bio.decryptCipher() ?: return onFail()
+    passBiometricPrompt(cipher, title, onOk = { c ->
+        val key = bio.open(c)
+        if (key != null) { key.fill(0); onOk() } else onFail()
+    }, onFail = onFail)
 }
 
 @Composable
@@ -199,11 +194,11 @@ fun PassScreen(
     val palette = passPalette()
 
     // Ecrã seguro enquanto o Pass está visível (pref local "Block screenshots").
-    DisposableEffect(blockScreens, activity) {
-        val window = activity?.window
-        if (blockScreens) window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    // A MainActivity decide o FLAG_SECURE (modo privado + ecrãs seguros): não mexer na janela aqui.
+    DisposableEffect(blockScreens) {
+        if (blockScreens) co.golink.tester.data.settings.SecureScreens.acquire()
         onDispose {
-            if (blockScreens && !vm.keepSecureFlag()) window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            if (blockScreens) co.golink.tester.data.settings.SecureScreens.release()
         }
     }
 
@@ -421,7 +416,8 @@ fun PassScreen(
         reprompt?.let { action ->
             PassRepromptDialog(
                 vm = vm,
-                bioAvailable = bioAvailable,
+                // O reprompt biométrico usa a chave do desbloqueio biométrico (CryptoObject).
+                bioAvailable = bioAvailable && vm.bio.enabled,
                 onDismiss = { reprompt = null },
                 onOk = { vm.markReprompted(); reprompt = null; action() },
             )
@@ -592,7 +588,7 @@ private fun PassRepromptDialog(vm: PassViewModel, bioAvailable: Boolean, onDismi
     var error by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        if (bioAvailable && activity != null) activity.passBiometricConfirm(pt("reprompt_title"), onOk = onOk, onFail = {})
+        if (bioAvailable && activity != null) activity.passBiometricConfirm(vm.bio, pt("reprompt_title"), onOk = onOk, onFail = {})
     }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -612,7 +608,7 @@ private fun PassRepromptDialog(vm: PassViewModel, bioAvailable: Boolean, onDismi
                 )
                 if (error) Text(pt("unlock_wrong"), color = PassRose, fontSize = 12.sp)
                 if (bioAvailable && activity != null) {
-                    TextButton(onClick = { activity.passBiometricConfirm(pt("reprompt_title"), onOk = onOk, onFail = {}) }) {
+                    TextButton(onClick = { activity.passBiometricConfirm(vm.bio, pt("reprompt_title"), onOk = onOk, onFail = {}) }) {
                         Icon(Icons.Outlined.Fingerprint, null, tint = PassBlue)
                         Spacer(Modifier.size(6.dp))
                         Text(pt("use_biometric"), color = PassBlue)

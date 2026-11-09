@@ -20,7 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 class E2EKeyManager @Inject constructor(
     private val api: UserEncryptionApi,
     private val backendUrl: co.golink.tester.data.config.BackendUrlHolder,
-    @dagger.hilt.android.qualifiers.ApplicationContext context: android.content.Context,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context,
 ) {
     /**
      * Chave PÚBLICA fixada no último desbloqueio. Não é segredo (só serve para
@@ -95,7 +95,8 @@ class E2EKeyManager @Inject constructor(
 
     private fun fingerprintBytes(pub: ByteArray): String {
         val hash = java.security.MessageDigest.getInstance("SHA-256").digest(pub)
-        return hash.take(8).joinToString("") { "%02X".format(it) }
+        // 128 bits (8 grupos de 4), igual ao e2e.fingerprint() da web: é o que se compara fora da app.
+        return hash.take(16).joinToString("") { "%02X".format(it) }
             .chunked(4).joinToString(" ")
     }
 
@@ -139,7 +140,7 @@ class E2EKeyManager @Inject constructor(
             val nonce = Envelope.unb64(body.wrapped_sk_password_nonce!!)
             val alg = body.kdf_alg ?: Envelope.KDF_ALG_ARGON2
             val key = Envelope.deriveKey(secret, salt, body.kdf_ops!!, body.kdf_mem!!, alg)
-            val sk = runCatching { Envelope.unwrapSecretKey(wrapped, nonce, key) }.getOrElse {
+            val sk = runCatching { Envelope.unwrapSecretKey(wrapped, nonce, key) }.also { key.fill(0) }.getOrElse {
                 // Antes de culpar a passphrase, confirmar que o secretbox funciona
                 // de todo: se o R8 voltar a partir a ligação nativa ao libsodium,
                 // nenhuma passphrase abriria e o erro seria enganador.
@@ -206,10 +207,18 @@ class E2EKeyManager @Inject constructor(
                 kdf_alg = alg,
             )
         )
-        check(setupResp.isSuccessful) { "setup falhou: HTTP ${setupResp.code()}" }
+        // Chaves intermédias já não servem: zerar (a privada fica em memória via setKeys).
+        pwKey.fill(0)
+        rederived.fill(0)
+        reopened.fill(0)
+        reopenedRec.fill(0)
+        if (!setupResp.isSuccessful) {
+            recovery.fill(0)
+            error("setup falhou: HTTP ${setupResp.code()}")
+        }
 
         setKeys(pubB64, kp.secretKey)
-        return Envelope.formatRecovery(recovery)
+        return Envelope.formatRecovery(recovery).also { recovery.fill(0) }
     }
 
     /** "Esqueci a password": desbloqueia com a recovery key. */
@@ -218,11 +227,17 @@ class E2EKeyManager @Inject constructor(
         if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code()}")
         val body = resp.body() ?: throw java.io.IOException("resposta vazia do servidor")
         val recBytes = Envelope.parseRecovery(recoveryKey)
-        val sk = Envelope.unwrapSecretKey(
-            Envelope.unb64(body.wrapped_sk_recovery),
-            Envelope.unb64(body.wrapped_sk_recovery_nonce),
-            recBytes,
-        )
+        // Chave colada a meio: dizer que está incompleta (e nunca passar < 32 bytes ao secretbox).
+        require(recBytes.size == Envelope.KEY_BYTES) { "e2e_recovery_incomplete" }
+        val sk = try {
+            Envelope.unwrapSecretKey(
+                Envelope.unb64(body.wrapped_sk_recovery),
+                Envelope.unb64(body.wrapped_sk_recovery_nonce),
+                recBytes,
+            )
+        } finally {
+            recBytes.fill(0)
+        }
         setKeys(body.public_key, sk)
     }
 
@@ -243,8 +258,12 @@ class E2EKeyManager @Inject constructor(
                 body.kdf_mem!!,
                 body.kdf_alg ?: Envelope.KDF_ALG_ARGON2,
             )
-            Envelope.unwrapSecretKey(Envelope.unb64(body.wrapped_sk_password!!), Envelope.unb64(body.wrapped_sk_password_nonce!!), key)
-        }.getOrNull()?.contentEquals(sk) == true
+            try {
+                Envelope.unwrapSecretKey(Envelope.unb64(body.wrapped_sk_password!!), Envelope.unb64(body.wrapped_sk_password_nonce!!), key)
+            } finally {
+                key.fill(0)
+            }
+        }.getOrNull()?.let { opened -> opened.contentEquals(sk).also { opened.fill(0) } } == true
     }
 
     /** Envia o código de confirmação para o email da conta. */
@@ -409,7 +428,12 @@ class E2EKeyManager @Inject constructor(
     private val devicePrefs = context.getSharedPreferences("e2e_device_key", android.content.Context.MODE_PRIVATE)
 
     val hasDeviceKey: Boolean
-        get() = (devicePrefs.getLong(DEVICE_EXPIRES, 0L) > System.currentTimeMillis()) && devicePrefs.contains(DEVICE_CIPHER)
+        get() {
+            val expires = devicePrefs.getLong(DEVICE_EXPIRES, 0L)
+            val now = System.currentTimeMillis()
+            // expires - now > TTL ⇒ o relógio andou para trás desde que se guardou: não prolongar.
+            return expires > now && expires - now <= DEVICE_TTL_MS && devicePrefs.contains(DEVICE_CIPHER)
+        }
 
     /** Guarda a privada atual cifrada no dispositivo (7 dias). */
     fun rememberOnDevice() {
@@ -469,9 +493,7 @@ class E2EKeyManager @Inject constructor(
         }
     }
 
-    private fun deviceAesKey(): javax.crypto.SecretKey {
-        val ks = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (ks.getEntry(DEVICE_ALIAS, null) as? java.security.KeyStore.SecretKeyEntry)?.let { return it.secretKey }
+    private fun generateDeviceAesKey(strongBox: Boolean): javax.crypto.SecretKey {
         val gen = javax.crypto.KeyGenerator.getInstance(android.security.keystore.KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
         gen.init(
             android.security.keystore.KeyGenParameterSpec.Builder(
@@ -481,9 +503,22 @@ class E2EKeyManager @Inject constructor(
                 .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
                 .setKeySize(256)
+                .apply {
+                    // StrongBox quando o aparelho o tem (chave num elemento seguro dedicado).
+                    if (strongBox && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) setIsStrongBoxBacked(true)
+                }
                 .build(),
         )
         return gen.generateKey()
+    }
+
+    private fun deviceAesKey(): javax.crypto.SecretKey {
+        val ks = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (ks.getEntry(DEVICE_ALIAS, null) as? java.security.KeyStore.SecretKeyEntry)?.let { return it.secretKey }
+        val hasStrongBox = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P &&
+            context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_STRONGBOX_KEYSTORE)
+        if (hasStrongBox) runCatching { return generateDeviceAesKey(strongBox = true) }
+        return generateDeviceAesKey(strongBox = false)
     }
 
     fun lock() {
@@ -499,6 +534,8 @@ class E2EKeyManager @Inject constructor(
         pinnedPublicKeyB64 = null
         pinVerified = false
         pinPrefs.edit().remove(PIN_KEY).apply()
+        // Chaves #k= das partilhas (cache; a canónica está no cofre do servidor): não ficam no aparelho.
+        context.getSharedPreferences(E2EShareService.SHARE_KEYS_PREFS, android.content.Context.MODE_PRIVATE).edit().clear().apply()
         _unlocked.value = false
         _configured.value = false
         onLockCallbacks.forEach { runCatching { it() } }

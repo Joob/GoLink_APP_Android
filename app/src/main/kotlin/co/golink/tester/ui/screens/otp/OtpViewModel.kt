@@ -1,6 +1,7 @@
 package co.golink.tester.ui.screens.otp
 
 import co.golink.tester.ui.i18n.tr
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import co.golink.tester.data.auth.AuthRepository
@@ -119,12 +120,7 @@ class OtpViewModel @Inject constructor(
         countdownJob?.cancel()
         _state.update { it.copy(remainingSeconds = seconds, expired = false, cooldown = false) }
         countdownJob = viewModelScope.launch {
-            var remaining = seconds
-            while (remaining > 0) {
-                delay(1000)
-                remaining -= 1
-                _state.update { it.copy(remainingSeconds = remaining) }
-            }
+            countDown(seconds)
             _state.update { it.copy(expired = true, remainingSeconds = 0, code = "", error = null) }
         }
     }
@@ -144,12 +140,7 @@ class OtpViewModel @Inject constructor(
         countdownJob?.cancel()
         _state.update { it.copy(remainingSeconds = seconds, expired = true, cooldown = true, error = null) }
         countdownJob = viewModelScope.launch {
-            var remaining = seconds
-            while (remaining > 0) {
-                delay(1000)
-                remaining -= 1
-                _state.update { it.copy(remainingSeconds = remaining) }
-            }
+            countDown(seconds)
             _state.update { it.copy(remainingSeconds = 0, cooldown = false) }
         }
     }
@@ -170,13 +161,38 @@ class OtpViewModel @Inject constructor(
         }
         if (seconds <= 0) return
         countdownJob = viewModelScope.launch {
-            var remaining = seconds
-            while (remaining > 0) {
-                delay(1000)
-                remaining -= 1
-                _state.update { it.copy(remainingSeconds = remaining) }
-            }
+            countDown(seconds)
             _state.update { it.copy(remainingSeconds = 0, error = null) }
+        }
+    }
+
+    /**
+     * Conta pelo relógio de tempo real decorrido (inclui sono profundo): um
+     * ciclo de delay(1000) parava com o ecrã desligado e mostrava tempo a mais.
+     */
+    private suspend fun countDown(seconds: Int) {
+        val deadline = SystemClock.elapsedRealtime() + seconds * 1000L
+        while (true) {
+            val left = ((deadline - SystemClock.elapsedRealtime() + 999) / 1000).toInt()
+            if (left <= 0) break
+            _state.update { it.copy(remainingSeconds = left) }
+            delay(1000)
+        }
+    }
+
+    /** Regresso a primeiro plano: alinha o countdown do código com o servidor. */
+    fun onResume() {
+        val s = _state.value
+        if (cancelled || !s.codeSentOnce || s.expired || s.cooldown || s.validated || s.remainingSeconds <= 0) return
+        viewModelScope.launch {
+            val remaining = authRepository.otpStatus().getOrNull()?.remaining_validity?.toInt() ?: return@launch
+            val now = _state.value
+            if (now.expired || now.cooldown || now.validated) return@launch
+            if (remaining > 0) startCountdown(remaining)
+            else {
+                countdownJob?.cancel()
+                _state.update { it.copy(expired = true, remainingSeconds = 0, code = "", error = null) }
+            }
         }
     }
 

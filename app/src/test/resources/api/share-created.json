@@ -1,0 +1,25 @@
+{
+  "data": {
+    "id": "s-9",
+    "type": "shared",
+    "attributes": {
+      "permission": null,
+      "protected": false,
+      "item_id": "f-1",
+      "protectedPasswordShow": null,
+      "expire_in": 0,
+      "expire_in_minutes": null,
+      "expires_at": null,
+      "download_limit": null,
+      "download_count": 0,
+      "view_limit": null,
+      "view_count": 0,
+      "showpassword_in": null,
+      "token": "abc",
+      "link": "https://tester.golink.co/share/abc",
+      "type": "file",
+      "active": true,
+      "owner_upload_limit": null
+    }
+  }
+}

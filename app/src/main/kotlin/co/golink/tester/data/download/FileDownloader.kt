@@ -1,13 +1,9 @@
 package co.golink.tester.data.download
 
-import android.app.DownloadManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.BroadcastReceiver
 import android.content.ContentValues
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -20,6 +16,7 @@ import co.golink.tester.data.config.BackendUrlHolder
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.download.ZipManifestEntry
 import co.golink.tester.domain.download.ZipManifestResponse
+import co.golink.tester.ui.i18n.tr
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
@@ -31,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -56,7 +54,6 @@ class FileDownloader @Inject constructor(
     private val _events = MutableSharedFlow<Event>(extraBufferCapacity = 16)
     val events: SharedFlow<Event> = _events
 
-    private val pending = mutableMapOf<Long, String>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val notifManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     private val notifId = AtomicInteger(2000)
@@ -72,36 +69,8 @@ class FileDownloader @Inject constructor(
         private const val DEFAULT_COPY_BUFFER = 64 * 1024
     }
 
-    private val receiver = object : BroadcastReceiver() {
-        override fun onReceive(ctx: Context?, intent: Intent?) {
-            if (intent?.action != DownloadManager.ACTION_DOWNLOAD_COMPLETE) return
-            val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
-            if (id < 0) return
-            val name = synchronized(pending) { pending.remove(id) } ?: return
-            val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            val query = DownloadManager.Query().setFilterById(id)
-            manager.query(query)?.use { c ->
-                if (!c.moveToFirst()) { _events.tryEmit(Event.Failed(name, "cancelado")); return }
-                val status = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
-                val reason = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
-                when (status) {
-                    DownloadManager.STATUS_SUCCESSFUL -> _events.tryEmit(Event.Completed(name))
-                    DownloadManager.STATUS_FAILED -> _events.tryEmit(Event.Failed(name, describeReason(reason)))
-                    else -> Unit
-                }
-            }
-        }
-    }
-
     init {
         ensureChannel(context)
-        val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            context.registerReceiver(receiver, filter)
-        }
     }
 
     /**
@@ -110,7 +79,7 @@ class FileDownloader @Inject constructor(
      * a meio. Lá tem notificação com a % e retoma sozinho se a rede cair.
      */
     fun downloadFile(id: String, name: String, basename: String? = null, encrypted: Boolean = false, mimetype: String? = null): Result<Unit> = runCatching {
-        if (encrypted && !e2eKeyManager.isUnlocked) error("Desbloqueia a encriptação para descarregar")
+        if (encrypted && !e2eKeyManager.isUnlocked) error("Desbloqueia a encriptação para descarregar".tr())
         val label = sanitize(name)
         _events.tryEmit(Event.Started(label))
         ZipDownloadService.startFile(context, id, label, basename, encrypted, mimetype)
@@ -127,24 +96,25 @@ class FileDownloader @Inject constructor(
     ): Outcome {
         val backend = backendUrlHolder.current.trimEnd('/')
         val url = "$backend/api/file/${Uri.encode(id)}/download"
+        val job = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
+        // E2E: abrir a data key selada (precisa da privada desbloqueada). Zerada no fim.
+        var dataKey: ByteArray? = null
         return try {
-            // E2E: abrir a data key selada (precisa da privada desbloqueada).
-            var dataKey: ByteArray? = null
             if (encrypted) {
-                if (!e2eKeyManager.isUnlocked) error("Desbloqueia a encriptação para descarregar")
+                if (!e2eKeyManager.isUnlocked) error("Desbloqueia a encriptação para descarregar".tr())
                 val wrapped = runCatching { userEncryptionApi.fileKey(id).body()?.wrapped_data_key }.getOrNull()
-                    ?: error("Sem chave de encriptação")
+                    ?: error("Sem chave de encriptação".tr())
                 dataKey = e2eKeyManager.openFileDataKey(wrapped)
             }
             val response = httpClient.newCall(Request.Builder().url(url).build()).execute()
             if (!response.isSuccessful) {
                 val errBody = response.body?.string()?.take(300)?.trim()
                 response.close()
-                error(scanMessage(errBody) ?: if (errBody.isNullOrBlank()) "HTTP ${response.code}" else "HTTP ${response.code}: $errBody")
+                error(scanMessage(errBody) ?: downloadHttpError(response.code, errBody))
             }
             val body = ResumableHttpInputStream(httpClient, url, response, onBytes = { loaded ->
                 onProgress(loaded, response.body?.contentLength() ?: -1L)
-            })
+            }, cancelled = { job?.isActive == false })
             body.use { input ->
                 // O nome do próprio item (já decifrado na app) manda: com nomes E2E
                 // o servidor só conhece o nome cifrado ("•"), e nomes com acentos
@@ -171,8 +141,10 @@ class FileDownloader @Inject constructor(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            _events.tryEmit(Event.Failed(sanitize(name), e.message ?: "Erro desconhecido"))
-            Outcome.Failed(e.message ?: "Erro desconhecido")
+            _events.tryEmit(Event.Failed(sanitize(name), e.message ?: "Erro desconhecido".tr()))
+            Outcome.Failed(e.message ?: "Erro desconhecido".tr())
+        } finally {
+            dataKey?.fill(0)
         }
     }
 
@@ -192,7 +164,7 @@ class FileDownloader @Inject constructor(
                     val body = response.body
                     if (!response.isSuccessful || body == null) {
                         notifManager.cancel(nid)
-                        _events.tryEmit(Event.Failed(label, scanMessage(body?.string()) ?: "HTTP ${response.code}"))
+                        _events.tryEmit(Event.Failed(label, scanMessage(body?.string()) ?: downloadHttpError(response.code, null)))
                         return@launch
                     }
                     val finalName = uniqueDestination(sanitize(name))
@@ -203,7 +175,7 @@ class FileDownloader @Inject constructor(
                 }
             } catch (e: Exception) {
                 notifManager.cancel(nid)
-                _events.tryEmit(Event.Failed(label, e.message ?: "Erro desconhecido"))
+                _events.tryEmit(Event.Failed(label, e.message ?: "Erro desconhecido".tr()))
             }
         }
     }
@@ -227,15 +199,13 @@ class FileDownloader @Inject constructor(
         // `failed`: ficheiros que ficaram fora do zip (não passam em silêncio).
         data class Completed(val name: String, val failed: List<String> = emptyList()) : Outcome
         data class Failed(val message: String) : Outcome
-        // Sem ficheiros cifrados: delegado ao DownloadManager (tem a sua notif).
-        object ServerZipEnqueued : Outcome
     }
 
     /**
      * Zip de pastas / vários itens. E2E: o servidor só tem ciphertext e não pode
      * zipar — buscamos o manifesto (lista plana + caminhos) e, se houver QUALQUER
      * ficheiro cifrado, decifra-se cada um e monta-se o zip no cliente. Caso
-     * contrário usa o zip do servidor (DownloadManager), como antes.
+     * contrário usa o zip do servidor (descarregado em stream, sem DownloadManager).
      *
      * Corre num FOREGROUND SERVICE ([ZipDownloadService]): pastas grandes demoram
      * e, num scope normal, o SO matava o processo se o utilizador saísse da app →
@@ -243,8 +213,8 @@ class FileDownloader @Inject constructor(
      * foreground service mantém o processo vivo e a notificação persistente.
      */
     fun downloadZip(items: List<BrowseItem>, suggestedName: String): Result<Unit> = runCatching {
-        if (items.isEmpty()) error("Sem itens para descarregar")
-        val token = tokenStore.token ?: error("Sessão inválida")
+        if (items.isEmpty()) error("Sem itens para descarregar".tr())
+        val token = tokenStore.token ?: error("Sessão inválida".tr())
         val payload = items.joinToString(",") { item ->
             val type = if (item is BrowseItem.Folder) "folder" else "file"
             "${item.id}|$type"
@@ -277,7 +247,7 @@ class FileDownloader @Inject constructor(
                 // Sem manifesto não se sabe se há ficheiros cifrados: o zip do
                 // servidor podia vir cheio de cifrado ilegível. Falha às claras.
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                val msg = "Não foi possível preparar o zip"
+                val msg = "Não foi possível preparar o zip".tr()
                 _events.tryEmit(Event.Failed(suggestedName, msg))
                 return Outcome.Failed(msg)
             }
@@ -286,26 +256,51 @@ class FileDownloader @Inject constructor(
             if (hasEncrypted) {
                 onEncrypted()
                 if (!e2eKeyManager.isUnlocked) {
-                    _events.tryEmit(Event.Failed(suggestedName, "Desbloqueia a encriptação para descarregar"))
-                    return Outcome.Failed("Desbloqueia a encriptação para descarregar")
+                    val msg = "Desbloqueia a encriptação para descarregar".tr()
+                    _events.tryEmit(Event.Failed(suggestedName, msg))
+                    return Outcome.Failed(msg)
                 }
                 val finalName = uniqueDestination(sanitize(suggestedName))
                 val failed = writeZipToDownloads(finalName, decryptManifestNames(manifest), backend, onProgress)
                 _events.tryEmit(Event.Completed(finalName))
                 Outcome.Completed(finalName, failed)
             } else {
-                // Sem ficheiros cifrados: zip do servidor via DownloadManager.
-                // Token no cabeçalho: na query ficava gravado na base de dados
-                // do DownloadManager e nos logs de acesso.
+                // Sem ficheiros cifrados: zip do servidor, descarregado aqui (já estamos no
+                // foreground service). Pelo DownloadManager o Bearer da sessão ficava gravado
+                // na base de dados do DownloadProvider (request_headers).
                 val url = "$backend/api/zip?items=${Uri.encode(payload)}"
-                enqueueViaManager(url, suggestedName, bearer = token)
-                Outcome.ServerZipEnqueued
+                val finalName = uniqueDestination(sanitize(suggestedName))
+                val response = httpClient.newCall(Request.Builder().url(url).build()).execute()
+                if (!response.isSuccessful) {
+                    val errBody = response.body?.string()?.take(300)?.trim()
+                    response.close()
+                    error(scanMessage(errBody) ?: downloadHttpError(response.code, errBody))
+                }
+                // O zip é gerado em stream (sem Range): não há retoma, falha às claras.
+                val total = response.body?.contentLength() ?: -1L
+                response.use { r ->
+                    withDownloadsOutput(finalName, "application/zip") { out ->
+                        val input = r.body?.byteStream() ?: throw IOException("Resposta vazia".tr())
+                        val buf = ByteArray(DEFAULT_COPY_BUFFER)
+                        var loaded = 0L
+                        while (true) {
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            out.write(buf, 0, n)
+                            loaded += n
+                            onProgress(loaded, total)
+                        }
+                    }
+                }
+                _events.tryEmit(Event.Completed(finalName))
+                Outcome.Completed(finalName)
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            _events.tryEmit(Event.Failed(suggestedName, e.message ?: "Erro no zip"))
-            Outcome.Failed(e.message ?: "Erro no zip")
+            _events.tryEmit(Event.Failed(suggestedName, e.message ?: "Erro no zip".tr()))
+            Outcome.Failed(e.message ?: "Erro no zip".tr())
         }
     }
 
@@ -361,6 +356,7 @@ class FileDownloader @Inject constructor(
                             dataKey = e2eKeyManager.openFileDataKey(wrapped)
                         }
                         val url = "$backend/api/file/${Uri.encode(f.id)}/download"
+                        val job = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
                         val resp = httpClient.newCall(Request.Builder().url(url).build()).execute()
                         if (!resp.isSuccessful) {
                             val msg = scanMessage(resp.body?.string())
@@ -370,11 +366,15 @@ class FileDownloader @Inject constructor(
                         ResumableHttpInputStream(httpClient, url, resp, onBytes = { n ->
                             fileBytes = n
                             onProgress(doneBytes + n, totalBytes)
-                        }).use { input ->
+                        }, cancelled = { job?.isActive == false }).use { input ->
                             val entryName = uniqueZipPath(ensureExtension(f.path, f.mimetype), used)
                             zos.putNextEntry(java.util.zip.ZipEntry(entryName))
                             if (dataKey != null) {
-                                co.golink.tester.data.encryption.EncryptedFileCodec.decryptStream(input, zos, dataKey)
+                                try {
+                                    co.golink.tester.data.encryption.EncryptedFileCodec.decryptStream(input, zos, dataKey)
+                                } finally {
+                                    dataKey.fill(0)
+                                }
                             } else {
                                 input.copyTo(zos, DEFAULT_COPY_BUFFER)
                             }
@@ -418,9 +418,9 @@ class FileDownloader @Inject constructor(
                 put(MediaStore.Downloads.IS_PENDING, 1)
             }
             val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                ?: throw IOException("Não foi possível criar ficheiro em Downloads")
+                ?: throw IOException("Não foi possível criar ficheiro em Downloads".tr())
             try {
-                val out = context.contentResolver.openOutputStream(uri) ?: throw IOException("Sem acesso a Downloads")
+                val out = context.contentResolver.openOutputStream(uri) ?: throw IOException("Sem acesso a Downloads".tr())
                 out.use { block(it) }
                 context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
             } catch (t: Throwable) {
@@ -430,7 +430,11 @@ class FileDownloader @Inject constructor(
         } else {
             val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             dir.mkdirs()
-            val file = java.io.File(dir, name)
+            // O nome pode vir decifrado de outra pessoa (Legacy): sem separadores, sem "..",
+            // sem controlo, e sempre um ficheiro novo — numa falha só se apaga o que criámos.
+            val safe = sanitize(name).replace(Regex("\\p{Cntrl}"), "_").trim().trimStart('.').ifBlank { "download" }
+            val file = java.io.File(dir, uniqueDestination(safe))
+            if (!file.createNewFile()) throw IOException("Não foi possível criar ficheiro em Downloads".tr())
             try {
                 file.outputStream().use { block(it) }
             } catch (t: Throwable) {
@@ -441,7 +445,8 @@ class FileDownloader @Inject constructor(
     }
 
     // Evita nomes/caminhos repetidos dentro do zip (corrompem alguns extractores).
-    private fun uniqueZipPath(path: String, used: HashSet<String>): String {
+    /** Também usado pelo LegacyOpenRepository (pastas do Legacy em .zip). */
+    internal fun uniqueZipPath(path: String, used: HashSet<String>): String {
         if (used.add(path)) return path
         val dot = path.lastIndexOf('.')
         val base = if (dot > 0) path.substring(0, dot) else path
@@ -451,34 +456,19 @@ class FileDownloader @Inject constructor(
         return "$base ($i)$ext"
     }
 
-    private fun enqueueViaManager(url: String, name: String, bearer: String? = null): Long {
-        val safe = uniqueDestination(sanitize(name))
-        val request = DownloadManager.Request(Uri.parse(url))
-            .addRequestHeader("Accept", "*/*")
-            .apply { if (!bearer.isNullOrEmpty()) addRequestHeader("Authorization", "Bearer $bearer") }
-            .setTitle(safe)
-            .setDescription("GoLink")
-            .setMimeType(mimeTypeFor(name))
-            .setAllowedOverMetered(true)
-            .setAllowedOverRoaming(true)
-            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, safe)
-        val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val id = manager.enqueue(request)
-        synchronized(pending) { pending[id] = safe }
-        return id
-    }
-
     private fun notify(id: Int, name: String, inProgress: Boolean, success: Boolean = false) {
         val icon = if (inProgress || success) android.R.drawable.stat_sys_download
                    else android.R.drawable.stat_notify_error
-        val title = if (inProgress) "A transferir…"
-                    else if (success) "Transferência concluída"
-                    else "Falha na transferência"
+        val title = if (inProgress) "A transferir…".tr()
+                    else if (success) "Transferência concluída".tr()
+                    else "Falha na transferência".tr()
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(icon)
             .setContentTitle(title)
             .setContentText(name)
+            // Ecrã de bloqueio: só o título, sem o nome (decifrado) do ficheiro.
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(NotificationCompat.Builder(context, CHANNEL_ID).setSmallIcon(icon).setContentTitle(title).build())
             .setOngoing(inProgress)
             .setAutoCancel(!inProgress)
         if (inProgress) builder.setProgress(0, 0, true)
@@ -543,29 +533,28 @@ class FileDownloader @Inject constructor(
         val ext = name.substringAfterLast('.', "").lowercase().ifBlank { return "application/octet-stream" }
         return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
     }
+}
 
-    private fun describeReason(reason: Int): String = when (reason) {
-        DownloadManager.ERROR_CANNOT_RESUME -> "não pode resumir"
-        DownloadManager.ERROR_DEVICE_NOT_FOUND -> "armazenamento indisponível"
-        DownloadManager.ERROR_FILE_ALREADY_EXISTS -> "ficheiro já existe"
-        DownloadManager.ERROR_FILE_ERROR -> "erro de escrita no ficheiro"
-        DownloadManager.ERROR_HTTP_DATA_ERROR -> "erro nos dados HTTP"
-        DownloadManager.ERROR_INSUFFICIENT_SPACE -> "espaço insuficiente"
-        DownloadManager.ERROR_TOO_MANY_REDIRECTS -> "demasiados redirecionamentos"
-        DownloadManager.ERROR_UNHANDLED_HTTP_CODE -> "código HTTP não suportado"
-        DownloadManager.ERROR_UNKNOWN -> "erro desconhecido"
-        in 400..599 -> "HTTP $reason"
-        else -> "código $reason"
+/**
+ * Erro HTTP de um download, sem mostrar o corpo cru (HTML do nginx, JSON do Laravel):
+ * 404/403 com texto próprio, senão a `message` do servidor traduzida, senão "HTTP n".
+ */
+internal fun downloadHttpError(code: Int, body: String?): String {
+    val msg = body?.let { Regex(""""message"\s*:\s*"([^"]+)"""").find(it)?.groupValues?.get(1) }
+    return when {
+        code == 404 -> "O ficheiro já não existe".tr()
+        code == 403 -> "Acesso negado".tr()
+        !msg.isNullOrBlank() -> co.golink.tester.ui.i18n.ServerMessages.localize(msg) ?: msg
+        else -> "HTTP $code"
     }
 }
 
 /** Canal único das transferências (cria-o e apaga o antigo, que tinha importâncias diferentes). */
 fun ensureChannel(context: Context) {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     if (nm.getNotificationChannel(FileDownloader.CHANNEL_ID) == null) {
         nm.createNotificationChannel(
-            NotificationChannel(FileDownloader.CHANNEL_ID, "Transferências", NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel(FileDownloader.CHANNEL_ID, co.golink.tester.ui.i18n.I18n.t("Transferências"), NotificationManager.IMPORTANCE_LOW),
         )
     }
     nm.deleteNotificationChannel("golink_downloads")

@@ -35,6 +35,9 @@ class BrowseRepository @Inject constructor(
     // nomes já decifrados (id → nome). Só em memória; expira em 60s.
     @Volatile private var nameIndexCache: co.golink.tester.domain.encryption.NameIndexResponse? = null
     @Volatile private var nameIndexAt: Long = 0
+
+    /** O último índice de nomes cifrados veio cortado: a pesquisa E2E está incompleta. */
+    val nameIndexTruncated: Boolean get() = nameIndexCache?.truncated == true
     private val decryptedNames = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     init {
@@ -92,22 +95,6 @@ class BrowseRepository @Inject constructor(
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { body.toPaged(page) }
     }
 
-    suspend fun listMobileBackup(type: String, page: Int, perPage: Int = PAGE_SIZE, deviceId: String? = null): Result<PagedItems> = runCatching {
-        val response = api.mobileBackup(type = type, page = page.toString(), perPage = perPage, deviceId = deviceId)
-        check(response.isSuccessful) { "HTTP ${response.code()}" }
-        val body = response.body() ?: error("Resposta vazia")
-        body.toPaged(page)
-    }
-
-    // page="all" — o ecrã de backups não tem paginação; pedir só a página 1
-    // escondia tudo o que passasse dos primeiros 20 itens.
-    suspend fun listAllMobileBackup(type: String, deviceId: String? = null): Result<List<BrowseItem>> = runCatching {
-        val response = api.mobileBackup(type = type, page = "all", deviceId = deviceId)
-        check(response.isSuccessful) { "HTTP ${response.code()}" }
-        val body = response.body() ?: error("Resposta vazia")
-        body.data.map { it.data.decItem() }
-    }
-
     suspend fun mobileBackupSummary(): Result<co.golink.tester.domain.backup.BackupSummary> = runCatching {
         val response = api.mobileBackupSummary()
         check(response.isSuccessful) { "HTTP ${response.code()}" }
@@ -126,29 +113,32 @@ class BrowseRepository @Inject constructor(
         (response.body() ?: error("Resposta vazia")).meta?.paginate?.total ?: 0
     }
 
-    // Navegação nas abas de backup: devolve as pastas de origem (Camera,
-    // Screenshots, …) e os ficheiros do nível pedido, filtrados por tipo no
-    // servidor. parentId=null é a raiz do backup.
-    suspend fun listMobileBackupTree(type: String, parentId: String?, deviceId: String? = null): Result<List<BrowseItem>> = runCatching {
+    // Navegação nas abas de backup: as pastas de origem (Camera, Screenshots, …)
+    // vêm todas na 1.ª página e os ficheiros do nível às fatias de [perPage],
+    // filtrados por tipo/telemóvel e ordenados no servidor. parentId=null é a
+    // raiz do backup. Uma Camera com milhares de fotos já não chega de uma vez.
+    suspend fun listMobileBackupTreePage(
+        type: String,
+        parentId: String?,
+        deviceId: String?,
+        page: Int,
+        sort: String?,
+        direction: String?,
+        perPage: Int = BACKUP_PAGE_SIZE,
+    ): Result<PagedItems> = runCatching {
         val response = api.mobileBackup(
             type = type,
-            page = "all",
+            page = page.toString(),
+            perPage = perPage,
             withFolders = true,
             parentId = parentId,
             deviceId = deviceId,
+            sort = sort,
+            direction = direction,
         )
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val body = response.body() ?: error("Resposta vazia")
-        body.data.map { it.data.decItem() }
-    }
-
-    // Conteúdo completo de uma pasta (page="all") — usado para navegar nas
-    // subpastas do backup (Camera, Screenshots, …) sem paginação.
-    suspend fun listAllFolder(id: String): Result<List<BrowseItem>> = runCatching {
-        val response = api.browseFolder(id, page = "all")
-        check(response.isSuccessful) { "HTTP ${response.code()}" }
-        val body = response.body() ?: error("Resposta vazia")
-        body.data.map { it.data.decItem() }
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { body.toPaged(page) }
     }
 
     suspend fun mobileBackupFingerprint(): Result<String> = runCatching {
@@ -160,6 +150,12 @@ class BrowseRepository @Inject constructor(
     suspend fun folderFingerprint(id: String?): Result<String> = runCatching {
         val targetId = id ?: ROOT
         val response = api.folderFingerprint(targetId)
+        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        (response.body() ?: error("Resposta vazia")).signature
+    }
+
+    suspend fun sharedFingerprint(): Result<String> = runCatching {
+        val response = api.sharedFingerprint()
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         (response.body() ?: error("Resposta vazia")).signature
     }
@@ -271,6 +267,23 @@ class BrowseRepository @Inject constructor(
         }
     }
 
+    /**
+     * Nomes (em claro) → id dos ficheiros de nome cifrado em [parentId] (null = raiz),
+     * para detetar duplicados antes de enviar: com o nome cifrado o servidor não
+     * dá 409. Vazio se a E2E estiver trancada ou o servidor não enviar parent_id.
+     */
+    suspend fun encryptedFileNamesIn(parentId: String?): Map<String, String> {
+        if (!keys.isUnlocked) return emptyMap()
+        val index = loadNameIndex() ?: return emptyMap()
+        if (!index.with_parent) return emptyMap()
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            index.files.asSequence()
+                .filter { it.parent_id == parentId }
+                .mapNotNull { item -> decryptedNameOf(item)?.let { it to item.id } }
+                .toMap()
+        }
+    }
+
     private suspend fun loadNameIndex():co.golink.tester.domain.encryption.NameIndexResponse? {
         val now = System.currentTimeMillis()
         nameIndexCache?.let { if (now - nameIndexAt < 60_000) return it }
@@ -336,5 +349,8 @@ class BrowseRepository @Inject constructor(
     companion object {
         const val ROOT = "root"
         const val PAGE_SIZE = 20
+
+        /** Página do Backup Mobile (o servidor aceita até 100). */
+        const val BACKUP_PAGE_SIZE = 100
     }
 }

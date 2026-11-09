@@ -69,6 +69,8 @@ class FileViewerViewModel @Inject constructor(
         val textContent: String? = null,
         val textLoading: Boolean = false,
         val textError: String? = null,
+        // Só o início do ficheiro foi lido (acima de TEXT_CAP): sem edição.
+        val textTruncated: Boolean = false,
         val toast: String? = null,
         val closeRequested: Boolean = false,
         val navigationTree: List<NavigationSection> = emptyList(),
@@ -115,13 +117,13 @@ class FileViewerViewModel @Inject constructor(
     /** Criado como ficheiro de texto (ex.: .csv): abre no editor de texto, não na folha de cálculo. */
     val opensAsText: Boolean = session.startInEditMode
 
+    // Sem ?token= no URL (ficava nos access logs): todos os pedidos levam o
+    // header Authorization, que é o único que o servidor lê.
     fun authedUrlFor(file: BrowseItem.File): String {
         val backend = backendUrlHolder.current.trimEnd('/')
-        val token = tokenStore.token
-        val tokenParam = if (!token.isNullOrBlank()) "?token=${android.net.Uri.encode(token)}" else ""
         val basename = file.basename.ifBlank { file.name }
         val encoded = android.net.Uri.encode(basename, "/")
-        return "$backend/file/$encoded$tokenParam"
+        return "$backend/file/$encoded"
     }
 
     fun authToken(): String? = tokenStore.token
@@ -129,14 +131,14 @@ class FileViewerViewModel @Inject constructor(
     fun goTo(index: Int) {
         val s = _state.value
         if (index < 0 || index >= s.files.size || index == s.currentIndex) return
-        _state.update { it.copy(currentIndex = index, zoom = 1f, rotation = 0f, textContent = null, textError = null, editing = false, draft = "") }
+        _state.update { it.copy(currentIndex = index, zoom = 1f, rotation = 0f, textContent = null, textError = null, textTruncated = false, editing = false, draft = "") }
         maybeLoadText()
     }
 
     fun next() {
         val s = _state.value
         if (s.currentIndex < s.files.lastIndex) {
-            _state.update { it.copy(currentIndex = it.currentIndex + 1, zoom = 1f, rotation = 0f, textContent = null, textError = null, editing = false, draft = "") }
+            _state.update { it.copy(currentIndex = it.currentIndex + 1, zoom = 1f, rotation = 0f, textContent = null, textError = null, textTruncated = false, editing = false, draft = "") }
             maybeLoadText()
         }
     }
@@ -144,7 +146,7 @@ class FileViewerViewModel @Inject constructor(
     fun prev() {
         val s = _state.value
         if (s.currentIndex > 0) {
-            _state.update { it.copy(currentIndex = it.currentIndex - 1, zoom = 1f, rotation = 0f, textContent = null, textError = null, editing = false, draft = "") }
+            _state.update { it.copy(currentIndex = it.currentIndex - 1, zoom = 1f, rotation = 0f, textContent = null, textError = null, textTruncated = false, editing = false, draft = "") }
             maybeLoadText()
         }
     }
@@ -159,8 +161,8 @@ class FileViewerViewModel @Inject constructor(
     fun download() {
         current?.let { file ->
             downloader.downloadFile(file) // passa file.encrypted -> decifra ao guardar
-                .onSuccess { _state.update { it.copy(toast = "Download iniciado: ${file.name}") } }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+                .onSuccess { _state.update { it.copy(toast = "Download iniciado: %s".tr().format(file.name)) } }
+                .onFailure { t -> _state.update { it.copy(toast = "Falha: %s".tr().format(t.message.orEmpty())) } }
         }
     }
 
@@ -231,9 +233,7 @@ class FileViewerViewModel @Inject constructor(
 
     private fun authedUrlForDownload(file: BrowseItem.File): String {
         val backend = backendUrlHolder.current.trimEnd('/')
-        val token = tokenStore.token
-        val tokenParam = if (!token.isNullOrBlank()) "?token=${android.net.Uri.encode(token)}" else ""
-        return "$backend/api/file/${android.net.Uri.encode(file.id)}/download$tokenParam"
+        return "$backend/api/file/${android.net.Uri.encode(file.id)}/download"
     }
 
     fun isEncrypted(file: BrowseItem.File): Boolean = file.encrypted
@@ -265,7 +265,7 @@ class FileViewerViewModel @Inject constructor(
                 }
                 .onFailure { t ->
                     _shareState.update { it?.copy(isWorking = false) }
-                    _state.update { it.copy(toast = "Falha: ${t.message}") }
+                    _state.update { it.copy(toast = "Falha: %s".tr().format(t.message.orEmpty())) }
                 }
         }
     }
@@ -293,7 +293,7 @@ class FileViewerViewModel @Inject constructor(
                 }
                 .onFailure { t ->
                     _shareState.update { it?.copy(isWorking = false) }
-                    _state.update { it.copy(toast = "Falha: ${t.message}") }
+                    _state.update { it.copy(toast = "Falha: %s".tr().format(t.message.orEmpty())) }
                 }
         }
     }
@@ -311,7 +311,7 @@ class FileViewerViewModel @Inject constructor(
                 }
                 .onFailure { t ->
                     _shareState.update { it?.copy(isWorking = false) }
-                    _state.update { it.copy(toast = "Falha: ${t.message}") }
+                    _state.update { it.copy(toast = "Falha: %s".tr().format(t.message.orEmpty())) }
                 }
         }
     }
@@ -337,7 +337,7 @@ class FileViewerViewModel @Inject constructor(
         viewModelScope.launch {
             shareRepository.sendByEmail(token, emails)
                 .onSuccess { _state.update { it.copy(toast = "Email enviado".tr()) } }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+                .onFailure { t -> _state.update { it.copy(toast = "Falha: %s".tr().format(t.message.orEmpty())) } }
             _shareState.update { it?.copy(sendingEmail = false) }
         }
     }
@@ -369,14 +369,17 @@ class FileViewerViewModel @Inject constructor(
                     val newList = _state.value.files.toMutableList().also { it.removeAt(_state.value.currentIndex) }
                     session.files = newList
                     if (newList.isEmpty()) {
-                        _state.update { it.copy(files = newList, toast = "Movido", closeRequested = true) }
+                        _state.update { it.copy(files = newList, toast = "Movido".tr(), closeRequested = true) }
                     } else {
                         val newIdx = _state.value.currentIndex.coerceAtMost(newList.lastIndex)
-                        _state.update { it.copy(files = newList, currentIndex = newIdx, toast = "Movido", zoom = 1f, rotation = 0f, textContent = null, editing = false, draft = "") }
+                        _state.update { it.copy(files = newList, currentIndex = newIdx, toast = "Movido".tr(), zoom = 1f, rotation = 0f, textContent = null, textTruncated = false, editing = false, draft = "") }
                         maybeLoadText()
                     }
                 }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+                .onFailure { t ->
+                    val (message, retryable) = co.golink.tester.data.files.MoveManager.describeFailure(t)
+                    _state.update { it.copy(toast = if (retryable) "Falha: %s".tr().format(message) else message.tr()) }
+                }
         }
     }
 
@@ -384,7 +387,7 @@ class FileViewerViewModel @Inject constructor(
         viewModelScope.launch {
             filesRepository.createFolder(name.trim(), parentId)
                 .onSuccess { _state.update { it.copy(toast = "Pasta criada".tr()) }; loadNavigationTree() }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+                .onFailure { t -> _state.update { it.copy(toast = "Falha: %s".tr().format(t.message.orEmpty())) } }
         }
     }
 
@@ -396,13 +399,13 @@ class FileViewerViewModel @Inject constructor(
                     if (updated is BrowseItem.File) {
                         val newList = _state.value.files.toMutableList()
                         newList[_state.value.currentIndex] = updated
-                        _state.update { it.copy(files = newList, toast = "Renomeado") }
+                        _state.update { it.copy(files = newList, toast = "Renomeado".tr()) }
                         session.files = newList
                     } else {
-                        _state.update { it.copy(toast = "Renomeado") }
+                        _state.update { it.copy(toast = "Renomeado".tr()) }
                     }
                 }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+                .onFailure { t -> _state.update { it.copy(toast = "Falha: %s".tr().format(t.message.orEmpty())) } }
         }
     }
 
@@ -412,7 +415,7 @@ class FileViewerViewModel @Inject constructor(
         viewModelScope.launch {
             trashRepository.restore(listOf(file))
                 .onSuccess { _state.update { it.copy(toast = "Restaurado".tr(), closeRequested = true) } }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+                .onFailure { t -> _state.update { it.copy(toast = "Falha: %s".tr().format(t.message.orEmpty())) } }
         }
     }
 
@@ -425,7 +428,7 @@ class FileViewerViewModel @Inject constructor(
                     trashRepository.notifyChanged()
                     _state.update { it.copy(toast = "Eliminado para sempre".tr(), closeRequested = true) }
                 }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+                .onFailure { t -> _state.update { it.copy(toast = "Falha: %s".tr().format(t.message.orEmpty())) } }
         }
     }
 
@@ -440,11 +443,11 @@ class FileViewerViewModel @Inject constructor(
                         _state.update { it.copy(files = newList, toast = "Movido para o lixo".tr(), closeRequested = true) }
                     } else {
                         val newIdx = _state.value.currentIndex.coerceAtMost(newList.lastIndex)
-                        _state.update { it.copy(files = newList, currentIndex = newIdx, toast = "Movido para o lixo".tr(), zoom = 1f, rotation = 0f, textContent = null, editing = false, draft = "") }
+                        _state.update { it.copy(files = newList, currentIndex = newIdx, toast = "Movido para o lixo".tr(), zoom = 1f, rotation = 0f, textContent = null, textTruncated = false, editing = false, draft = "") }
                         maybeLoadText()
                     }
                 }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+                .onFailure { t -> _state.update { it.copy(toast = "Falha: %s".tr().format(t.message.orEmpty())) } }
         }
     }
 
@@ -461,6 +464,8 @@ class FileViewerViewModel @Inject constructor(
         if (!canEdit(file)) return false
         if (!file.isEditableText()) return false
         if (file.encrypted && !e2eKeyManager.isUnlocked) return false
+        // Gravar um texto cortado reescrevia o ficheiro só com o início.
+        if (_state.value.textTruncated) return false
         return _state.value.textContent != null
     }
 
@@ -494,7 +499,7 @@ class FileViewerViewModel @Inject constructor(
                     }
                 }
                 .onFailure { t ->
-                    _state.update { it.copy(saving = false, toast = "Falha: ${t.message}") }
+                    _state.update { it.copy(saving = false, toast = "Falha: %s".tr().format(t.message.orEmpty())) }
                 }
         }
     }
@@ -514,22 +519,38 @@ class FileViewerViewModel @Inject constructor(
                     }.build()
                     httpClient.newCall(req).execute().use { resp ->
                         if (!resp.isSuccessful) error("HTTP ${resp.code}")
-                        var bytes = resp.body?.bytes() ?: ByteArray(0)
-                        // E2E: o corpo é ciphertext (GLK1...) — decifrar antes de mostrar,
-                        // senão o viewer mostrava lixo binário.
-                        if (file.encrypted) {
-                            val key = dataKeyFor(file) ?: error("E2E bloqueado ou sem chave deste ficheiro")
-                            bytes = co.golink.tester.data.encryption.EncryptedFileCodec.decryptFull(bytes, key)
+                        val body = resp.body ?: return@use "" to false
+                        // Lê no máximo TEXT_CAP+1 bytes (um .log de centenas de MB dava OOM).
+                        // E2E: decifra em stream e para logo que passa o limite.
+                        val out = CappedOutput(TEXT_CAP + 1)
+                        try {
+                            body.byteStream().use { input ->
+                                if (file.encrypted) {
+                                    val key = dataKeyFor(file) ?: error("E2E bloqueado ou sem chave deste ficheiro")
+                                    co.golink.tester.data.encryption.EncryptedFileCodec.decryptStream(input, out, key)
+                                } else {
+                                    val buf = ByteArray(64 * 1024)
+                                    while (true) {
+                                        val r = input.read(buf)
+                                        if (r < 0) break
+                                        out.write(buf, 0, r)
+                                    }
+                                }
+                            }
+                        } catch (_: CappedOutput.Full) {
                         }
-                        // Cap to ~1MB to avoid blowing memory
-                        val capped = if (bytes.size > 1_048_576) bytes.copyOfRange(0, 1_048_576) else bytes
-                        String(capped, Charsets.UTF_8)
+                        val bytes = out.bytes()
+                        val truncated = bytes.size > TEXT_CAP
+                        var end = minOf(bytes.size, TEXT_CAP)
+                        // Não cortar a meio de um carácter UTF-8.
+                        if (truncated) while (end > 0 && (bytes[end].toInt() and 0xC0) == 0x80) end--
+                        String(bytes, 0, end, Charsets.UTF_8) to truncated
                     }
                 }
             }
             result
-                .onSuccess { txt ->
-                    _state.update { it.copy(textContent = txt, textLoading = false) }
+                .onSuccess { (txt, truncated) ->
+                    _state.update { it.copy(textContent = txt, textTruncated = truncated, textLoading = false) }
                     // Ficheiro acabado de criar pelo menu "+": abre já em edição.
                     if (session.startInEditMode) {
                         session.startInEditMode = false
@@ -538,6 +559,23 @@ class FileViewerViewModel @Inject constructor(
                 }
                 .onFailure { t -> _state.update { it.copy(textLoading = false, textError = t.message ?: "erro") } }
         }
+    }
+
+    /** Guarda até [limit] bytes; ao passar lança [Full] para parar a leitura/decifra. */
+    private class CappedOutput(private val limit: Int) : java.io.OutputStream() {
+        class Full : java.io.IOException("cap")
+        private val buf = java.io.ByteArrayOutputStream()
+        override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
+        override fun write(b: ByteArray, off: Int, len: Int) {
+            val room = limit - buf.size()
+            buf.write(b, off, minOf(len, room))
+            if (len >= room) throw Full()
+        }
+        fun bytes(): ByteArray = buf.toByteArray()
+    }
+
+    private companion object {
+        const val TEXT_CAP = 1_048_576
     }
 }
 

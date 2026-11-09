@@ -1,5 +1,7 @@
 package co.golink.tester.ui.screens.resetpassword
 
+import co.golink.tester.ui.common.autofillHint
+import co.golink.tester.ui.common.AutofillField
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -88,7 +90,8 @@ fun CreateNewPasswordScreen(
                 imeAction = ImeAction.Next,
             ),
             shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth()
+                .autofillHint(AutofillField.Email, onFill = viewModel::onEmail),
         )
         Spacer(Modifier.height(14.dp))
 
@@ -112,7 +115,7 @@ fun CreateNewPasswordScreen(
                 }
             },
             shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().autofillHint(AutofillField.NewPassword, onFill = viewModel::onPassword),
         )
         Spacer(Modifier.height(14.dp))
 

@@ -59,6 +59,7 @@ class PassRepository @Inject constructor(
     private val http: PassHttp,
     private val keys: E2EKeyManager,
     private val bio: PassBiometricStore,
+    private val prefs: PassPrefs,
 ) {
     companion object {
         private val DEFAULT_FOLDERS = listOf("Personal", "Finance", "Work", "Home")
@@ -70,7 +71,7 @@ class PassRepository @Inject constructor(
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val _state = MutableStateFlow(PassState(locked = bio.enabled))
+    private val _state = MutableStateFlow(PassState(locked = bio.enabled || prefs.startsLocked()))
     val state: StateFlow<PassState> = _state.asStateFlow()
 
     @Volatile private var k: ByteArray? = null
@@ -106,6 +107,7 @@ class PassRepository @Inject constructor(
             wipe()
             _state.value = PassState()
             bio.clear()
+            prefs.clearLockState()
         }
     }
 
@@ -179,8 +181,24 @@ class PassRepository @Inject constructor(
     }
 
     fun lock() {
+        prefs.vaultLocked = true
         wipe()
         _state.value = PassState(locked = true)
+    }
+
+    /** Desbloqueado com sucesso: o lock persistido deixa de valer. */
+    private fun markUnlocked() {
+        prefs.vaultLocked = false
+        persistActivity(System.currentTimeMillis(), force = true)
+    }
+
+    private var activityPersistedAt = 0L
+
+    /** Guarda a última atividade em disco (no máx. a cada 30 s). */
+    private fun persistActivity(now: Long, force: Boolean = false) {
+        if (!force && now - activityPersistedAt < 30_000L) return
+        activityPersistedAt = now
+        prefs.lastActiveAt = now
     }
 
     /** Desbloquear com a passphrase E2E (ou abre as chaves E2E, se ainda não estavam). */
@@ -192,6 +210,7 @@ class PassRepository @Inject constructor(
             else -> false
         }
         if (!ok) return false
+        markUnlocked()
         _state.update { it.copy(locked = false, needsKeys = false) }
         load(force = true)
         return true
@@ -202,9 +221,19 @@ class PassRepository @Inject constructor(
         val vault = http.get("/vault")["data"] as? JsonObject ?: return false
         // A K tem de abrir o meta do cofre (se o cofre foi recriado, a K guardada já não serve).
         val meta = vault.str("meta_enc")
-        if (meta != null && runCatching { PassCrypto.decryptJson(meta, key) }.isFailure) return false
+        if (meta != null) {
+            if (runCatching { PassCrypto.decryptJson(meta, key) }.isFailure) return false
+        } else {
+            // Sem meta: validar com o primeiro item. Sem nada com que validar, recusar
+            // (fica a passphrase) em vez de aceitar uma K qualquer e mostrar tudo "🔒".
+            val first = (http.get("/items")["data"] as? JsonArray).orEmpty()
+                .firstNotNullOfOrNull { (it as? JsonObject)?.str("payload_enc")?.takeIf(String::isNotEmpty) }
+                ?: return false
+            if (runCatching { PassCrypto.decryptJson(first, key) }.isFailure) return false
+        }
         wipe()
         k = key
+        markUnlocked()
         _state.value = PassState(locked = false)
         load(force = true)
         return _state.value.loaded
@@ -246,11 +275,13 @@ class PassRepository @Inject constructor(
 
     fun touch() {
         lastActivity = System.currentTimeMillis()
+        persistActivity(lastActivity)
     }
 
     /** Auto-lock ao fim de lock_after minutos sem atividade (0 = nunca, como na web). */
     private fun startIdleWatch() {
         lastActivity = System.currentTimeMillis()
+        persistActivity(lastActivity, force = true)
         if (idleJob?.isActive == true) return
         idleJob = scope.launch {
             while (isActive) {
@@ -305,7 +336,9 @@ class PassRepository @Inject constructor(
         metaLocked = unreadable
         metaSeen = metaEnc
         settingsSeen = settingsKey
-        _state.update { it.copy(settings = PassSettings.from(settingsObj), folders = folders) }
+        val parsed = PassSettings.from(settingsObj)
+        prefs.lockAfterMinutes = parsed.lockAfter
+        _state.update { it.copy(settings = parsed, folders = folders) }
     }
 
     private fun decryptItem(raw: JsonObject, previous: PassItem?): PassItem {
@@ -574,7 +607,9 @@ class PassRepository @Inject constructor(
         )
         val s = (res["data"] as? JsonObject)?.obj("settings")
         settingsSeen = s?.toString()
-        _state.update { it.copy(settings = PassSettings.from(s)) }
+        val parsed = PassSettings.from(s)
+        prefs.lockAfterMinutes = parsed.lockAfter
+        _state.update { it.copy(settings = parsed) }
     }
 
     // ---- Importação ----------------------------------------------------------

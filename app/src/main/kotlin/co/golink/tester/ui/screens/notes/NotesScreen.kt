@@ -3,7 +3,6 @@ package co.golink.tester.ui.screens.notes
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
-import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -544,14 +543,19 @@ private fun NotesWebView(vm: NotesViewModel, visible: Boolean, onView: (WebView?
             val text = probe?.optInt("text") ?: 0
             val appH = probe?.optDouble("appH") ?: 0.0
             if (probe == null || text == 0 || appH < 1 || view.height == 0 || !view.isShown) {
+                // Em release, nada que possa trazer texto decifrado: sem amostra, sem consola, sem Logcat.
+                val debug = co.golink.tester.BuildConfig.DEBUG
+                if (!debug) probe?.remove("sample")
                 diag = buildString {
-                    appendLine("Notes · diagnóstico (ecrã sem conteúdo)")
+                    appendLine(nt("diag_title"))
                     appendLine(native)
-                    appendLine(probe?.toString(1) ?: "probe=$raw")
-                    appendLine("— consola —")
-                    vm.consoleLog.forEach { appendLine(it) }
+                    appendLine(probe?.toString(1) ?: if (debug) "probe=$raw" else "probe=?")
+                    if (debug) {
+                        appendLine("— consola —")
+                        vm.consoleLog.forEach { appendLine(it) }
+                    }
                 }
-                android.util.Log.w("NotesWebView", diag!!)
+                if (debug) android.util.Log.w("NotesWebView", diag!!)
             }
         }
     }
@@ -582,6 +586,8 @@ private fun NotesWebView(vm: NotesViewModel, visible: Boolean, onView: (WebView?
             onView(null)
         }
     }
+    // onPause() não pára os temporizadores JS: com a app em segundo plano, pára-os (depois do flush).
+    co.golink.tester.ui.common.PauseWebViewTimersInBackground({ webView })
 
     Box(Modifier.fillMaxSize()) {
         if (!rendererGone) AndroidView(
@@ -597,16 +603,20 @@ private fun NotesWebView(vm: NotesViewModel, visible: Boolean, onView: (WebView?
                     settings.offscreenPreRaster = true
                     setBackgroundColor(if (dark) 0xFF151515.toInt() else 0xFFFFFFFF.toInt())
 
+                    // Ponte só para a origem do servidor (mensagens); sem suporte na WebView, a interface antiga.
                     val bridge = NotesBridge(vm, { darkNow }, this)
+                    if (!co.golink.tester.ui.screens.editor.installMessageBridge(this, "GoLinkNotesPort", pageUri, bridge)) {
+                        bridge.legacy = co.golink.tester.ui.screens.editor.LegacyPageBridge(bridge, "__glnResolve") { bridge.view }
+                            .also { addJavascriptInterface(it, "GoLinkNotesHost") }
+                    }
                     tag = bridge
-                    addJavascriptInterface(bridge, "GoLinkNotesHost")
 
                     // Erros de JS da página no Logcat (tag NotesWebView).
                     webChromeClient = object : android.webkit.WebChromeClient() {
                         override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
                             val line = "${m.messageLevel()}: ${m.message()} (${m.sourceId().substringAfterLast('/')}:${m.lineNumber()})"
                             vm.logConsole(line)
-                            if (m.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.ERROR || m.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.WARNING) {
+                            if (co.golink.tester.BuildConfig.DEBUG && (m.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.ERROR || m.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.WARNING)) {
                                 android.util.Log.w("NotesWebView", line)
                             }
                             return true
@@ -618,21 +628,39 @@ private fun NotesWebView(vm: NotesViewModel, visible: Boolean, onView: (WebView?
                         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                             val url = request.url
                             // A página (mesmo depois de redirecionada: www/apex, barra final) carrega aqui.
-                            if (url.path?.trimEnd('/') == pageUri.path?.trimEnd('/') && (url.host == pageUri.host || request.isRedirect)) return false
-                            runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                            // O redirect só vale dentro do mesmo site (www/apex), nunca para outro host.
+                            if (url.path?.trimEnd('/') == pageUri.path?.trimEnd('/') && sameSite(url, pageUri)) return false
+                            // Só web e email: content:, file:, intent: e esquemas de outras apps ficam de fora.
+                            if (url.scheme?.lowercase() in setOf("http", "https", "mailto")) {
+                                runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                            }
                             return true
+                        }
+
+                        override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                            // A ponte antiga só responde à página das Notes deste servidor (frame principal).
+                            (view.tag as? NotesBridge)?.legacy?.trusted = sameSite(Uri.parse(url), pageUri)
                         }
 
                         override fun onPageFinished(view: WebView, url: String) {
                             // Os scripts já correram: sem window.GoLinkNotes a página não arrancou
                             // (bundle em falta no servidor / erro de JS) — mostra o erro, não branco.
-                            view.evaluateJavascript("typeof window.GoLinkNotes === 'object' ? 1 : 0") { booted ->
-                                if (booted != "1") {
-                                    android.util.Log.w("NotesWebView", "página não arrancou: $url")
-                                    failed = true
+                            // Com a ponte por mensagens o arranque espera pela resposta de "info":
+                            // volta a ver durante ~3 s antes de dar a página como falhada.
+                            fun check(left: Int) {
+                                view.evaluateJavascript("typeof window.GoLinkNotes === 'object' ? 1 : 0") { booted ->
+                                    when {
+                                        booted == "1" -> loading = false
+                                        left > 0 -> view.postDelayed({ check(left - 1) }, 300)
+                                        else -> {
+                                            android.util.Log.w("NotesWebView", "página não arrancou: $url")
+                                            failed = true
+                                            loading = false
+                                        }
+                                    }
                                 }
-                                loading = false
                             }
+                            check(10)
                         }
 
                         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -680,7 +708,9 @@ private fun NotesWebView(vm: NotesViewModel, visible: Boolean, onView: (WebView?
                         destroyed = true
                         bridge?.view = null
                         bridge?.onFlushed = null
-                        view.removeJavascriptInterface("GoLinkNotesHost")
+                        co.golink.tester.ui.screens.editor.uninstallPageBridge(view, "GoLinkNotesPort", "GoLinkNotesHost")
+                        // pauseTimers é global: não deixar as outras WebViews paradas.
+                        runCatching { view.resumeTimers() }
                         view.destroy()
                     }
                 }
@@ -735,7 +765,7 @@ private fun NotesWebView(vm: NotesViewModel, visible: Boolean, onView: (WebView?
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 if (!isPermanentDrawer()) {
                     IconButton(onClick = onMenu, modifier = Modifier.padding(4.dp)) {
-                        Icon(Icons.Filled.Menu, contentDescription = "Menu")
+                        Icon(Icons.Filled.Menu, contentDescription = "Menu".tr())
                     }
                 }
             }
@@ -754,7 +784,7 @@ private fun CenterMessage(
     Box(Modifier.fillMaxSize()) {
         if (!isPermanentDrawer()) {
             IconButton(onClick = onMenu, modifier = Modifier.padding(4.dp)) {
-                Icon(Icons.Filled.Menu, contentDescription = "Menu")
+                Icon(Icons.Filled.Menu, contentDescription = "Menu".tr())
             }
         }
         Column(
@@ -836,36 +866,37 @@ private fun ManageNotebooksSheet(
     }
 }
 
-/**
- * window.GoLinkNotesHost. Os métodos correm numa thread do WebView: o trabalho vai
- * para o ViewModel e a resposta volta pela thread principal (__glnResolve).
- */
+/** Ponte com a página das Notes (ver installMessageBridge); o trabalho vai para o ViewModel. */
 private class NotesBridge(
     private val vm: NotesViewModel,
     private val dark: () -> Boolean,
     /** null = já não responde (renderer morto / destruída). */
     @Volatile var view: WebView?,
-) {
+) : co.golink.tester.ui.screens.editor.PageBridgeHost {
     /** WebView a sair: chamado quando a página confirma que gravou. */
     @Volatile var onFlushed: (() -> Unit)? = null
 
-    @JavascriptInterface
-    fun info(): String = vm.infoJson(dark())
+    /** Só quando a WebView não suporta mensagens. */
+    var legacy: co.golink.tester.ui.screens.editor.LegacyPageBridge? = null
 
-    @JavascriptInterface
-    fun request(id: Int, method: String, args: String) {
+    override fun info(): String = vm.infoJson(dark())
+
+    override fun request(id: Int, method: String, args: String, onDone: (Int) -> Unit) {
         vm.request(id, method, args) { done ->
-            view?.post { view?.evaluateJavascript("window.__glnResolve && window.__glnResolve($done)", null) }
+            if (view != null) onDone(done)
             if (method == "flushed") onFlushed?.invoke()
         }
     }
 
-    @JavascriptInterface
-    fun take(id: Int): String = vm.take(id)
+    override fun take(id: Int): String = vm.take(id)
 
-    @JavascriptInterface
-    fun toast(message: String) = vm.toast(message)
+    override fun toast(message: String) = vm.toast(message)
 }
+
+/** Mesmo esquema e mesmo host (www/apex contam como o mesmo site). */
+internal fun sameSite(url: Uri, page: Uri): Boolean =
+    url.scheme == page.scheme && url.host != null &&
+        url.host?.removePrefix("www.") == page.host?.removePrefix("www.") && url.port == page.port
 
 /** Estado da página para o diagnóstico (devolve uma string JSON). */
 private const val NOTES_PROBE = """(function(){try{

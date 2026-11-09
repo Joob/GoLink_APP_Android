@@ -4,9 +4,13 @@ on:
   push:
   pull_request:
 
+# O token do workflow só lê o repositório.
+permissions:
+  contents: read
+
 jobs:
   build:
-    name: Unit tests, lint & debug build
+    name: Unit tests, lint, debug & release build
     runs-on: ubuntu-latest
 
     steps:
@@ -29,6 +33,11 @@ jobs:
 
       - name: Build debug
         run: ./gradlew assembleDebug
+
+      # Release minificado (R8) sem assinatura: apanha regras de ProGuard em falta
+      # (ex.: JNA/lazysodium) que só partem o build de produção.
+      - name: Build release (R8, sem assinatura)
+        run: ./gradlew assembleRelease
 
       - name: Guardar relatorios em caso de falha
         if: failure()

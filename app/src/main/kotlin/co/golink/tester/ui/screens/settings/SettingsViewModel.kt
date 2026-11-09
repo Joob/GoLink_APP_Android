@@ -24,6 +24,7 @@ import coil.ImageLoader
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -32,6 +33,14 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** Resultado de um PIN pedido nas Definições (mesmas esperas do ecrã de bloqueio). */
+sealed interface PinCheck {
+    data object Ok : PinCheck
+    data object Wrong : PinCheck
+    data class LockedOut(val seconds: Int) : PinCheck
+}
 
 data class SettingsUiState(
     val storage: StorageUsage? = null,
@@ -50,6 +59,8 @@ data class SettingsUiState(
     val isLoadingTransactions: Boolean = false,
     val isLoadingTokens: Boolean = false,
     val isUpdatingPassword: Boolean = false,
+    // Muda a cada password alterada com sucesso: o formulário só limpa os campos aí.
+    val passwordChangedAt: Long = 0L,
     // Alteração de email: idle → code (código enviado ao novo email).
     val emailChangeStep: String = "idle",
     val emailChangeTarget: String = "",
@@ -64,6 +75,8 @@ data class SettingsUiState(
     val hideInRecents: Boolean = true,
     val twoFactorEnabled: Boolean = false,
     val newTokenPlaintext: String? = null,
+    val isCreatingToken: Boolean = false,
+    val createTokenError: String? = null,
     val toast: String? = null,
     val logEntries: List<LogEntry> = emptyList(),
     val plans: List<Plan> = emptyList(),
@@ -91,6 +104,8 @@ class SettingsViewModel @Inject constructor(
     autoBackupPreferences: co.golink.tester.data.backup.AutoBackupPreferences,
     private val autoBackupManager: co.golink.tester.data.backup.AutoBackupManager,
     private val fileViewerSession: co.golink.tester.ui.screens.viewer.FileViewerSession,
+    private val uploadManager: co.golink.tester.data.upload.UploadManager,
+    private val appLockBioKey: co.golink.tester.data.settings.AppLockBiometricKey,
 ) : ViewModel() {
 
     /** Estado do backup automático (cartão no menu das Definições). */
@@ -115,9 +130,8 @@ class SettingsViewModel @Inject constructor(
     init {
         // O cartão do backup reflecte pausas feitas na web sem abrir o ecrã do backup.
         viewModelScope.launch { autoBackupManager.syncServerState() }
+        // Armazenamento serve o menu e a faturação; sessões e tokens carregam por painel (LaunchedEffect(route)).
         loadStorage()
-        loadSessions()
-        loadTokens()
         _state.update {
             it.copy(
                 biometricEnabled = securityPrefs.biometricEnabled,
@@ -149,13 +163,6 @@ class SettingsViewModel @Inject constructor(
                 }
                 .onFailure { t -> _state.update { it.copy(toast = t.message ?: "Falha ao atualizar a imagem".tr()) } }
             _isUpdatingAvatar.value = false
-        }
-    }
-
-    fun resetCsrf() {
-        viewModelScope.launch {
-            logger.log("Security", "Token CSRF redefinido".tr())
-            _state.update { it.copy(toast = "Token CSRF redefinido".tr()) }
         }
     }
 
@@ -223,24 +230,17 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    // Só as outras sessões: a atual não tem "Terminar" (termina-se em Sair ou nos Tokens, com overlay + logout).
     fun revokeSession(id: String) = viewModelScope.launch {
-        val wasCurrent = _state.value.sessions.firstOrNull { it.id == id }?.is_current == true
-        // Revogar a sessão atual desloga → mostrar já o overlay "A sair da conta…".
-        if (wasCurrent) _state.update { it.copy(logoutOverlay = "A sair da conta…".tr()) }
         repository.revokeSession(id)
             .onSuccess {
-                if (wasCurrent) {
-                    // Overlay fica até o logout limpar o token e o RootGate navegar para fora.
-                    authRepository.logout()
-                } else {
-                    _state.update { it.copy(toast = "Sessão revogada".tr(), sessions = it.sessions.filterNot { s -> s.id == id }) }
-                }
+                _state.update { it.copy(toast = "Sessão revogada".tr(), sessions = it.sessions.filterNot { s -> s.id == id }) }
             }
-            .onFailure { t -> _state.update { it.copy(logoutOverlay = null, toast = t.message) } }
+            .onFailure { t -> _state.update { it.copy(toast = t.message) } }
     }
 
     fun revokeAllSessions() = viewModelScope.launch {
-        _state.update { it.copy(logoutOverlay = "A sair de todas as sessões…".tr()) }
+        _state.update { it.copy(logoutOverlay = "A terminar as outras sessões…".tr()) }
         repository.revokeAllSessions()
             .onSuccess {
                 _state.update { it.copy(logoutOverlay = null, toast = "Todas as outras sessões revogadas".tr()) }
@@ -253,7 +253,11 @@ class SettingsViewModel @Inject constructor(
         _state.update { it.copy(isUpdatingPassword = true) }
         viewModelScope.launch {
             repository.updatePassword(current, newPassword, passkeyToken)
-                .onSuccess { _state.update { it.copy(isUpdatingPassword = false, toast = "Password actualizada".tr()) } }
+                .onSuccess {
+                    _state.update {
+                        it.copy(isUpdatingPassword = false, passwordChangedAt = System.currentTimeMillis(), toast = "Password actualizada".tr())
+                    }
+                }
                 .onFailure { t -> _state.update { it.copy(isUpdatingPassword = false, toast = t.message) } }
         }
     }
@@ -292,6 +296,19 @@ class SettingsViewModel @Inject constructor(
                     }
                 }
                 .onFailure { t -> _state.update { it.copy(isChangingEmail = false, emailChangeError = t.message) } }
+        }
+    }
+
+    /**
+     * Reenviar o código depois de confirmar com passkey: o token já foi gasto, por isso
+     * volta ao 1.º passo (email mantido) para confirmar de novo com password ou passkey.
+     */
+    fun restartEmailChangeForResend() {
+        _state.update {
+            it.copy(
+                emailChangeStep = "idle",
+                emailChangeError = "Confirma de novo com a password ou a passkey para reenviar o código.".tr(),
+            )
         }
     }
 
@@ -359,16 +376,35 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun createToken(name: String) = viewModelScope.launch {
-        repository.createToken(name)
-            .onSuccess { plaintext -> _state.update { it.copy(newTokenPlaintext = plaintext) }; loadTokens() }
-            .onFailure { t -> _state.update { it.copy(toast = t.message) } }
+    fun createToken(name: String, password: String?, passkeyToken: String?) {
+        if (_state.value.isCreatingToken) return
+        _state.update { it.copy(isCreatingToken = true, createTokenError = null) }
+        viewModelScope.launch {
+            repository.createToken(name, password, passkeyToken)
+                .onSuccess { plaintext ->
+                    _state.update { it.copy(isCreatingToken = false, newTokenPlaintext = plaintext) }
+                    loadTokens()
+                }
+                .onFailure { t ->
+                    _state.update {
+                        it.copy(isCreatingToken = false, createTokenError = t.message ?: "Não foi possível criar o token".tr())
+                    }
+                }
+        }
     }
 
+    fun clearCreateTokenError() = _state.update { it.copy(createTokenError = null) }
+
+    /** Revogar o token desta sessão termina-a: overlay + logout, como no painel Sessões. */
     fun deleteToken(id: Long) = viewModelScope.launch {
+        val wasCurrent = _state.value.tokens.firstOrNull { it.id == id }?.is_current == true
+        if (wasCurrent) _state.update { it.copy(logoutOverlay = "A sair da conta…".tr()) }
         repository.deleteToken(id)
-            .onSuccess { _state.update { it.copy(tokens = it.tokens.filterNot { t -> t.id == id }) } }
-            .onFailure { t -> _state.update { it.copy(toast = t.message) } }
+            .onSuccess {
+                if (wasCurrent) authRepository.logout()
+                else _state.update { it.copy(tokens = it.tokens.filterNot { t -> t.id == id }) }
+            }
+            .onFailure { t -> _state.update { it.copy(logoutOverlay = null, toast = t.message) } }
     }
 
     fun consumeNewToken() = _state.update { it.copy(newTokenPlaintext = null) }
@@ -383,38 +419,74 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setBiometricEnabled(enabled: Boolean) {
+        // Religar a biometria (após confirmação) começa com uma chave nova do Keystore.
+        if (enabled) appLockBioKey.reset()
         securityPrefs.biometricEnabled = enabled
         logger.log("Security", if (enabled) "Biometria activada" else "Biometria desactivada")
         _state.update { it.copy(biometricEnabled = enabled) }
     }
 
+    // PBKDF2 + EncryptedSharedPreferences: sempre fora da main thread.
     fun enablePin(pin: String) {
-        securityPrefs.setPinHash(pin)
-        securityPrefs.pinEnabled = true
-        logger.log("Security", "PIN de bloqueio activado")
-        _state.update { it.copy(pinEnabled = true) }
+        viewModelScope.launch {
+            withContext(Dispatchers.Default) { securityPrefs.setPinHash(pin) }
+            securityPrefs.pinEnabled = true
+            logger.log("Security", "PIN de bloqueio activado")
+            _state.update { it.copy(pinEnabled = true) }
+        }
+    }
+
+    /**
+     * Verifica o PIN com o mesmo contador/esperas do ecrã de bloqueio: ao fim de
+     * [AppSecurityPreferences.MAX_FAILURES] falhas a sessão é terminada.
+     */
+    private suspend fun checkPin(pin: String): PinCheck {
+        securityPrefs.lockoutRemainingMs().let { if (it > 0) return PinCheck.LockedOut(((it + 999) / 1000).toInt()) }
+        if (withContext(Dispatchers.Default) { securityPrefs.verifyPin(pin) }) {
+            securityPrefs.resetFailures()
+            return PinCheck.Ok
+        }
+        val n = securityPrefs.registerFailure()
+        logger.log("Security", "PIN errado nas Definições ($n)")
+        if (n >= AppSecurityPreferences.MAX_FAILURES) {
+            logger.log("Security", "Demasiados PINs errados: sessão terminada")
+            securityPrefs.resetFailures()
+            authRepository.logout()
+            return PinCheck.Wrong
+        }
+        val left = securityPrefs.lockoutRemainingMs()
+        return if (left > 0) PinCheck.LockedOut(((left + 999) / 1000).toInt()) else PinCheck.Wrong
     }
 
     /** Mudar o PIN: só com o PIN atual certo. */
-    fun changePin(current: String, new: String): Boolean {
-        if (!securityPrefs.verifyPin(current)) return false
-        securityPrefs.setPinHash(new)
-        logger.log("Security", "PIN de bloqueio alterado")
-        return true
+    fun changePin(current: String, new: String, onResult: (PinCheck) -> Unit) {
+        viewModelScope.launch {
+            val r = checkPin(current)
+            if (r == PinCheck.Ok) {
+                withContext(Dispatchers.Default) { securityPrefs.setPinHash(new) }
+                logger.log("Security", "PIN de bloqueio alterado")
+            }
+            onResult(r)
+        }
     }
 
     /**
      * Desligar o bloqueio (interruptor geral): pede o PIN quando há um; desliga
      * o PIN e a biometria.
      */
-    fun disableAppLock(pin: String?): Boolean {
-        if (securityPrefs.hasPinSet && (pin == null || !securityPrefs.verifyPin(pin))) return false
-        if (securityPrefs.hasPinSet) securityPrefs.clearPin()
-        securityPrefs.pinEnabled = false
-        securityPrefs.biometricEnabled = false
-        logger.log("Security", "Bloqueio da app desactivado")
-        _state.update { it.copy(pinEnabled = false, biometricEnabled = false) }
-        return true
+    fun disableAppLock(pin: String?, onResult: (PinCheck) -> Unit) {
+        viewModelScope.launch {
+            if (securityPrefs.hasPinSet) {
+                val r = if (pin == null) PinCheck.Wrong else checkPin(pin)
+                if (r != PinCheck.Ok) { onResult(r); return@launch }
+                withContext(Dispatchers.IO) { securityPrefs.clearPin() }
+            }
+            securityPrefs.pinEnabled = false
+            securityPrefs.biometricEnabled = false
+            logger.log("Security", "Bloqueio da app desactivado")
+            _state.update { it.copy(pinEnabled = false, biometricEnabled = false) }
+            onResult(PinCheck.Ok)
+        }
     }
 
     fun setLockDelay(ms: Long) {
@@ -432,14 +504,34 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 imageLoader.memoryCache?.clear()
-                imageLoader.diskCache?.clear()
-                context.cacheDir.deleteRecursively()
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    imageLoader.diskCache?.clear()
+                    clearCacheDirKeepingUploads()
+                }
                 logger.log("Cache", "Cache local limpa".tr())
                 _state.update { it.copy(toast = "Cache limpa com sucesso".tr()) }
                 loadCacheSize()
             } catch (e: Exception) {
                 _state.update { it.copy(toast = "Erro ao limpar cache".tr()) }
             }
+        }
+    }
+
+    /**
+     * Apaga a cache, mas não os temporários de uploads: "camera/" é da fila retomável
+     * e, com uploads por acabar, os e2e_/newtext_/newdoc_ ainda vão ser enviados.
+     */
+    private fun clearCacheDirKeepingUploads() {
+        val busy = uploadManager.tasks.value.any { t ->
+            t.state == co.golink.tester.data.upload.UploadTask.State.Queued ||
+                t.state == co.golink.tester.data.upload.UploadTask.State.Uploading ||
+                (t.state == co.golink.tester.data.upload.UploadTask.State.Failed &&
+                    (t.networkError || t.e2eLocked || t.waitingForNetwork))
+        }
+        val uploadPrefixes = listOf("e2e_", "newtext_", "newdoc_")
+        context.cacheDir.listFiles()?.forEach { f ->
+            val keep = f.name == "camera" || (busy && uploadPrefixes.any { f.name.startsWith(it) })
+            if (!keep) f.deleteRecursively()
         }
     }
 
@@ -470,7 +562,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             billingRepository.listPlans()
                 .onSuccess { l -> _state.update { it.copy(plans = l, isLoadingPlans = false) } }
-                .onFailure { t -> _state.update { it.copy(isLoadingPlans = false, toast = "Erro a carregar planos: ${t.message}") } }
+                .onFailure { t -> _state.update { it.copy(isLoadingPlans = false, toast = "Erro a carregar planos: %s".tr().format(t.message.orEmpty())) } }
         }
     }
 
@@ -501,7 +593,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             request()
                 .onSuccess { url -> _state.update { it.copy(isStartingCheckout = false, checkoutUrl = url) } }
-                .onFailure { t -> _state.update { it.copy(isStartingCheckout = false, toast = "Erro a iniciar checkout: ${t.message}") } }
+                .onFailure { t -> _state.update { it.copy(isStartingCheckout = false, toast = "Erro a iniciar checkout: %s".tr().format(t.message.orEmpty())) } }
         }
     }
 

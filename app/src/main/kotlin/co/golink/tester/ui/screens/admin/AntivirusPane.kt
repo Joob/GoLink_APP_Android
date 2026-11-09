@@ -83,7 +83,7 @@ class AntivirusViewModel @Inject constructor(
                     _state.update {
                         it.copy(
                             overview = r,
-                            files = if (page == 1) r.data else it.files + r.data,
+                            files = if (page == 1) r.data else (it.files + r.data).distinctBy { x -> x.id },
                             page = r.meta.current_page,
                             lastPage = r.meta.last_page,
                             isLoading = false,
@@ -91,7 +91,7 @@ class AntivirusViewModel @Inject constructor(
                         )
                     }
                 }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, isLoadingMore = false, error = "Não foi possível carregar (${t.message})") } }
+                .onFailure { t -> _state.update { it.copy(isLoading = false, isLoadingMore = false, error = "Não foi possível carregar (%s)".tr().format(t.message.orEmpty())) } }
         }
     }
 
@@ -142,6 +142,18 @@ fun AntivirusPane(
     LaunchedEffect(state.toast) { state.toast?.let { snackbar.showSnackbar(it); viewModel.consumeToast() } }
 
     var confirmDelete by remember { mutableStateOf<QuarantinedFile?>(null) }
+    // Desligar deixa todos os uploads sem análise: pede confirmação (ligar não).
+    var confirmDisable by remember { mutableStateOf(false) }
+    if (confirmDisable) {
+        SettingsDialog(
+            title = "Desligar o antivírus?".tr(),
+            message = "Os uploads novos deixam de ser analisados até voltares a ligar. Os ficheiros enviados entretanto não ficam em quarentena.".tr(),
+            confirmText = "Desligar".tr(),
+            destructive = true,
+            onConfirm = { confirmDisable = false; viewModel.toggle(false) },
+            onDismiss = { confirmDisable = false },
+        )
+    }
     confirmDelete?.let { f ->
         SettingsDialog(
             title = "Apagar definitivamente".tr(),
@@ -181,7 +193,11 @@ fun AntivirusPane(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
-                                    Switch(checked = o.enabled, onCheckedChange = viewModel::toggle, enabled = state.busy == null)
+                                    Switch(
+                                        checked = o.enabled,
+                                        onCheckedChange = { on -> if (on) viewModel.toggle(true) else confirmDisable = true },
+                                        enabled = state.busy == null,
+                                    )
                                 }
                             }
                             when {

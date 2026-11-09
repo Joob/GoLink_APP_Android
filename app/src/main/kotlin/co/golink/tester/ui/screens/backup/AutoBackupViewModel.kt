@@ -1,6 +1,5 @@
 package co.golink.tester.ui.screens.backup
 
-import co.golink.tester.ui.i18n.tr
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import co.golink.tester.data.backup.AutoBackupManager
@@ -116,7 +115,7 @@ class AutoBackupViewModel @Inject constructor(
             preferences.clearError()
             manager.enable()
         }.onFailure {
-            preferences.lastError = "Não foi possível activar o backup: ${it.message ?: it::class.simpleName}"
+            preferences.lastError = "Não foi possível activar o backup."
         }
         // Marca como activo no servidor (este aparelho, e levanta uma pausa da
         // conta). Se falhar, o worker repete antes de ler a flag
@@ -143,7 +142,7 @@ class AutoBackupViewModel @Inject constructor(
         _resuming.value = true
         viewModelScope.launch {
             if (!manager.resumeDevice()) {
-                preferences.lastError = "Não foi possível retomar — verifica a ligação e tenta de novo.".tr()
+                preferences.lastError = "Não foi possível retomar — verifica a ligação e tenta de novo."
             }
             _resuming.value = false
         }
@@ -161,7 +160,7 @@ class AutoBackupViewModel @Inject constructor(
             preferences.clearError()
             manager.runNow()
         }.onFailure {
-            preferences.lastError = "Não foi possível iniciar o backup: ${it.message ?: it::class.simpleName}"
+            preferences.lastError = "Não foi possível iniciar o backup."
         }
     }
 
@@ -177,7 +176,7 @@ class AutoBackupViewModel @Inject constructor(
             preferences.clearError()
             manager.runNow(userInitiated = true)
         }.onFailure {
-            preferences.lastError = "Não foi possível iniciar o backup: ${it.message ?: it::class.simpleName}"
+            preferences.lastError = "Não foi possível iniciar o backup."
         }
     }
 

@@ -30,7 +30,12 @@ class UserRepository @Inject constructor(
     suspend fun fetchMe(): Result<User> = runCatching {
         val token = tokenStore.token
         val response = api.me()
-        if (!response.isSuccessful) throw UserFetchException(response.code(), "HTTP ${response.code()}")
+        if (!response.isSuccessful) {
+            // Só o 403 do EnsureOtpVerified manda de volta ao OTP (não um 403 do WAF/Cloudflare).
+            val otpRequired = response.code() == 403 &&
+                runCatching { response.errorBody()?.string().orEmpty().contains("\"otp_required\":true") }.getOrDefault(false)
+            throw UserFetchException(response.code(), "HTTP ${response.code()}", otpRequired)
+        }
         val body = response.body() ?: throw UserFetchException(0, "Resposta vazia")
         User.fromResponse(body).also {
             _me.value = it
@@ -50,7 +55,7 @@ class UserRepository @Inject constructor(
             }
     }
 
-    class UserFetchException(val statusCode: Int, message: String) : Exception(message)
+    class UserFetchException(val statusCode: Int, message: String, val otpRequired: Boolean = false) : Exception(message)
 
     fun clear() {
         _me.value = null

@@ -95,7 +95,7 @@ class PaymentsViewModel @Inject constructor(
                         )
                     }
                 }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (${t.message})") } }
+                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (%s)".tr().format(t.message.orEmpty())) } }
         }
     }
 
@@ -118,12 +118,16 @@ class PaymentsViewModel @Inject constructor(
 
     fun toggle(key: String, on: Boolean) = save(key, mapOf(key to if (on) "1" else "0"))
 
-    fun storeCredentials(r: PaymentServiceRequest, test: Boolean) {
+    /** [onStored]: só depois de o servidor aceitar (o ecrã limpa aí os campos). */
+    fun storeCredentials(r: PaymentServiceRequest, test: Boolean, onStored: () -> Unit = {}) {
         _state.update { it.copy(saving = r.service) }
         viewModelScope.launch {
             val result = if (test) repository.testPaymentService(r) else repository.storePaymentService(r)
             result
-                .onSuccess { _state.update { it.copy(saving = null, toast = if (test) "Ligação ao Stripe OK".tr() else "Credenciais guardadas".tr()) }; if (!test) load() }
+                .onSuccess {
+                    _state.update { it.copy(saving = null, toast = if (test) "Ligação ao Stripe OK".tr() else "Credenciais guardadas".tr()) }
+                    if (!test) { onStored(); load() }
+                }
                 .onFailure { t -> _state.update { it.copy(saving = null, toast = t.message) } }
         }
     }
@@ -230,7 +234,8 @@ private fun GatewayCard(service: String, title: String, config: GatewayConfig?, 
             val ready = key.isNotBlank() && secret.isNotBlank()
             SettingsPrimaryButton(
                 "Guardar credenciais".tr(),
-                onClick = { vm.storeCredentials(request, test = false); key = ""; secret = ""; webhook = "" },
+                // Num erro os campos ficam preenchidos para corrigir e repetir.
+                onClick = { vm.storeCredentials(request, test = false) { key = ""; secret = ""; webhook = "" } },
                 enabled = ready,
                 loading = state.saving == service,
             )

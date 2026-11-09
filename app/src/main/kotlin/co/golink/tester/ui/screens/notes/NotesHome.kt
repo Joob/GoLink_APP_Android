@@ -245,7 +245,7 @@ private fun TopBar(title: String, showMenu: Boolean, onMenu: () -> Unit, onSearc
         Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (showMenu) IconButton(onClick = onMenu) { Icon(Icons.Filled.Menu, contentDescription = "Menu") } else Spacer(Modifier.width(12.dp))
+        if (showMenu) IconButton(onClick = onMenu) { Icon(Icons.Filled.Menu, contentDescription = I18n.t("Menu")) } else Spacer(Modifier.width(12.dp))
         Text(
             title,
             fontSize = 20.sp,

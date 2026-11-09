@@ -74,6 +74,7 @@ import co.golink.tester.data.pass.PassItem
 import co.golink.tester.data.pass.PassPrefs
 import co.golink.tester.data.pass.PassRepository
 import co.golink.tester.data.pass.autofill.PassAutofillMatch
+import co.golink.tester.data.pass.autofill.PassAutofillParser
 import co.golink.tester.data.pass.autofill.PassAutofillResponses
 import co.golink.tester.data.pass.autofill.PassAutofillTarget
 import co.golink.tester.ui.i18n.pt
@@ -163,7 +164,17 @@ class PassAutofillActivity : FragmentActivity() {
         packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
     }.getOrDefault(pkg)
 
-    private val targetName: String get() = target.webDomain?.removePrefix("www.") ?: appLabel(target.packageName)
+    /** Domínio (só de browsers conhecidos) ou nome da app + pacote (o nome pode ser imitado). */
+    private val targetName: String get() = target.webDomain?.removePrefix("www.")
+        ?: appLabel(target.packageName).let { if (it == target.packageName) it else "$it · ${target.packageName}" }
+
+    /** "Outros logins…" à espera do reprompt (item, lembrar para esta app). */
+    private var pendingPick: Pair<PassItem, Boolean>? = null
+
+    private suspend fun completePick(item: PassItem, rememberApp: Boolean) {
+        if (rememberApp) runCatching { repo.rememberApp(item.id, target.packageName) }
+        finishWith(PassAutofillResponses.filled(this, target, repo.state.value.item(item.id) ?: item))
+    }
 
     private fun needsReprompt() = repo.state.value.settings.reprompt && !repo.repromptValid()
 
@@ -221,9 +232,18 @@ class PassAutofillActivity : FragmentActivity() {
                 Phase.Lock, Phase.Confirm -> LockView(confirm = phase == Phase.Confirm) {
                     repo.markReprompted()
                     repo.touch()
-                    afterOpen(true)?.let { phase = it }
+                    val pick = pendingPick
+                    if (pick != null) {
+                        pendingPick = null
+                        lifecycleScope.launch { completePick(pick.first, pick.second) }
+                    } else {
+                        afterOpen(true)?.let { phase = it }
+                    }
                 }
-                Phase.Pick -> PickView()
+                Phase.Pick -> PickView(onNeedsConfirm = { item, rememberApp ->
+                    pendingPick = item to rememberApp
+                    phase = Phase.Confirm
+                })
                 Phase.Save -> SaveView()
             }
         }
@@ -241,7 +261,9 @@ class PassAutofillActivity : FragmentActivity() {
 
         val tryBiometric: () -> Unit = {
             if (confirm) {
-                passBiometricConfirm(pt("reprompt_title"), onOk = onOk, onFail = {})
+                passBiometricConfirm(bio, pt("reprompt_title"), onOk = onOk, onFail = {
+                    if (bio.consumeInvalidated()) error = pt("biometric_changed")
+                })
             } else {
                 val cipher = bio.decryptCipher()
                 if (cipher == null) {
@@ -328,15 +350,19 @@ class PassAutofillActivity : FragmentActivity() {
 
     /** "Outros logins…": qualquer login do cofre; os que correspondem vêm primeiro. */
     @Composable
-    private fun PickView() {
+    private fun PickView(onNeedsConfirm: (PassItem, Boolean) -> Unit) {
         val p = LocalPassPalette.current
         val scope = rememberCoroutineScope()
         val state by repo.state.collectAsState()
         var query by remember { mutableStateOf("") }
-        val isApp = target.webDomain == null
+        // Browser sem domínio não é "app": não ligar o pacote do browser a um login.
+        val isApp = target.webDomain == null && !PassAutofillParser.isTrustedBrowser(target.packageName)
         var remember by remember { mutableStateOf(isApp) }
         var busy by remember { mutableStateOf(false) }
-        val matched = remember(state.items) { PassAutofillMatch.match(state.items, target.packageName, target.webDomain).map { it.item.id }.toSet() }
+        val hits = remember(state.items) { PassAutofillMatch.match(state.items, target.packageName, target.webDomain) }
+        // Ordenação: também os heurísticos (não verificados); "lembrar" só fica de fora nos verificados.
+        val matched = remember(hits) { hits.map { it.item.id }.toSet() }
+        val verified = remember(hits) { hits.filter { it.strength != PassAutofillMatch.Strength.Heuristic }.map { it.item.id }.toSet() }
         val list = remember(state.items, query, matched) {
             val q = query.trim().lowercase()
             state.items.filter { it.type == "login" && !it.isTrashed && !it.locked }
@@ -345,10 +371,12 @@ class PassAutofillActivity : FragmentActivity() {
         }
         val choose: (PassItem) -> Unit = { item ->
             if (!busy) {
-                busy = true
-                scope.launch {
-                    if (isApp && remember && item.id !in matched) runCatching { repo.rememberApp(item.id, target.packageName) }
-                    finishWith(PassAutofillResponses.filled(this@PassAutofillActivity, target, repo.state.value.item(item.id) ?: item))
+                val rememberApp = isApp && remember && item.id !in verified
+                // Reprompt também aqui: sem ele, "Outros logins…" entregava valores sem confirmar.
+                if (needsReprompt()) onNeedsConfirm(item, rememberApp)
+                else {
+                    busy = true
+                    scope.launch { completePick(item, rememberApp) }
                 }
             }
         }
@@ -417,7 +445,7 @@ class PassAutofillActivity : FragmentActivity() {
                             url = target.webDomain?.let { "https://" + it.removePrefix("www.") }.orEmpty(),
                             username = username.trim(),
                             password = password,
-                            packageName = target.packageName.takeIf { target.webDomain == null },
+                            packageName = target.packageName.takeIf { target.webDomain == null && !PassAutofillParser.isTrustedBrowser(it) },
                         )
                     }.isSuccess
                     busy = false

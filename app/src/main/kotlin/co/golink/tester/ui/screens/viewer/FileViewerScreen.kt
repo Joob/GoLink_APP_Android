@@ -373,8 +373,7 @@ fun FileViewerScreen(
                     when {
                         file.isImageLike() -> ImageViewer(
                             file = file,
-                            // E2E: usa o download-by-id (que faz dual-read do bucket cifrado).
-                            url = if (file.encrypted) viewModel.authedUrlFor(file) else viewModel.authedUrlFor(file),
+                            url = viewModel.authedUrlFor(file),
                             token = viewModel.authToken(),
                             zoom = if (page == state.currentIndex) state.zoom else 1f,
                             rotation = if (page == state.currentIndex) state.rotation else 0f,
@@ -400,6 +399,7 @@ fun FileViewerScreen(
                             editing = page == state.currentIndex && state.editing,
                             draft = state.draft,
                             onDraftChange = viewModel::updateDraft,
+                            truncated = page == state.currentIndex && state.textTruncated,
                         )
                         // Vizinhos de áudio/vídeo não criam player nem decifram: só a
                         // página ativa (senão o vídeo ao lado começava a descarregar).
@@ -567,12 +567,16 @@ private fun ImageViewer(
     // Descodifica ao tamanho do ecrã (com margem para zoom), não à resolução
     // original: uma foto de 12 MP eram ~48 MB por bitmap — pausas de GC no swipe.
     val maxSide = (maxOf(metrics.widthPixels, metrics.heightPixels) * 1.5f).toInt()
+    val appContext = LocalContext.current.applicationContext
 
     LaunchedEffect(file.id) {
         if (bitmap != null) return@LaunchedEffect
         loading = true
         error = null
         runCatching {
+            // Em claro: pelo Coil, com cache em disco própria (reabrir não volta a descarregar),
+            // descodificado ao tamanho do ecrã a partir do ficheiro (sem o original em memória).
+            if (decrypt == null) return@runCatching loadPlainImage(appContext, file, url, token, maxSide)
             withContext(Dispatchers.IO) {
                 val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
                 conn.instanceFollowRedirects = true
@@ -580,12 +584,20 @@ private fun ImageViewer(
                 if (!token.isNullOrBlank()) conn.setRequestProperty("Authorization", "Bearer $token")
                 conn.connectTimeout = 20_000
                 conn.readTimeout = 60_000
+                // Original, cópia decifrada e bitmap ficam em memória ao mesmo tempo
+                // (e a página vizinha também): acima do teto não se pré-visualiza.
+                val declared = file.filesizeBytes.takeIf { it > 0 } ?: conn.contentLengthLong
+                if (declared > IMAGE_PREVIEW_MAX_BYTES) {
+                    conn.disconnect()
+                    error("Imagem demasiado grande para pré-visualizar. Descarrega-a para a ver.".tr())
+                }
                 conn.inputStream.use { input ->
                     // Lê os bytes uma vez para decodificar E ler a orientação EXIF
                     // do mesmo conteúdo. Sem isto as fotos apareciam de lado (o
                     // BitmapFactory ignora a orientação; o Coil, usado nas
                     // miniaturas, aplica-a — daí a diferença).
-                    val raw = input.readBytes()
+                    val raw = readAtMost(input, IMAGE_PREVIEW_MAX_BYTES)
+                        ?: error("Imagem demasiado grande para pré-visualizar. Descarrega-a para a ver.".tr())
                     // E2E: se cifrado, decifra os bytes antes de descodificar.
                     val bytes = if (decrypt != null) (decrypt(raw) ?: error("Falha ao decifrar".tr())) else raw
                     val bmp = decodeSampled(bytes, maxSide)
@@ -692,6 +704,27 @@ private fun ImageViewer(
                     ),
             )
         }
+    }
+}
+
+/** Imagem não cifrada via [co.golink.tester.data.files.ViewerImageCache] (Coil aplica o EXIF). */
+private suspend fun loadPlainImage(context: android.content.Context, file: BrowseItem.File, url: String, token: String?, maxSide: Int): Bitmap {
+    if (file.filesizeBytes > IMAGE_PREVIEW_MAX_BYTES) error("Imagem demasiado grande para pré-visualizar. Descarrega-a para a ver.".tr())
+    val request = coil.request.ImageRequest.Builder(context)
+        .data(url)
+        .apply { if (!token.isNullOrBlank()) setHeader("Authorization", "Bearer $token") }
+        // O URL é o do nome: a revisão (ou a data) separa versões do mesmo ficheiro.
+        .diskCacheKey("viewer:${file.id}:${file.contentRevision ?: file.updatedAtIso ?: file.filesizeBytes}")
+        .memoryCachePolicy(coil.request.CachePolicy.DISABLED)
+        .size(maxSide)
+        .precision(coil.size.Precision.INEXACT)
+        .allowHardware(false)
+        .allowRgb565(false)
+        .build()
+    return when (val result = co.golink.tester.data.files.ViewerImageCache.loader(context).execute(request)) {
+        is coil.request.SuccessResult -> (result.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+            ?: error("Falha na descodificação".tr())
+        is coil.request.ErrorResult -> throw result.throwable
     }
 }
 
@@ -924,6 +957,23 @@ private fun AudioViewer(
     }
 }
 
+private const val IMAGE_PREVIEW_MAX_BYTES = 64L * 1024 * 1024
+
+/** Lê o stream inteiro, ou null se passar de [max] bytes (sem o carregar todo). */
+private fun readAtMost(input: java.io.InputStream, max: Long): ByteArray? {
+    val out = java.io.ByteArrayOutputStream()
+    val buf = ByteArray(64 * 1024)
+    var total = 0L
+    while (true) {
+        val r = input.read(buf)
+        if (r < 0) break
+        total += r
+        if (total > max) return null
+        out.write(buf, 0, r)
+    }
+    return out.toByteArray()
+}
+
 @Composable
 private fun PdfViewer(
     url: String,
@@ -949,9 +999,12 @@ private fun PdfViewer(
         error = null
         pageCount = 0
         val job = scope.launch {
+            val cacheFile = File(context.cacheDir, "viewer_pdf_${fileKey}.pdf")
+            // Saiu da composição a meio: o bloco IO acaba de escrever e só depois
+            // lança o cancelamento — o finally abaixo garante que o claro não fica.
+            var unlinked = false
             try {
                 val file = withContext(Dispatchers.IO) {
-                    val cacheFile = File(context.cacheDir, "viewer_pdf_${fileKey}.pdf")
                     val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
                     if (!token.isNullOrBlank()) conn.setRequestProperty("Authorization", "Bearer $token")
                     conn.connectTimeout = 20_000
@@ -970,7 +1023,7 @@ private fun PdfViewer(
                             }
                         }
                     } catch (t: Throwable) {
-                        cacheFile.delete()
+                        co.golink.tester.data.encryption.PlaintextCache.wipe(cacheFile)
                         throw t
                     }
                     cacheFile
@@ -981,7 +1034,8 @@ private fun PdfViewer(
                     // Só unlink (NÃO sobrescrever: o descritor aberto lê o mesmo inode).
                     // O PdfRenderer continua a ler pelo descritor; o ficheiro em claro
                     // deixa de existir na cache.
-                    withContext(Dispatchers.IO) { file.delete() }
+                    withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { file.delete() }
+                    unlinked = true
                 }
                 val r = PdfRenderer(openedPfd)
                 pfd = openedPfd
@@ -993,6 +1047,10 @@ private fun PdfViewer(
             } catch (t: Throwable) {
                 error = t.message ?: "erro"
                 loading = false
+            } finally {
+                if (!unlinked) withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                    co.golink.tester.data.encryption.PlaintextCache.wipe(cacheFile)
+                }
             }
         }
         onDispose {

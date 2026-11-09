@@ -11,7 +11,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
@@ -60,8 +59,8 @@ fun VueFileManagerTheme(
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
+            // Edge-to-edge (enableEdgeToEdge na MainActivity): a cor da barra não se aplica; só os ícones.
             val window = (view.context as Activity).window
-            window.statusBarColor = colors.background.toArgb()
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
         }
     }

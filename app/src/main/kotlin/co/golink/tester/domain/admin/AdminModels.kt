@@ -127,6 +127,17 @@ data class AdminPageMeta(
     val current_page: Int = 1,
     val last_page: Int = 1,
     val total: Int = 0,
+    /** Só na lista de faturas com ?stats=1: contagens globais por estado. */
+    val stats: InvoiceStats? = null,
+)
+
+@Serializable
+data class InvoiceStats(
+    val all: Int = 0,
+    val paid: Int = 0,
+    val failed: Int = 0,
+    val cancelled: Int = 0,
+    val refunded: Int = 0,
 )
 
 // ---------------------------------------------------------------------------
@@ -297,7 +308,7 @@ data class DeletedUserRow(
     val user_id: JsonElement? = null,
     /** scheduled | deleting | deleted */
     val state: String = "deleted",
-    /** user | admin | support */
+    /** user | admin | support | inactivity */
     val requested_by: String = "user",
     val name: String? = null,
     val email: String? = null,
@@ -317,13 +328,22 @@ data class CreateUserRequest(
     val password: String,
     val password_confirmation: String,
     val role: String,
+    /** Step-up de criar um admin: password do admin atual (a `password` é a da conta nova). */
+    val admin_password: String? = null,
+    /** Ou passkey confirmada (finalidade change_role). */
+    val passkey_token: String? = null,
 )
 
 @Serializable
 data class RoleAttributes(val role: String)
 
 @Serializable
-data class ChangeRoleRequest(val attributes: RoleAttributes)
+data class ChangeRoleRequest(
+    val attributes: RoleAttributes,
+    /** Promover a admin: password do admin atual ou passkey_token (change_role). */
+    val password: String? = null,
+    val passkey_token: String? = null,
+)
 
 @Serializable
 data class CapacityAttributes(val max_storage_amount: Int)

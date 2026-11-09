@@ -90,21 +90,22 @@ object Routes {
         "support?admin=$admin&status=${status.orEmpty()}&assigned=${assigned.orEmpty()}&priority=${priority.orEmpty()}"
     const val SUPPORT_DASHBOARD = "support_dashboard"
     const val SUPPORT_TICKET = "support_ticket/{id}?admin={admin}"
-    fun supportTicket(id: String, admin: Boolean = false) = "support_ticket/$id?admin=$admin"
+    fun supportTicket(id: String, admin: Boolean = false) = "support_ticket/${android.net.Uri.encode(id)}?admin=$admin"
     const val SUPPORT_NEW = "support_new"
     const val ADMIN = "admin/{pane}"
     fun admin(pane: String) = "admin/$pane"
     const val ADMIN_USER = "admin_user/{id}"
     fun adminUser(id: String) = "admin_user/$id"
     const val CALENDAR = "calendar?event={event}&date={date}"
-    fun calendar(event: String? = null, date: String? = null) = "calendar?event=${event.orEmpty()}&date=${date.orEmpty()}"
+    fun calendar(event: String? = null, date: String? = null) =
+        "calendar?event=${android.net.Uri.encode(event.orEmpty())}&date=${android.net.Uri.encode(date.orEmpty())}"
     const val LEGACY = "legacy?pane={pane}"
     const val NOTES = "notes?path={path}"
     const val PASS = "pass?pane={pane}"
     fun pass(pane: String = "vault") = "pass?pane=$pane"
     /** Caminho dentro das Notes: "all/<id>", "checklists", "<id>" (link de notificação)… */
     fun notes(path: String = "") = "notes?path=${android.net.Uri.encode(path)}"
-    fun legacy(pane: String = "overview") = "legacy?pane=$pane"
+    fun legacy(pane: String = "overview") = "legacy?pane=${android.net.Uri.encode(pane)}"
     // Páginas públicas do Legacy (App Links, sem sessão). "legacy_" ≠ "legacy?".
     const val LEGACY_OPEN = "legacy_open/{token}"
     const val LEGACY_INVITE = "legacy_invite/{id}"
@@ -113,7 +114,7 @@ object Routes {
     const val VERIFY_EMAIL = "verify_email?url={url}"
     fun verifyEmail(url: String) = "verify_email?url=${android.net.Uri.encode(url)}"
     const val TEAM_INVITATION = "team_invitation/{id}"
-    fun teamInvitation(id: String) = "team_invitation/$id"
+    fun teamInvitation(id: String) = "team_invitation/${android.net.Uri.encode(id)}"
 }
 
 enum class TopState { Loading, NeedsAuth, NeedsOtp, Authenticated, BootstrapFailed }
@@ -294,8 +295,9 @@ fun AppNavHost(
         if (needsAuth && (!authed || !inApp)) return@LaunchedEffect
         val target = AppLinkRouter.consume() ?: return@LaunchedEffect
         fun onTopOfHome(dest: String) = navController.navigate(dest) { popUpTo(Routes.HOME) }
-        when (target) {
-            is AppLinkRouter.Target.Nav -> runCatching { navController.navigate(target.uri) }
+        // Um link forjado não pode crashar a app (rota sem correspondência → IllegalArgumentException).
+        runCatching { when (target) {
+            is AppLinkRouter.Target.Nav -> navController.navigate(target.uri)
             is AppLinkRouter.Target.VerifyEmail -> navController.navigate(Routes.verifyEmail(target.url))
             is AppLinkRouter.Target.TeamInvite -> navController.navigate(Routes.teamInvitation(target.id))
             is AppLinkRouter.Target.Folder -> openFolderFromLink(target.kind, target.id)
@@ -305,7 +307,7 @@ fun AppNavHost(
             AppLinkRouter.Target.Billing -> onTopOfHome(Routes.settings("billing"))
             is AppLinkRouter.Target.Legacy -> onTopOfHome(Routes.legacy(target.pane))
             is AppLinkRouter.Target.Notes -> onTopOfHome(Routes.notes(target.path))
-        }
+        } }
     }
 
     // Convite de guardião aberto antes do login: Guarding assim que houver sessão.

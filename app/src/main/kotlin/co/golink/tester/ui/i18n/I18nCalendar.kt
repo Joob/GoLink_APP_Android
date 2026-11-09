@@ -104,6 +104,7 @@ object I18nCalendar {
         r("Apagar este evento?", "Delete this event?", "Supprimer cet événement ?", "¿Eliminar este evento?"),
         r("O evento é apagado para todos e os convidados recebem um aviso de cancelamento.", "The event is deleted for everyone and guests get a cancellation notice.", "L’événement est supprimé pour tout le monde et les invités reçoivent un avis d’annulation.", "El evento se elimina para todos y los invitados reciben un aviso de cancelación."),
         r("Evento apagado", "Event deleted", "Événement supprimé", "Evento eliminado"),
+        r("Há demasiados eventos neste período: alguns não são mostrados.", "Too many events in this period: some aren't shown.", "Trop d'événements sur cette période : certains ne sont pas affichés.", "Hay demasiados eventos en este periodo: algunos no se muestran."),
         r("Evento guardado", "Event saved", "Événement enregistré", "Evento guardado"),
         r("O evento foi alterado noutro lado — mostramos a versão mais recente.", "The event was changed elsewhere — showing the latest version.", "L’événement a été modifié ailleurs — voici la version la plus récente.", "El evento se cambió en otro sitio: mostramos la versión más reciente."),
         r("Sem link para convidados", "No link for guests", "Pas de lien pour les invités", "Sin enlace para invitados"),
@@ -160,6 +161,23 @@ object I18nCalendar {
 
         // Alertas e feriados
         r("Lembretes do calendário", "Calendar reminders", "Rappels de l’agenda", "Recordatorios del calendario"),
+        r("Lembrete do calendário", "Calendar reminder", "Rappel de l’agenda", "Recordatorio del calendario"),
+        r("Os lembretes podem chegar atrasados", "Reminders may arrive late", "Les rappels peuvent arriver en retard", "Los recordatorios pueden llegar con retraso"),
+        r("Permite alarmes exatos para os lembretes tocarem à hora certa.", "Allow exact alarms so reminders go off on time.", "Autorisez les alarmes exactes pour que les rappels sonnent à l’heure.", "Permite las alarmas exactas para que los recordatorios suenen a su hora."),
+        r("Agora não", "Not now", "Pas maintenant", "Ahora no"),
+        // Lembretes: título no ecrã de bloqueio, pausa sem chave, atrasados (2026-11-11)
+        r("Lembretes", "Reminders", "Rappels", "Recordatorios"),
+        r("Mostrar o título no ecrã de bloqueio", "Show the title on the lock screen", "Afficher le titre sur l’écran de verrouillage", "Mostrar el título en la pantalla de bloqueo"),
+        r("Desligado: só \"Lembrete do calendário\" e a hora.", "Off: only \"Calendar reminder\" and the time.", "Désactivé : seulement « Rappel de l’agenda » et l’heure.", "Desactivado: solo «Recordatorio del calendario» y la hora."),
+        r("Lembretes em pausa", "Reminders paused", "Rappels en pause", "Recordatorios en pausa"),
+        r("Sem a chave de encriptação neste aparelho, os lembretes só estão agendados até %s. Desbloqueia para os retomar.", "Without the encryption key on this device, reminders are only scheduled until %s. Unlock to resume them.", "Sans la clé de chiffrement sur cet appareil, les rappels ne sont programmés que jusqu’au %s. Déverrouillez pour les reprendre.", "Sin la clave de cifrado en este dispositivo, los recordatorios solo están programados hasta el %s. Desbloquea para reanudarlos."),
+        r("Sem a chave de encriptação neste aparelho, os lembretes deixaram de ser agendados. Desbloqueia para os retomar.", "Without the encryption key on this device, reminders are no longer scheduled. Unlock to resume them.", "Sans la clé de chiffrement sur cet appareil, les rappels ne sont plus programmés. Déverrouillez pour les reprendre.", "Sin la clave de cifrado en este dispositivo, los recordatorios ya no se programan. Desbloquea para reanudarlos."),
+        r("Estado dos lembretes", "Reminder status", "État des rappels", "Estado de los recordatorios"),
+        r("Lembretes do calendário em pausa", "Calendar reminders paused", "Rappels de l’agenda en pause", "Recordatorios del calendario en pausa"),
+        r("Abre o Calendário para voltares a receber os lembretes.", "Open the Calendar to receive reminders again.", "Ouvrez l’Agenda pour recevoir à nouveau les rappels.", "Abre el Calendario para volver a recibir los recordatorios."),
+        r("atrasado", "late", "en retard", "con retraso"),
+        r("OK", "OK", "OK", "OK"),
+        r("nome@exemplo.com", "name@example.com", "nom@exemple.com", "nombre@ejemplo.com"),
         r("a começar agora (%s)", "starting now (%s)", "commence maintenant (%s)", "empieza ahora (%s)"),
         r("começa às %s", "starts at %s", "commence à %s", "empieza a las %s"),
         r("Amanhã", "Tomorrow", "Demain", "Mañana"),
@@ -168,6 +186,7 @@ object I18nCalendar {
         r("País dos feriados", "Holidays country", "Pays des jours fériés", "País de los festivos"),
         r("Procurar país…", "Search country…", "Rechercher un pays…", "Buscar país…"),
         r("Automático (país da conta)", "Automatic (account country)", "Automatique (pays du compte)", "Automático (país de la cuenta)"),
+        r("Só o organizador muda a repetição e os alertas", "Only the organizer can change the repeat and alerts", "Seul l'organisateur peut modifier la répétition et les alertes", "Solo el organizador puede cambiar la repetición y los avisos"),
     )
 
     val en: Map<String, String> = rows.associate { it[0] to it[1] }

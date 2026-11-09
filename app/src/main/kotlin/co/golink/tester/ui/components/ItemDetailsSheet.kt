@@ -45,9 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -355,7 +353,6 @@ private fun DetailsActionTile(
 
 @Composable
 private fun ShareCard(item: BrowseItem, share: ShareInfo, onEdit: (() -> Unit)?) {
-    val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
     // Relógio próprio para o "expira em" não ficar parado com a folha aberta.
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -404,7 +401,7 @@ private fun ShareCard(item: BrowseItem, share: ShareInfo, onEdit: (() -> Unit)?)
                             .padding(start = 8.dp)
                             .size(18.dp)
                             .clickable {
-                                clipboard.setText(AnnotatedString(share.link!!))
+                                co.golink.tester.ui.common.copyLinkToClipboard(context, "share-link", share.link!!)
                                 android.widget.Toast.makeText(context, "Link copiado".tr(), android.widget.Toast.LENGTH_SHORT).show()
                             },
                     )

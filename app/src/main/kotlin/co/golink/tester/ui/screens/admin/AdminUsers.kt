@@ -49,6 +49,8 @@ import co.golink.tester.ui.screens.settings.SettingsPrimaryButton
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -81,6 +83,8 @@ class AdminUsersViewModel @Inject constructor(
     private val _state = MutableStateFlow(UiState())
     val state = _state.asStateFlow()
     private var searchJob: Job? = null
+    /** Pedido de lista em curso: um load novo cancela-o (troca de separador/pesquisa). */
+    private var loadJob: Job? = null
 
     init { load() }
 
@@ -101,34 +105,47 @@ class AdminUsersViewModel @Inject constructor(
     }
 
     fun load() {
-        _state.update { it.copy(isLoading = true, error = null, page = 1) }
-        viewModelScope.launch { fetch(1) }
+        loadJob?.cancel()
+        _state.update { it.copy(isLoading = true, isLoadingMore = false, error = null, page = 1) }
+        loadJob = viewModelScope.launch { fetch(1) }
     }
 
     fun loadMore() {
         val s = _state.value
-        if (s.isLoadingMore || !s.hasMore) return
+        if (s.isLoadingMore || !s.hasMore || loadJob?.isActive == true) return
         _state.update { it.copy(isLoadingMore = true) }
-        viewModelScope.launch { fetch(s.page + 1) }
+        loadJob = viewModelScope.launch { fetch(s.page + 1) }
     }
 
     private suspend fun fetch(page: Int) {
         val s = _state.value
+        // Resultado de um filtro que já não é o atual (ou pedido cancelado): ignora.
+        val filterChanged = { _state.value.tab != s.tab || _state.value.search != s.search }
         val failed: (Throwable) -> Unit = { t ->
-            _state.update { it.copy(isLoading = false, isLoadingMore = false, error = if (page == 1) "Não foi possível carregar (${t.message})" else it.error) }
+            _state.update { it.copy(isLoading = false, isLoadingMore = false, error = if (page == 1) "Não foi possível carregar (%s)".tr().format(t.message.orEmpty()) else it.error) }
         }
         if (s.tab == UsersTab.Deleted) {
-            repository.deletedUsers(page, s.search)
+            val result = repository.deletedUsers(page, s.search)
+            if (!currentCoroutineContext().isActive || filterChanged()) return
+            result
                 .onSuccess { (rows, more) ->
-                    _state.update { it.copy(deleted = if (page == 1) rows else it.deleted + rows, hasMore = more, page = page, isLoading = false, isLoadingMore = false) }
+                    _state.update {
+                        it.copy(
+                            deleted = if (page == 1) rows else (it.deleted + rows).distinctBy { r -> r.id.toString() },
+                            hasMore = more, page = page, isLoading = false, isLoadingMore = false,
+                        )
+                    }
                 }
                 .onFailure(failed)
         } else {
-            repository.users(page, s.tab.status, s.search)
+            val result = repository.users(page, s.tab.status, s.search)
+            if (!currentCoroutineContext().isActive || filterChanged()) return
+            result
                 .onSuccess { p ->
                     _state.update {
                         it.copy(
-                            users = if (page == 1) p.items else it.users + p.items,
+                            // Uma conta nova entre páginas desloca o offset: sem dedupe o LazyColumn rebenta com chaves repetidas.
+                            users = if (page == 1) p.items else (it.users + p.items).distinctBy { u -> u.id },
                             counts = p.counts ?: it.counts,
                             hasMore = p.hasMore, page = page, isLoading = false, isLoadingMore = false,
                         )
@@ -253,7 +270,7 @@ private fun UserRowItem(u: AdminUserItem, onClick: () -> Unit) {
                 if (u.deletionScheduledFor != null) AdminBadge("Eliminação agendada".tr(), AdminColors.Warning)
             }
             u.lastLoginAt?.let {
-                Text("${"Último acesso".tr()}: $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                Text("${"Último acesso".tr()}: ${formatAdminDate(it) ?: it}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
             }
         },
     )
@@ -270,6 +287,7 @@ private fun DeletedUserRowItem(row: DeletedUserRow, onOpen: (() -> Unit)?, onCan
     val by = when (row.requested_by) {
         "admin" -> "Pedido do admin".tr()
         "support" -> "Via suporte".tr()
+        "inactivity" -> "Por inatividade".tr()
         else -> "Pedido do utilizador".tr()
     }
     AdminListRow(
@@ -314,7 +332,13 @@ private fun CreateUserSheet(
     var password by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var role by remember { mutableStateOf("user") }
-    val valid = name.isNotBlank() && email.contains('@') && password.length >= 6 && password == confirm
+    // Criar um admin exige step-up: password do admin atual ou passkey (change_role).
+    var adminPassword by remember { mutableStateOf("") }
+    var passkeyToken by remember { mutableStateOf<String?>(null) }
+    val stepUpOk = role != "admin" || passkeyToken != null || adminPassword.isNotEmpty()
+    val valid = name.isNotBlank() && email.contains('@') && password.length >= 6 && password == confirm && stepUpOk
+    // Erro do servidor: a passkey é de uso único/expira, pede de novo.
+    LaunchedEffect(error) { if (error != null) { passkeyToken = null; adminPassword = "" } }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(
@@ -331,10 +355,34 @@ private fun CreateUserSheet(
             )
             Text("Função".tr(), style = MaterialTheme.typography.labelMedium)
             AdminSegmented(listOf("user" to "Utilizador".tr(), "admin" to "Admin"), role, { role = it })
+            if (role == "admin") {
+                Text(
+                    "Os administradores têm acesso total à plataforma. Confirma com a tua password.".tr(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                co.golink.tester.ui.screens.settings.PasskeyConfirmRow(
+                    purpose = "change_role",
+                    confirmed = passkeyToken != null,
+                    onToken = { passkeyToken = it },
+                )
+                if (passkeyToken == null) {
+                    SettingsField("A tua password".tr(), adminPassword, { adminPassword = it }, isPassword = true)
+                }
+            }
             error?.let { SettingsNotice(it, MaterialTheme.colorScheme.error) }
             SettingsPrimaryButton(
                 "Criar".tr(),
-                onClick = { onSubmit(CreateUserRequest(name.trim(), email, password, confirm, role)) },
+                onClick = {
+                    val admin = role == "admin"
+                    onSubmit(
+                        CreateUserRequest(
+                            name.trim(), email, password, confirm, role,
+                            admin_password = adminPassword.takeIf { admin && passkeyToken == null && it.isNotEmpty() },
+                            passkey_token = passkeyToken.takeIf { admin },
+                        ),
+                    )
+                },
                 enabled = valid,
                 loading = isSubmitting,
             )

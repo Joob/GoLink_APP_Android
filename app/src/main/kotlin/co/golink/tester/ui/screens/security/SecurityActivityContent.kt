@@ -171,8 +171,10 @@ fun SecurityActivityContent(
         }
     }
     val days = remember(visible) { visible.groupBy { parseIsoLocal(it.createdAt)?.toLocalDate() } }
-    val weekAgo = LocalDate.now().minusDays(7)
-    val recentAlerts = items.count { it.event in ALERTS && (parseIsoLocal(it.createdAt)?.toLocalDate()?.isAfter(weekAgo) == true) }
+    val recentAlerts = remember(items) {
+        val weekAgo = LocalDate.now().minusDays(7)
+        items.count { it.event in ALERTS && (parseIsoLocal(it.createdAt)?.toLocalDate()?.isAfter(weekAgo) == true) }
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),

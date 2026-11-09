@@ -42,7 +42,8 @@ class E2EShareService @Inject constructor(
     // servidor (selada à pública do dono): só com a cache, abrir a partilha noutro
     // dispositivo (ou na web) cunhava uma chave nova e matava em silêncio os links
     // já distribuídos. (Espelha o localStorage 'share_key_<token>' da web.)
-    private val shareKeyPrefs = context.getSharedPreferences("e2e_share_keys", Context.MODE_PRIVATE)
+    // Fora do backup/transferência (data_extraction_rules) e apagada no logout (E2EKeyManager.lock).
+    private val shareKeyPrefs = context.getSharedPreferences(SHARE_KEYS_PREFS, Context.MODE_PRIVATE)
 
     private fun cachedShareKey(token: String): ByteArray? =
         shareKeyPrefs.getString(token, null)?.let { runCatching { Envelope.unb64(it) }.getOrNull() }
@@ -296,7 +297,9 @@ class E2EShareService @Inject constructor(
                     filesApi.shareFileKey(fileId, ShareKeyBody(recipientId, sealed))
                     ok++
                 }
-            } catch (e: Throwable) {
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
                 // sem acesso p/ este ficheiro; segue
             }
             onProgress(i + 1, ids.size)
@@ -311,6 +314,8 @@ class E2EShareService @Inject constructor(
     }
 
     companion object {
+        const val SHARE_KEYS_PREFS = "e2e_share_keys"
+
         fun get(context: Context): E2EShareService =
             EntryPointAccessors.fromApplication(
                 context.applicationContext,

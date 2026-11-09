@@ -93,7 +93,7 @@ class SupportTeamViewModel @Inject constructor(
         viewModelScope.launch {
             repository.supportTeam()
                 .onSuccess { r -> _state.update { it.copy(agents = r.data, categories = r.categories.ifEmpty { it.categories }, isLoading = false) } }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (${t.message})") } }
+                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (%s)".tr().format(t.message.orEmpty())) } }
         }
     }
 

@@ -54,8 +54,29 @@ object PassAutofillParser {
         return null
     }
 
+    /**
+     * Browsers em que o `webDomain` é de confiança (setWebDomain é público: qualquer app o pode
+     * declarar). Mesma lista que os compatibility-package de pass_autofill_service.xml + browsers
+     * com autofill nativo. Fora desta lista o pedido é tratado como app.
+     */
+    val TRUSTED_BROWSERS = setOf(
+        "com.android.chrome", "com.chrome.beta", "com.chrome.dev", "com.chrome.canary", "org.chromium.chrome",
+        "com.brave.browser", "com.brave.browser_beta", "com.brave.browser_nightly",
+        "com.microsoft.emmx", "com.microsoft.emmx.beta", "com.microsoft.emmx.dev", "com.microsoft.emmx.canary",
+        "com.opera.browser", "com.opera.browser.beta", "com.opera.mini.native", "com.opera.gx",
+        "com.sec.android.app.sbrowser", "com.sec.android.app.sbrowser.beta",
+        "com.vivaldi.browser", "com.vivaldi.browser.snapshot",
+        "com.duckduckgo.mobile.android", "com.kiwibrowser.browser", "com.ecosia.android",
+        "org.mozilla.firefox", "org.mozilla.firefox_beta", "org.mozilla.fenix", "org.mozilla.focus", "org.mozilla.klar",
+        "org.mozilla.fennec_fdroid", "org.torproject.torbrowser", "us.spotco.fennec_dos", "io.github.forkmaintainers.iceraven",
+        "org.cromite.cromite", "org.bromite.bromite",
+    )
+
+    fun isTrustedBrowser(pkg: String?): Boolean = pkg != null && pkg in TRUSTED_BROWSERS
+
     fun parse(structure: AssistStructure, withValues: Boolean = false): PassAutofillTarget {
         val pkg = structure.activityComponent?.packageName.orEmpty()
+        val trustDomain = isTrustedBrowser(pkg)
         var domain: String? = null
         val users = mutableListOf<AutofillId>()
         val passwords = mutableListOf<AutofillId>()
@@ -65,7 +86,7 @@ object PassAutofillParser {
         var lastText: AssistStructure.ViewNode? = null
 
         fun walk(node: AssistStructure.ViewNode) {
-            node.webDomain?.takeIf { it.isNotBlank() }?.let { if (domain == null) domain = it }
+            if (trustDomain) node.webDomain?.takeIf { it.isNotBlank() }?.let { if (domain == null) domain = it }
             val id = node.autofillId
             if (id != null && node.autofillType == View.AUTOFILL_TYPE_TEXT && node.visibility == View.VISIBLE) {
                 val html = node.htmlInfo

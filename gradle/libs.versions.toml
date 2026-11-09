@@ -27,6 +27,13 @@ splashscreen = "1.0.1"
 work = "2.10.0"
 credentials = "1.3.0"
 hiltWork = "1.2.0"
+autofill = "1.1.0"
+# E2E: libsodium nativo (Lazysodium + JNA). Acompanhar as versões do libsodium embutido.
+lazysodium = "5.1.0"
+jna = "5.14.0"
+# Notes nativas: motor QuickJS (historial de CVEs) — acompanhar as versões.
+quickjsWrapper = "3.2.0"
+junit = "4.13.2"
 
 [libraries]
 androidx-credentials = { group = "androidx.credentials", name = "credentials", version.ref = "credentials" }
@@ -83,6 +90,11 @@ androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscree
 androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
 androidx-hilt-work = { group = "androidx.hilt", name = "hilt-work", version.ref = "hiltWork" }
 androidx-hilt-compiler = { group = "androidx.hilt", name = "hilt-compiler", version.ref = "hiltWork" }
+androidx-autofill = { group = "androidx.autofill", name = "autofill", version.ref = "autofill" }
+lazysodium-android = { group = "com.goterl", name = "lazysodium-android", version.ref = "lazysodium" }
+jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
+quickjs-wrapper-android = { group = "wang.harlon.quickjs", name = "wrapper-android", version.ref = "quickjsWrapper" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

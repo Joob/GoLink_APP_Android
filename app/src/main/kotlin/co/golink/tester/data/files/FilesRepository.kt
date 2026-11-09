@@ -14,6 +14,7 @@ import co.golink.tester.data.encryption.E2EShareService
 import co.golink.tester.data.encryption.EncryptedFileCodec
 import co.golink.tester.network.FilesApi
 import co.golink.tester.network.UserEncryptionApi
+import co.golink.tester.ui.i18n.tr
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -33,6 +34,7 @@ class FilesRepository @Inject constructor(
     // E2E Fase 2: cifra o nome no espaço privado (encryptName) quando há chave.
     // A resposta traz o placeholder → repomos o nome em claro que definimos.
     suspend fun createFolder(name: String, parentId: String?, encryptName: Boolean = true, color: String? = null, emoji: String? = null): Result<BrowseItem.Folder> = runCatching {
+        ItemNames.problem(name)?.let { throw IllegalArgumentException(it) }
         val enc = if (encryptName && keys.canSealNames) keys.sealName(name) else null
         val response = api.createFolder(
             CreateFolderRequest(
@@ -40,10 +42,10 @@ class FilesRepository @Inject constructor(
                 parent_id = parentId,
                 name_encrypted = enc,
                 color = color,
-                emoji = emoji,
+                emoji = emoji?.takeIf { it.isNotEmpty() }?.let { emojiPayload(it) },
             )
         )
-        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        checkNameResponse(response)
         val entry = response.body()?.data ?: error("Resposta vazia")
         val folder = entry.toItem() as BrowseItem.Folder
         // Pasta criada dentro de uma pasta já partilhada: o visitante do link só
@@ -59,6 +61,7 @@ class FilesRepository @Inject constructor(
         appearance: co.golink.tester.domain.files.FolderAppearance? = null,
     ): Result<BrowseItem> = runCatching {
         val type = if (item is BrowseItem.Folder) "folder" else "file"
+        ItemNames.problem(newName)?.let { throw IllegalArgumentException(it) }
         val enc = if (encryptName && keys.canSealNames) keys.sealName(newName) else null
         val response = api.rename(
             item.id,
@@ -70,7 +73,7 @@ class FilesRepository @Inject constructor(
                 emoji = appearance?.let { a -> a.emoji?.let { emojiPayload(it) } ?: kotlinx.serialization.json.JsonNull },
             )
         )
-        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        checkNameResponse(response)
         val entry = response.body()?.data ?: error("Resposta vazia")
         val result = entry.toItem()
         // Renomear dentro de uma pasta partilhada: o nome antigo continuava no link.
@@ -79,6 +82,16 @@ class FilesRepository @Inject constructor(
             is BrowseItem.Folder -> result.copy(name = newName)
             is BrowseItem.File -> result.copy(name = newName)
         }
+    }
+
+    /** Criar/renomear: um 422 mostra a mensagem do campo (nome inválido), não "HTTP 422". */
+    private fun checkNameResponse(response: retrofit2.Response<*>) {
+        if (response.isSuccessful) return
+        if (response.code() == 422) {
+            val raw = runCatching { response.errorBody()?.string().orEmpty() }.getOrDefault("")
+            ItemNames.validationMessage(raw)?.let { throw IllegalArgumentException(it) }
+        }
+        error("HTTP ${response.code()}")
     }
 
     // Mesmo formato do seletor da web (public/assets/emojis.json): {codes, char, name}.
@@ -101,7 +114,7 @@ class FilesRepository @Inject constructor(
 
         if (file.encrypted) {
             val wrapped = userEncryptionApi.fileKey(file.id).body()?.wrapped_data_key
-                ?: error("Sem chave para este ficheiro")
+                ?: error("Sem chave para este ficheiro".tr())
             val dataKey = keys.openFileDataKey(wrapped)
             bytes = EncryptedFileCodec.encrypt(bytes, dataKey)
         }
@@ -120,20 +133,20 @@ class FilesRepository @Inject constructor(
                 else "0".toRequestBody("text/plain".toMediaTypeOrNull()),
             )
         } catch (e: java.io.IOException) {
-            throw IllegalStateException("Falha de ligação. As alterações não foram gravadas, tenta novamente.", e)
+            throw IllegalStateException("Falha de ligação. As alterações não foram gravadas, tenta novamente.".tr(), e)
         }
         val errBody = if (response.isSuccessful) null else response.errorBody()?.string().orEmpty()
         check(response.isSuccessful) {
             val code = response.code()
             when {
                 // Antivírus recusou o conteúdo: nada foi gravado.
-                code == 422 && errBody!!.contains("virus_detected") -> "Vírus detetado: o ficheiro foi recusado e não foi guardado."
+                code == 422 && errBody!!.contains("virus_detected") -> "Vírus detetado: o ficheiro foi recusado e não foi guardado.".tr()
                 else -> when (code) {
-                507 -> "Sem espaço de armazenamento disponível"
-                403 -> "Sem permissão para editar este ficheiro"
-                413 -> "Ficheiro acima do limite de upload"
-                422 -> "Este tipo de ficheiro não pode ser editado"
-                404 -> "O ficheiro já não existe"
+                507 -> "Sem espaço de armazenamento disponível".tr()
+                403 -> "Sem permissão para editar este ficheiro".tr()
+                413 -> "Ficheiro acima do limite de upload".tr()
+                422 -> "Este tipo de ficheiro não pode ser editado".tr()
+                404 -> "O ficheiro já não existe".tr()
                 else -> "HTTP $code"
                 }
             }

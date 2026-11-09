@@ -184,6 +184,7 @@ class CalendarViewModel @Inject constructor(
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private var loadJob: Job? = null
+    private var truncatedWarned = false
     private var loadedRange: Triple<CalView, LocalDate, LocalDate>? = null
 
     init {
@@ -269,9 +270,15 @@ class CalendarViewModel @Inject constructor(
             if (repo.calendars.value.isEmpty()) loadCalendars()
             repo.fetchEvents(CalendarDates.dayStart(fetchFrom, zone), CalendarDates.dayStart(to, zone))
                 .onSuccess { list ->
+                    // Lista cortada pelo servidor: avisa uma vez (o poll de 5 s não repete).
+                    val warn = repo.lastEventsTruncated && !truncatedWarned
+                    if (warn) truncatedWarned = true
                     _state.update {
                         val events = if (append) (it.events + list).distinctBy { e -> e.id } else list
-                        it.copy(events = events, loading = false, loaded = true, error = null)
+                        it.copy(
+                            events = events, loading = false, loaded = true, error = null,
+                            toast = if (warn) "Há demasiados eventos neste período: alguns não são mostrados.".tr() else it.toast,
+                        )
                     }
                 }
                 .onFailure { e ->
@@ -356,10 +363,8 @@ class CalendarViewModel @Inject constructor(
     fun rsvp(instance: CalInstance, status: String) = viewModelScope.launch {
         repo.rsvp(instance.event, status)
             .onSuccess { saved -> _state.update { it.copy(open = instance.copy(event = saved)) } }
-            .onFailure { e ->
-                val msg = if (e is EventConflictException) "O evento foi alterado noutro lado — mostramos a versão mais recente." else "Não foi possível concluir. Tenta de novo."
-                _state.update { it.copy(toast = msg.tr()) }
-            }
+            // O RSVP não tem versão (o servidor nunca devolve 409 aqui): só o erro genérico.
+            .onFailure { _state.update { it.copy(toast = "Não foi possível concluir. Tenta de novo.".tr()) } }
     }
 
     fun newEvent(start: java.time.Instant? = null) = _state.update { it.copy(editor = EditorRequest(null, start)) }

@@ -1,0 +1,95 @@
+{
+    "_doc": "Casos partilhados da Recurrence (PHP = JS = Kotlin). Instantes em UTC; repeat_until é uma data no fuso do evento. Verificar com: node ops/calendar/fixtures.mjs",
+    "cases": [
+        {
+            "name": "diário mantém a hora local na mudança de hora",
+            "start": "2026-10-23T08:00:00Z", "end": "2026-10-23T09:00:00Z", "timezone": "Europe/Lisbon", "repeat": "daily",
+            "from": "2026-10-24T00:00:00Z", "to": "2026-10-27T00:00:00Z",
+            "expected": ["2026-10-24T08:00:00Z", "2026-10-25T09:00:00Z", "2026-10-26T09:00:00Z"]
+        },
+        {
+            "name": "mensal no dia 31 fica no último dia; until inclusivo",
+            "start": "2026-01-31T10:00:00Z", "end": "2026-01-31T11:00:00Z", "timezone": "Europe/Lisbon", "repeat": "monthly", "until": "2026-03-31",
+            "from": "2026-01-01T00:00:00Z", "to": "2026-06-01T00:00:00Z",
+            "expected": ["2026-01-31T10:00:00Z", "2026-02-28T10:00:00Z", "2026-03-31T09:00:00Z"]
+        },
+        {
+            "name": "mensal em UTC",
+            "start": "2026-01-31T10:00:00Z", "end": "2026-01-31T11:00:00Z", "timezone": "UTC", "repeat": "monthly",
+            "from": "2026-01-01T00:00:00Z", "to": "2026-05-01T00:00:00Z",
+            "expected": ["2026-01-31T10:00:00Z", "2026-02-28T10:00:00Z", "2026-03-31T10:00:00Z", "2026-04-30T10:00:00Z"]
+        },
+        {
+            "name": "anual a 29 de fevereiro passa a 28",
+            "start": "2028-02-29T10:00:00Z", "end": "2028-02-29T11:00:00Z", "timezone": "UTC", "repeat": "yearly",
+            "from": "2029-01-01T00:00:00Z", "to": "2029-12-31T00:00:00Z",
+            "expected": ["2029-02-28T10:00:00Z"]
+        },
+        {
+            "name": "repeat_until inclui o próprio dia até às 23:59",
+            "start": "2026-03-02T22:00:00Z", "end": "2026-03-02T23:00:00Z", "timezone": "UTC", "repeat": "weekly", "until": "2026-03-16",
+            "from": "2026-03-01T00:00:00Z", "to": "2026-04-01T00:00:00Z",
+            "expected": ["2026-03-02T22:00:00Z", "2026-03-09T22:00:00Z", "2026-03-16T22:00:00Z"]
+        },
+        {
+            "name": "ocorrência em curso no início do intervalo conta",
+            "start": "2026-05-01T23:00:00Z", "end": "2026-05-02T01:00:00Z", "timezone": "UTC", "repeat": "daily",
+            "from": "2026-05-10T00:00:00Z", "to": "2026-05-11T00:00:00Z",
+            "expected": ["2026-05-09T23:00:00Z", "2026-05-10T23:00:00Z"]
+        },
+        {
+            "name": "sem repetição fora do intervalo não aparece",
+            "start": "2026-05-01T10:00:00Z", "end": "2026-05-01T11:00:00Z", "timezone": "UTC", "repeat": "none",
+            "from": "2026-05-02T00:00:00Z", "to": "2026-05-03T00:00:00Z",
+            "expected": []
+        },
+        {
+            "name": "semanal nos dias escolhidos",
+            "start": "2026-10-28T09:00:00Z", "end": "2026-10-28T10:00:00Z", "timezone": "Europe/Lisbon", "repeat": "weekly", "days": [5, 1, 3],
+            "from": "2026-10-26T00:00:00Z", "to": "2026-11-07T00:00:00Z",
+            "expected": ["2026-10-28T09:00:00Z", "2026-10-30T09:00:00Z", "2026-11-02T09:00:00Z", "2026-11-04T09:00:00Z", "2026-11-06T09:00:00Z"]
+        },
+        {
+            "name": "início fora dos dias continua a ser o primeiro",
+            "start": "2026-10-27T09:00:00Z", "end": "2026-10-27T10:00:00Z", "timezone": "Europe/Lisbon", "repeat": "weekly", "days": [1, 5],
+            "from": "2026-10-26T00:00:00Z", "to": "2026-11-04T00:00:00Z",
+            "expected": ["2026-10-27T09:00:00Z", "2026-10-30T09:00:00Z", "2026-11-02T09:00:00Z"]
+        },
+        {
+            "name": "intervalo e número de vezes",
+            "start": "2026-10-28T09:00:00Z", "end": "2026-10-28T10:00:00Z", "timezone": "Europe/Lisbon", "repeat": "daily", "interval": 2, "count": 3,
+            "from": "2026-10-01T00:00:00Z", "to": "2026-12-01T00:00:00Z",
+            "expected": ["2026-10-28T09:00:00Z", "2026-10-30T09:00:00Z", "2026-11-01T09:00:00Z"]
+        },
+        {
+            "name": "semana sim semana não salta para a frente",
+            "start": "2026-10-27T09:00:00Z", "end": "2026-10-27T10:00:00Z", "timezone": "Europe/Lisbon", "repeat": "weekly", "interval": 2, "days": [2, 4],
+            "from": "2026-11-09T00:00:00Z", "to": "2026-11-20T00:00:00Z",
+            "expected": ["2026-11-10T09:00:00Z", "2026-11-12T09:00:00Z"]
+        },
+        {
+            "name": "salto de meses com intervalo e dias (hora de verão em 28/03/2027)",
+            "start": "2026-10-27T09:00:00Z", "end": "2026-10-27T10:00:00Z", "timezone": "Europe/Lisbon", "repeat": "weekly", "interval": 2, "days": [2, 4],
+            "from": "2027-03-01T00:00:00Z", "to": "2027-04-10T00:00:00Z",
+            "expected": ["2027-03-02T09:00:00Z", "2027-03-04T09:00:00Z", "2027-03-16T09:00:00Z", "2027-03-18T09:00:00Z", "2027-03-30T08:00:00Z", "2027-04-01T08:00:00Z"]
+        },
+        {
+            "name": "salto de meses com intervalo, dias e contagem",
+            "start": "2026-10-27T09:00:00Z", "end": "2026-10-27T10:00:00Z", "timezone": "Europe/Lisbon", "repeat": "weekly", "interval": 2, "days": [2, 4], "count": 20,
+            "from": "2027-02-10T00:00:00Z", "to": "2027-06-01T00:00:00Z",
+            "expected": ["2027-02-16T09:00:00Z", "2027-02-18T09:00:00Z", "2027-03-02T09:00:00Z", "2027-03-04T09:00:00Z"]
+        },
+        {
+            "name": "dias da semana contam no fuso do evento (Tóquio, segunda 08:00 = domingo 23:00 UTC)",
+            "start": "2026-11-01T23:00:00Z", "end": "2026-11-02T00:00:00Z", "timezone": "Asia/Tokyo", "repeat": "weekly", "days": [1, 3],
+            "from": "2026-11-01T00:00:00Z", "to": "2026-11-12T00:00:00Z",
+            "expected": ["2026-11-01T23:00:00Z", "2026-11-03T23:00:00Z", "2026-11-08T23:00:00Z", "2026-11-10T23:00:00Z"]
+        },
+        {
+            "name": "dias da semana contam no fuso do evento (Nova Iorque, sexta 21:00 = sábado 01:00 UTC)",
+            "start": "2026-11-07T02:00:00Z", "end": "2026-11-07T03:00:00Z", "timezone": "America/New_York", "repeat": "weekly", "days": [2, 5],
+            "from": "2026-11-06T00:00:00Z", "to": "2026-11-19T00:00:00Z",
+            "expected": ["2026-11-07T02:00:00Z", "2026-11-11T02:00:00Z", "2026-11-14T02:00:00Z", "2026-11-18T02:00:00Z"]
+        }
+    ]
+}

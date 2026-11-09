@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import co.golink.tester.ui.i18n.tr
 import dagger.hilt.android.AndroidEntryPoint
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -41,6 +42,7 @@ class ZipDownloadService : Service() {
     private val jobs = ConcurrentHashMap<Int, Job>()
     private val lastNotif = ConcurrentHashMap<Int, Notification>()
     private var foregroundId = 0
+    @Volatile private var timedOut = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -65,14 +67,26 @@ class ZipDownloadService : Service() {
 
         // Tem de chamar startForeground em <5s do arranque, ANTES de qualquer rede.
         val first = buildProgress(jobId, name, 0, 0)
-        synchronized(this) {
+        val started = synchronized(this) {
             lastNotif[jobId] = first
             if (foregroundId == 0) {
-                startForegroundCompat(jobId, first)
-                foregroundId = jobId
+                startForegroundCompat(jobId, first).also { ok -> if (ok) foregroundId = jobId }
             } else {
                 notifManager.notify(jobId, first)
+                true
             }
+        }
+        // O sistema recusou o foreground (Android 15+: tempo de dataSync esgotado,
+        // ou arranque em background): falha visível em vez de matar a app.
+        if (!started) {
+            lastNotif.remove(jobId)
+            if (kind != null) {
+                tracker.start(jobId, name, isZip = kind != KIND_FILE, encrypted = intent?.getBooleanExtra(EXTRA_ENCRYPTED, false) == true)
+                tracker.finish(jobId, DownloadPhase.Failed, FGS_REFUSED_MESSAGE.tr())
+            }
+            postFinal(FGS_REFUSED_MESSAGE.tr(), success = false, title = "Falha na transferência".tr())
+            if (jobs.isEmpty()) stopSelf()
+            return START_NOT_STICKY
         }
 
         if (kind == null) {
@@ -124,24 +138,26 @@ class ZipDownloadService : Service() {
                 when (outcome) {
                     is FileDownloader.Outcome.Completed -> if (outcome.failed.isEmpty()) {
                         tracker.finish(jobId, DownloadPhase.Done, outcome.name)
-                        postFinal(outcome.name, success = true, title = "Transferência concluída")
+                        postFinal(outcome.name, success = true, title = "Transferência concluída".tr())
                     } else {
-                        val detail = "${outcome.name} — ${outcome.failed.size} ficheiro(s) não incluídos: " +
-                            outcome.failed.take(5).joinToString(", ")
+                        val detail = "${outcome.name} — " + "%d ficheiro(s) não incluídos: %s".tr()
+                            .format(outcome.failed.size, outcome.failed.take(5).joinToString(", "))
                         // O zip existe (Done), mas o painel mostra o que ficou de fora.
                         tracker.finish(jobId, DownloadPhase.Done, detail)
-                        postFinal(detail, success = false, title = "Transferência incompleta")
+                        postFinal(detail, success = false, title = "Transferência incompleta".tr())
                     }
                     is FileDownloader.Outcome.Failed -> {
                         tracker.finish(jobId, DownloadPhase.Failed, outcome.message)
-                        postFinal("$name — ${outcome.message}", success = false, title = "Falha na transferência")
+                        postFinal("$name — ${outcome.message}", success = false, title = "Falha na transferência".tr())
                     }
-                    // O DownloadManager mostra a sua própria notificação.
-                    FileDownloader.Outcome.ServerZipEnqueued -> tracker.dismiss(jobId)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 tracker.finish(jobId, DownloadPhase.Cancelled)
-                postFinal(name, success = false, title = "Transferência cancelada")
+                postFinal(
+                    name, success = false,
+                    title = if (timedOut) co.golink.tester.ui.i18n.I18n.t("Transferência interrompida pelo sistema. Tenta de novo.")
+                    else "Transferência cancelada".tr(),
+                )
             } finally {
                 finishJob(jobId)
             }
@@ -169,11 +185,22 @@ class ZipDownloadService : Service() {
         } else {
             if (foregroundId == jobId) {
                 val next = jobs.keys.first()
-                startForegroundCompat(next, lastNotif[next] ?: buildProgress(next, "", 0, 0))
-                foregroundId = next
+                if (startForegroundCompat(next, lastNotif[next] ?: buildProgress(next, "", 0, 0))) foregroundId = next
             }
             notifManager.cancel(jobId)
         }
+    }
+
+    // Android 15+: o tipo dataSync tem limite de 6 h por 24 h. Se o serviço não parar
+    // logo, o sistema lança ForegroundServiceDidNotStopInTimeException (crash).
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        timedOut = true
+        jobs.values.forEach { it.cancel() }
+        synchronized(this) {
+            foregroundId = 0
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        }
+        stopSelf()
     }
 
     override fun onDestroy() {
@@ -184,8 +211,8 @@ class ZipDownloadService : Service() {
     private fun buildProgress(jobId: Int, name: String, loaded: Long, total: Long): Notification {
         val percent = if (total > 0) ((loaded * 100) / total).toInt().coerceIn(0, 99) else -1
         val text = when {
-            percent >= 0 -> "$percent% · ${formatBytes(loaded)} / ${formatBytes(total)}"
-            loaded > 0 -> formatBytes(loaded)
+            percent >= 0 -> "$percent% · ${co.golink.tester.ui.common.formatBytes(loaded)} / ${co.golink.tester.ui.common.formatBytes(total)}"
+            loaded > 0 -> co.golink.tester.ui.common.formatBytes(loaded)
             else -> ""
         }
         val cancel = PendingIntent.getService(
@@ -194,15 +221,23 @@ class ZipDownloadService : Service() {
             Intent(this, ZipDownloadService::class.java).setAction(ACTION_CANCEL).putExtra(EXTRA_JOB_ID, jobId),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        // Ecrã de bloqueio: sem o nome (decifrado) do ficheiro.
+        val publicVersion = NotificationCompat.Builder(this, FileDownloader.CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle("A transferir…".tr())
+            .apply { if (percent >= 0) setProgress(100, percent, false) else setProgress(0, 0, true) }
+            .build()
         return NotificationCompat.Builder(this, FileDownloader.CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle(name.ifBlank { "A transferir…" })
-            .setContentText(text.ifBlank { "A transferir…" })
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicVersion)
+            .setContentTitle(name.ifBlank { "A transferir…".tr() })
+            .setContentText(text.ifBlank { "A transferir…".tr() })
             .setSubText(if (percent >= 0) "$percent%" else null)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancelar", cancel)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancelar".tr(), cancel)
             .apply {
                 if (percent >= 0) setProgress(100, percent, false) else setProgress(0, 0, true)
             }
@@ -212,8 +247,15 @@ class ZipDownloadService : Service() {
     private fun postFinal(text: String, success: Boolean, title: String) {
         val icon = if (success) android.R.drawable.stat_sys_download_done
                    else android.R.drawable.stat_notify_error
+        // Ecrã de bloqueio: só o título genérico, sem o nome do ficheiro.
+        val publicVersion = NotificationCompat.Builder(this, FileDownloader.CHANNEL_ID)
+            .setSmallIcon(icon)
+            .setContentTitle(title)
+            .build()
         val notif = NotificationCompat.Builder(this, FileDownloader.CHANNEL_ID)
             .setSmallIcon(icon)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicVersion)
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
@@ -223,19 +265,16 @@ class ZipDownloadService : Service() {
         notifManager.notify(finalNotifId.getAndIncrement(), notif)
     }
 
-    private fun startForegroundCompat(id: Int, notification: Notification) {
+    /** false se o sistema recusar (ForegroundServiceStartNotAllowedException e afins). */
+    private fun startForegroundCompat(id: Int, notification: Notification): Boolean = try {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(id, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             startForeground(id, notification)
         }
-    }
-
-    private fun formatBytes(b: Long): String = when {
-        b >= 1L shl 30 -> "%.2f GB".format(b / (1L shl 30).toDouble())
-        b >= 1L shl 20 -> "%.1f MB".format(b / (1L shl 20).toDouble())
-        b >= 1L shl 10 -> "%.0f KB".format(b / (1L shl 10).toDouble())
-        else -> "$b B"
+        true
+    } catch (e: Exception) {
+        false
     }
 
     companion object {
@@ -254,6 +293,7 @@ class ZipDownloadService : Service() {
         private const val EXTRA_BASENAME = "basename"
         private const val EXTRA_ENCRYPTED = "encrypted"
         private const val EXTRA_MIME = "mime"
+        private const val FGS_REFUSED_MESSAGE = "O Android não deixou continuar a transferência em segundo plano. Tenta de novo com a app aberta."
 
         /** Cancela uma transferência (botão do painel dentro da app). */
         fun cancel(context: Context, jobId: Int) {

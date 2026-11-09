@@ -1,11 +1,8 @@
 package co.golink.tester.ui.screens.socialite
 
 import co.golink.tester.ui.i18n.tr
-import android.annotation.SuppressLint
-import android.webkit.CookieManager
-import android.webkit.JavascriptInterface
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.net.Uri
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,15 +27,18 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
+/**
+ * Login social em Custom Tabs (ver [SocialiteViewModel]). O nome do ficheiro
+ * ficou do tempo da WebView embebida.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SocialiteWebViewScreen(
@@ -49,15 +49,24 @@ fun SocialiteWebViewScreen(
 ) {
     LaunchedEffect(provider) { viewModel.start(provider) }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     LaunchedEffect(state.tokenAdopted) {
         if (state.tokenAdopted) onCompleted()
     }
 
+    LaunchedEffect(state.launchUrl) {
+        val url = state.launchUrl ?: return@LaunchedEffect
+        val opened = runCatching {
+            CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(context, Uri.parse(url))
+        }.isSuccess
+        if (opened) viewModel.onLaunched() else viewModel.onLaunchFailed()
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Entrar com ${provider.replaceFirstChar { it.titlecase() }}") },
+                title = { Text("Entrar com %s".tr().format(provider.replaceFirstChar { it.titlecase() })) },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
                         Icon(Icons.Filled.Close, contentDescription = "Cancelar".tr())
@@ -67,65 +76,36 @@ fun SocialiteWebViewScreen(
         }
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            val url = state.initialUrl
-            val signInHost = state.backendHost
-            val signInPath = state.signInPath
             when {
-                state.loadingUrl -> CenteredLoading()
+                state.loadingUrl || state.finishingAuth -> CenteredLoading()
                 state.error != null -> ErrorBlock(message = state.error!!, onRetry = { viewModel.start(provider) })
-                url != null && signInHost != null -> OauthWebView(
-                    initialUrl = url,
-                    backendHost = signInHost,
-                    signInPath = signInPath,
-                    onSignInLanded = { backendOrigin ->
-                        val cookies = CookieManager.getInstance().getCookie(backendOrigin).orEmpty()
-                        viewModel.onCallbackLanded(cookies)
-                    },
-                )
-                else -> ErrorBlock(message = "Configuração do servidor inválida".tr(), onRetry = onCancel)
-            }
-            if (state.finishingAuth) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                }
+                state.awaitingBrowser -> AwaitingBrowser(onReopen = viewModel::reopen)
+                else -> CenteredLoading()
             }
         }
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun OauthWebView(
-    initialUrl: String,
-    backendHost: String,
-    signInPath: String,
-    onSignInLanded: (backendOrigin: String) -> Unit,
-) {
-    val context = LocalContext.current
-    val webView = remember {
-        WebView(context).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            CookieManager.getInstance().setAcceptCookie(true)
-            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-            webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    val parsed = url?.let { runCatching { android.net.Uri.parse(it) }.getOrNull() }
-                    val isSignIn = parsed?.host == backendHost &&
-                        (parsed.path == signInPath || parsed.path?.startsWith("$signInPath?") == true)
-                    if (isSignIn) {
-                        onSignInLanded("${parsed.scheme}://${parsed.host}")
-                    }
-                }
-            }
-            loadUrl(initialUrl)
-        }
+private fun AwaitingBrowser(onReopen: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            "Continua no browser para entrar. Depois voltas aqui automaticamente.".tr(),
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = onReopen,
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(vertical = 14.dp, horizontal = 16.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Abrir de novo".tr()) }
     }
-
-    AndroidView(
-        factory = { webView },
-        modifier = Modifier.fillMaxSize(),
-    )
 }
 
 @Composable

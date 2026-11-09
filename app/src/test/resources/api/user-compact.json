@@ -1,0 +1,47 @@
+{
+  "data": {
+    "id": "u-1",
+    "type": "user",
+    "attributes": {
+      "color": "#00BC7E",
+      "avatar": null,
+      "email": "ana@x.pt",
+      "role": "admin",
+      "two_factor_authentication": false,
+      "two_factor_confirmed_at": null,
+      "socialite_account": true,
+      "has_passkeys": true,
+      "storage": {"used": 12, "capacity": "5 GB", "percentage": 0.24},
+      "created_at": "01. Jan. 2026",
+      "updated_at": "08. Nov. 2026",
+      "email_verified_at": "2026-01-01T10:00:00.000000Z",
+      "is_suspended": false,
+      "suspended_until": null,
+      "suspended_reason": null,
+      "is_pending_deletion": false,
+      "support_staff": {"is_admin": true, "display_name": "Ana", "title": "Suporte", "scope": "all", "can_assign": true, "can_delete": true, "can_request_deletion": true, "can_view_user_email": true, "can_manage_team": true, "can_use_ai": false},
+      "deletion_scheduled_for": null
+    },
+    "relationships": {
+      "settings": {
+        "data": {
+          "id": "u-1",
+          "type": "settings",
+          "attributes": {
+            "avatar": null, "name": "Ana Silva", "first_name": "Ana", "last_name": "Silva",
+            "address": null, "state": null, "city": null, "postal_code": null, "country": "PT",
+            "holiday_country": "PT", "phone_number": null, "timezone": "0.0", "language": "pt",
+            "theme_mode": "system", "emoji_type": "native", "mobile_backup_enabled": true,
+            "news_emails": true, "tips_emails": false, "weekly_summary": false,
+            "date_format": null, "week_start": 1
+          }
+        }
+      },
+      "favourites": []
+    },
+    "meta": {
+      "restrictions": {"canUpload": true, "canDownload": true, "canCreateFolder": false, "canCreateTeamFolder": true, "canInviteTeamMembers": true, "reason": null},
+      "upload": {"limit": 5368709120, "limitFormatted": "5 GB"}
+    }
+  }
+}

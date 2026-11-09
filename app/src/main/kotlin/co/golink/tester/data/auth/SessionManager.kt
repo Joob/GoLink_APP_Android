@@ -30,6 +30,7 @@ class SessionManager @Inject constructor(
     private val tokenStore: TokenStore,
     private val userRepository: UserRepository,
     private val connectivity: ConnectivityMonitor,
+    private val sessionTerminator: SessionTerminator,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -97,8 +98,17 @@ class SessionManager @Inject constructor(
         }
     }
 
-    fun forceLogout() {
-        scope.launch { tokenStore.clear() }
+    /**
+     * Sai sem esperar pelo servidor (ecrã de erro, fim da eliminação). O token
+     * é revogado no servidor quando houver rede; a limpeza local (E2E, caches,
+     * cookies) corre no [SessionTerminator] via TokenStore.clear().
+     */
+    fun forceLogout(revokeOnServer: Boolean = true) {
+        scope.launch {
+            val token = tokenStore.token
+            if (revokeOnServer && token != null) sessionTerminator.revokeLater(token)
+            tokenStore.clear()
+        }
     }
 
     private suspend fun loadUserOrFail() {
@@ -122,13 +132,14 @@ class SessionManager @Inject constructor(
                 _state.value = AuthState.Authenticated(it)
                 return true
             }
-            val error = result.exceptionOrNull()
-            when ((error as? UserRepository.UserFetchException)?.statusCode) {
+            val error = result.exceptionOrNull() as? UserRepository.UserFetchException
+            when {
                 // Invalid/expired token → full logout.
-                401 -> { tokenStore.clear(); return true }
+                error?.statusCode == 401 -> { tokenStore.clear(); return true }
                 // OTP not (or no longer) verified server-side → back to OTP,
                 // keeping the pending token so the user can enter the code.
-                403 -> { tokenStore.markOtpPending(); return true }
+                // Outros 403 (WAF, conta suspensa — essa já limpa no guard) são transitórios.
+                error != null && error.statusCode == 403 && error.otpRequired -> { tokenStore.markOtpPending(); return true }
             }
         }
         return false

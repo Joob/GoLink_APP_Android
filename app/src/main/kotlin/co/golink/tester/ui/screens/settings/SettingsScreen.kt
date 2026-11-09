@@ -66,7 +66,6 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.CreditCard
-import androidx.compose.material.icons.outlined.CurrencyBitcoin
 import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DeleteSweep
@@ -103,6 +102,9 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.ui.semantics.Role
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.DropdownMenuItem
@@ -142,6 +144,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -150,14 +153,15 @@ import androidx.compose.material.icons.outlined.Language
 import co.golink.tester.data.LogEntry
 import co.golink.tester.data.LogSanitizer
 import co.golink.tester.ui.i18n.tr
+import co.golink.tester.ui.i18n.trPlural
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import co.golink.tester.domain.billing.Plan
 import co.golink.tester.domain.settings.AccessToken
+import co.golink.tester.ui.common.copySecretToClipboard
 import co.golink.tester.domain.settings.SecurityEventData
 import co.golink.tester.domain.settings.SessionItem
 import co.golink.tester.domain.settings.StorageUsage
@@ -182,6 +186,18 @@ private sealed interface SettingsRoute {
     data object AppSecurity : SettingsRoute
     data object DeleteAccount : SettingsRoute
 }
+
+private val ALL_SETTINGS_ROUTES: List<SettingsRoute> = listOf(
+    SettingsRoute.Menu, SettingsRoute.Profile, SettingsRoute.Password, SettingsRoute.Email,
+    SettingsRoute.ApiTokens, SettingsRoute.Encryption, SettingsRoute.Storage, SettingsRoute.SecurityActivity,
+    SettingsRoute.Sessions, SettingsRoute.Billing, SettingsRoute.AppSecurity, SettingsRoute.DeleteAccount,
+)
+
+/** O painel aberto sobrevive à ida ao visualizador/Atividade e à morte do processo. */
+private val SettingsRouteSaver = androidx.compose.runtime.saveable.Saver<SettingsRoute, Int>(
+    save = { ALL_SETTINGS_ROUTES.indexOf(it) },
+    restore = { ALL_SETTINGS_ROUTES.getOrNull(it) },
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -214,7 +230,9 @@ fun SettingsScreen(
             else -> SettingsRoute.Menu
         }
     }
-    var route by remember { mutableStateOf<SettingsRoute>(entryRoute) }
+    var route by androidx.compose.runtime.saveable.rememberSaveable(stateSaver = SettingsRouteSaver) {
+        mutableStateOf<SettingsRoute>(entryRoute)
+    }
 
     LaunchedEffect(state.toast) {
         state.toast?.let { snackbarHost.showSnackbar(it); viewModel.consumeToast() }
@@ -224,30 +242,20 @@ fun SettingsScreen(
         if (route == SettingsRoute.Billing && state.transactions.isEmpty() && !state.isLoadingTransactions) {
             viewModel.loadTransactions()
         }
-        if (route == SettingsRoute.Billing) {
-            viewModel.loadPlans()
-        }
         if (route == SettingsRoute.SecurityActivity && state.securityEvents.isEmpty() && !state.isLoadingSecurityEvents) {
             viewModel.loadSecurityEvents()
         }
-    }
-
-    val uriHandlerForCheckout = LocalUriHandler.current
-    LaunchedEffect(state.checkoutUrl) {
-        state.checkoutUrl?.let { url ->
-            uriHandlerForCheckout.openUri(url)
-            viewModel.consumeCheckoutUrl()
+        // Menu (contagem de dispositivos) e Sessões; os tokens só no painel deles.
+        if ((route == SettingsRoute.Menu || route == SettingsRoute.Sessions) && state.sessions.isEmpty() && !state.isLoadingSessions) {
+            viewModel.loadSessions()
+        }
+        if (route == SettingsRoute.ApiTokens && state.tokens.isEmpty() && !state.isLoadingTokens) {
+            viewModel.loadTokens()
         }
     }
 
-    state.pendingCheckoutPlan?.let { plan ->
-        PaymentMethodDialog(
-            plan = plan,
-            onDismiss = viewModel::dismissPaymentMethods,
-            onStripe = { viewModel.startStripeCheckout(plan) },
-            onCrypto = { viewModel.startCryptoCheckout(plan) },
-        )
-    }
+    // Sem compras na app (política de pagamentos da Play): o plano compra-se
+    // no site; aqui só se mostra o plano atual e a utilização.
 
     BackHandler(enabled = route != SettingsRoute.Menu && route != entryRoute) {
         route = SettingsRoute.Menu
@@ -263,7 +271,7 @@ fun SettingsScreen(
         SettingsRoute.Storage -> "Armazenamento".tr()
         SettingsRoute.Sessions -> "Sessões ativas".tr()
         SettingsRoute.SecurityActivity -> "Atividade de segurança".tr()
-        SettingsRoute.Billing -> "Plano e donativos".tr()
+        SettingsRoute.Billing -> "Plano e pagamentos".tr()
         SettingsRoute.AppSecurity -> "Bloqueio da app".tr()
         SettingsRoute.DeleteAccount -> "Apagar conta".tr()
     }
@@ -328,19 +336,20 @@ fun SettingsScreen(
                 )
                 SettingsRoute.Password -> PasswordPane(
                     isLoading = state.isUpdatingPassword,
+                    changedAt = state.passwordChangedAt,
                     onSubmit = viewModel::updatePassword,
                     hasPasskeys = user?.hasPasskeys == true,
                     socialiteAccount = user?.socialiteAccount == true,
                     twoFactorEnabled = state.twoFactorEnabled,
                     backendUrl = backendUrl,
                     onRefreshUser = viewModel::refreshUser,
-                    onResetCsrf = viewModel::resetCsrf,
                 )
                 SettingsRoute.Email -> EmailChangeSection(
                     currentEmail = user?.email.orEmpty(),
                     hasPasskeys = user?.hasPasskeys == true,
                     state = state,
                     onRequest = viewModel::requestEmailChange,
+                    onRestartForResend = viewModel::restartEmailChangeForResend,
                     onConfirm = viewModel::confirmEmailChange,
                     onCancel = viewModel::cancelEmailChange,
                 )
@@ -348,6 +357,9 @@ fun SettingsScreen(
                     tokens = state.tokens,
                     isLoadingTokens = state.isLoadingTokens,
                     newTokenPlaintext = state.newTokenPlaintext,
+                    isCreatingToken = state.isCreatingToken,
+                    createTokenError = state.createTokenError,
+                    onClearCreateTokenError = viewModel::clearCreateTokenError,
                     onCreateToken = viewModel::createToken,
                     onDeleteToken = viewModel::deleteToken,
                     onConsumeNewToken = viewModel::consumeNewToken,
@@ -387,13 +399,10 @@ fun SettingsScreen(
                     user = user,
                     transactions = state.transactions,
                     isLoading = state.isLoadingTransactions,
-                    plans = state.plans,
-                    isLoadingPlans = state.isLoadingPlans,
-                    isStartingCheckout = state.isStartingCheckout,
-                    onUpgrade = viewModel::selectPlan,
+                    storage = state.storage,
                     onRefresh = viewModel::loadTransactions,
                     isUpdatingProfile = state.isUpdatingProfile,
-                    onUpdateField = viewModel::updateProfileField,
+                    onUpdateFields = viewModel::updateProfileFields,
                 )
                 SettingsRoute.DeleteAccount -> DeleteAccountPane(userEmail = user?.email, scheduledFor = user?.deletionScheduledFor)
                 SettingsRoute.AppSecurity -> AppSecurityPane(
@@ -614,7 +623,6 @@ private fun MenuPane(
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         SettingsBadge(if (freePlan) "Plano gratuito".tr() else u.planName.orEmpty(), SettingsColors.Purple)
                         Spacer(Modifier.weight(1f))
-                        if (freePlan) SettingsActionText("Melhorar →".tr(), onClick = { onNavigate(SettingsRoute.Billing) })
                     }
                 }
             }
@@ -656,7 +664,7 @@ private fun MenuPane(
         SettingsGroup(title = "Plano".tr()) {
             val hasSupport = user?.role != "admin"
             SettingsNavRow(Icons.Outlined.CloudQueue, SettingsColors.Teal, "Armazenamento".tr(), "Espaço utilizado e disponível".tr()) { onNavigate(SettingsRoute.Storage) }
-            SettingsNavRow(Icons.Outlined.CreditCard, SettingsColors.Purple, "Plano e pagamentos".tr(), "Donativos, faturação e histórico".tr(), showDivider = hasSupport) { onNavigate(SettingsRoute.Billing) }
+            SettingsNavRow(Icons.Outlined.CreditCard, SettingsColors.Purple, "Plano e pagamentos".tr(), "Plano atual, utilização e histórico".tr(), showDivider = hasSupport) { onNavigate(SettingsRoute.Billing) }
             // Como na web: o admin não abre tickets. A Administração e o Support Desk
             // vivem agora na gaveta (toggle Drive | Admin / Support).
             if (hasSupport) {
@@ -1035,13 +1043,16 @@ private fun ProfilePane(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
+                        // Alvo de 48dp sem mexer no círculo de 34dp (o offset compensa a margem).
+                        .offset(7.dp, 7.dp)
+                        .minimumInteractiveComponentSize()
                         .size(34.dp)
                         .clip(CircleShape)
                         .background(settingsScreenBackground())
                         .padding(3.dp)
                         .clip(CircleShape)
                         .background(SettingsAccent)
-                        .clickable(enabled = !isUpdatingAvatar, onClick = pickAvatar),
+                        .clickable(enabled = !isUpdatingAvatar, role = Role.Button, onClick = pickAvatar),
                 ) {
                     Icon(Icons.Filled.PhotoCamera, contentDescription = "Mudar fotografia".tr(), tint = Color.White, modifier = Modifier.size(16.dp))
                 }
@@ -1102,23 +1113,6 @@ private fun ProfilePane(
     }
 }
 
-/** Indicativos (ISO → "+351"), pela ordem da lista de países. */
-private val DIAL_CODES = listOf(
-    "PT" to "+351", "ES" to "+34", "FR" to "+33", "DE" to "+49", "IT" to "+39", "GB" to "+44",
-    "IE" to "+353", "NL" to "+31", "BE" to "+32", "LU" to "+352", "CH" to "+41", "AT" to "+43",
-    "DK" to "+45", "SE" to "+46", "NO" to "+47", "FI" to "+358", "PL" to "+48", "CZ" to "+420",
-    "SK" to "+421", "HU" to "+36", "RO" to "+40", "BG" to "+359", "GR" to "+30", "HR" to "+385",
-    "SI" to "+386", "EE" to "+372", "LV" to "+371", "LT" to "+370", "US" to "+1", "CA" to "+1",
-    "MX" to "+52", "BR" to "+55", "AR" to "+54", "CL" to "+56", "CO" to "+57", "PE" to "+51",
-    "AU" to "+61", "NZ" to "+64", "JP" to "+81", "KR" to "+82", "CN" to "+86", "HK" to "+852",
-    "TW" to "+886", "SG" to "+65", "IN" to "+91", "ID" to "+62", "TH" to "+66", "VN" to "+84",
-    "PH" to "+63", "MY" to "+60", "AE" to "+971", "SA" to "+966", "IL" to "+972", "TR" to "+90",
-    "EG" to "+20", "ZA" to "+27", "NG" to "+234", "KE" to "+254", "MA" to "+212", "AO" to "+244",
-    "MZ" to "+258", "CV" to "+238", "RU" to "+7", "UA" to "+380",
-)
-
-private fun dialCode(iso: String): String = DIAL_CODES.firstOrNull { it.first == iso }?.second ?: "+351"
-
 private fun flagEmoji(iso: String): String =
     iso.uppercase().take(2).map { Character.toChars(0x1F1E6 + (it - 'A')).concatToString() }.joinToString("")
 
@@ -1157,7 +1151,7 @@ private fun PhoneField(iso: String, number: String, onIso: (String) -> Unit, onN
                 modifier = Modifier.heightIn(max = 320.dp),
             ) {
                 DIAL_CODES.forEach { (code, dial) ->
-                    val name = COUNTRIES.firstOrNull { it.first == code }?.second ?: code
+                    val name = countryName(code, COUNTRIES.firstOrNull { it.first == code }?.second ?: code)
                     DropdownMenuItem(
                         text = { Text("${flagEmoji(code)}  $name  $dial") },
                         onClick = { onIso(code); expanded = false },
@@ -1166,7 +1160,7 @@ private fun PhoneField(iso: String, number: String, onIso: (String) -> Unit, onN
             }
         }
         SettingsField(
-            label = "",
+            label = "Telefone".tr(), // só para o TalkBack (showLabel = false)
             value = number,
             onValueChange = { v -> onNumber(v.filter { it.isDigit() || it == ' ' }) },
             placeholder = "912 345 678",
@@ -1176,76 +1170,6 @@ private fun PhoneField(iso: String, number: String, onIso: (String) -> Unit, onN
         )
     }
 }
-
-/** "agora 10:13" no fuso escolhido (deslocamento em horas, ex. "5.5"). */
-private fun timeAtOffset(value: String): String? {
-    val h = value.toDoubleOrNull() ?: return null
-    return runCatching {
-        java.time.OffsetDateTime.now(java.time.ZoneOffset.ofTotalSeconds((h * 3600).toInt()))
-            .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
-    }.getOrNull()
-}
-
-// Fuso horário: rótulos curtos ("Lisboa, Londres (GMT+0)"); o valor guardado
-// continua a ser o deslocamento ("0.0"), como na web.
-private val TIMEZONES = listOf(
-    "-12.0" to "Ilha Baker (GMT-12)",
-    "-11.0" to "Samoa, Midway (GMT-11)",
-    "-10.0" to "Havai (GMT-10)",
-    "-9.5" to "Marquesas (GMT-9:30)",
-    "-9.0" to "Alasca (GMT-9)",
-    "-8.0" to "Los Angeles, Vancouver (GMT-8)",
-    "-7.0" to "Denver, Phoenix (GMT-7)",
-    "-6.0" to "Cidade do México, Chicago (GMT-6)",
-    "-5.0" to "Nova Iorque, Bogotá, Lima (GMT-5)",
-    "-4.0" to "Caracas, La Paz (GMT-4)",
-    "-3.5" to "Terra Nova (GMT-3:30)",
-    "-3.0" to "São Paulo, Buenos Aires (GMT-3)",
-    "-2.0" to "Atlântico Médio (GMT-2)",
-    "-1.0" to "Açores, Cabo Verde (GMT-1)",
-    "0.0" to "Lisboa, Londres (GMT+0)",
-    "1.0" to "Madrid, Paris, Luanda (GMT+1)",
-    "2.0" to "Maputo, Joanesburgo (GMT+2)",
-    "3.0" to "Moscovo, Riade (GMT+3)",
-    "3.5" to "Teerão (GMT+3:30)",
-    "4.0" to "Dubai, Baku (GMT+4)",
-    "4.5" to "Cabul (GMT+4:30)",
-    "5.0" to "Karachi, Tashkent (GMT+5)",
-    "5.5" to "Nova Deli, Mumbai (GMT+5:30)",
-    "5.75" to "Catmandu (GMT+5:45)",
-    "6.0" to "Daca, Almaty (GMT+6)",
-    "7.0" to "Banguecoque, Jacarta (GMT+7)",
-    "8.0" to "Pequim, Singapura, Macau (GMT+8)",
-    "9.0" to "Tóquio, Seul (GMT+9)",
-    "9.5" to "Adelaide, Darwin (GMT+9:30)",
-    "10.0" to "Sydney, Guam (GMT+10)",
-    "10.5" to "Ilha Lord Howe (GMT+10:30)",
-    "11.0" to "Ilhas Salomão (GMT+11)",
-    "12.0" to "Auckland, Fiji (GMT+12)",
-    "12.75" to "Ilhas Chatham (GMT+12:45)",
-    "13.0" to "Tonga, Samoa (GMT+13)",
-    "14.0" to "Kiritimati (GMT+14)",
-)
-
-private val COUNTRIES = listOf(
-    "PT" to "Portugal", "ES" to "Spain", "FR" to "France", "DE" to "Germany",
-    "IT" to "Italy", "GB" to "United Kingdom", "IE" to "Ireland", "NL" to "Netherlands",
-    "BE" to "Belgium", "LU" to "Luxembourg", "CH" to "Switzerland", "AT" to "Austria",
-    "DK" to "Denmark", "SE" to "Sweden", "NO" to "Norway", "FI" to "Finland",
-    "PL" to "Poland", "CZ" to "Czech Republic", "SK" to "Slovakia", "HU" to "Hungary",
-    "RO" to "Romania", "BG" to "Bulgaria", "GR" to "Greece", "HR" to "Croatia",
-    "SI" to "Slovenia", "EE" to "Estonia", "LV" to "Latvia", "LT" to "Lithuania",
-    "US" to "United States", "CA" to "Canada", "MX" to "Mexico", "BR" to "Brazil",
-    "AR" to "Argentina", "CL" to "Chile", "CO" to "Colombia", "PE" to "Peru",
-    "AU" to "Australia", "NZ" to "New Zealand", "JP" to "Japan", "KR" to "South Korea",
-    "CN" to "China", "HK" to "Hong Kong", "TW" to "Taiwan", "SG" to "Singapore",
-    "IN" to "India", "ID" to "Indonesia", "TH" to "Thailand", "VN" to "Vietnam",
-    "PH" to "Philippines", "MY" to "Malaysia", "AE" to "United Arab Emirates",
-    "SA" to "Saudi Arabia", "IL" to "Israel", "TR" to "Turkey", "EG" to "Egypt",
-    "ZA" to "South Africa", "NG" to "Nigeria", "KE" to "Kenya", "MA" to "Morocco",
-    "AO" to "Angola", "MZ" to "Mozambique", "CV" to "Cape Verde",
-    "RU" to "Russia", "UA" to "Ukraine",
-)
 
 @Composable
 private fun TimezoneDropdown(value: String, onValueChange: (String) -> Unit) {
@@ -1277,7 +1201,7 @@ private fun TimezoneDropdown(value: String, onValueChange: (String) -> Unit) {
 @Composable
 private fun CountryDropdown(value: String, onValueChange: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    val selectedLabel = COUNTRIES.firstOrNull { it.first.equals(value, ignoreCase = true) }?.second ?: value
+    val selectedLabel = COUNTRIES.firstOrNull { it.first.equals(value, ignoreCase = true) }?.let { countryName(it.first, it.second) } ?: value
     Box(modifier = Modifier.fillMaxWidth()) {
         SettingsSelectBox(text = selectedLabel, onClick = { expanded = true })
         androidx.compose.material3.DropdownMenu(
@@ -1287,7 +1211,7 @@ private fun CountryDropdown(value: String, onValueChange: (String) -> Unit) {
         ) {
             COUNTRIES.forEach { (v, label) ->
                 DropdownMenuItem(
-                    text = { Text(label) },
+                    text = { Text(countryName(v, label)) },
                     onClick = { onValueChange(v); expanded = false },
                 )
             }
@@ -1298,13 +1222,13 @@ private fun CountryDropdown(value: String, onValueChange: (String) -> Unit) {
 @Composable
 private fun PasswordPane(
     isLoading: Boolean,
+    changedAt: Long,
     onSubmit: (current: String, new: String, passkeyToken: String?) -> Unit,
     hasPasskeys: Boolean,
     socialiteAccount: Boolean,
     twoFactorEnabled: Boolean,
     backendUrl: String,
     onRefreshUser: () -> Unit,
-    onResetCsrf: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
     var show2faInfo by remember { mutableStateOf(false) }
@@ -1333,6 +1257,10 @@ private fun PasswordPane(
     var passkeyToken by remember { mutableStateOf<String?>(null) }
     var newPassword by remember { mutableStateOf("") }
     var confirmation by remember { mutableStateOf("") }
+    // Só limpa depois de o servidor aceitar: com a password atual errada os campos ficam.
+    LaunchedEffect(changedAt) {
+        if (changedAt > 0L) { current = ""; newPassword = ""; confirmation = ""; passkeyToken = null }
+    }
     val mismatch = newPassword.isNotEmpty() && confirmation.isNotEmpty() && newPassword != confirmation
     // 8 = mesma política do registo e do servidor (Fortify\Rules\Password).
     val tooShort = newPassword.isNotEmpty() && newPassword.length < MIN_PASSWORD_LENGTH
@@ -1353,7 +1281,7 @@ private fun PasswordPane(
                 text = "Guardar nova password".tr(),
                 onClick = {
                     onSubmit(current, newPassword, passkeyToken)
-                    current = ""; newPassword = ""; confirmation = ""; passkeyToken = null
+                    passkeyToken = null // uso único: se falhar, confirma-se de novo
                 },
                 enabled = canSubmit,
                 loading = isLoading,
@@ -1423,25 +1351,14 @@ private fun PasswordPane(
             SettingsField(
                 "Confirmar nova password".tr(), confirmation, { confirmation = it }, isPassword = true,
                 isError = mismatch, supportingText = if (mismatch) "Não coincide".tr() else null,
+                imeAction = ImeAction.Done,
+                onImeAction = { if (canSubmit) { onSubmit(current, newPassword, passkeyToken); passkeyToken = null } },
             )
             Text(
                 "Por segurança, terminamos a sessão nos outros dispositivos.".tr(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        }
-
-        PaneSection("Resolução de problemas".tr())
-        PaneCard {
-            Column {
-                Text("Repor token de sessão (CSRF)".tr(), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Usa só se tiveres erros ao iniciar sessão ou ao guardar.".tr(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            SettingsOutlinedButton(text = "Repor token".tr(), onClick = onResetCsrf)
         }
     }
 }
@@ -1470,28 +1387,68 @@ private fun ApiTokensPane(
     tokens: List<AccessToken>,
     isLoadingTokens: Boolean,
     newTokenPlaintext: String?,
-    onCreateToken: (String) -> Unit,
+    isCreatingToken: Boolean,
+    createTokenError: String?,
+    onClearCreateTokenError: () -> Unit,
+    onCreateToken: (name: String, password: String?, passkeyToken: String?) -> Unit,
     onDeleteToken: (Long) -> Unit,
     onConsumeNewToken: () -> Unit,
 ) {
     var showCreateTokenDialog by remember { mutableStateOf(false) }
     var newTokenName by remember { mutableStateOf("") }
+    // Step-up exigido pelo servidor (create_token): password atual ou passkey.
+    var tokenPassword by remember { mutableStateOf("") }
+    var tokenPasskey by remember { mutableStateOf<String?>(null) }
+    var revoking by remember { mutableStateOf<AccessToken?>(null) }
 
-    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+
+    val closeCreate = {
+        showCreateTokenDialog = false; newTokenName = ""; tokenPassword = ""; tokenPasskey = null
+        onClearCreateTokenError()
+    }
+    // Criado: o token de passkey foi gasto e o diálogo fecha (o token novo aparece no painel).
+    LaunchedEffect(newTokenPlaintext) { if (newTokenPlaintext != null && showCreateTokenDialog) closeCreate() }
 
     if (showCreateTokenDialog) {
-        val close = { showCreateTokenDialog = false; newTokenName = "" }
         SettingsDialog(
             title = "Novo token de acesso".tr(),
             message = "Dá-lhe um nome para o reconheceres mais tarde (ex.: script de backup).".tr(),
             icon = Icons.Outlined.VpnKey,
             confirmText = "Criar".tr(),
-            confirmEnabled = newTokenName.isNotBlank(),
-            onConfirm = { onCreateToken(newTokenName.trim()); close() },
-            onDismiss = close,
+            // O servidor exige min:3 no nome.
+            confirmEnabled = !isCreatingToken && newTokenName.trim().length >= 3 && (tokenPasskey != null || tokenPassword.isNotEmpty()),
+            onConfirm = { onCreateToken(newTokenName.trim(), tokenPassword, tokenPasskey) },
+            onDismiss = { if (!isCreatingToken) closeCreate() },
         ) {
-            SettingsField("Nome do token".tr(), newTokenName, { newTokenName = it })
+            SettingsField("Nome do token".tr(), newTokenName, { newTokenName = it }, hint = "mínimo 3 caracteres".tr())
+            PasskeyConfirmRow(purpose = "create_token", confirmed = tokenPasskey != null, onToken = { tokenPasskey = it })
+            if (tokenPasskey == null) {
+                SettingsField(
+                    "Password atual".tr(), tokenPassword, { tokenPassword = it }, isPassword = true, hint = "para confirmar que és tu".tr(),
+                    imeAction = ImeAction.Done,
+                )
+            }
+            createTokenError?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
         }
+    }
+
+    revoking?.let { token ->
+        SettingsDialog(
+            title = "Revogar este token?".tr(),
+            message = if (token.is_current) {
+                "É o token desta sessão: revogá-lo termina a sessão nesta app.".tr()
+            } else {
+                "As apps ou scripts que o usam deixam de ter acesso.".tr()
+            },
+            icon = Icons.Outlined.VpnKey,
+            confirmText = "Revogar".tr(),
+            destructive = true,
+            onConfirm = { revoking = null; onDeleteToken(token.id) },
+            onDismiss = { revoking = null },
+        )
     }
 
     PaneColumn {
@@ -1513,7 +1470,7 @@ private fun ApiTokensPane(
                     Spacer(Modifier.height(6.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(token, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f), maxLines = 3, overflow = TextOverflow.Ellipsis)
-                        IconButton(onClick = { clipboard.setText(AnnotatedString(token)); onConsumeNewToken() }) {
+                        IconButton(onClick = { copySecretToClipboard(context, "API token", token); onConsumeNewToken() }) {
                             Icon(Icons.Filled.ContentCopy, contentDescription = "Copiar".tr(), tint = SettingsAccent)
                         }
                     }
@@ -1544,7 +1501,7 @@ private fun ApiTokensPane(
                     subtitle = listOfNotNull(tokenDetail(token), used).joinToString("\n"),
                     showDivider = i < tokens.lastIndex,
                 ) {
-                    SettingsPillButton("Revogar".tr(), onClick = { onDeleteToken(token.id) }, color = SettingsColors.Red)
+                    SettingsPillButton("Revogar".tr(), onClick = { revoking = token }, color = SettingsColors.Red)
                 }
             }
         }
@@ -1561,6 +1518,7 @@ private fun EmailChangeSection(
     hasPasskeys: Boolean,
     state: SettingsUiState,
     onRequest: (email: String, password: String, passkeyToken: String?) -> Unit,
+    onRestartForResend: () -> Unit,
     onConfirm: (code: String) -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -1608,7 +1566,11 @@ private fun EmailChangeSection(
                 if (inCodeStep) {
                     SettingsActionText(
                         "Reenviar código".tr(),
-                        onClick = { onRequest(state.emailChangeTarget, password, passkeyToken) },
+                        // Confirmado com passkey (token já gasto, sem password): volta ao 1.º passo.
+                        onClick = {
+                            if (password.isNotEmpty()) onRequest(state.emailChangeTarget, password, null)
+                            else { newEmail = state.emailChangeTarget; editing = true; onRestartForResend() }
+                        },
                         enabled = !state.isChangingEmail,
                     )
                     Spacer(Modifier.width(16.dp))
@@ -1633,7 +1595,7 @@ private fun EmailChangeSection(
                 SettingsField("Novo endereço de email".tr(), newEmail, { newEmail = it }, keyboardType = KeyboardType.Email, placeholder = "nome@exemplo.com")
                 PasskeyConfirmRow(purpose = "email", hasPasskeys = hasPasskeys, confirmed = passkeyToken != null, onToken = { passkeyToken = it })
                 if (passkeyToken == null) {
-                    SettingsField("Password atual".tr(), password, { password = it }, isPassword = true, hint = "para confirmar que és tu".tr())
+                    SettingsField("Password atual".tr(), password, { password = it }, isPassword = true, hint = "para confirmar que és tu".tr(), imeAction = ImeAction.Done)
                 }
             } else {
                 Text(
@@ -1644,6 +1606,7 @@ private fun EmailChangeSection(
                 SettingsField(
                     "Código de confirmação".tr(), code, { v -> code = v.filter { it.isDigit() }.take(6) },
                     keyboardType = KeyboardType.NumberPassword,
+                    imeAction = ImeAction.Done,
                     hint = "6 dígitos".tr(),
                     supportingText = if (secondsLeft > 0) "O código expira em %ds".tr().format(secondsLeft)
                         else "O código expirou. Pede um novo.".tr(),
@@ -1991,7 +1954,7 @@ private fun SessionsPane(
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
             Text(
                 if (sessions.size == 1) "1 dispositivo com sessão iniciada na tua conta.".tr()
-                else "%d dispositivos com sessão iniciada na tua conta.".tr().format(sessions.size),
+                else trPlural("%d dispositivo com sessão iniciada na tua conta.", "%d dispositivos com sessão iniciada na tua conta.", sessions.size),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
@@ -1999,7 +1962,7 @@ private fun SessionsPane(
             if (isLoading) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = SettingsAccent)
             } else {
-                IconButton(onClick = onRefresh, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = onRefresh) {
                     Icon(Icons.Filled.Refresh, contentDescription = "Atualizar".tr(), tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
                 }
             }
@@ -2136,22 +2099,12 @@ private fun BillingPane(
     user: User?,
     transactions: List<TransactionItem>,
     isLoading: Boolean,
-    plans: List<Plan>,
-    isLoadingPlans: Boolean,
-    isStartingCheckout: Boolean,
-    onUpgrade: (Plan) -> Unit,
+    storage: co.golink.tester.domain.settings.StorageUsage?,
     onRefresh: () -> Unit,
     isUpdatingProfile: Boolean,
-    onUpdateField: (name: String, value: String) -> Unit,
+    onUpdateFields: (Map<String, String>) -> Unit,
 ) {
     var showHistory by remember { mutableStateOf(false) }
-    var showYearly by remember { mutableStateOf(false) }
-    val hasYearly = plans.any { it.interval == "year" }
-    val visiblePlans = if (hasYearly) plans.filter { it.interval == if (showYearly) "year" else "month" } else plans
-    var selectedId by remember(visiblePlans) {
-        mutableStateOf(visiblePlans.firstOrNull { !it.name.equals(user?.planName, ignoreCase = true) }?.id ?: visiblePlans.firstOrNull()?.id)
-    }
-    val selected = visiblePlans.firstOrNull { it.id == selectedId }
 
     PaneColumn {
         if (user?.isPastDue == true || user?.isPaymentSuspended == true) {
@@ -2187,72 +2140,37 @@ private fun BillingPane(
             }
         }
 
-        Column(modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp)) {
-            Text("Apoiar o GoLink".tr(), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        // Utilização do plano atual.
+        storage?.let { st ->
+            PaneCard {
+                Text("Utilização".tr(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "%1${'$'}s de %2${'$'}s utilizados".tr().format(st.used, st.capacity),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { (st.percentage / 100f).coerceIn(0f, 1f) },
+                    color = SettingsAccent,
+                    trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f),
+                    drawStopIndicator = {},
+                    modifier = Modifier.fillMaxWidth().height(6.dp),
+                )
+            }
+        }
+
+        // Só informativo: sem link, URL nem botão (anti-steering da Play).
+        PaneCard {
             Text(
-                "O GoLink é gratuito e sem fins lucrativos. Os donativos mantêm o serviço para todos.".tr(),
+                "A compra de planos tem de ser feita através do site.".tr(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        when {
-            isLoadingPlans -> Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            plans.isEmpty() -> Text("Sem planos disponíveis.".tr(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            else -> {
-                if (hasYearly) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                            .padding(3.dp),
-                    ) {
-                        listOf(false to "Mensal".tr(), true to "Anual".tr()).forEach { (yearly, label) ->
-                            val on = showYearly == yearly
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (on) settingsCardColor() else Color.Transparent)
-                                    .clickable { showYearly = yearly }
-                                    .padding(vertical = 8.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal)
-                            }
-                        }
-                    }
-                }
-                visiblePlans.forEach { plan ->
-                    PlanOptionRow(
-                        plan = plan,
-                        selected = plan.id == selectedId,
-                        isCurrent = user?.planName?.equals(plan.name, ignoreCase = true) == true,
-                        onClick = { selectedId = plan.id },
-                    )
-                }
-                PaneCard {
-                    Text(
-                        "Todos incluem: encriptação ponta-a-ponta AES-256, SSL/TLS, dados privados e descentralizados, sem metadados e suporte.".tr(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                selected?.let { plan ->
-                    val isCurrent = user?.planName?.equals(plan.name, ignoreCase = true) == true
-                    SettingsPrimaryButton(
-                        text = if (isCurrent) "Plano atual".tr()
-                        else listOfNotNull("Apoiar com %s".tr().format(plan.name), plan.price).joinToString(" · "),
-                        onClick = { onUpgrade(plan) },
-                        enabled = !isCurrent,
-                        loading = isStartingCheckout,
-                    )
-                }
-            }
-        }
 
         // Dados de faturação (saíram do Perfil): opcionais, só para recibos.
-        user?.let { BillingAddressSection(it, isUpdatingProfile, onUpdateField) }
+        user?.let { BillingAddressSection(it, isUpdatingProfile, onUpdateFields) }
     }
 }
 
@@ -2260,7 +2178,7 @@ private fun BillingPane(
 private fun BillingAddressSection(
     user: User,
     isUpdating: Boolean,
-    onUpdateField: (name: String, value: String) -> Unit,
+    onUpdateFields: (Map<String, String>) -> Unit,
 ) {
     var address by remember(user.id) { mutableStateOf(user.address.orEmpty()) }
     var city by remember(user.id) { mutableStateOf(user.city.orEmpty()) }
@@ -2274,7 +2192,7 @@ private fun BillingAddressSection(
         "postal_code" to (postalCode to user.postalCode.orEmpty()),
         "state" to (state to user.state.orEmpty()),
         "country" to (country to user.country.orEmpty()),
-    ).filter { (_, v) -> v.first.trim() != v.second.trim() && v.first.isNotBlank() }
+    ).filter { (_, v) -> v.first.trim() != v.second.trim() } // vazio = limpar (o servidor aceita null)
     val dirty = changes.isNotEmpty()
 
     PaneSection("Dados de faturação".tr())
@@ -2294,72 +2212,15 @@ private fun BillingAddressSection(
             Spacer(Modifier.height(6.dp))
             CountryDropdown(value = country, onValueChange = { country = it })
         }
-        SettingsField("Estado/Região".tr(), state, { state = it }, placeholder = "Se aplicável, ex.: Lisboa".tr())
+        SettingsField("Estado/Região".tr(), state, { state = it }, placeholder = "Se aplicável, ex.: Lisboa".tr(), imeAction = ImeAction.Done)
         SettingsPrimaryButton(
             text = if (dirty) "Guardar alterações".tr() else "Sem alterações".tr(),
-            onClick = { changes.forEach { (field, v) -> onUpdateField(field, v.first.trim()) } },
+            // Um único pedido ao VM: chamadas seguidas eram descartadas pela guarda isUpdatingProfile.
+            onClick = { onUpdateFields(changes.associate { (field, v) -> field to v.first.trim() }) },
             enabled = dirty,
             loading = isUpdating,
         )
     }
-}
-
-// Opção de plano (rádio): nome, "100 GB · 8 membros" e preço/intervalo.
-@Composable
-private fun PlanOptionRow(plan: Plan, selected: Boolean, isCurrent: Boolean, onClick: () -> Unit) {
-    val storage = plan.features["max_storage_amount"]?.let { if (it >= 1024 && it % 1024 == 0L) "${it / 1024} TB" else "$it GB" }
-    val members = plan.features["max_team_members"]?.let { if (it == -1L) "membros ilimitados".tr() else "%d membros".tr().format(it) }
-    // max_upload_size em GB (base 1024, como o resto da app)
-    val upload = plan.features["max_upload_size"]?.let {
-        when {
-            it == -1L -> "sem limite por ficheiro".tr()
-            it > 0 -> "ficheiros até %s".tr().format(if (it >= 1024 && it % 1024 == 0L) "${it / 1024} TB" else "$it GB")
-            else -> null
-        }
-    }
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = if (selected) SettingsAccent.copy(alpha = 0.06f) else settingsCardColor(),
-        border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) SettingsAccent else MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-            Box(
-                modifier = Modifier
-                    .size(20.dp)
-                    .clip(CircleShape)
-                    .border(2.dp, if (selected) SettingsAccent else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (selected) Box(Modifier.size(10.dp).clip(CircleShape).background(SettingsAccent))
-            }
-            Spacer(Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    plan.name + if (isCurrent) " · " + "atual".tr() else "",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                listOfNotNull(storage, members, upload).takeIf { it.isNotEmpty() }?.let {
-                    Text(it.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            plan.price?.let { price ->
-                Text(
-                    price + (plan.interval?.let { "/" + planIntervalLabel(it) } ?: ""),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun planIntervalLabel(interval: String): String = when (interval) {
-    "month" -> "mês".tr()
-    "year" -> "ano".tr()
-    else -> interval
 }
 
 @Composable
@@ -2422,6 +2283,8 @@ private fun EncryptionPane(
     // Passos: "current" (passphrase atual) → "code" (email) → "new".
     var step by remember { mutableStateOf("current") }
     var currentPass by remember { mutableStateOf("") }
+    // Depois de verificada, só fica o SHA-256 (para "tem de ser diferente da atual").
+    var currentHash by remember { mutableStateOf<String?>(null) }
     var currentError by remember { mutableStateOf<String?>(null) }
     var verifying by remember { mutableStateOf(false) }
     var changeToken by remember { mutableStateOf<String?>(null) }
@@ -2429,11 +2292,11 @@ private fun EncryptionPane(
     var confirmPass by remember { mutableStateOf("") }
     val minLen = 12
     val tooShort = newPass.isNotEmpty() && newPass.length < minLen
-    val sameAsCurrent = newPass.isNotEmpty() && newPass == currentPass
+    val sameAsCurrent = newPass.isNotEmpty() && currentHash != null && sha256Hex(newPass) == currentHash
     val mismatch = confirmPass.isNotEmpty() && newPass != confirmPass
     val canSubmit = newPass.length >= minLen && !sameAsCurrent && newPass == confirmPass && !isChanging && changeToken != null
     fun resetFlow() {
-        step = "current"; currentPass = ""; currentError = null; changeToken = null; newPass = ""; confirmPass = ""
+        step = "current"; currentPass = ""; currentHash = null; currentError = null; changeToken = null; newPass = ""; confirmPass = ""
     }
 
     PaneColumn {
@@ -2564,7 +2427,13 @@ private fun EncryptionPane(
                                 scope.launch {
                                     val ok = runCatching { onVerifyCurrent(currentPass) }.getOrDefault(false)
                                     verifying = false
-                                    if (ok) step = "code" else currentError = "A frase-passe atual está incorreta.".tr()
+                                    if (ok) {
+                                        currentHash = sha256Hex(currentPass)
+                                        currentPass = ""
+                                        step = "code"
+                                    } else {
+                                        currentError = "A frase-passe atual está incorreta.".tr()
+                                    }
                                 }
                             },
                             enabled = currentPass.isNotEmpty(),
@@ -2639,8 +2508,8 @@ private fun AppSecurityPane(
     hasPinSet: Boolean,
     onBiometricToggle: (Boolean) -> Unit,
     onEnablePin: (String) -> Unit,
-    onChangePin: (String, String) -> Boolean,
-    onDisableAppLock: (String?) -> Boolean,
+    onChangePin: (String, String, (PinCheck) -> Unit) -> Unit,
+    onDisableAppLock: (String?, (PinCheck) -> Unit) -> Unit,
     lockDelayMs: Long,
     onSetLockDelay: (Long) -> Unit,
     hideInRecents: Boolean,
@@ -2664,6 +2533,14 @@ private fun AppSecurityPane(
     var pinFirst by remember { mutableStateOf("") }
     var pinInput by remember { mutableStateOf("") }
     var pinError by remember { mutableStateOf<String?>(null) }
+
+    // PIN a ser verificado (PBKDF2 fora da main thread): botões desligados.
+    var pinBusy by remember { mutableStateOf(false) }
+    fun pinCheckMessage(r: PinCheck): String = when {
+        r is PinCheck.LockedOut && r.seconds > 60 -> "Demasiadas tentativas. Tenta daqui a %d min.".tr().format((r.seconds + 59) / 60)
+        r is PinCheck.LockedOut -> "Demasiadas tentativas. Aguarda %d s.".tr().format(r.seconds)
+        else -> "PIN incorreto".tr()
+    }
 
     // PIN disable dialog
     var showPinDisable by remember { mutableStateOf(false) }
@@ -2716,9 +2593,13 @@ private fun AppSecurityPane(
             icon = Icons.Outlined.Lock,
             destructive = true,
             confirmText = "Desativar".tr(),
-            confirmEnabled = pinDisableInput.length == 4,
+            confirmEnabled = pinDisableInput.length == 4 && !pinBusy,
             onConfirm = {
-                if (!onDisableAppLock(pinDisableInput)) { pinDisableError = "PIN incorreto".tr(); pinDisableInput = "" } else close()
+                pinBusy = true
+                onDisableAppLock(pinDisableInput) { r ->
+                    pinBusy = false
+                    if (r != PinCheck.Ok) { pinDisableError = pinCheckMessage(r); pinDisableInput = "" } else close()
+                }
             },
             onDismiss = close,
         ) {
@@ -2743,19 +2624,25 @@ private fun AppSecurityPane(
             },
             icon = Icons.Outlined.Lock,
             confirmText = if (changeStep == 3) "Mudar PIN".tr() else "Seguinte".tr(),
-            confirmEnabled = changeInput.length == 4,
+            confirmEnabled = changeInput.length == 4 && !pinBusy,
             onConfirm = {
                 when (changeStep) {
                     1 -> { changeCurrent = changeInput; changeInput = ""; changeStep = 2 }
                     2 -> { changeNew = changeInput; changeInput = ""; changeStep = 3 }
-                    else -> when {
-                        changeInput != changeNew -> { changeError = "Os PINs não coincidem".tr(); changeInput = "" }
-                        !onChangePin(changeCurrent, changeNew) -> {
-                            // PIN atual errado: volta ao primeiro passo.
-                            changeCurrent = ""; changeNew = ""; changeInput = ""; changeStep = 1
-                            changeError = "PIN incorreto".tr()
+                    else -> if (changeInput != changeNew) {
+                        changeError = "Os PINs não coincidem".tr(); changeInput = ""
+                    } else {
+                        pinBusy = true
+                        onChangePin(changeCurrent, changeNew) { r ->
+                            pinBusy = false
+                            if (r == PinCheck.Ok) {
+                                closeChange()
+                            } else {
+                                // PIN atual errado: volta ao primeiro passo.
+                                changeCurrent = ""; changeNew = ""; changeInput = ""; changeStep = 1
+                                changeError = pinCheckMessage(r)
+                            }
                         }
-                        else -> closeChange()
                     }
                 }
             },
@@ -2815,9 +2702,9 @@ private fun AppSecurityPane(
             showPinDisable = true
         } else if (bioOn) {
             // Só impressão digital: confirmar antes de desligar o bloqueio.
-            confirmBiometric("Desligar bloqueio".tr(), "Confirma a tua identidade para desligar".tr()) { onDisableAppLock(null) }
+            confirmBiometric("Desligar bloqueio".tr(), "Confirma a tua identidade para desligar".tr()) { onDisableAppLock(null) {} }
         } else {
-            onDisableAppLock(null)
+            onDisableAppLock(null) {}
         }
     }
 
@@ -2842,7 +2729,14 @@ private fun AppSecurityPane(
                     subtitle = if (!biometricAvailable) "Não disponível neste telemóvel".tr() else null,
                     checked = bioOn,
                     enabled = biometricAvailable,
-                    onCheckedChange = { want -> if (want) enableBiometric() else onBiometricToggle(false) },
+                    onCheckedChange = { want ->
+                        when {
+                            want -> enableBiometric()
+                            // Só impressão digital: desligá-la desliga o bloqueio → confirmar, como no interruptor geral.
+                            !hasPinSet -> confirmBiometric("Desligar bloqueio".tr(), "Confirma a tua identidade para desligar".tr()) { onBiometricToggle(false) }
+                            else -> onBiometricToggle(false)
+                        }
+                    },
                     showDivider = true,
                 )
                 val pinReady = pinEnabled && hasPinSet
@@ -2882,6 +2776,15 @@ private fun AppSecurityPane(
                         onSelect = onSetLockDelay,
                     )
                 }
+                // Antes do Android 13 esconder a miniatura exige FLAG_SECURE (bloqueia capturas).
+                if (lockDelayMs <= 0L && android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+                    Text(
+                        "Com «Agora», a app fica oculta nos recentes e as capturas de ecrã ficam bloqueadas".tr(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                    )
+                }
             }
 
             PaneSection("Privacidade".tr())
@@ -2894,6 +2797,22 @@ private fun AppSecurityPane(
                     else "Pré-visualização em branco, bloqueia capturas de ecrã".tr(),
                     checked = hideInRecents,
                     onCheckedChange = onSetHideInRecents,
+                )
+            }
+        }
+
+        // O botão Lua/Sol da gaveta só alterna claro/escuro: aqui pode voltar-se a "Sistema".
+        PaneSection("Aparência".tr())
+        PaneCard(padded = false) {
+            Box(Modifier.padding(8.dp)) {
+                SettingsSegmented(
+                    options = listOf(
+                        co.golink.tester.ui.theme.AppThemeMode.Mode.SYSTEM to "Sistema".tr(),
+                        co.golink.tester.ui.theme.AppThemeMode.Mode.LIGHT to "Claro".tr(),
+                        co.golink.tester.ui.theme.AppThemeMode.Mode.DARK to "Escuro".tr(),
+                    ),
+                    selected = co.golink.tester.ui.theme.AppThemeMode.mode,
+                    onSelect = { co.golink.tester.ui.theme.AppThemeMode.set(context, it) },
                 )
             }
         }
@@ -2951,7 +2870,7 @@ private fun LogDialog(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Registo de diagnóstico".tr(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Text(
-                            if (entries.isEmpty()) "Sem entradas".tr() else "${entries.size} entrada${if (entries.size != 1) "s" else ""}",
+                            if (entries.isEmpty()) "Sem entradas".tr() else trPlural("%d entrada", "%d entradas", entries.size),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -2981,13 +2900,14 @@ private fun LogDialog(
                         contentPadding = PaddingValues(vertical = 4.dp),
                     ) {
                         var lastDate: String? = null
-                        entries.forEach { entry ->
+                        // Chaves pelo índice: entradas iguais no mesmo ms repetiam a chave (crash).
+                        entries.forEachIndexed { i, entry ->
                             val date = entry.dateFormatted()
                             if (date != lastDate) {
                                 lastDate = date
-                                item(key = "date_$date") { DateSeparator(date) }
+                                item(key = "date_${i}_$date") { DateSeparator(date) }
                             }
-                            item(key = "${entry.timestamp}_${entry.message.hashCode()}") {
+                            item(key = "log_$i") {
                                 LogRow(entry)
                             }
                         }
@@ -3153,81 +3073,6 @@ private fun LogRow(entry: LogEntry) {
     }
 }
 
-// Espelha o seletor de método da web (SubscribeAccountPopup.vue): cartão via
-// Stripe ou cripto via NOWPayments. Ambos abrem uma página externa.
-@Composable
-private fun PaymentMethodDialog(
-    plan: Plan,
-    onDismiss: () -> Unit,
-    onStripe: () -> Unit,
-    onCrypto: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Método de pagamento".tr()) },
-        text = {
-            Column {
-                Text(
-                    plan.name + (plan.price?.let { " — $it" } ?: ""),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.height(12.dp))
-                if (plan.stripePriceId != null) {
-                    PaymentMethodRow(
-                        icon = Icons.Outlined.CreditCard,
-                        title = "Cartão".tr(),
-                        description = "Renovação automática todos os meses.".tr(),
-                        onClick = onStripe,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-                PaymentMethodRow(
-                    icon = Icons.Outlined.CurrencyBitcoin,
-                    title = "Criptomoeda".tr(),
-                    description = "Bitcoin, Ethereum, Dogecoin e mais. Cada período é pago manualmente.".tr(),
-                    onClick = onCrypto,
-                )
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancelar".tr()) }
-        },
-    )
-}
-
-@Composable
-private fun PaymentMethodRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    description: String,
-    onClick: () -> Unit,
-) {
-    Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-        ) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                Text(
-                    description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
 // Avisa do pagamento em atraso. Antes do fim do prazo mostra os dias que
 // faltam; depois, que a conta está limitada. Ver ScanPastDueSubscriptionsSchedule.
 @Composable
@@ -3261,9 +3106,11 @@ private fun PaymentOverdueBanner(
                     if (isSuspended) {
                         "Os uploads, partilhas e equipas estão pausados. Os teus ficheiros continuam acessíveis para download.".tr()
                     } else {
-                        "Faltam {days} dia(s) para regularizar. Depois disso, uploads e partilhas ficam pausados."
-                            .tr()
-                            .replace("{days}", daysLeft.toString())
+                        trPlural(
+                            "Falta %d dia para regularizar. Depois disso, uploads e partilhas ficam pausados.",
+                            "Faltam %d dias para regularizar. Depois disso, uploads e partilhas ficam pausados.",
+                            daysLeft,
+                        )
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = onContainer,
@@ -3272,3 +3119,7 @@ private fun PaymentOverdueBanner(
         }
     }
 }
+
+/** Só para comparar frases-passe sem as guardar em claro no estado. */
+private fun sha256Hex(text: String): String =
+    java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }

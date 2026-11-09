@@ -78,6 +78,8 @@ class AdminUserViewModel @Inject constructor(
         /** Passo 2 (código) pendente: "email" | "delete". */
         val awaitingCode: String? = null,
         val deleted: Boolean = false,
+        /** Subscrição ativa (o servidor recusa eliminar contas com subscrição fixed ativa). */
+        val hasActiveSubscription: Boolean = false,
     )
 
     private val _state = MutableStateFlow(UiState())
@@ -90,8 +92,11 @@ class AdminUserViewModel @Inject constructor(
         viewModelScope.launch {
             repository.user(userId)
                 .onSuccess { u -> _state.update { it.copy(user = u, isLoading = false) } }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (${t.message})") } }
+                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (%s)".tr().format(t.message.orEmpty())) } }
             repository.userStorage(userId).onSuccess { s -> _state.update { it.copy(storage = s) } }
+            repository.userSubscription(userId).onSuccess { sub ->
+                _state.update { it.copy(hasActiveSubscription = sub != null && !sub.attributes.is_cancelled && sub.attributes.status == "active") }
+            }
         }
     }
 
@@ -104,7 +109,9 @@ class AdminUserViewModel @Inject constructor(
         }
     }
 
-    fun changeRole(role: String) = run("role", "Função atualizada".tr(), ::load) { repository.changeRole(userId, role) }
+    /** Promover a admin: [password] do admin atual ou [passkeyToken] (change_role), exigidos pelo servidor. */
+    fun changeRole(role: String, password: String? = null, passkeyToken: String? = null) =
+        run("role", "Função atualizada".tr(), ::load) { repository.changeRole(userId, role, password, passkeyToken) }
 
     fun changeCapacity(gb: Int) = run("capacity", "Quota atualizada".tr()) {
         repository.changeCapacity(userId, gb).onSuccess { s -> _state.update { it.copy(storage = s) } }
@@ -191,12 +198,12 @@ fun AdminUserScreen(
                             onSelect = { tab = it; viewModel.clearError() },
                         )
                         when (tab) {
-                            UserTab.Details -> DetailsTab(user, state, viewModel)
+                            UserTab.Details -> DetailsTab(user, state, viewModel, isSelf = access?.user?.id == user.id)
                             UserTab.Storage -> StorageTab(state, viewModel)
                             UserTab.Billing -> UserBillingTab(subscriptionType)
                             UserTab.Security -> SecurityTab(user, state, viewModel)
                             UserTab.Suspend -> SuspendTab(user, state, viewModel)
-                            UserTab.Delete -> DeleteTab(user, state, viewModel)
+                            UserTab.Delete -> DeleteTab(user, state, viewModel, blockedBySubscription = subscriptionType == "fixed" && state.hasActiveSubscription)
                         }
                         Spacer(Modifier.height(24.dp))
                     }
@@ -229,7 +236,7 @@ private fun ErrorNotice(state: AdminUserViewModel.UiState) {
 }
 
 @Composable
-private fun DetailsTab(user: User, state: AdminUserViewModel.UiState, vm: AdminUserViewModel) {
+private fun DetailsTab(user: User, state: AdminUserViewModel.UiState, vm: AdminUserViewModel, isSelf: Boolean) {
     SettingsCard(title = "Informação da conta".tr()) {
         AdminInfoRow("Nome".tr(), user.name)
         AdminInfoRow("Email".tr(), user.email)
@@ -239,14 +246,50 @@ private fun DetailsTab(user: User, state: AdminUserViewModel.UiState, vm: AdminU
         AdminInfoRow("Telefone".tr(), user.phoneNumber)
         AdminInfoRow("Cidade".tr(), user.city)
     }
+    // O servidor recusa mudar a própria função (422): no próprio perfil não há card.
+    if (isSelf) return
     var role by remember(user.role) { mutableStateOf(user.role) }
+    var confirming by remember { mutableStateOf(false) }
     SettingsCard(title = "Função".tr(), description = "Os administradores têm acesso a toda a administração.".tr()) {
         AdminSegmented(listOf("user" to "Utilizador".tr(), "admin" to "Admin"), role, { role = it })
         ErrorNotice(state)
         SettingsPrimaryButton(
-            "Guardar função".tr(), onClick = { vm.changeRole(role) },
-            enabled = role != user.role, loading = state.busy == "role",
+            "Guardar função".tr(), onClick = { confirming = true },
+            enabled = role != user.role && state.busy == null, loading = state.busy == "role",
         )
+    }
+    if (confirming) {
+        val promoting = role == "admin" && user.role != "admin"
+        // Step-up da promoção: password do admin atual ou passkey (uso único).
+        var password by remember { mutableStateOf("") }
+        var passkeyToken by remember { mutableStateOf<String?>(null) }
+        SettingsDialog(
+            title = if (promoting) "Tornar administrador?".tr() else "Remover o papel de administrador?".tr(),
+            message = if (promoting) {
+                "%s passa a ter acesso total à plataforma. Confirma com a tua password.".tr().format(user.email)
+            } else {
+                "%s perde o acesso à administração e a sessão é terminada em todos os aparelhos.".tr().format(user.email)
+            },
+            confirmText = "Guardar função".tr(),
+            destructive = !promoting,
+            confirmEnabled = !promoting || passkeyToken != null || password.isNotEmpty(),
+            onConfirm = {
+                confirming = false
+                if (promoting) vm.changeRole(role, password, passkeyToken) else vm.changeRole(role)
+            },
+            onDismiss = { confirming = false },
+        ) {
+            if (promoting) {
+                co.golink.tester.ui.screens.settings.PasskeyConfirmRow(
+                    purpose = "change_role",
+                    confirmed = passkeyToken != null,
+                    onToken = { passkeyToken = it },
+                )
+                if (passkeyToken == null) {
+                    SettingsField("A tua password".tr(), password, { password = it }, isPassword = true)
+                }
+            }
+        }
     }
 }
 
@@ -341,7 +384,17 @@ private fun SuspendTab(user: User, state: AdminUserViewModel.UiState, vm: AdminU
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 ErrorNotice(state)
-                SettingsPrimaryButton("Levantar suspensão".tr(), onClick = vm::unsuspend, loading = state.busy == "unsuspend")
+                var confirmLift by remember { mutableStateOf(false) }
+                SettingsPrimaryButton("Levantar suspensão".tr(), onClick = { confirmLift = true }, enabled = state.busy == null, loading = state.busy == "unsuspend")
+                if (confirmLift) {
+                    SettingsDialog(
+                        title = "Levantar suspensão".tr(),
+                        message = "%s volta a poder entrar e usar a API.".tr().format(user.email),
+                        confirmText = "Levantar suspensão".tr(),
+                        onConfirm = { confirmLift = false; vm.unsuspend() },
+                        onDismiss = { confirmLift = false },
+                    )
+                }
             }
             else -> {
                 var unit by remember { mutableStateOf<String?>(null) }
@@ -354,26 +407,45 @@ private fun SuspendTab(user: User, state: AdminUserViewModel.UiState, vm: AdminU
                 }
                 SettingsField("Motivo (opcional)".tr(), reason, { reason = it.take(255) })
                 ErrorNotice(state)
+                var confirmSuspend by remember { mutableStateOf(false) }
                 SettingsPrimaryButton(
                     "Suspender".tr(),
-                    onClick = { vm.suspend(unit, value.toIntOrNull(), reason) },
+                    onClick = { confirmSuspend = true },
                     // O backend exige value sempre que unit vier preenchido.
-                    enabled = unit == null || (value.toIntOrNull() ?: 0) > 0,
+                    enabled = (unit == null || (value.toIntOrNull() ?: 0) > 0) && state.busy == null,
                     loading = state.busy == "suspend",
                 )
+                if (confirmSuspend) {
+                    val duration = unit?.let { u ->
+                        "${value.toIntOrNull() ?: 0} ${(SUSPEND_UNITS.firstOrNull { it.first == u }?.second ?: u).tr().lowercase()}"
+                    } ?: "Indefinida".tr()
+                    SettingsDialog(
+                        title = "Suspender conta?".tr(),
+                        message = "%s deixa de conseguir entrar e todas as sessões são terminadas de imediato. Duração: %s.".tr()
+                            .format(user.email, duration),
+                        confirmText = "Suspender".tr(),
+                        destructive = true,
+                        onConfirm = { confirmSuspend = false; vm.suspend(unit, value.toIntOrNull(), reason) },
+                        onDismiss = { confirmSuspend = false },
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun DeleteTab(user: User, state: AdminUserViewModel.UiState, vm: AdminUserViewModel) {
+private fun DeleteTab(user: User, state: AdminUserViewModel.UiState, vm: AdminUserViewModel, blockedBySubscription: Boolean) {
     SettingsCard(
         title = "Eliminar conta".tr(),
         description = "A conta é bloqueada de imediato e todos os ficheiros são apagados. Não pode ser desfeito.".tr(),
     ) {
         if (user.role == "admin") {
             SettingsNotice("Os administradores não podem ser eliminados aqui.".tr(), AdminColors.Warning)
+            return@SettingsCard
+        }
+        if (blockedBySubscription) {
+            SettingsNotice("Não é possível eliminar: o utilizador tem uma subscrição ativa.".tr(), AdminColors.Warning)
             return@SettingsCard
         }
         var name by remember { mutableStateOf("") }

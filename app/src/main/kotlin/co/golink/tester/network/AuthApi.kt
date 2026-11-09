@@ -12,6 +12,7 @@ import co.golink.tester.domain.auth.PendingTokenResponse
 import co.golink.tester.domain.auth.RegisterData
 import co.golink.tester.domain.auth.RegisterRequest
 import co.golink.tester.domain.auth.ResetPasswordRequest
+import co.golink.tester.domain.auth.SocialiteExchangeRequest
 import co.golink.tester.domain.auth.SocialiteUrl
 import co.golink.tester.domain.auth.ValidateOtpRequest
 import retrofit2.Response
@@ -20,6 +21,7 @@ import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.Path
+import retrofit2.http.Query
 
 interface AuthApi {
     @POST("api/login")
@@ -30,6 +32,13 @@ interface AuthApi {
 
     @POST("api/logout")
     suspend fun logout(): Response<Unit>
+
+    /** Revoga um token que já não é o da sessão (ver LogoutRevokeWorker). */
+    @POST("api/logout")
+    suspend fun logoutWith(@Header("Authorization") bearer: String): Response<Unit>
+
+    @POST("api/socialite/exchange")
+    suspend fun socialiteExchange(@Body body: SocialiteExchangeRequest): Response<PendingTokenResponse>
 
     @POST("api/password/recover")
     suspend fun recoverPassword(@Body body: ForgotPasswordRequest): Response<ApiEnvelope<Unit>>
@@ -54,6 +63,16 @@ interface AuthApi {
 
     @GET("api/socialite/{provider}/redirect")
     suspend fun socialiteRedirect(@Path("provider") provider: String): Response<ApiEnvelope<SocialiteUrl>>
+
+    /** Fluxo da app: state e PKCE (S256) gerados aqui; regresso pelo esquema próprio. */
+    @GET("api/socialite/{provider}/redirect")
+    suspend fun socialiteRedirectApp(
+        @Path("provider") provider: String,
+        @Query("state") state: String,
+        @Query("code_challenge") codeChallenge: String,
+        @Query("redirect_scheme") redirectScheme: String,
+        @Query("client") client: String,
+    ): Response<ApiEnvelope<SocialiteUrl>>
 
     @GET("api/socialite/pending-token")
     suspend fun socialitePendingToken(

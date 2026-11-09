@@ -77,26 +77,8 @@ class MoveManager @Inject constructor(
                     if (_jobs.value.firstOrNull { it.id == id }?.state == MoveJob.State.Done) dismiss(id)
                 }
                 .onFailure { t ->
-                    val msg = t.message.orEmpty()
-                    // Recusas definitivas do servidor: sem "Tentar de novo".
-                    // Código estável do servidor; o texto em inglês só como recurso
-                    // para servidores antigos.
-                    val code = (t as? MoveRefused)?.code
-                    val outOfTeam = code == "team_scope" || (code == null && msg.contains("within that team folder", ignoreCase = true))
-                    val rootMove = code == "team_root" || (code == null && msg.contains("team folders can't be moved", ignoreCase = true))
-                    val teamInto = code == null && !outOfTeam && !rootMove && msg.contains("team folder", ignoreCase = true)
-                    update(id) {
-                        it.copy(
-                            state = MoveJob.State.Failed,
-                            error = when {
-                                outOfTeam -> TEAM_SCOPE_MESSAGE
-                                rootMove -> TEAM_ROOT_MESSAGE
-                                teamInto -> TEAM_INTO_TEAM_MESSAGE
-                                else -> msg
-                            },
-                            retryable = !outOfTeam && !teamInto && !rootMove,
-                        )
-                    }
+                    val (message, retryable) = describeFailure(t)
+                    update(id) { it.copy(state = MoveJob.State.Failed, error = message, retryable = retryable) }
                 }
         }
     }
@@ -110,6 +92,29 @@ class MoveManager @Inject constructor(
         const val TEAM_SCOPE_MESSAGE = "Os itens de uma pasta de equipa só podem ser movidos dentro dessa equipa."
         const val TEAM_ROOT_MESSAGE = "As pastas de equipa não se movem. Podes mover os itens dentro delas."
         const val TEAM_INTO_TEAM_MESSAGE = "Uma pasta de equipa não pode ir para dentro de outra."
+        const val INTO_SELF_MESSAGE = "Uma pasta não pode ser movida para dentro de si própria."
+        const val SHARE_ROOT_MESSAGE = "A pasta partilhada em si não pode ser movida."
+
+        /**
+         * Erro de mover → (chave i18n ou mensagem do servidor, pode tentar de novo).
+         * Recusas definitivas do servidor ficam sem "Tentar de novo". Código estável do
+         * servidor; o texto em inglês só como recurso para servidores antigos.
+         */
+        fun describeFailure(t: Throwable): Pair<String, Boolean> {
+            val msg = t.message.orEmpty()
+            val code = (t as? MoveRefused)?.code
+            val outOfTeam = code == "team_scope" || (code == null && msg.contains("within that team folder", ignoreCase = true))
+            val rootMove = code == "team_root" || (code == null && msg.contains("team folders can't be moved", ignoreCase = true))
+            val teamInto = code == null && !outOfTeam && !rootMove && msg.contains("team folder", ignoreCase = true)
+            return when {
+                outOfTeam -> TEAM_SCOPE_MESSAGE to false
+                rootMove -> TEAM_ROOT_MESSAGE to false
+                teamInto -> TEAM_INTO_TEAM_MESSAGE to false
+                code == "move_into_self" -> INTO_SELF_MESSAGE to false
+                code == "share_root" -> SHARE_ROOT_MESSAGE to false
+                else -> msg to true
+            }
+        }
 
         /** Nome da pasta destino na árvore de navegação (null = raiz). */
         fun folderName(sections: List<NavigationSection>, id: String?): String? {

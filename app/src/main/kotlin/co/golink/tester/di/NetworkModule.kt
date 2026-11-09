@@ -1,6 +1,7 @@
 package co.golink.tester.di
 
 import co.golink.tester.BuildConfig
+import co.golink.tester.data.config.BackendUrlHolder
 import co.golink.tester.network.interceptors.AppLoggerInterceptor
 import co.golink.tester.network.interceptors.AuthInterceptor
 import co.golink.tester.network.interceptors.HostRewriteInterceptor
@@ -14,6 +15,7 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Named
 import javax.inject.Singleton
 import kotlinx.serialization.json.Json
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -34,24 +36,33 @@ object NetworkModule {
     @Provides
     @Singleton
     @Named("base")
-    fun provideBaseOkHttp(): OkHttpClient {
+    fun provideBaseOkHttp(backendUrl: BackendUrlHolder): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
             // Identifica a app: o servidor isenta-a do Cloudflare Turnstile (só existe na web).
-            .addInterceptor { chain ->
+            // Só para o backend (não para URLs assinados de S3/CDN nem terceiros). Network
+            // interceptor: já vê o host final (depois do HostRewrite e de cada redirect).
+            .addNetworkInterceptor { chain ->
+                val request = chain.request()
+                val backendHost = backendUrl.current.toHttpUrlOrNull()?.host
                 chain.proceed(
-                    chain.request().newBuilder()
-                        .header("X-GoLink-Client", "android/${BuildConfig.VERSION_NAME}")
-                        .build()
+                    if (request.url.host == backendHost) {
+                        request.newBuilder().header("X-GoLink-Client", "android/${BuildConfig.VERSION_NAME}").build()
+                    } else request
                 )
             }
         if (BuildConfig.DEBUG) {
             // HEADERS instead of BODY: BODY buffers the entire request/response body
             // in memory for inspection, which causes OOM and timeouts on large uploads.
             builder.addInterceptor(
-                HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.HEADERS }
+                HttpLoggingInterceptor().apply {
+                    level = HttpLoggingInterceptor.Level.HEADERS
+                    redactHeader("Authorization")
+                    redactHeader("Cookie")
+                    redactHeader("Set-Cookie")
+                }
             )
         }
         return builder.build()

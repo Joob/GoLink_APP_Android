@@ -66,6 +66,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -119,9 +120,9 @@ class PlansViewModel @Inject constructor(private val repository: AdminRepository
         viewModelScope.launch {
             repository.plans(page)
                 .onSuccess { (list, more) ->
-                    _state.update { s -> s.copy(plans = if (page == 1) list else s.plans + list, page = page, hasMore = more, isLoading = false, loadingMore = false) }
+                    _state.update { s -> s.copy(plans = if (page == 1) list else (s.plans + list).distinctBy { x -> x.idString }, page = page, hasMore = more, isLoading = false, loadingMore = false) }
                 }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, loadingMore = false, error = "Não foi possível carregar (${t.message})") } }
+                .onFailure { t -> _state.update { it.copy(isLoading = false, loadingMore = false, error = "Não foi possível carregar (%s)".tr().format(t.message.orEmpty())) } }
         }
     }
 
@@ -148,14 +149,35 @@ class PlansViewModel @Inject constructor(private val repository: AdminRepository
 
     fun saveDetails(plan: AdminPlan, name: String, description: String, visible: Boolean, amount: Double?, features: Map<String, Int>) {
         val id = plan.idString
-        run("Alterações guardadas".tr(), {
-            runCatching {
-                repository.updatePlan(id, UpdatePlanRequest(name, description.ifBlank { null }, visible)).getOrThrow()
-                if (amount != null && amount != plan.attributes.amount) repository.updatePlanPrice(id, amount).getOrThrow()
-                val changed = features.filter { (k, v) -> plan.fixedFeatures()[k]?.toDoubleOrNull()?.toInt() != v }
-                if (changed.isNotEmpty()) repository.updatePlanFeatures(id, changed).getOrThrow()
+        // Três pedidos sem atomicidade: se um falhar diz qual e recarrega o
+        // plano (os passos anteriores já ficaram gravados).
+        _state.update { it.copy(saving = true, formError = null) }
+        viewModelScope.launch {
+            val details: suspend () -> Result<*> = { repository.updatePlan(id, UpdatePlanRequest(name, description.ifBlank { null }, visible)) }
+            val price: suspend () -> Result<*> = {
+                if (amount != null && amount != plan.attributes.amount) repository.updatePlanPrice(id, amount) else Result.success(Unit)
             }
-        }) { _state.update { it.copy(selected = null) } }
+            val featuresStep: suspend () -> Result<*> = {
+                val changed = features.filter { (k, v) -> plan.fixedFeatures()[k]?.toDoubleOrNull()?.toInt() != v }
+                if (changed.isNotEmpty()) repository.updatePlanFeatures(id, changed) else Result.success(Unit)
+            }
+            val steps = listOf("Detalhes".tr() to details, "Preço".tr() to price, "Funcionalidades".tr() to featuresStep)
+            for ((index, step) in steps.withIndex()) {
+                val error = step.second().exceptionOrNull() ?: continue
+                val saved = steps.take(index).joinToString(", ") { it.first }
+                val message = if (saved.isEmpty()) {
+                    "%s: %s".format(step.first, error.message.orEmpty())
+                } else {
+                    "Gravado: %s. Falhou: %s (%s).".tr().format(saved, step.first, error.message.orEmpty())
+                }
+                _state.update { it.copy(saving = false, formError = message) }
+                load()
+                if (saved.isNotEmpty()) repository.plan(id).onSuccess { fresh -> _state.update { it.copy(selected = fresh) } }
+                return@launch
+            }
+            _state.update { it.copy(saving = false, toast = "Alterações guardadas".tr(), selected = null) }
+            load()
+        }
     }
 
     fun delete(plan: AdminPlan) = run("Plano eliminado".tr(), { repository.deletePlan(plan.idString) }) {
@@ -407,9 +429,9 @@ class SubscriptionsViewModel @Inject constructor(private val repository: AdminRe
         viewModelScope.launch {
             repository.subscriptions(page)
                 .onSuccess { (list, more) ->
-                    _state.update { s -> s.copy(items = if (page == 1) list else s.items + list, page = page, hasMore = more, isLoading = false, loadingMore = false) }
+                    _state.update { s -> s.copy(items = if (page == 1) list else (s.items + list).distinctBy { x -> x.idString }, page = page, hasMore = more, isLoading = false, loadingMore = false) }
                 }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, loadingMore = false, error = "Não foi possível carregar (${t.message})") } }
+                .onFailure { t -> _state.update { it.copy(isLoading = false, loadingMore = false, error = "Não foi possível carregar (%s)".tr().format(t.message.orEmpty())) } }
         }
     }
 
@@ -488,7 +510,7 @@ class DiscountsViewModel @Inject constructor(private val repository: AdminReposi
         viewModelScope.launch {
             repository.discounts()
                 .onSuccess { l -> _state.update { it.copy(items = l, isLoading = false) } }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (${t.message})") } }
+                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (%s)".tr().format(t.message.orEmpty())) } }
         }
     }
 
@@ -679,34 +701,60 @@ class InvoicesViewModel @Inject constructor(private val repository: AdminReposit
         val selected: TransactionData? = null,
         val busy: Boolean = false,
         val toast: String? = null,
+        /** Contagens globais por estado (do servidor, não das páginas carregadas). */
+        val stats: co.golink.tester.domain.admin.InvoiceStats? = null,
     ) {
-        val visible: List<TransactionData>
-            get() = items.filter { t ->
-                val a = t.attributes
-                val u = t.relationships?.user?.data?.attributes
-                invoiceStatus(t) .let { filter == "all" || it == filter } &&
-                    (query.isBlank() || listOfNotNull(u?.name, u?.email, a.note, a.reference, a.price).any { it.contains(query, true) })
-            }
+        /** O filtro e a pesquisa são feitos no servidor. */
+        val visible: List<TransactionData> get() = items
     }
 
     private val _state = MutableStateFlow(UiState())
     val state = _state.asStateFlow()
 
+    private var loadJob: kotlinx.coroutines.Job? = null
+    private var searchJob: kotlinx.coroutines.Job? = null
+
     init { load() }
 
     fun load(page: Int = 1) {
-        _state.update { if (page == 1) it.copy(isLoading = it.items.isEmpty(), error = null) else it.copy(loadingMore = true) }
-        viewModelScope.launch {
-            repository.transactions(page)
-                .onSuccess { (list, more) ->
-                    _state.update { s -> s.copy(items = if (page == 1) list else s.items + list, page = page, hasMore = more, isLoading = false, loadingMore = false) }
+        if (page == 1) loadJob?.cancel() else if (loadJob?.isActive == true) return
+        val filter = _state.value.filter
+        val query = _state.value.query
+        _state.update { if (page == 1) it.copy(isLoading = it.items.isEmpty(), loadingMore = false, error = null) else it.copy(loadingMore = true) }
+        loadJob = viewModelScope.launch {
+            val result = repository.transactions(page, state = filter.takeIf { it != "all" }, search = query)
+            // Cancelado ou filtro/pesquisa mudou entretanto: descarta.
+            if (!kotlinx.coroutines.currentCoroutineContext().isActive || _state.value.filter != filter || _state.value.query != query) return@launch
+            result
+                .onSuccess { p ->
+                    _state.update { s ->
+                        s.copy(
+                            items = if (page == 1) p.items else (s.items + p.items).distinctBy { x -> x.idString },
+                            page = page, hasMore = p.hasMore, isLoading = false, loadingMore = false,
+                            stats = p.stats ?: s.stats,
+                        )
+                    }
                 }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, loadingMore = false, error = "Não foi possível carregar (${t.message})") } }
+                .onFailure { t -> _state.update { it.copy(isLoading = false, loadingMore = false, error = "Não foi possível carregar (%s)".tr().format(t.message.orEmpty())) } }
         }
     }
 
-    fun setFilter(f: String) = _state.update { it.copy(filter = f) }
-    fun setQuery(q: String) = _state.update { it.copy(query = q) }
+    fun setFilter(f: String) {
+        if (f == _state.value.filter) return
+        _state.update { it.copy(filter = f, items = emptyList()) }
+        load()
+    }
+
+    /** Pesquisa no servidor com atraso de 350 ms. */
+    fun setQuery(q: String) {
+        _state.update { it.copy(query = q) }
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(350)
+            _state.update { it.copy(items = emptyList()) }
+            load()
+        }
+    }
     fun open(t: TransactionData?) = _state.update { it.copy(selected = t) }
 
     fun refund(t: TransactionData) = act("Fatura reembolsada".tr()) { repository.refundTransaction(t.idString) }
@@ -724,13 +772,6 @@ class InvoicesViewModel @Inject constructor(private val repository: AdminReposit
     fun consumeToast() = _state.update { it.copy(toast = null) }
 }
 
-private fun invoiceStatus(t: TransactionData): String = when {
-    t.attributes.is_refunded -> "refunded"
-    t.attributes.status == "completed" -> "paid"
-    t.attributes.status == "cancelled" -> "cancelled"
-    else -> "failed"
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InvoicesPane(viewModel: InvoicesViewModel = hiltViewModel()) {
@@ -738,7 +779,9 @@ fun InvoicesPane(viewModel: InvoicesViewModel = hiltViewModel()) {
     val snackbar = remember { SnackbarHostState() }
     var confirm by remember { mutableStateOf<Pair<String, TransactionData>?>(null) }
     LaunchedEffect(state.toast) { state.toast?.let { snackbar.showSnackbar(it); viewModel.consumeToast() } }
-    val counts = remember(state.items) { state.items.groupingBy(::invoiceStatus).eachCount() + ("all" to state.items.size) }
+    val counts = remember(state.stats) {
+        state.stats?.let { mapOf("all" to it.all, "paid" to it.paid, "refunded" to it.refunded, "failed" to it.failed) } ?: emptyMap()
+    }
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(

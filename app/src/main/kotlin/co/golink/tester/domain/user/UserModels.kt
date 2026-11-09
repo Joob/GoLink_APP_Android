@@ -24,6 +24,14 @@ data class UserData(
 @Serializable
 data class UserMeta(
     val restrictions: UserRestrictions? = null,
+    // Limite por ficheiro efetivo do utilizador (plano pago ou Free); limit null = sem limite.
+    val upload: UserUploadLimit? = null,
+)
+
+@Serializable
+data class UserUploadLimit(
+    val limit: Long? = null,
+    val limitFormatted: String? = null,
 )
 
 // Restrições de faturação/espaço da conta (UserResource → meta.restrictions).
@@ -192,6 +200,8 @@ data class User(
     val deletionScheduledFor: String? = null,
     val canUpload: Boolean = true,
     val canCreateFolder: Boolean = true,
+    val uploadLimitBytes: Long? = null,
+    val uploadLimitLabel: String? = null,
     val holidayCountry: String? = null,
     val dateFormat: String? = null,
     val weekStart: Int? = null,
@@ -242,6 +252,8 @@ data class User(
                 deletionScheduledFor = attrs.deletion_scheduled_for,
                 canUpload = response.data.meta?.restrictions?.canUpload ?: true,
                 canCreateFolder = response.data.meta?.restrictions?.canCreateFolder ?: true,
+                uploadLimitBytes = response.data.meta?.upload?.limit?.takeIf { it > 0 },
+                uploadLimitLabel = response.data.meta?.upload?.limitFormatted,
             )
         }
     }

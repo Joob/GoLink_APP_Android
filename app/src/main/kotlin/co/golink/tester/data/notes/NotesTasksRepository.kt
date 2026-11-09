@@ -2,7 +2,6 @@ package co.golink.tester.data.notes
 
 import co.golink.tester.data.encryption.CalendarCrypto
 import co.golink.tester.data.encryption.E2EKeyManager
-import co.golink.tester.data.legacy.LegacyCrypto
 import co.golink.tester.network.NotesApi
 import java.time.LocalDate
 import java.util.concurrent.ConcurrentHashMap
@@ -10,6 +9,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
@@ -35,8 +35,10 @@ data class NoteTaskItem(
 @Singleton
 class NotesTasksRepository @Inject constructor(
     private val api: NotesApi,
-    private val keys: E2EKeyManager,
+    keys: E2EKeyManager,
+    private val keyCache: NoteKeyCache,
 ) {
+    // A chave vem da NoteKeyCache (a mesma das Notes, zerada lá no lock); aqui só o título.
     private data class NoteKey(val wrapped: String, val metaEnc: String?, val key: ByteArray, val title: String)
 
     private val cache = ConcurrentHashMap<String, NoteKey>()
@@ -57,11 +59,14 @@ class NotesTasksRepository @Inject constructor(
                 val wrapped = o.str("wrapped_key") ?: continue
                 val metaEnc = o.str("meta_enc")
                 val hit = cache[id]
-                noteKeys[id] = if (hit != null && hit.wrapped == wrapped && hit.metaEnc == metaEnc) hit else runCatching {
-                    val key = if (hit?.wrapped == wrapped) hit.key else keys.openFileDataKey(wrapped)
-                    val title = metaEnc?.let { runCatching { LegacyCrypto.decryptJson(it, key)["title"]?.jsonPrimitive?.contentOrNull }.getOrNull() }.orEmpty()
-                    NoteKey(wrapped, metaEnc, key, title).also { cache[id] = it }
-                }.getOrNull()
+                noteKeys[id] = if (hit != null && hit.wrapped == wrapped && hit.metaEnc == metaEnc) hit else {
+                    keyCache.open(wrapped)?.let { key ->
+                        val title = metaEnc?.let {
+                            runCatching { NoteMeta.from(Json.parseToJsonElement(CalendarCrypto.decryptString(it, key)) as? JsonObject).title }.getOrNull()
+                        }.orEmpty()
+                        NoteKey(wrapped, metaEnc, key, title).also { cache[id] = it }
+                    }
+                }
             }
             body["data"]?.jsonArray.orEmpty().mapNotNull { t ->
                 val o = t.jsonObject

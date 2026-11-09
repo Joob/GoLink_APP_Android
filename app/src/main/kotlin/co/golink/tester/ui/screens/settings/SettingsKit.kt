@@ -1,5 +1,14 @@
 package co.golink.tester.ui.screens.settings
 
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.withStyle
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.ui.focus.focusRequester
@@ -14,7 +23,9 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material.icons.filled.Check
@@ -83,6 +94,9 @@ fun SettingsField(
     supportingText: String? = null,
     hint: String? = null,
     showLabel: Boolean = true,
+    // Por omissão "Seguinte" (passa ao campo seguinte); o último campo usa Done + [onImeAction].
+    imeAction: ImeAction = ImeAction.Next,
+    onImeAction: (() -> Unit)? = null,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         if (showLabel) {
@@ -96,32 +110,53 @@ fun SettingsField(
             focused -> SettingsAccent
             else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
         }
+        var revealed by remember { mutableStateOf(false) }
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
             singleLine = true,
             textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
             cursorBrush = SolidColor(SettingsAccent),
-            visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
-            keyboardOptions = KeyboardOptions(keyboardType = if (isPassword) KeyboardType.Password else keyboardType),
+            visualTransformation = if (isPassword && !revealed) PasswordVisualTransformation() else VisualTransformation.None,
+            keyboardOptions = KeyboardOptions(keyboardType = if (isPassword) KeyboardType.Password else keyboardType, imeAction = imeAction),
+            keyboardActions = if (onImeAction != null) {
+                KeyboardActions(onDone = { onImeAction() }, onGo = { onImeAction() }, onSend = { onImeAction() })
+            } else {
+                KeyboardActions.Default
+            },
+            // TalkBack: o rótulo visível é um Text à parte, por isso vai também para o campo.
+            // Altura mínima (não fixa) para não cortar texto com letra grande.
             modifier = Modifier
                 .fillMaxWidth()
-                .height(50.dp)
+                .heightIn(min = 50.dp)
+                .semantics { if (label.isNotBlank()) contentDescription = label }
                 .onFocusChanged { focused = it.isFocused },
             decorationBox = { inner ->
-                Box(
-                    contentAlignment = Alignment.CenterStart,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .fillMaxSize()
+                        .fillMaxWidth()
+                        .heightIn(min = 50.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(settingsCardColor())
                         .border(if (focused) 1.5.dp else 1.dp, borderColor, RoundedCornerShape(12.dp))
-                        .padding(horizontal = 14.dp),
+                        .padding(start = 14.dp, end = if (isPassword) 2.dp else 14.dp, top = if (isPassword) 1.dp else 8.dp, bottom = if (isPassword) 1.dp else 8.dp),
                 ) {
-                    if (value.isEmpty() && placeholder != null) {
-                        Text(placeholder, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                        if (value.isEmpty() && placeholder != null) {
+                            Text(placeholder, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                        }
+                        inner()
                     }
-                    inner()
+                    if (isPassword) {
+                        androidx.compose.material3.IconButton(onClick = { revealed = !revealed }) {
+                            Icon(
+                                if (revealed) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                contentDescription = if (revealed) "Esconder password".tr() else "Mostrar password".tr(),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
             },
         )
@@ -298,11 +333,14 @@ fun SettingsCheckSquare(checked: Boolean, enabled: Boolean = true, onClick: () -
     val alpha = if (enabled) 1f else 0.4f
     Box(
         modifier = Modifier
+            // Alvo de toque de 48dp (o quadrado continua com 24dp).
+            .minimumInteractiveComponentSize()
             .size(24.dp)
             .clip(shape)
             .background(if (checked) SettingsAccent.copy(alpha = alpha) else Color.Transparent)
             .border(1.5.dp, if (checked) SettingsAccent.copy(alpha = alpha) else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f * alpha), shape)
-            .clickable(enabled = enabled, onClick = onClick),
+            // TalkBack anuncia "caixa de verificação, marcada/não marcada".
+            .toggleable(value = checked, enabled = enabled, role = Role.Checkbox, onValueChange = { onClick() }),
         contentAlignment = Alignment.Center,
     ) {
         if (checked) Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
@@ -528,7 +566,8 @@ fun SettingsToggleRow(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(enabled = enabled) { onCheckedChange(!checked) }
+                // Role.Switch + estado: o TalkBack anuncia "ligado/desligado" (o Switch não tem onCheckedChange).
+                .toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = { onCheckedChange(it) })
                 .padding(horizontal = 16.dp, vertical = 13.dp),
         ) {
             if (icon != null) {
@@ -562,8 +601,9 @@ fun SettingsActionText(text: String, onClick: () -> Unit, color: Color = Setting
         fontWeight = FontWeight.Bold,
         color = color.copy(alpha = if (enabled) 1f else 0.45f),
         modifier = Modifier
+            .minimumInteractiveComponentSize()
             .clip(RoundedCornerShape(8.dp))
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 6.dp, vertical = 4.dp),
     )
 }
@@ -575,9 +615,10 @@ fun SettingsPillButton(text: String, onClick: () -> Unit, enabled: Boolean = tru
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
+            .minimumInteractiveComponentSize()
             .clip(RoundedCornerShape(50))
             .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), RoundedCornerShape(50))
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 7.dp),
     ) {
         Text(text, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = c.copy(alpha = if (enabled) 1f else 0.45f))
@@ -603,7 +644,7 @@ fun <T> SettingsSegmented(options: List<Pair<T, String>>, selected: T, onSelect:
                     .weight(1f)
                     .clip(RoundedCornerShape(10.dp))
                     .background(if (on) settingsCardColor().let { if (settingsIsDark()) MaterialTheme.colorScheme.surface else it } else Color.Transparent)
-                    .clickable { onSelect(value) }
+                    .selectable(selected = on, role = Role.RadioButton, onClick = { onSelect(value) })
                     .padding(vertical = 10.dp),
             ) {
                 Text(

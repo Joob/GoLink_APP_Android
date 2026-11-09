@@ -24,8 +24,17 @@ import kotlinx.serialization.json.Json
  *
  * E2E: o ciphertext fica num ficheiro em filesDir/upload_resume (não no cache)
  * e a data key é guardada cifrada com uma chave AES do Android Keystore — nunca
- * sai do dispositivo nem fica em claro no disco. O backup automático fica de
- * fora (o worker volta a correr sozinho).
+ * sai do dispositivo nem fica em claro no disco.
+ *
+ * Fonte sem posição (Drive/Fotos na nuvem, sem E2E): uma cópia em
+ * filesDir/upload_resume (`copyPath`) passa a ser a fonte dos chunks, para
+ * retomar e reenviar partes em falta. Apaga-se com o registo.
+ *
+ * Backup automático: só o envio por chunks (cifrado) é registado, com o id
+ * `bk_<upload_key>` (estável entre execuções do worker) e `backupKey`. Não entra
+ * no [forUser] — o worker volta a pôr o ficheiro na fila e o envio continua dos
+ * chunks já aceites. Sai com o envio concluído, ao desligar o backup ou ao fim
+ * de [BACKUP_MAX_AGE].
  */
 class UploadResumeStore(private val context: Context) {
 
@@ -67,6 +76,11 @@ class UploadResumeStore(private val context: Context) {
         val replacesId: String? = null,
         val chunks: ChunkState? = null,
         val e2e: E2EState? = null,
+        /** Cópia local de uma fonte sem posição (envio sem E2E por chunks). */
+        val copyPath: String? = null,
+        val mime: String? = null,
+        /** upload_key do backup automático (registo do worker, não do utilizador). */
+        val backupKey: String? = null,
         val updatedAt: Long = System.currentTimeMillis(),
     )
 
@@ -88,7 +102,7 @@ class UploadResumeStore(private val context: Context) {
 
     @Synchronized fun get(taskId: String): Record? = records[taskId]
 
-    @Synchronized fun forUser(userId: String): List<Record> = records.values.filter { it.userId == userId }
+    @Synchronized fun forUser(userId: String): List<Record> = records.values.filter { it.userId == userId && it.backupKey == null }
 
     @Synchronized fun put(record: Record) {
         records[record.taskId] = record.copy(updatedAt = System.currentTimeMillis())
@@ -119,8 +133,20 @@ class UploadResumeStore(private val context: Context) {
         val r = records.remove(taskId) ?: return null
         lastSave.remove(taskId)
         r.e2e?.tempPath?.let { File(it).delete() }
+        r.copyPath?.let { File(it).delete() }
         save()
         return r
+    }
+
+    /** Backup desligado: larga o progresso e os ciphertexts do backup. */
+    @Synchronized fun forgetBackups() {
+        records.values.filter { it.backupKey != null }.map { it.taskId }.forEach { forget(it) }
+    }
+
+    /** Registos do backup parados há mais de [BACKUP_MAX_AGE] (o servidor já apagou as partes). */
+    @Synchronized fun purgeStaleBackups() {
+        val cutoff = System.currentTimeMillis() - BACKUP_MAX_AGE
+        records.values.filter { it.backupKey != null && it.updatedAt < cutoff }.map { it.taskId }.forEach { forget(it) }
     }
 
     @Synchronized fun isTracked(taskId: String): Boolean = records.containsKey(taskId)
@@ -139,6 +165,8 @@ class UploadResumeStore(private val context: Context) {
 
     fun tempFileFor(taskId: String): File = File(dir, "$taskId.enc")
 
+    fun copyFileFor(taskId: String): File = File(dir, "$taskId.src")
+
     private fun save() {
         runCatching {
             val tmp = File(file.parentFile, file.name + ".tmp")
@@ -152,8 +180,18 @@ class UploadResumeStore(private val context: Context) {
         val stale = records.values.filter { it.updatedAt < cutoff }.map { it.taskId }
         stale.forEach { forget(it) }
         // Ciphertexts órfãos (registo perdido): não deixar ficheiros grandes para trás.
-        val live = records.values.mapNotNull { it.e2e?.tempPath }.toSet()
+        purgeStaleBackups()
+        val live = records.values.flatMap { listOfNotNull(it.e2e?.tempPath, it.copyPath) }.toSet()
         dir.listFiles()?.filter { it.absolutePath !in live }?.forEach { it.delete() }
+        // Fotos/vídeos da câmara (em claro, cache/camera): os que já não têm envio
+        // por retomar. A margem de 1 h protege uma captura a decorrer agora.
+        val cameraCutoff = System.currentTimeMillis() - 60 * 60 * 1000L
+        val cameraLive = records.values.map { android.net.Uri.parse(it.uri) }
+            .filter { it.authority == "${context.packageName}.fileprovider" }
+            .mapNotNull { it.lastPathSegment }.toSet()
+        File(context.cacheDir, "camera").listFiles()
+            ?.filter { it.name !in cameraLive && it.lastModified() < cameraCutoff }
+            ?.forEach { it.delete() }
     }
 
     // ---- chave do dispositivo (Keystore) para a data key E2E ----------------
@@ -195,5 +233,8 @@ class UploadResumeStore(private val context: Context) {
 
         /** O servidor apaga as partes ao fim de 24 h: depois disto recomeça os chunks. */
         const val CHUNKS_MAX_AGE = 20L * 3600 * 1000
+
+        /** Backup: depois disto as partes já não existem e o ciphertext só ocupa espaço. */
+        const val BACKUP_MAX_AGE = 24L * 3600 * 1000
     }
 }

@@ -75,6 +75,15 @@ data class LoginData(
 @Serializable
 data class SocialiteUrl(
     val url: String,
+    /** "app_code" quando o servidor aceitou o fluxo da app (Custom Tabs + código). */
+    val flow: String? = null,
+)
+
+@Serializable
+data class SocialiteExchangeRequest(
+    val code: String,
+    val code_verifier: String,
+    val state: String,
 )
 
 @Serializable

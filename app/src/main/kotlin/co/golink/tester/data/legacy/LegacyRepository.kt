@@ -87,8 +87,18 @@ class LegacyRepository @Inject constructor(
         scope.launch {
             keys.unlocked.collect {
                 if (!it) {
+                    val stale = kVault
                     reset()
-                    turn.withLock { if (!keys.isUnlocked) reset() }
+                    turn.withLock {
+                        val later = kVault
+                        if (!keys.isUnlocked) reset()
+                        // As escritas correm em [turn]: já ninguém cifra com estas chaves.
+                        // (Uma leitura fora do mutex só falha a decifrar.)
+                        if (!keys.isUnlocked) {
+                            stale?.fill(0)
+                            later?.fill(0)
+                        }
+                    }
                 }
             }
         }
@@ -150,7 +160,7 @@ class LegacyRepository @Inject constructor(
         }
         val key = if (rekeyed || kVault == null) keys.openFileDataKey(full.vault.sealed_vault_key) else kVault!!
         val decrypted = decryptFull(full, key)
-        kVault = key
+        swapKey(key)
         _state.update {
             it.copy(
                 vault = decrypted.vault,
@@ -165,14 +175,21 @@ class LegacyRepository @Inject constructor(
     private suspend fun reloadLocked() {
         val body = api.vault().bodyOrThrow()
         val full = body.data ?: run {
-            kVault = null
+            swapKey(null)
             _state.value = LegacyState(loaded = true, guardingCount = body.guarding_count)
             return
         }
         val key = keys.openFileDataKey(full.vault.sealed_vault_key)
         val decrypted = decryptFull(full, key)
-        kVault = key
+        swapKey(key)
         _state.value = decrypted.copy(loaded = true, guardingCount = body.guarding_count)
+    }
+
+    /** Dentro de [turn]: troca a K_vault e apaga a anterior da memória. */
+    private fun swapKey(key: ByteArray?) {
+        val old = kVault
+        kVault = key
+        if (old != null && old !== key) old.fill(0)
     }
 
     /** Escrita no cofre: em série; um 409 recarrega (esta cópia ficou para trás) e o erro segue. */
@@ -582,23 +599,27 @@ class LegacyRepository @Inject constructor(
     private fun sealGuardians(rows: List<LegacyGuardian>, key: ByteArray, vaultId: String, epoch: Int, threshold: Int, resplit: Boolean): List<PlacedGuardian> {
         val shares = if (resplit) LegacyCrypto.splitVaultKey(key, threshold, rows.size)
         else rows.map { cc.openBytes(it.dto.share_vault ?: throw LegacyException("legacy_share_missing"), key) }
-        val placed = rows.mapIndexed { i, g ->
-            Triple(g, if (resplit) i + 1 else (g.dto.slot ?: (i + 1)), if (resplit) cc.sealBytes(shares[i], key) else g.dto.share_vault)
-        }
-        val roster = placed.mapNotNull { (g, slot, _) ->
-            LegacyCrypto.pinnedKey(g)?.takeIf { g.dto.status == "accepted" }?.let { LegacyCrypto.RosterEntry(slot, g.dto.id, it) }
-        }
-        return placed.mapIndexed { i, (g, slot, shareVault) ->
-            val publicKey = LegacyCrypto.pinnedKey(g)
-            if (g.dto.status != "accepted" || publicKey == null) return@mapIndexed PlacedGuardian(g, slot, shareVault, null, null, null)
-            // Selar a uma chave nova não prova que o guardião a tem: é preciso outro desafio.
-            val unproven = !g.dto.sealed || g.dto.sealed_pubkey != publicKey
-            PlacedGuardian(
-                g, slot, shareVault,
-                LegacyCrypto.sealGuardianBlob(vaultId, epoch, slot, shares[i], threshold, placed.size, roster, publicKey),
-                publicKey,
-                if (unproven) LegacyCrypto.createChallenge(publicKey) else null,
-            )
+        try {
+            val placed = rows.mapIndexed { i, g ->
+                Triple(g, if (resplit) i + 1 else (g.dto.slot ?: (i + 1)), if (resplit) cc.sealBytes(shares[i], key) else g.dto.share_vault)
+            }
+            val roster = placed.mapNotNull { (g, slot, _) ->
+                LegacyCrypto.pinnedKey(g)?.takeIf { g.dto.status == "accepted" }?.let { LegacyCrypto.RosterEntry(slot, g.dto.id, it) }
+            }
+            return placed.mapIndexed { i, (g, slot, shareVault) ->
+                val publicKey = LegacyCrypto.pinnedKey(g)
+                if (g.dto.status != "accepted" || publicKey == null) return@mapIndexed PlacedGuardian(g, slot, shareVault, null, null, null)
+                // Selar a uma chave nova não prova que o guardião a tem: é preciso outro desafio.
+                val unproven = !g.dto.sealed || g.dto.sealed_pubkey != publicKey
+                PlacedGuardian(
+                    g, slot, shareVault,
+                    LegacyCrypto.sealGuardianBlob(vaultId, epoch, slot, shares[i], threshold, placed.size, roster, publicKey),
+                    publicKey,
+                    if (unproven) LegacyCrypto.createChallenge(publicKey) else null,
+                )
+            }
+        } finally {
+            shares.forEach { it.fill(0) }
         }
     }
 
@@ -697,18 +718,28 @@ class LegacyRepository @Inject constructor(
         s.copy(guardians = s.guardians.map { if (it.dto.id == fresh.id) it.copy(dto = fresh.copy(public_key = it.dto.public_key)) else it })
     }
 
+    // Em [turn], como as outras escritas: o patch não pinta por cima de um reload ou de uma
+    // escrita em curso, e um 409 (cofre mudou de estado) recarrega antes de o erro seguir.
     suspend fun reinviteGuardian(id: String) = withContext(Dispatchers.IO) {
-        patchGuardian(api.reinviteGuardian(id).bodyOrThrow().data)
+        turn.withLock {
+            val response = api.reinviteGuardian(id)
+            if (response.code() == 409) runCatching { reloadLocked() }
+            patchGuardian(response.bodyOrThrow().data)
+        }
     }
 
     suspend fun reconfirmGuardian(id: String) = withContext(Dispatchers.IO) {
-        val guardian = _state.value.guardians.firstOrNull { it.dto.id == id } ?: return@withContext
-        val publicKey = LegacyCrypto.pinnedKey(guardian) ?: throw LegacyException("legacy_not_accepted")
-        val challenge = LegacyCrypto.createChallenge(publicKey)
-        patchGuardian(api.reconfirmGuardian(id, buildJsonObject {
-            put("sealed_challenge", challenge.sealedChallenge)
-            put("challenge_hash", challenge.challengeHash)
-        }).bodyOrThrow().data)
+        turn.withLock {
+            val guardian = _state.value.guardians.firstOrNull { it.dto.id == id } ?: return@withLock
+            val publicKey = LegacyCrypto.pinnedKey(guardian) ?: throw LegacyException("legacy_not_accepted")
+            val challenge = LegacyCrypto.createChallenge(publicKey)
+            val response = api.reconfirmGuardian(id, buildJsonObject {
+                put("sealed_challenge", challenge.sealedChallenge)
+                put("challenge_hash", challenge.challengeHash)
+            })
+            if (response.code() == 409) runCatching { reloadLocked() }
+            patchGuardian(response.bodyOrThrow().data)
+        }
     }
 
     private fun wroteRecipients(recipients: List<LegacyRecipient>, items: List<LegacyItem>? = null) = wrote(recipients, items)
@@ -776,7 +807,7 @@ class LegacyRepository @Inject constructor(
         val codes = recipients.associate { (r, code, _) -> r.dto.id to code }
         val items = s.items.map { item ->
             val kItem = cc.unwrapKey(item.dto.key_vault ?: throw LegacyException("legacy_item_key_missing"), old)
-            buildJsonObject {
+            try { buildJsonObject {
                 put("id", item.dto.id)
                 put("meta_enc", rekeyedMeta(item.dto.meta_enc, item.meta, kVault))
                 put("key_vault", cc.wrapKey(kItem, kVault))
@@ -789,7 +820,7 @@ class LegacyRepository @Inject constructor(
                         })
                     }
                 })
-            }
+            } } finally { kItem.fill(0) }
         }
         val guardianRows = s.guardians.map { g -> g.copy(dto = g.dto.copy(meta_enc = rekeyedMeta(g.dto.meta_enc, g.meta, kVault))) }
         val guardians = if (guardianRows.isEmpty()) emptyList()
@@ -823,7 +854,7 @@ class LegacyRepository @Inject constructor(
                 put("items", kotlinx.serialization.json.buildJsonArray { items.forEach { add(it) } })
             }).bodyOrThrow()
         }
-        this.kVault = kVault
+        swapKey(kVault)
         apply(body.data)
     }
 
@@ -862,8 +893,13 @@ private val errorJson = Json { ignoreUnknownKeys = true }
 /** Corpo da resposta ou [LegacyException] com o `message` da API (legacy_*). */
 internal fun <T> Response<T>.legacyBody(): T {
     if (isSuccessful) return body() ?: throw LegacyException("legacy_empty", code())
-    val message = runCatching {
-        (errorJson.parseToJsonElement(errorBody()?.string().orEmpty()).jsonObject["message"] as? JsonPrimitive)?.content
-    }.getOrNull()
+    val error = runCatching { errorJson.parseToJsonElement(errorBody()?.string().orEmpty()).jsonObject }.getOrNull()
+    // Step-up de desarmar/pausar: o 422 vem em `errors` (password ou passkey_token).
+    val fields = error?.get("errors") as? JsonObject
+    if (code() == 422 && fields != null) {
+        if ("passkey_token" in fields) throw LegacyException("legacy_step_up_expired", 422)
+        if ("password" in fields) throw LegacyException("legacy_step_up_password", 422)
+    }
+    val message = (error?.get("message") as? JsonPrimitive)?.content
     throw LegacyException(message?.takeIf { it.isNotBlank() } ?: "http_${code()}", code())
 }

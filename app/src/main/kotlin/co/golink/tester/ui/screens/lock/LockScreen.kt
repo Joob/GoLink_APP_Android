@@ -4,6 +4,7 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
+import co.golink.tester.data.settings.AppLockBiometricKey
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
@@ -117,25 +118,49 @@ fun LockScreen(
     fun triggerBiometric() {
         val fa = activity as? FragmentActivity ?: return
         if (promptOpen) return
+        // Biometria com CryptoObject — uma impressão digital
+        // acabada de inscrever invalida a chave e passa a pedir o PIN.
+        var keyState = viewModel.biometricKeyState()
+        if (keyState is AppLockBiometricKey.State.Invalidated && !pinAvailable && !allowDeviceCredential) {
+            // Android < 11 sem PIN: não há outro meio; chave nova e biometria normal (como antes).
+            keyState = viewModel.resetBiometricKey()
+        }
+        val deviceOnly = keyState is AppLockBiometricKey.State.Invalidated
+        if (deviceOnly && pinAvailable) {
+            usePin = true
+            bioNotice = "A biometria do aparelho mudou. Usa o PIN para desbloquear.".tr()
+            return
+        }
         promptOpen = true
         bioNotice = null
         val info = BiometricPrompt.PromptInfo.Builder()
             .setTitle("Desbloquear GoLink".tr())
-            .setSubtitle("Desbloqueia os teus ficheiros encriptados".tr())
-        if (allowDeviceCredential) {
+            .setSubtitle(
+                if (deviceOnly) "A biometria do aparelho mudou. Confirma com o código do telemóvel.".tr()
+                else "Desbloqueia os teus ficheiros encriptados".tr(),
+            )
+        if (deviceOnly) {
+            info.setAllowedAuthenticators(BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+        } else if (allowDeviceCredential) {
             info.setAllowedAuthenticators(
                 BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL,
             )
         } else {
             info.setNegativeButtonText(if (pinAvailable) "Usar PIN".tr() else "Cancelar".tr())
         }
-        BiometricPrompt(
+        val crypto = (keyState as? AppLockBiometricKey.State.Ready)?.let { BiometricPrompt.CryptoObject(it.cipher) }
+        val prompt = BiometricPrompt(
             fa,
             ContextCompat.getMainExecutor(fa),
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     // promptOpen fica true: a folha não volta a subir enquanto o bloqueio sai.
-                    viewModel.onBiometricSuccess()
+                    if (deviceOnly) {
+                        viewModel.onDeviceCredentialSuccess()
+                    } else if (!viewModel.onBiometricSuccess(result.cryptoObject?.cipher, usedCrypto = crypto != null)) {
+                        promptOpen = false
+                        if (pinAvailable) usePin = true
+                    }
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
@@ -150,7 +175,8 @@ fun LockScreen(
                     }
                 }
             },
-        ).authenticate(info.build())
+        )
+        if (crypto != null) prompt.authenticate(info.build(), crypto) else prompt.authenticate(info.build())
     }
 
     // Abre a impressão digital ao mostrar e sempre que a app volta (o sistema
@@ -184,7 +210,7 @@ fun LockScreen(
         error != null -> error
         lockoutSeconds > 60 -> "Demasiadas tentativas. Tenta daqui a %d min.".tr().format((lockoutSeconds + 59) / 60)
         lockoutSeconds > 0 -> "Demasiadas tentativas. Aguarda %d s.".tr().format(lockoutSeconds)
-        else -> null
+        else -> bioNotice
     }
 
     // Fundo sempre nosso: captura da janela principal, reduzida e desfocada em

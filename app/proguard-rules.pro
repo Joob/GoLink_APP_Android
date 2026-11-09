@@ -3,8 +3,8 @@
 # As libs (Retrofit, kotlinx.serialization, Hilt, OkHttp) trazem consumer-rules
 # próprias, por isso o APK funcionava; aqui ficam as garantias que faltavam.
 
-# Mapa de desofuscação, para traduzir stack traces de produção.
--printmapping mapping.txt
+# Mapa de desofuscação: o do AGP (build/outputs/mapping/release/mapping.txt).
+# Arquivar por versão fora do repositório.
 
 # Mantém números de linha e nomes de ficheiro nos stack traces.
 -keepattributes SourceFile,LineNumberTable
@@ -22,7 +22,9 @@
     public static ** INSTANCE;
 }
 
-# DTOs da app: os nomes dos campos sao a chave do JSON da API.
+# DTOs da app: os nomes do JSON vêm do serializer gerado pelo kotlinx.serialization,
+# por isso os campos podem ser ofuscados (allowobfuscation). A regra só impede o R8
+# de remover membros que a app não lê (rede de segurança; não protege nomes).
 -keepclassmembers,allowobfuscation class co.golink.tester.domain.** {
     *;
 }
@@ -48,6 +50,14 @@
 # O JNA referencia AWT, que não existe no Android.
 -dontwarn java.awt.**
 -dontwarn com.sun.jna.**
+
+# --- Logcat ------------------------------------------------------------------
+# Sem Log.d/v/i no release (caminhos, estados, mensagens do JS das Notes).
+-assumenosideeffects class android.util.Log {
+    public static int d(...);
+    public static int v(...);
+    public static int i(...);
+}
 
 # --- OkHttp ------------------------------------------------------------------
 -dontwarn okhttp3.internal.platform.**

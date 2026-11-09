@@ -23,6 +23,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.outlined.Check
@@ -142,7 +145,7 @@ fun LegacyScreen(
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var confirmLogout by remember { mutableStateOf(false) }
-    val scroll = rememberScrollState()
+    val listState = rememberLazyListState()
     var dialog by remember { mutableStateOf<LegacyDialog?>(null) }
 
     LaunchedEffect(e2eUnlocked) { if (e2eUnlocked) vm.load() }
@@ -158,7 +161,7 @@ fun LegacyScreen(
         snackbar.showSnackbar(lt(t.key, *t.params.toList().toTypedArray()))
         vm.consumeToast()
     }
-    LaunchedEffect(pane) { scroll.scrollTo(0) }
+    LaunchedEffect(pane) { listState.scrollToItem(0) }
     BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
 
     val secondaryArea = when {
@@ -276,7 +279,7 @@ fun LegacyScreen(
                     navigationIcon = {
                         if (!isPermanentDrawer()) {
                             IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                                Icon(Icons.Filled.Menu, contentDescription = "Menu")
+                                Icon(Icons.Filled.Menu, contentDescription = "Menu".tr())
                             }
                         }
                     },
@@ -299,46 +302,51 @@ fun LegacyScreen(
                         CircularProgressIndicator(strokeWidth = 2.dp)
                     }
                     legacy.vault == null && !standalone && pane != "guarding" -> Welcome(creating = ui.creating, onCreate = vm::create)
-                    else -> Column(
-                        Modifier
-                            .fillMaxSize()
-                            .verticalScroll(scroll)
-                            .padding(PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = if (tab == LegacyTab.Vault) 96.dp else 32.dp)),
-                    ) {
-                        when (tab) {
-                            LegacyTab.Vault -> LegacySegmented(
-                                options = listOf(
+                    else -> {
+                        // Uma só LazyColumn: as listas longas (Activity, Recipients, Guarding) entram
+                        // linha a linha; os outros panes são um item cada.
+                        val content: LazyListScope.() -> Unit = when (pane) {
+                            "recipients" -> legacyRecipientsContent(legacy, vm::toast) { dialog = it }
+                            "activity" -> legacyActivityContent(activityVm, ui.checkins, vm::toast)
+                            "guarding" -> legacyGuardingContent(vm::toast)
+                            else -> {
+                                {
+                                    item(key = "pane_$pane") {
+                                        when (pane) {
+                                            "items" -> LegacyItemsPane(legacy) { dialog = it }
+                                            "messages" -> LegacyMessagesPane(legacy) { dialog = it }
+                                            "guardians" -> LegacyGuardiansPane(legacy, ui.busy, vm) { dialog = it }
+                                            "timing" -> LegacyTimingPane(legacy, ui.busy, vm)
+                                            else -> LegacyOverviewPane(legacy, ui.busy, vm, openPane)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = if (tab == LegacyTab.Vault) 96.dp else 32.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            val segments = when (tab) {
+                                LegacyTab.Vault -> listOf(
                                     "items" to "${lt("seg_items")} · ${legacy.vaultItems.size}",
                                     "messages" to "${lt("messages")} · ${legacy.messages.size}",
-                                ),
-                                selected = pane,
-                                onSelect = { pane = it },
-                            )
-                            LegacyTab.People -> LegacySegmented(
-                                options = listOf(
+                                )
+                                LegacyTab.People -> listOf(
                                     "guardians" to "${lt("guardians")} · ${legacy.guardians.size}",
                                     "recipients" to "${lt("recipients")} · ${legacy.recipients.size}",
-                                ),
-                                selected = pane,
-                                onSelect = { pane = it },
-                            )
-                            LegacyTab.Settings -> LegacySegmented(
-                                options = listOf("timing" to lt("timing"), "activity" to lt("activity")),
-                                selected = pane,
-                                onSelect = { pane = it },
-                            )
-                            else -> Unit
-                        }
-                        if (tab in setOf(LegacyTab.Vault, LegacyTab.People, LegacyTab.Settings)) Spacer(Modifier.height(14.dp))
-                        when (pane) {
-                            "items" -> LegacyItemsPane(legacy) { dialog = it }
-                            "messages" -> LegacyMessagesPane(legacy) { dialog = it }
-                            "guardians" -> LegacyGuardiansPane(legacy, ui.busy, vm) { dialog = it }
-                            "recipients" -> LegacyRecipientsPane(legacy, vm::toast) { dialog = it }
-                            "timing" -> LegacyTimingPane(legacy, ui.busy, vm)
-                            "activity" -> LegacyActivityPane(activityVm, ui.checkins, vm::toast)
-                            "guarding" -> LegacyGuardingPane(vm::toast)
-                            else -> LegacyOverviewPane(legacy, ui.busy, vm, openPane)
+                                )
+                                LegacyTab.Settings -> listOf("timing" to lt("timing"), "activity" to lt("activity"))
+                                else -> null
+                            }
+                            if (segments != null) {
+                                item(key = "segments") {
+                                    LegacySegmented(options = segments, selected = pane, onSelect = { pane = it }, modifier = Modifier.padding(bottom = 4.dp))
+                                }
+                            }
+                            content()
                         }
                     }
                 }

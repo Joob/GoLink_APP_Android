@@ -4,6 +4,9 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -28,6 +31,8 @@ class ConnectivityMonitor @Inject constructor(
     @ApplicationContext context: Context,
 ) {
     private val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile private var unvalidatedSince = 0L
 
     private val _online = MutableStateFlow(currentlyOnline())
     val online: StateFlow<Boolean> = _online.asStateFlow()
@@ -44,7 +49,7 @@ class ConnectivityMonitor @Inject constructor(
                 override fun onAvailable(network: Network) { _online.value = currentlyOnline() }
                 override fun onLost(network: Network) { _online.value = currentlyOnline() }
                 override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                    _online.value = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    _online.value = isUsable(caps)
                 }
             })
         }
@@ -53,8 +58,36 @@ class ConnectivityMonitor @Inject constructor(
     fun isOnline(): Boolean = currentlyOnline()
 
     private fun currentlyOnline(): Boolean {
-        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+        if (caps == null) {
+            unvalidatedSince = 0L
+            return false
+        }
+        return isUsable(caps)
+    }
+
+    /**
+     * Online = INTERNET e VALIDATED (um captive portal não conta). Recurso: há
+     * redes onde a validação do Android nunca chega (sondagem bloqueada); sem
+     * portal detetado, passam a contar ao fim de [VALIDATION_GRACE_MS].
+     */
+    private fun isUsable(caps: NetworkCapabilities): Boolean {
+        if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+            unvalidatedSince = 0L
+            return false
+        }
+        if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+            unvalidatedSince = 0L
+            return true
+        }
+        if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)) return false
+        val now = SystemClock.elapsedRealtime()
+        if (unvalidatedSince == 0L) {
+            unvalidatedSince = now
+            // Reavaliar quando acabar a espera (o sistema pode não voltar a avisar).
+            mainHandler.postDelayed({ _online.value = currentlyOnline() }, VALIDATION_GRACE_MS)
+        }
+        return now - unvalidatedSince >= VALIDATION_GRACE_MS
     }
 
     /** Espera que a rede volte. false se passar o limite. */
@@ -80,5 +113,9 @@ class ConnectivityMonitor @Inject constructor(
 
     fun retryNow() {
         retryNowSignal.tryEmit(Unit)
+    }
+
+    private companion object {
+        const val VALIDATION_GRACE_MS = 10_000L
     }
 }

@@ -173,18 +173,25 @@ fun AutoBackupScreen(
 
     // Calculado a pedido (não remember): inclui o áudio quando essa fonte está
     // activa, para o pedido na activação cobrir tudo o que vai ser lido.
-    fun requiredPermissions(): Array<String> {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU)
-            return arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-        return buildList {
+    fun requiredPermissions(): Array<String> = buildList {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            add(Manifest.permission.READ_EXTERNAL_STORAGE)
+        } else {
             add(Manifest.permission.READ_MEDIA_IMAGES)
             add(Manifest.permission.READ_MEDIA_VIDEO)
+            // Android 14+: "Selecionar fotos" passa a acesso parcial persistente
+            // (sem isto ficava temporário e o worker perdia-o em background).
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                add(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+            }
             if (state.includeAudios) add(Manifest.permission.READ_MEDIA_AUDIO)
             // POST_NOTIFICATIONS is asked together so the foreground-service
             // progress notification can actually appear on Android 13+.
             add(Manifest.permission.POST_NOTIFICATIONS)
-        }.toTypedArray()
-    }
+        }
+        // Sem ela o MediaStore entrega as fotos sem a localização (EXIF GPS).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(Manifest.permission.ACCESS_MEDIA_LOCATION)
+    }.toTypedArray()
 
     // Permissions that are *required* for the worker to function. POST_NOTIFICATIONS
     // is desirable but the upload still runs without it, so we don't gate on it.
@@ -195,11 +202,32 @@ fun AutoBackupScreen(
             arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
     }
 
-    fun hasPermissions(): Boolean = mediaPermissions.all {
-        ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-    }
+    fun granted(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
-    var hasPerm by remember { mutableStateOf(hasPermissions()) }
+    // Android 14+: só as fotos/vídeos escolhidos (acesso parcial).
+    fun hasLimitedAccess(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            !mediaPermissions.all(::granted) &&
+            granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+
+    fun hasPermissions(): Boolean = mediaPermissions.all(::granted) || hasLimitedAccess()
+
+    fun hasMediaLocation(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || granted(Manifest.permission.ACCESS_MEDIA_LOCATION)
+
+    var limitedAccess by remember { mutableStateOf(hasLimitedAccess()) }
+    // Negada de vez: o pedido volta logo sem diálogo — oferece as definições.
+    var showPermissionSettings by remember { mutableStateOf(false) }
+
+    fun openAppSettings() {
+        runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+    }
 
     // Downloads/Documentos: no Android 11+ o MediaStore só mostra ficheiros
     // multimédia a apps de terceiros — PDFs, ZIPs, etc. ficam de fora do
@@ -238,12 +266,53 @@ fun AutoBackupScreen(
         }
     }
 
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
-        hasPerm = mediaPermissions.all { results[it] == true || ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
-        if (hasPerm) {
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
+        limitedAccess = hasLimitedAccess()
+        if (hasPermissions()) {
             viewModel.enable()
             maybeRequestAllFilesAccess()
+        } else {
+            // Sem justificação a mostrar = o sistema já não pergunta (negada de
+            // vez ou "não perguntar de novo"): o botão parecia não fazer nada.
+            val activity = context.backupActivity()
+            if (activity != null && mediaPermissions.none {
+                    androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(activity, it)
+                }
+            ) showPermissionSettings = true
         }
+    }
+
+    // "Escolher mais" no acesso parcial: o sistema volta a mostrar o seletor.
+    val morePhotosLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        limitedAccess = hasLimitedAccess()
+    }
+
+    // Backup já ligado antes desta versão: a localização das fotos nunca foi
+    // pedida. Pede-a uma vez (o sistema deixa de perguntar se for negada).
+    val locationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(state.enabled) {
+        if (!state.enabled || hasMediaLocation()) return@LaunchedEffect
+        val uiPrefs = context.getSharedPreferences("auto_backup_ui", android.content.Context.MODE_PRIVATE)
+        if (uiPrefs.getBoolean("asked_media_location", false)) return@LaunchedEffect
+        uiPrefs.edit().putBoolean("asked_media_location", true).apply()
+        runCatching { locationLauncher.launch(Manifest.permission.ACCESS_MEDIA_LOCATION) }
+    }
+
+    if (showPermissionSettings) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showPermissionSettings = false },
+            title = { Text("Permissão necessária".tr()) },
+            text = {
+                Text("O acesso às fotos e vídeos foi recusado. Para ativar o backup, permite-o nas definições da app.".tr())
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showPermissionSettings = false
+                    openAppSettings()
+                }) { Text("Abrir definições".tr()) }
+            },
+            dismissButton = { TextButton(onClick = { showPermissionSettings = false }) { Text("Cancelar".tr()) } },
+        )
     }
 
     // Áudio tem o seu próprio launcher: o partilhado chamava enable() outra vez
@@ -258,7 +327,11 @@ fun AutoBackupScreen(
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             when (event) {
-                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> viewModel.startServerStateSync()
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
+                    viewModel.startServerStateSync()
+                    // Pode ter mudado nas definições do sistema.
+                    limitedAccess = hasLimitedAccess()
+                }
                 androidx.lifecycle.Lifecycle.Event.ON_PAUSE -> viewModel.stopServerStateSync()
                 else -> {}
             }
@@ -293,7 +366,7 @@ fun AutoBackupScreen(
             if (!state.enabled) {
                 OnboardingCard(
                     onActivate = {
-                        if (hasPermissions()) {
+                        if (hasPermissions() && hasMediaLocation()) {
                             viewModel.enable()
                             maybeRequestAllFilesAccess()
                         } else {
@@ -322,7 +395,25 @@ fun AutoBackupScreen(
                         onRetry = viewModel::resumeDevice,
                     )
                 } else state.lastError?.let { err ->
-                    ErrorCard(message = err, onDismiss = viewModel::dismissError, onRetry = viewModel::runNow)
+                    ErrorCard(message = backupErrorText(err), onDismiss = viewModel::dismissError, onRetry = viewModel::runNow)
+                }
+                if (limitedAccess) {
+                    ErrorCard(
+                        message = "O backup só vê as fotos e vídeos que escolheste. As novas só entram se as escolheres ou se permitires o acesso a todas.".tr(),
+                        title = "Acesso limitado às fotos".tr(),
+                        actionLabel = "Escolher mais".tr(),
+                        onRetry = {
+                            runCatching {
+                                morePhotosLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.READ_MEDIA_IMAGES,
+                                        Manifest.permission.READ_MEDIA_VIDEO,
+                                        Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+                                    ),
+                                )
+                            }
+                        },
+                    )
                 }
                 if (tasks.isNotEmpty()) {
                     RecentUploadsSection(
@@ -377,6 +468,15 @@ fun AutoBackupScreen(
             }
         }
     }
+}
+
+private fun android.content.Context.backupActivity(): android.app.Activity? {
+    var c: android.content.Context = this
+    while (c is android.content.ContextWrapper) {
+        if (c is android.app.Activity) return c
+        c = c.baseContext
+    }
+    return null
 }
 
 @Composable
@@ -1178,4 +1278,19 @@ private fun Modifier.lazyListScrollbar(state: LazyListState, color: Color): Modi
         size = Size(3.dp.toPx(), barHeight),
         cornerRadius = CornerRadius(1.5.dp.toPx()),
     )
+}
+
+/**
+ * O worker guarda o erro em PT canónico (é comparado por igualdade/prefixo no
+ * estado): só aqui é traduzido, também os que têm um número.
+ */
+internal fun backupErrorText(raw: String): String {
+    val failed = co.golink.tester.data.backup.AutoBackupManager.FAILED_FILES_ERROR
+    Regex("^(\\d+) " + Regex.escape(failed) + "$").find(raw)?.let {
+        return "%d ficheiro(s) falharam".tr().format(it.groupValues[1].toInt())
+    }
+    if (raw.startsWith(co.golink.tester.data.backup.AutoBackupManager.OFFLINE_ERROR)) {
+        return "Sem ligação ao servidor — a tentar de novo.".tr()
+    }
+    return raw.tr()
 }

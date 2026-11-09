@@ -16,6 +16,10 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <!-- Android 14+: "Selecionar fotos" dá acesso parcial persistente; sem
+         esta declaração fica em modo de compatibilidade (temporário) e o
+         worker em background perdia o acesso. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
     <!-- "Acesso a todos os ficheiros" (Android 11+): sem isto o MediaStore só
@@ -44,8 +48,10 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.VueFileManager"
-        tools:targetApi="35"
-        xmlns:tools="http://schemas.android.com/tools">
+        tools:targetApi="31">
+        <!-- requestLegacyExternalStorage: ignorado a partir do Android 11, mas no 10
+             (minSdk 26) é o que deixa o backup ver Downloads/Documentos (sem
+             MANAGE_EXTERNAL_STORAGE nessa versão). -->
 
         <!-- Câmara do "+": fotos/vídeos gravados na cache antes do envio. -->
         <provider
@@ -73,7 +79,7 @@
         <service
             android:name=".data.pass.autofill.PassAutofillService"
             android:exported="true"
-            android:label="GoLink Pass"
+            android:label="@string/pass_autofill_label"
             android:permission="android.permission.BIND_AUTOFILL_SERVICE">
             <intent-filter>
                 <action android:name="android.service.autofill.AutofillService" />
@@ -89,6 +95,21 @@
             android:taskAffinity=""
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.VueFileManager" />
+
+        <!-- Login social (Custom Tabs): regresso <applicationId>.oauth:/callback?code&state. -->
+        <activity
+            android:name=".ui.screens.socialite.OAuthRedirectActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${applicationId}.oauth" />
+            </intent-filter>
+        </activity>
 
         <activity
             android:name=".MainActivity"
@@ -110,7 +131,9 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" />
                 <data android:host="golink.co" />
-                <data android:host="tester.golink.co" />
+                <!-- ${appLinkAltHost}: tester.golink.co só no debug (dá 403 ao assetlinks e,
+                     em Android ≤ 11, um host sem verificar anula a verificação de todos). -->
+                <data android:host="${appLinkAltHost}" />
                 <data android:pathPrefix="/create-new-password" />
                 <data android:pathPrefix="/register/" />
                 <!-- Legacy: abrir cofre (recipient), convite de guardião, check-in do email. -->
@@ -127,17 +150,25 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" />
                 <data android:host="golink.co" />
-                <data android:host="tester.golink.co" />
+                <!-- ${appLinkAltHost}: tester.golink.co só no debug (dá 403 ao assetlinks e,
+                     em Android ≤ 11, um host sem verificar anula a verificação de todos). -->
+                <data android:host="${appLinkAltHost}" />
                 <data android:pathPrefix="/api/user/verify/" />
                 <data android:pathPrefix="/team-folder-invitation/" />
-                <data android:pathPrefix="/platform/files" />
-                <data android:pathPrefix="/platform/team-folders" />
-                <data android:pathPrefix="/calendar" />
+                <!-- path + pathPrefix com "/": "/calendarX" ou "/platform/files-…" ficam no
+                     browser em vez de abrir a app e o link se perder (AppLinkRouter). -->
+                <data android:path="/platform/files" />
+                <data android:pathPrefix="/platform/files/" />
+                <data android:path="/platform/team-folders" />
+                <data android:pathPrefix="/platform/team-folders/" />
+                <data android:path="/calendar" />
+                <data android:pathPrefix="/calendar/" />
                 <data android:path="/notes" />
                 <data android:pathPrefix="/notes/" />
-                <data android:pathPrefix="/support/tickets" />
-                <data android:pathPrefix="/admin/support/tickets" />
-                <data android:pathPrefix="/user/settings/billing" />
+                <data android:pathPrefix="/support/tickets/" />
+                <data android:pathPrefix="/admin/support/tickets/" />
+                <data android:path="/user/settings/billing" />
+                <data android:pathPrefix="/user/settings/billing/" />
                 <data android:path="/legacy" />
                 <data android:pathPrefix="/legacy/" />
             </intent-filter>
@@ -169,6 +200,9 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+                <!-- Fuso/hora mudaram: dias inteiros e "Hoje/Amanhã" voltam a ser calculados. -->
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
             </intent-filter>
         </receiver>
     </application>

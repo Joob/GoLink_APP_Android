@@ -1,4 +1,5 @@
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
@@ -23,8 +24,8 @@ android {
         applicationId = "co.golink.tester"
         minSdk = 26
         targetSdk = 36
-        versionCode = 167
-        versionName = "3.84.0"
+        versionCode = 169
+        versionName = "3.86.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -43,7 +44,10 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            // Sem keystore.properties (CI) sai um APK sem assinatura: serve para validar o R8.
+            signingConfig = if (keystoreProps.getProperty("storeFile") != null) signingConfigs.getByName("release") else null
+            // App Links: só golink.co (verificável); repetir o host é inofensivo.
+            manifestPlaceholders["appLinkAltHost"] = "golink.co"
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -53,6 +57,7 @@ android {
         }
         debug {
             applicationIdSuffix = ".debug"
+            manifestPlaceholders["appLinkAltHost"] = "tester.golink.co"
             isMinifyEnabled = false
         }
     }
@@ -60,10 +65,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
     }
 
     buildFeatures {
@@ -103,7 +104,6 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     implementation(libs.androidx.navigation.compose)
-    implementation(libs.androidx.datastore.preferences)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
@@ -133,7 +133,7 @@ dependencies {
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.biometric)
     // Pass: sugestões de preenchimento no teclado (InlineSuggestionUi, Android 11+).
-    implementation("androidx.autofill:autofill:1.1.0")
+    implementation(libs.androidx.autofill)
     // Passkeys (WebAuthn) via Credential Manager; play-services para Android ≤ 13.
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play.services)
@@ -142,12 +142,19 @@ dependencies {
 
     // E2E: libsodium nativo (crypto_box_seal, Argon2id, secretbox) — interopera
     // com o libsodium do PHP/JS. AES-256-GCM do codec usa o javax.crypto.
-    implementation("com.goterl:lazysodium-android:5.1.0@aar")
-    implementation("net.java.dev.jna:jna:5.14.0@aar")
+    // = "…@aar": só o AAR, sem dependências transitivas (o jar do JNA chocava com o AAR).
+    implementation(variantOf(libs.lazysodium.android) { artifactType("aar") }) { isTransitive = false }
+    implementation(variantOf(libs.jna) { artifactType("aar") }) { isTransitive = false }
 
     // Notes nativas: QuickJS corre o assets/notes-core.js (Yjs + y-prosemirror, gerado no repo web
     // por ops/notes-core) — o mesmo formato do editor da web, sem WebView.
-    implementation("wang.harlon.quickjs:wrapper-android:3.2.0")
+    implementation(libs.quickjs.wrapper.android)
 
-    testImplementation("junit:junit:4.13.2")
+    testImplementation(libs.junit)
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
 }

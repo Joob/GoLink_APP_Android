@@ -120,7 +120,7 @@ fun NewsAdminPane(
         OutlinedTextField(
             value = state.message,
             onValueChange = viewModel::setMessage,
-            label = { Text("Mensagem") },
+            label = { Text("Mensagem".tr()) },
             placeholder = { Text("Escreve aqui a notícia importante...".tr()) },
             minLines = 4,
             enabled = !state.isLoading,

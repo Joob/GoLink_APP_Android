@@ -49,7 +49,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.golink.tester.data.legacy.LegacyState
 import co.golink.tester.domain.legacy.LegacyVaultDto
-import co.golink.tester.ui.components.dialogs.ConfirmDialog
 import co.golink.tester.ui.i18n.lt
 
 /** Overview: hero com o estado, mosaicos e o que acontece se parares. */
@@ -63,6 +62,7 @@ fun LegacyOverviewPane(
     val vault = legacy.vault ?: return
     var confirmRevoke by remember { mutableStateOf(false) }
     var pausing by remember { mutableStateOf(false) }
+    var pauseUntil by remember { mutableStateOf<String?>(null) }
     val t = vault.timeline
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -129,18 +129,15 @@ fun LegacyOverviewPane(
         }
     }
 
+    // Revogar e pausar pedem step-up (password ou passkey).
     if (confirmRevoke) {
-        ConfirmDialog(
-            title = lt("revoke_title"),
-            message = lt("revoke_text"),
-            confirmText = lt("revoke"),
-            destructive = true,
-            onDismiss = { confirmRevoke = false },
-            onConfirm = { confirmRevoke = false; vm.disarm() },
-        )
+        LegacyStepUpDialog(LegacyStepUpRequest.Disarm(revoke = true), vm, onDismiss = { confirmRevoke = false })
     }
     if (pausing) {
-        PauseDialog(onDismiss = { pausing = false }, onPause = { day -> pausing = false; vm.pause(day) })
+        PauseDialog(onDismiss = { pausing = false }, onPause = { day -> pausing = false; pauseUntil = day })
+    }
+    pauseUntil?.let { day ->
+        LegacyStepUpDialog(LegacyStepUpRequest.Pause(day), vm, onDismiss = { pauseUntil = null })
     }
 }
 

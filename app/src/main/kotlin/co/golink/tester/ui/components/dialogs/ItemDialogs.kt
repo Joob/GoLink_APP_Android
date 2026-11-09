@@ -198,6 +198,7 @@ fun CreateFolderDialog(location: String, onDismiss: () -> Unit, onCreate: (Strin
     var color by remember { mutableStateOf<String?>(null) }
     var emoji by remember { mutableStateOf<String?>(null) }
     val finalName = name.trim().ifEmpty { "Nova pasta".tr() }
+    val nameProblem = co.golink.tester.data.files.ItemNames.problem(finalName)
     val appearance = folderAppearance(useEmoji, color, emoji)
     val tint = hex(appearance.color) ?: MaterialTheme.colorScheme.primary
 
@@ -208,11 +209,13 @@ fun CreateFolderDialog(location: String, onDismiss: () -> Unit, onCreate: (Strin
         iconBackground = tint.copy(alpha = 0.12f),
         onDismiss = onDismiss,
         confirmText = "Criar pasta".tr(),
+        confirmEnabled = nameProblem == null,
         onConfirm = { onCreate(finalName, appearance.color, appearance.emoji); onDismiss() },
     ) {
         FieldLabel("Nome".tr())
         NameField(name, { name = it }, placeholder = "Nova pasta".tr())
-        HelperText("Vai ser criado como %s".tr().format(finalName))
+        if (nameProblem != null) HelperText(nameProblem, color = Danger)
+        else HelperText("Vai ser criado como %s".tr().format(finalName))
         AppearanceSection(useEmoji, { useEmoji = it }, color, { color = it }, emoji, { emoji = it })
     }
 }
@@ -366,6 +369,8 @@ fun EditItemDialog(item: BrowseItem, onDismiss: () -> Unit, onSave: (String, Fol
     val folderChanged = folder != null && appearance != FolderAppearance(folder.color, folder.emoji?.takeIf { it.isNotBlank() })
     val nameChanged = name.trim() != item.name
     val changed = nameChanged || folderChanged
+    // O nome atual pode vir de antes das regras do servidor: só se valida quando muda.
+    val nameProblem = if (name.isBlank() || nameChanged) co.golink.tester.data.files.ItemNames.problem(name) else null
     val tint = hex(appearance?.color) ?: MaterialTheme.colorScheme.primary
 
     CreateSheetScaffold(
@@ -378,7 +383,7 @@ fun EditItemDialog(item: BrowseItem, onDismiss: () -> Unit, onSave: (String, Fol
         iconBackground = if (folder != null) tint.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
         onDismiss = onDismiss,
         confirmText = "Guardar".tr(),
-        confirmEnabled = changed && name.isNotBlank(),
+        confirmEnabled = changed && nameProblem == null,
         onConfirm = {
             onSave(name.trim(), if (folderChanged) appearance else null)
             onDismiss()
@@ -388,12 +393,12 @@ fun EditItemDialog(item: BrowseItem, onDismiss: () -> Unit, onSave: (String, Fol
         NameField(name, { name = it }, placeholder = item.name, clearable = true)
         HelperText(
             when {
-                name.isBlank() -> "O nome não pode ficar vazio".tr()
+                nameProblem != null -> nameProblem
                 !changed -> "Ainda sem alterações".tr()
                 nameChanged -> "Vai ser guardado como %s".tr().format(name.trim())
                 else -> "Aparência alterada".tr()
             },
-            color = if (name.isBlank()) Danger else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (nameProblem != null) Danger else MaterialTheme.colorScheme.onSurfaceVariant,
         )
         if (folder != null) {
             AppearanceSection(useEmoji, { useEmoji = it }, color, { color = it }, emoji, { emoji = it })

@@ -25,6 +25,19 @@ class PassAutofillTest {
         assertFalse(PassAutofillMatch.domainsMatch("evilgoogle.com", "google.com"))
         assertFalse(PassAutofillMatch.domainsMatch("example.co.uk", "co.uk"))
         assertFalse(PassAutofillMatch.domainsMatch("a.com", "com"))
+        // Alojamento partilhado (PSL): cada subdomínio é um site diferente.
+        assertFalse(PassAutofillMatch.domainsMatch("evil.github.io", "github.io"))
+        assertFalse(PassAutofillMatch.domainsMatch("a.github.io", "b.github.io"))
+        assertTrue(PassAutofillMatch.domainsMatch("me.github.io", "login.me.github.io"))
+        assertTrue(PassAutofillMatch.domainsMatch("shop.example.co.uk", "example.co.uk"))
+    }
+
+    @Test fun browserDomainOnlyFromKnownBrowsers() {
+        assertTrue(PassAutofillParser.isTrustedBrowser("com.android.chrome"))
+        assertFalse(PassAutofillParser.isTrustedBrowser("com.evil.paypal"))
+        // Browser sem webDomain não usa login.apps nem heurística.
+        val items = listOf(login("c", "https://chrome.com", apps = listOf("com.android.chrome")))
+        assertTrue(PassAutofillMatch.match(items, "com.android.chrome", null).isEmpty())
     }
 
     @Test fun mainLabelAndTokens() {

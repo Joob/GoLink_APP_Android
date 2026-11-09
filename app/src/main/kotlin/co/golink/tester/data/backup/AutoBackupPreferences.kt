@@ -177,6 +177,12 @@ class AutoBackupPreferences @Inject constructor(
         get() = prefs.getString(KEY_OVER_LIMIT_NOTICE, null)
         set(value) { prefs.edit { putString(KEY_OVER_LIMIT_NOTICE, value) } }
 
+    // Última leitura da flag do servidor pelo worker: sem nada por enviar, o
+    // tick de 1 min só volta a perguntar ao fim de SERVER_CHECK_INTERVAL.
+    var lastServerCheckAt: Long
+        get() = prefs.getLong(KEY_LAST_SERVER_CHECK_AT, 0L)
+        set(value) = prefs.edit { putLong(KEY_LAST_SERVER_CHECK_AT, value) }
+
     // Ligado no telemóvel mas o servidor ainda não sabe (POST por confirmar).
     // Enquanto true, um "desligado" lido do servidor é a flag antiga — não
     // pode desligar localmente o que o utilizador acabou de ligar.
@@ -312,6 +318,7 @@ class AutoBackupPreferences @Inject constructor(
         const val KEY_VIDEOS_COUNT = "videos_count"
         const val KEY_VIDEOS_BYTES = "videos_bytes"
         const val KEY_LAST_ERROR = "last_error"
+        const val KEY_LAST_SERVER_CHECK_AT = "last_server_check_at"
         private const val KEY_OVER_LIMIT_NOTICE = "over_limit_notice"
     }
 }

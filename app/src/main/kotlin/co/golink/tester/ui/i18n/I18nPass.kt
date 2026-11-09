@@ -237,6 +237,7 @@ object I18nPass {
         "export_csv_warning" to arrayOf("Um ficheiro CSV tem todas as tuas passwords em texto simples. Quem tiver o ficheiro consegue lê-las.", "A CSV file contains all your passwords in plain text. Anyone with the file can read them.", "Un fichier CSV contient tous vos mots de passe en clair. Toute personne qui a le fichier peut les lire.", "Un archivo CSV contiene todas tus contraseñas en texto plano. Cualquiera con el archivo puede leerlas."),
         "export_csv_ack" to arrayOf("Percebo. Apago o ficheiro quando terminar.", "I understand. I'll delete the file when I'm done.", "Je comprends. Je supprimerai le fichier ensuite.", "Lo entiendo. Borraré el archivo al terminar."),
         "exporting" to arrayOf("A exportar…", "Exporting…", "Export…", "Exportando…"),
+        "export_confirm" to arrayOf("Introduz a tua frase-passe para exportar o cofre inteiro.", "Enter your passphrase to export the whole vault.", "Saisissez votre phrase de chiffrement pour exporter tout le coffre.", "Introduce tu frase de cifrado para exportar toda la bóveda."),
         "badge.breach" to arrayOf("fuga", "breach", "fuite", "filtrada"),
         "badge.reused" to arrayOf("repetida", "reused", "réutilisé", "repetida"),
         "badge.weak" to arrayOf("fraca", "weak", "faible", "débil"),

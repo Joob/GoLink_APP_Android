@@ -48,6 +48,11 @@ fun OtpScreen(
     val cancel = { viewModel.cancel(); onCancel() }
     // OTP é a raiz da pilha: sem isto o "voltar" fechava a app e a sessão pendente ficava.
     BackHandler(onBack = cancel)
+    // De volta a primeiro plano: confirma no servidor quanto falta ao código.
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        viewModel.onResume()
+        onPauseOrDispose { }
+    }
 
     AuthScaffold(
         title = "Verificação".tr(),

@@ -2,7 +2,10 @@ package co.golink.tester.domain.browse
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonTransformingSerializer
 
 @Serializable
 data class BrowseListResponse(
@@ -22,8 +25,19 @@ data class BrowseEntry(
     val id: String,
     val type: String,
     val attributes: BrowseAttributes,
+    @Serializable(with = BrowseRelationshipsSerializer::class)
     val relationships: BrowseRelationships? = null,
 )
+
+/**
+ * Sem nenhuma relação (ficheiro na raiz, sem partilha, sem criador/EXIF) o PHP
+ * serializa `"relationships": []`. Trata `[]` como objeto vazio.
+ */
+object BrowseRelationshipsSerializer :
+    JsonTransformingSerializer<BrowseRelationships>(BrowseRelationships.serializer()) {
+    override fun transformDeserialize(element: JsonElement): JsonElement =
+        if (element is JsonArray) JsonObject(emptyMap()) else element
+}
 
 @Serializable
 data class BrowseRelationships(

@@ -197,6 +197,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleStartEffect
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import co.golink.tester.data.auth.AuthRepository
@@ -471,7 +472,12 @@ fun BrowseScreen(
     val cameraContext = LocalContext.current
     var cameraUri by rememberSaveable { mutableStateOf<String?>(null) }
     val onCaptured: (Boolean) -> Unit = { ok ->
-        if (ok && cameraUri != null) activeDialog = ActionDialog.CameraDestination else cameraUri = null
+        if (ok && cameraUri != null) activeDialog = ActionDialog.CameraDestination
+        else {
+            // Captura cancelada: não deixar o ficheiro (vazio ou parcial) na cache.
+            cameraUri?.let { deleteCameraFile(cameraContext, it) }
+            cameraUri = null
+        }
     }
     val photoCapture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture(), onCaptured)
     val videoCapture = rememberLauncherForActivityResult(ActivityResultContracts.CaptureVideo(), onCaptured)
@@ -1647,8 +1653,17 @@ fun BrowseScreen(
                     confirmText = "Carregar".tr(),
                     initialId = viewModel.uploadTargetId(),
                     initialLabel = state.crumbs.lastOrNull()?.name,
-                    onDismiss = { activeDialog = ActionDialog.None; cameraUri = null },
-                    onConfirm = { destinationId -> viewModel.uploadTo(listOf(Uri.parse(uri)), destinationId) },
+                    // Fechar sem escolher destino apaga a captura (em claro); ao confirmar,
+                    // o UploadManager apaga-a quando o envio termina.
+                    onDismiss = {
+                        activeDialog = ActionDialog.None
+                        cameraUri?.let { deleteCameraFile(cameraContext, it) }
+                        cameraUri = null
+                    },
+                    onConfirm = { destinationId ->
+                        cameraUri = null
+                        viewModel.uploadTo(listOf(Uri.parse(uri)), destinationId)
+                    },
                     onCreateFolder = { parentId -> createInMoveFor = true to parentId },
                 )
                 createInMoveFor?.let { (_, parentId) ->
@@ -2436,7 +2451,8 @@ private fun LowStorageBanner(
             }
         }
         Text(
-            "Upgrade".tr() + " →",
+            // Sem apelo à compra na app (política da Play): abre só o plano atual.
+            "Ver plano".tr() + " →",
             style = MaterialTheme.typography.labelMedium,
             color = color,
             fontWeight = FontWeight.SemiBold,
@@ -2586,12 +2602,16 @@ private fun TeamMembersPopup(
     val e2eShare = remember { E2EShareService.get(context) }
     var grantMember by remember { mutableStateOf<TeamMember?>(null) }
 
-    // Presença: atualiza ao abrir e a cada minuto enquanto a folha está aberta.
+    // Presença: atualiza ao abrir e a cada minuto enquanto a folha está aberta e a app
+    // à vista. Em fundo não pede (cada pedido marcava-me "online" aos colegas).
     var onlineIds by remember(folder.id) { mutableStateOf<Set<String>?>(null) }
-    LaunchedEffect(folder.id) {
-        while (true) {
-            loadOnline()?.let { onlineIds = it }
-            kotlinx.coroutines.delay(60_000)
+    val presenceLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(folder.id, presenceLifecycle) {
+        presenceLifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            while (true) {
+                loadOnline()?.let { onlineIds = it }
+                kotlinx.coroutines.delay(60_000)
+            }
         }
     }
     val members = remember(folder.members, onlineIds) {
@@ -2796,8 +2816,9 @@ private fun TrashRetentionNotice(days: Int, onEmptyNow: () -> Unit) {
 }
 
 /**
- * Ficheiro novo na cache para a câmara gravar. Não se apaga depois do envio
- * (a retoma de uploads volta a ler o Uri); limpa-se o que tiver mais de 3 dias.
+ * Ficheiro novo na cache para a câmara gravar. O UploadManager apaga-o quando
+ * o envio termina (a retoma precisa dele até lá); restos sem envio pendente são
+ * varridos no arranque. Aqui limpa-se ainda o que tiver mais de 3 dias.
  */
 private fun newCameraUri(context: android.content.Context, video: Boolean): Uri {
     val dir = java.io.File(context.cacheDir, "camera").apply { mkdirs() }
@@ -2806,6 +2827,12 @@ private fun newCameraUri(context: android.content.Context, video: Boolean): Uri 
     val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
     val file = java.io.File(dir, if (video) "VID_$stamp.mp4" else "IMG_$stamp.jpg")
     return androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+}
+
+/** Apaga a captura da câmara (cache/camera) indicada pelo Uri do FileProvider. */
+private fun deleteCameraFile(context: android.content.Context, uri: String) {
+    val name = Uri.parse(uri).lastPathSegment ?: return
+    runCatching { java.io.File(java.io.File(context.cacheDir, "camera"), name).delete() }
 }
 
 /** Mover pendente de confirmação por incluir a raiz de uma pasta de equipa. */

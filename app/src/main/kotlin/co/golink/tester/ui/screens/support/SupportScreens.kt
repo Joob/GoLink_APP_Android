@@ -67,6 +67,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -83,6 +84,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.clip
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import co.golink.tester.domain.support.AttachmentData
 import co.golink.tester.domain.support.DeletionRequestState
 import co.golink.tester.domain.support.MessageEnvelope
@@ -202,6 +204,7 @@ fun SupportListScreen(
 
     // Volta a carregar sempre que o ecrã reentra (ex.: ao voltar do detalhe).
     LaunchedEffect(Unit) { viewModel.refresh() }
+    PollWhileResumed { viewModel.poll() }
 
     Scaffold(
         topBar = {
@@ -431,9 +434,12 @@ fun SupportTicketScreen(
     viewModel: SupportTicketViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val me by viewModel.me.collectAsStateWithLifecycle()
+    val perms = me?.supportStaff
     val admin = viewModel.isAdmin
     val snackbarHost = remember { SnackbarHostState() }
-    var reply by remember { mutableStateOf("") }
+    // Rascunho sobrevive à rotação e à morte do processo (a password do cartão não).
+    var reply by rememberSaveable { mutableStateOf("") }
     var menuOpen by remember { mutableStateOf(false) }
     var confirmDialog by remember { mutableStateOf<String?>(null) } // "delete" | "request-deletion" | "close"
     val listState = rememberLazyListState()
@@ -444,6 +450,7 @@ fun SupportTicketScreen(
 
     LaunchedEffect(state.toast) { state.toast?.let { snackbarHost.showSnackbar(it); viewModel.consumeToast() } }
     LaunchedEffect(state.deleted) { if (state.deleted) onBack() }
+    PollWhileResumed { viewModel.poll() }
     // Rascunho do copiloto: preenche (ou acrescenta ao já escrito) para o agente rever.
     LaunchedEffect(state.draft) {
         state.draft?.let { draft ->
@@ -527,7 +534,6 @@ fun SupportTicketScreen(
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null) }
                 },
                 actions = {
-                    val perms = viewModel.permissions
                     val canRequestDeletion = admin && perms?.can_request_deletion == true
                     val canDelete = admin && perms?.can_delete == true
                     if (ticket != null && ((admin && (canRequestDeletion || canDelete)) || (!admin && ticket.attributes.status != "closed"))) {
@@ -572,13 +578,13 @@ fun SupportTicketScreen(
                 enabled = !state.isBusy,
                 onUpdate = viewModel::update,
                 agents = state.agents,
-                canAssign = viewModel.permissions?.can_assign == true,
-                myId = viewModel.myId,
+                canAssign = perms?.can_assign == true,
+                myId = me?.id,
                 onAssign = viewModel::assign,
             )
-            if (admin && (ticket.ai != null || viewModel.permissions?.can_use_ai == true)) AiAssistPanel(
+            if (admin && (ticket.ai != null || perms?.can_use_ai == true)) AiAssistPanel(
                 ticket = ticket,
-                canUseAi = viewModel.permissions?.can_use_ai == true,
+                canUseAi = perms?.can_use_ai == true,
                 state = state,
                 onApplyTriage = viewModel::applyTriage,
                 onSuggestReply = viewModel::suggestReply,
@@ -821,8 +827,9 @@ private fun MessageBubble(
     val fromSupport = a.author_role == "admin"
     // Sem nome individual → "Equipa de suporte" na língua da app.
     val authorName = a.author_name ?: if (fromSupport) "Equipa de suporte".tr() else "—"
-    // O lado de quem está a ver fica à direita.
-    val mine = fromSupport == viewerIsAdmin
+    // O lado de quem está a ver fica à direita. Com is_mine do servidor, as
+    // mensagens de outros agentes ficam à esquerda com nome e cargo.
+    val mine = a.is_mine ?: (fromSupport == viewerIsAdmin)
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
@@ -907,7 +914,10 @@ private fun DaySeparator(iso: String?) {
     val label = when (date) {
         today -> "Hoje".tr()
         today.minusDays(1) -> "Ontem".tr()
-        else -> date.format(DateTimeFormatter.ofPattern("EEEE, d MMMM"))
+        // Na língua da app, não na do sistema.
+        else -> date.format(
+            DateTimeFormatter.ofPattern("EEEE, d MMMM", java.util.Locale.forLanguageTag(co.golink.tester.ui.i18n.I18n.lang)),
+        )
     }
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         HorizontalDivider(Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -1275,6 +1285,24 @@ private fun TicketDeadlineNotice(
             if (attrs.is_locked && !admin) {
                 Spacer(Modifier.width(8.dp))
                 TextButton(onClick = onNewTicket) { Text("Novo ticket".tr()) }
+            }
+        }
+    }
+}
+
+/**
+ * Chama [action] a cada [intervalMs] enquanto o ecrã está visível (RESUMED),
+ * como o setInterval da web no Support Desk. A 1.ª chamada é só após o intervalo.
+ */
+@Composable
+internal fun PollWhileResumed(intervalMs: Long = 20_000L, action: () -> Unit) {
+    val lifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current.lifecycle
+    val current by androidx.compose.runtime.rememberUpdatedState(action)
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            while (true) {
+                kotlinx.coroutines.delay(intervalMs)
+                current()
             }
         }
     }

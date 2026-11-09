@@ -42,6 +42,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -69,17 +70,24 @@ class AbuseReportsViewModel @Inject constructor(
     private val _state = MutableStateFlow(UiState())
     val state = _state.asStateFlow()
 
+    /** Pedido em curso: a página 1 (troca de filtro) cancela o anterior. */
+    private var loadJob: kotlinx.coroutines.Job? = null
+
     init { load() }
 
     fun load(page: Int = 1) {
         val status = _state.value.status
-        _state.update { if (page == 1) it.copy(isLoading = it.reports.isEmpty(), error = null) else it.copy(isLoadingMore = true) }
-        viewModelScope.launch {
-            repository.abuseReports(status, page)
+        if (page == 1) loadJob?.cancel() else if (loadJob?.isActive == true) return
+        _state.update { if (page == 1) it.copy(isLoading = it.reports.isEmpty(), isLoadingMore = false, error = null) else it.copy(isLoadingMore = true) }
+        loadJob = viewModelScope.launch {
+            val result = repository.abuseReports(status, page)
+            // Cancelado ou filtro mudou entretanto: ignora o resultado antigo.
+            if (!kotlinx.coroutines.currentCoroutineContext().isActive || _state.value.status != status) return@launch
+            result
                 .onSuccess { r ->
                     _state.update {
                         it.copy(
-                            reports = if (page == 1) r.data else it.reports + r.data,
+                            reports = if (page == 1) r.data else (it.reports + r.data).distinctBy { x -> x.id },
                             page = r.meta.current_page,
                             lastPage = r.meta.last_page,
                             openCount = r.meta.open,
@@ -88,7 +96,7 @@ class AbuseReportsViewModel @Inject constructor(
                         )
                     }
                 }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, isLoadingMore = false, error = "Não foi possível carregar (${t.message})") } }
+                .onFailure { t -> _state.update { it.copy(isLoading = false, isLoadingMore = false, error = "Não foi possível carregar (%s)".tr().format(t.message.orEmpty())) } }
         }
     }
 
@@ -216,6 +224,22 @@ private fun AbuseReportRow(
     onAction: (String) -> Unit,
 ) {
     val uri = LocalUriHandler.current
+    // O conteúdo denunciado pode ser malware/phishing: avisar antes de abrir.
+    var warnOpen by remember { mutableStateOf(false) }
+    if (warnOpen) {
+        SettingsDialog(
+            title = "Abrir link denunciado?".tr(),
+            message = "O conteúdo pode ser malicioso (malware, phishing). Abre-o só num ambiente seguro e não descarregues ficheiros.".tr(),
+            confirmText = "Abrir link".tr(),
+            destructive = true,
+            onConfirm = {
+                warnOpen = false
+                // Sem browser instalado o openUri lança exceção.
+                runCatching { uri.openUri(r.link) }
+            },
+            onDismiss = { warnOpen = false },
+        )
+    }
     AdminListRow(
         title = abuseReasonLabel(r.reason),
         subtitle = listOfNotNull(
@@ -250,7 +274,7 @@ private fun AbuseReportRow(
                 AdminInfoRow("Dono".tr(), r.owner?.let { o -> listOfNotNull(o.name, o.email).joinToString(" · ") })
                 r.reporter_email?.let { AdminInfoRow("Denunciado por".tr(), it) }
                 FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    if (r.link_active) TextButton(onClick = { uri.openUri(r.link) }) { Text("Abrir link".tr()) }
+                    if (r.link_active) TextButton(onClick = { warnOpen = true }) { Text("Abrir link".tr()) }
                     r.owner?.let { o -> TextButton(onClick = { onOpenUser(o.id) }) { Text("Ver dono".tr()) } }
                     val enabled = busy == null
                     when (r.status) {

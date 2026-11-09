@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">GoLink.co</string>
+    <!-- Nome do serviço de preenchimento nas Definições do sistema (marca, igual em todas as línguas). -->
+    <string name="pass_autofill_label" translatable="false">GoLink Pass</string>
 
     <!-- Auth -->
     <string name="sign_in_title">Entrar</string>

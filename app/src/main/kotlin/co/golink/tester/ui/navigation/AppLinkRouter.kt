@@ -32,7 +32,12 @@ object AppLinkRouter {
 
     private const val TTL_MS = 10 * 60_000L
     private val HOSTS = setOf("golink.co", "tester.golink.co")
+    /** Ids/painéis vindos do link: só caracteres seguros (UUID, numérico, token). */
+    private val SAFE_ID = Regex("[A-Za-z0-9_-]{1,128}")
     private val NAV_PREFIXES = listOf("/create-new-password", "/register/", "/legacy-open/", "/legacy-invite/", "/legacy-checkin/")
+
+    /** https no nosso domínio (www incluído): links vindos do servidor que se podem abrir. */
+    fun isOwnHttpsLink(uri: Uri): Boolean = uri.scheme == "https" && uri.host?.removePrefix("www.") in HOSTS
 
     private val _pending = MutableStateFlow<Target?>(null)
     val pending: StateFlow<Target?> = _pending
@@ -65,6 +70,12 @@ object AppLinkRouter {
         if (NAV_PREFIXES.any { path.startsWith(it) }) return if (fromNewIntent) Target.Nav(uri) else null
         val s = uri.pathSegments
         fun at(i: Int) = s.getOrNull(i)
+        // Presente mas com formato inválido → link ignorado.
+        fun bad(v: String?) = !v.isNullOrEmpty() && !SAFE_ID.matches(v)
+        if (bad(at(1)) && at(0) in setOf("team-folder-invitation", "legacy")) return null
+        if (bad(at(2)) && at(0) in setOf("platform", "support")) return null
+        if (bad(at(3)) && at(0) == "admin") return null
+        if (bad(uri.getQueryParameter("event")) && at(0) == "calendar") return null
         return when {
             at(0) == "api" && at(1) == "user" && at(2) == "verify" && at(3) != null -> Target.VerifyEmail(uri.toString())
             at(0) == "team-folder-invitation" && at(1) != null -> Target.TeamInvite(at(1)!!)

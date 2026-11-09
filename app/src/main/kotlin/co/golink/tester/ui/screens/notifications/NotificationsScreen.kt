@@ -55,7 +55,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -224,7 +223,12 @@ fun NotificationsScreen(
                 { e, d -> openCalendar(e, d) },
                 { pane -> openLegacy(pane) },
                 { path -> openNotes(path) },
-                { url -> runCatching { uriHandler.openUri(url) } },
+                // Só https no nosso domínio (os App Links voltam à app); o resto é ignorado.
+                { url ->
+                    if (co.golink.tester.ui.navigation.AppLinkRouter.isOwnHttpsLink(android.net.Uri.parse(url))) {
+                        runCatching { uriHandler.openUri(url) }
+                    }
+                },
             )
         }
     }
@@ -249,7 +253,7 @@ fun NotificationsScreen(
     }
 
     var openId by rememberSaveable { mutableStateOf<String?>(null) }
-    val answering by viewModel.answering.collectAsState()
+    val answering by viewModel.answering.collectAsStateWithLifecycle()
 
     // Popup de detalhe (como na web): abrir já não marca como lida, o ✓ é que marca.
     items.firstOrNull { it.id == openId }?.let { n ->

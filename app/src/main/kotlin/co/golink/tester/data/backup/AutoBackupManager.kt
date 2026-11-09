@@ -175,8 +175,8 @@ class AutoBackupManager @Inject constructor(
         // Os uploads já entregues ao UploadManager correm num scope próprio e
         // sobrevivem ao cancelamento do worker — sem isto continuavam em
         // background e, ao reactivar, somavam-se à nova execução (contagens a
-        // duplicar e conflitos).
-        uploadManager.cancelBackups()
+        // duplicar e conflitos). Larga também o progresso por chunks guardado.
+        uploadManager.cancelBackups(discardResume = true)
         BackupNotifications.cancelProgress(context)
         pendingUserRun = false
         preferences.devicePaused = false

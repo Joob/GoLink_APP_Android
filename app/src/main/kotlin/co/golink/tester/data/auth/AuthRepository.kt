@@ -19,6 +19,7 @@ class AuthRepository @Inject constructor(
     private val tokenStore: TokenStore,
     private val errorParser: ApiErrorParser,
     private val e2eKeyManager: co.golink.tester.data.encryption.E2EKeyManager,
+    private val sessionTerminator: SessionTerminator,
 ) {
     /**
      * Email como o servidor o espera: sem espaços nem caracteres invisíveis
@@ -126,21 +127,43 @@ class AuthRepository @Inject constructor(
         tokenStore.markOtpValidated()
     }.recoverCatching { throw errorParser.fromThrowable(it) }
 
-    suspend fun socialiteRedirectUrl(provider: String): Result<String> = runCatching {
-        val response = api.socialiteRedirect(provider)
+    /**
+     * URL do fornecedor para o fluxo da app (Custom Tabs). null se o servidor
+     * ainda não conhece o fluxo (não devolve flow = "app_code").
+     */
+    suspend fun socialiteAppRedirectUrl(
+        provider: String,
+        state: String,
+        codeChallenge: String,
+        redirectScheme: String,
+    ): Result<String?> = runCatching {
+        val response = api.socialiteRedirectApp(provider, state, codeChallenge, redirectScheme, client = "android")
         if (!response.isSuccessful) throw errorParser.parse(response)
-        response.body()?.data?.url ?: throw AuthError.Unknown("URL OAuth ausente")
+        val data = response.body()?.data ?: throw AuthError.Unknown("URL OAuth ausente")
+        data.url.takeIf { data.flow == "app_code" }
     }.recoverCatching { throw errorParser.fromThrowable(it) }
 
-    suspend fun adoptSocialiteToken(token: String) {
+    /** Troca o código de uso único (com o code_verifier PKCE) pelo token otp-pending. */
+    suspend fun socialiteExchange(code: String, codeVerifier: String, state: String): Result<Unit> = runCatching {
+        val response = api.socialiteExchange(
+            co.golink.tester.domain.auth.SocialiteExchangeRequest(code = code, code_verifier = codeVerifier, state = state),
+        )
+        if (!response.isSuccessful) throw errorParser.parse(response)
+        val token = response.body()?.token?.takeIf { it.isNotBlank() }
+            ?: throw AuthError.Unknown("Sem token na resposta")
         tokenStore.setPendingToken(token)
-    }
+    }.recoverCatching { throw errorParser.fromThrowable(it) }
 
     suspend fun logout(): Result<Unit> = runCatching {
         // Melhor esforço com limite: sem rede, sair não pode ficar preso ao timeout do OkHttp.
-        runCatching { kotlinx.coroutines.withTimeoutOrNull(LOGOUT_TIMEOUT_MS) { api.logout() } }
+        val token = tokenStore.token
+        val revoked = runCatching {
+            kotlinx.coroutines.withTimeoutOrNull(LOGOUT_TIMEOUT_MS) { api.logout() }
+        }.getOrNull()?.let { it.isSuccessful || it.code() == 401 } == true
+        // Sem resposta: o token continuava válido no servidor até 30 dias.
+        if (!revoked && token != null) sessionTerminator.revokeLater(token)
         e2eKeyManager.lock() // limpar a chave privada E2E da memória
-        tokenStore.clear()
+        tokenStore.clear() // → SessionTerminator: resto da limpeza
     }
 
     private companion object {

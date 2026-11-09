@@ -9,6 +9,7 @@ import co.golink.tester.domain.share.ShareByEmailRequest
 import co.golink.tester.domain.share.ShareResponseAttributes
 import co.golink.tester.domain.share.UpdateShareRequest
 import co.golink.tester.network.ShareApi
+import co.golink.tester.ui.i18n.tr
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -41,10 +42,7 @@ class ShareRepository @Inject constructor(
             emails = emails?.filter { it.isNotBlank() },
         )
         val response = api.create(body)
-        if (!response.isSuccessful) {
-            val errBody = response.errorBody()?.string()?.take(300) ?: ""
-            error("HTTP ${response.code()}: $errBody")
-        }
+        checkShareResponse(response)
         val attrs = response.body()?.data?.attributes ?: error("Resposta vazia")
         attrs.toShareInfo()
     }
@@ -72,7 +70,7 @@ class ShareRepository @Inject constructor(
             view_limit = views,
         )
         val response = api.update(token, body)
-        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        checkShareResponse(response)
         val attrs = response.body()?.data?.attributes ?: error("Resposta vazia")
         attrs.toShareInfo()
     }
@@ -95,14 +93,36 @@ class ShareRepository @Inject constructor(
     }
 
     suspend fun sendByEmail(token: String, emails: List<String>): Result<Unit> = runCatching {
+        require(emails.size <= MAX_EMAILS) { "No máximo %d destinatários por envio".tr().format(MAX_EMAILS) }
         val response = api.sendByEmail(token, ShareByEmailRequest(emails = emails))
-        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        checkShareResponse(response)
     }
 
     suspend fun qrCode(token: String): Result<String> = runCatching {
         val response = api.qrCode(token)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         response.body()?.data?.svg ?: error("Sem QR no payload")
+    }
+
+    /**
+     * Erro legível em vez de "HTTP 4xx: {json}": 429 (máx. 20 envios por hora), a mensagem
+     * do campo nas 422 (password > 72, dica > 40, mais de 10 emails) e a do servidor nos 403/404.
+     */
+    private fun checkShareResponse(response: retrofit2.Response<*>) {
+        if (response.isSuccessful) return
+        val code = response.code()
+        if (code == 429) error("Demasiados envios, tenta daqui a pouco".tr())
+        val raw = runCatching { response.errorBody()?.string().orEmpty() }.getOrDefault("")
+        val body = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(raw) as? kotlinx.serialization.json.JsonObject }.getOrNull()
+        val errors = body?.get("errors") as? kotlinx.serialization.json.JsonObject
+        val first = (errors?.values?.firstOrNull() as? kotlinx.serialization.json.JsonArray)?.firstOrNull()
+        val message = ((first ?: body?.get("message")) as? kotlinx.serialization.json.JsonPrimitive)?.content
+        error(co.golink.tester.ui.i18n.ServerMessages.localize(message)?.takeIf { it.isNotBlank() } ?: "HTTP $code")
+    }
+
+    companion object {
+        /** Destinatários por pedido aceites pelo servidor (link por email e criar com emails). */
+        const val MAX_EMAILS = 10
     }
 
     private fun ShareResponseAttributes.toShareInfo() = ShareInfo(

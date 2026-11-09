@@ -211,7 +211,7 @@ class SystemSettingsViewModel @Inject constructor(
                         )
                     }
                 }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (${t.message})") } }
+                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (%s)".tr().format(t.message.orEmpty())) } }
         }
     }
 
@@ -267,7 +267,20 @@ class SystemSettingsViewModel @Inject constructor(
         runCatching {
             val resolver = context.contentResolver
             val mime = resolver.getType(uri) ?: "image/png"
-            val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Não foi possível ler a imagem".tr())
+            // Leitura fora da main thread e com limite (logótipo/favicon).
+            val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                resolver.openInputStream(uri)?.use { input ->
+                    val out = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(16 * 1024)
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        out.write(buffer, 0, n)
+                        if (out.size() > MAX_SETTING_IMAGE_BYTES) error("Imagem demasiado grande (máximo %d MB)".tr().format(MAX_SETTING_IMAGE_BYTES / (1024 * 1024)))
+                    }
+                    out.toByteArray()
+                }
+            } ?: error("Não foi possível ler a imagem".tr())
             val path = repository.uploadSettingImage(key, bytes, mime, "$key.${mime.substringAfter('/').substringBefore('+')}").getOrThrow()
             _state.update { it.copy(values = it.values + (key to path)) }
         }
@@ -695,3 +708,6 @@ private fun StatusMap(title: String, map: JsonObject?) {
         }
     }
 }
+
+/** Limite das imagens das definições (logótipo, favicon…). */
+private const val MAX_SETTING_IMAGE_BYTES = 2 * 1024 * 1024

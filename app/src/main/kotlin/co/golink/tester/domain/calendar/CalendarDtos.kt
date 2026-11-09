@@ -39,7 +39,11 @@ data class CreatedIdResponse(val data: CreatedId? = null)
 data class CreatedId(val id: String)
 
 @Serializable
-data class EventListResponse(val data: List<EventDto> = emptyList())
+data class EventListResponse(
+    val data: List<EventDto> = emptyList(),
+    // Acima de 2000 eventos no intervalo o servidor corta a lista.
+    val truncated: Boolean = false,
+)
 
 @Serializable
 data class EventResponse(val data: EventDto? = null, val type: String? = null)

@@ -3,8 +3,6 @@ package co.golink.tester.data.settings
 import android.content.Context
 import android.util.Base64
 import androidx.core.content.edit
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -19,16 +17,9 @@ class AppSecurityPreferences @Inject constructor(
 ) {
     private val prefs = context.getSharedPreferences("app_security", Context.MODE_PRIVATE)
 
-    // Keystore + Tink: caro a criar; aquecido em IO no arranque (warmUp).
-    private val encryptedPrefs by lazy {
-        EncryptedSharedPreferences.create(
-            context,
-            "app_security_pin",
-            MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
-    }
+    // Keystore (AES-GCM, ver EncryptedPrefs): caro a criar; aquecido em IO no arranque
+    // (warmUp). Migra uma vez das EncryptedSharedPreferences antigas.
+    private val encryptedPrefs by lazy { EncryptedPrefs.create(context, "app_security_pin") }
 
     @Volatile private var pinSetCache: Boolean? = null
 

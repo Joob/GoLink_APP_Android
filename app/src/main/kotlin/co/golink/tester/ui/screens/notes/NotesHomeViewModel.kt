@@ -114,6 +114,7 @@ class NotesHomeViewModel @Inject constructor(
     private val repo: NotesRepository,
     core: NotesCore,
     userRepository: co.golink.tester.data.user.UserRepository,
+    keys: co.golink.tester.data.encryption.E2EKeyManager,
 ) : ViewModel() {
 
     /** Utilizador atual (avatar do "Agora" no histórico). */
@@ -241,6 +242,25 @@ class NotesHomeViewModel @Inject constructor(
     private val folds = java.util.concurrent.ConcurrentHashMap<String, Folded>()
     private var indexJob: Job? = null
     private var searchJob: Job? = null
+
+    init {
+        // Texto decifrado das notas (índice da pesquisa): não fica no VM depois do lock.
+        viewModelScope.launch {
+            keys.unlocked.collect { unlocked ->
+                if (!unlocked) {
+                    indexJob?.cancel()
+                    texts.clear()
+                    folds.clear()
+                }
+            }
+        }
+    }
+
+    override fun onCleared() {
+        texts.clear()
+        folds.clear()
+        super.onCleared()
+    }
 
     fun setQuery(q: String) {
         _search.value = _search.value.copy(query = q)
@@ -422,7 +442,20 @@ class NotesHomeViewModel @Inject constructor(
 
     fun deleteForever(note: NoteItem) = act { repo.forceDelete(note.id) }
 
+    /** Uma falha não pára as restantes: conta-as e recarrega o lixo no fim. */
     fun emptyTrash() = act {
-        repo.trash.value.orEmpty().forEach { repo.forceDelete(it.id) }
+        val items = repo.trash.value.orEmpty()
+        var failed = 0
+        items.forEach { n ->
+            try {
+                repo.forceDelete(n.id)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                failed++
+            }
+        }
+        repo.loadTrash()
+        if (failed > 0) toast(nt("empty_trash_failed", "n" to failed))
     }
 }

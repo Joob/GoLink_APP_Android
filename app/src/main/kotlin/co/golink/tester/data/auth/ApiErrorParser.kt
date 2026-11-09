@@ -2,6 +2,7 @@ package co.golink.tester.data.auth
 
 import co.golink.tester.domain.auth.AuthError
 import co.golink.tester.domain.auth.ErrorBody
+import co.golink.tester.ui.i18n.tr
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.serialization.json.Json
@@ -16,14 +17,14 @@ class ApiErrorParser @Inject constructor(
         val raw = runCatching { response.errorBody()?.string().orEmpty() }.getOrDefault("")
         val body = runCatching { json.decodeFromString(ErrorBody.serializer(), raw) }.getOrNull()
         val message = body?.message ?: when (code) {
-            401 -> "Não autorizado"
-            403 -> "Acesso negado"
-            404 -> "Recurso não encontrado"
-            409 -> "Conflito"
-            422 -> "Dados inválidos"
-            429 -> "Demasiados pedidos"
-            in 500..599 -> "Erro do servidor"
-            else -> "Erro inesperado"
+            401 -> "Não autorizado".tr()
+            403 -> "Acesso negado".tr()
+            404 -> "Recurso não encontrado".tr()
+            409 -> "Conflito".tr()
+            422 -> "Dados inválidos".tr()
+            429 -> "Demasiados pedidos".tr()
+            in 500..599 -> "Erro do servidor".tr()
+            else -> "Erro inesperado".tr()
         }
         val fields = body?.errors
         return when {
@@ -49,14 +50,14 @@ class ApiErrorParser @Inject constructor(
 
         return AuthError.OtpCooldown(
             remainingSeconds = body?.remaining_cooldown ?: body?.remaining_wait ?: retryAfter ?: 0,
-            message = body?.otp_code ?: body?.message ?: "Demasiadas tentativas",
+            message = body?.otp_code ?: body?.message ?: "Demasiadas tentativas".tr(),
             rateLimited = body?.remaining_cooldown == null && body?.remaining_wait != null,
         )
     }
 
     fun fromThrowable(t: Throwable): AuthError = when (t) {
         is AuthError -> t
-        is java.io.IOException -> AuthError.Network(t.message ?: "Falha de rede")
+        is java.io.IOException -> AuthError.Network(t.message ?: "Falha de rede".tr())
         else -> AuthError.Unknown(t.message ?: t::class.java.simpleName)
     }
 }

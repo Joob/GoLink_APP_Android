@@ -214,6 +214,14 @@ fun SearchSheet(
                 if (state.loading || (state.query.isBlank() && state.recentsLoading)) {
                     LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
                 }
+                if (state.query.isNotBlank() && state.indexTruncated) {
+                    Text(
+                        "Pesquisa limitada aos primeiros 10 000 itens".tr(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                    )
+                }
 
                 val showRecents = state.query.isBlank()
                 val list = if (showRecents) state.recents else state.results

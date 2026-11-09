@@ -20,10 +20,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,7 +42,10 @@ import co.golink.tester.domain.legacy.LegacyGuardingRow
 import co.golink.tester.ui.i18n.lt
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -64,6 +68,9 @@ data class GuardianCodeStep(val action: String, val email: String, val code: Str
 
 private val CODE_ERRORS = setOf("legacy_code_invalid", "legacy_code_expired", "legacy_code_too_many")
 
+/** O convite mudou noutro sítio (aceite/recusado/retirado): recarregar e fechar o passo do código. */
+private val STALE_ERRORS = setOf("legacy_not_invited", "legacy_already_accepted", "legacy_missing_relays")
+
 @HiltViewModel
 class LegacyGuardingViewModel @Inject constructor(
     private val repo: LegacyGuardingRepository,
@@ -74,16 +81,36 @@ class LegacyGuardingViewModel @Inject constructor(
 
     val ownFingerprint: String get() = keys.fingerprint().orEmpty()
 
-    /** Mostrado ao ecrã que chamou (Guarding.vue só tem o erro genérico). */
-    var onToast: (LegacyToast) -> Unit = {}
+    /** Mostrado ao ecrã que chamou (Guarding.vue só tem o erro genérico); recolhido num efeito, não atribuído na composição. */
+    private val _toasts = MutableSharedFlow<LegacyToast>(extraBufferCapacity = 8)
+    val toasts: SharedFlow<LegacyToast> = _toasts.asSharedFlow()
+
+    private fun onToast(t: LegacyToast) { _toasts.tryEmit(t) }
+
+    init {
+        // Bloqueio E2E: os códigos dos destinatários saem da memória.
+        viewModelScope.launch {
+            keys.unlocked.collect { unlocked ->
+                if (!unlocked) _state.update { it.copy(results = emptyMap(), pending = emptyMap()) }
+            }
+        }
+    }
 
     private fun run(block: suspend () -> Unit) = viewModelScope.launch {
         _state.update { it.copy(busy = true) }
         runCatching { block() }.onFailure {
             android.util.Log.w("Legacy", "guardião", it)
-            onToast(LegacyToast("error", true))
+            fail(it)
         }
         _state.update { it.copy(busy = false) }
+    }
+
+    /** Erro com mensagem própria quando a há; num convite desatualizado recarrega a lista. */
+    private suspend fun fail(e: Throwable) {
+        onToast(LegacyToast(legacyErrorKey(e), true))
+        if ((e as? co.golink.tester.data.legacy.LegacyException)?.code in STALE_ERRORS) {
+            runCatching { repo.load() }.onSuccess { rows -> _state.update { it.copy(rows = rows, pending = emptyMap()) } }
+        }
     }
 
     fun load() = run {
@@ -118,7 +145,7 @@ class LegacyGuardingViewModel @Inject constructor(
                 _state.update { s -> s.copy(pending = s.pending + (row.id to step.copy(code = "", error = message))) }
             } else {
                 android.util.Log.w("Legacy", "guardião", e)
-                onToast(LegacyToast("error", true))
+                fail(e)
             }
         }
         _state.update { it.copy(busy = false) }
@@ -126,7 +153,8 @@ class LegacyGuardingViewModel @Inject constructor(
 
     fun combine(row: LegacyGuardingRow) = run {
         val result = repo.combine(row.id)
-        _state.update { it.copy(results = it.results + (row.id to result)) }
+        // Bloqueado a meio: o resultado já não pode aparecer.
+        if (keys.isUnlocked) _state.update { it.copy(results = it.results + (row.id to result)) }
     }
 
     fun resend(row: LegacyGuardingRow, person: LegacyCombinedRecipient) = run {
@@ -135,90 +163,103 @@ class LegacyGuardingViewModel @Inject constructor(
     }
 }
 
-/** Guarding.vue: os cofres em que sou guardião. */
+/** Guarding.vue: os cofres em que sou guardião. Linhas para a LazyColumn do LegacyScreen. */
 @Composable
-fun LegacyGuardingPane(onToast: (LegacyToast) -> Unit, vm: LegacyGuardingViewModel = hiltViewModel()) {
+fun legacyGuardingContent(onToast: (LegacyToast) -> Unit, vm: LegacyGuardingViewModel = hiltViewModel()): LazyListScope.() -> Unit {
     val state by vm.state.collectAsStateWithLifecycle()
-    val clipboard = LocalClipboardManager.current
-    vm.onToast = onToast
+    val copySecret = rememberLegacyCopy()
+    val toast by rememberUpdatedState(onToast)
+    // Códigos dos destinatários à vista: fora de capturas e da miniatura dos recentes.
+    LegacySecureWhile(state.results.values.any { it.recipients.isNotEmpty() })
+    LaunchedEffect(vm) { vm.toasts.collect { toast(it) } }
     LaunchedEffect(Unit) { vm.load() }
+    val s = state
+    val print = vm.ownFingerprint
 
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(lt("guarding_text"), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        val print = vm.ownFingerprint
-        if (print.isNotEmpty() && state.rows.isNotEmpty()) {
-            LegacyCard {
-                Text(lt("guarding_fingerprint"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(print, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(top = 4.dp))
+    return {
+        item(key = "guarding_intro") {
+            Text(lt("guarding_text"), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (print.isNotEmpty() && s.rows.isNotEmpty()) {
+            item(key = "guarding_fingerprint") {
+                LegacyCard {
+                    Text(lt("guarding_fingerprint"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(print, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(top = 4.dp))
+                }
             }
         }
-        if (state.loaded && state.rows.isEmpty()) {
-            LegacyCard { Text(lt("no_guarding"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        if (s.loaded && s.rows.isEmpty()) {
+            item(key = "guarding_empty") { LegacyCard { Text(lt("no_guarding"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
         }
-        state.rows.forEach { row ->
-            val open = releasable(row)
-            LegacyCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(row.owner_name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
-                        Text(lt("guarding_rule", "count" to row.threshold, "total" to row.count), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        items(s.rows, key = { "guarding_${it.id}" }) { row ->
+            GuardingCard(row, s, vm) { code ->
+                copySecret(code)
+                toast(LegacyToast("copied"))
+            }
+        }
+    }
+}
+
+@Composable
+private fun GuardingCard(row: LegacyGuardingRow, state: LegacyGuardingState, vm: LegacyGuardingViewModel, onCopy: (String) -> Unit) {
+    val open = releasable(row)
+    LegacyCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(row.owner_name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
+                Text(lt("guarding_rule", "count" to row.threshold, "total" to row.count), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            when {
+                row.status == "invited" -> LegacyChip(lt("guardian_invited"), ChipTone.Warn)
+                open -> LegacyChip(lt("guarding_released"), ChipTone.Danger)
+                else -> LegacyChip(lt("guarding_standing_by"), ChipTone.Ok)
+            }
+        }
+        val step = state.pending[row.id]
+        when {
+            row.status == "invited" && step != null -> GuardianCodeForm(
+                step = step,
+                busy = state.busy,
+                onCode = { vm.setCode(row, it) },
+                onConfirm = { vm.confirmCode(row) },
+                onCancel = { vm.cancelCode(row) },
+                onResend = { vm.requestCode(row, step.action) },
+            )
+            row.status == "invited" -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 12.dp)) {
+                Button(onClick = { vm.requestCode(row, "accept") }, enabled = !state.busy, shape = RoundedCornerShape(12.dp)) { Text(lt("accept")) }
+                OutlinedButton(onClick = { vm.requestCode(row, "decline") }, enabled = !state.busy, shape = RoundedCornerShape(12.dp)) { Text(lt("decline")) }
+            }
+            open -> {
+                Text(lt("combine_text", "name" to row.owner_name), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(top = 12.dp))
+                val result = state.results[row.id]
+                if (result == null) {
+                    Button(onClick = { vm.combine(row) }, enabled = !state.busy, shape = RoundedCornerShape(12.dp), modifier = Modifier.padding(top = 10.dp)) { Text(lt("combine")) }
+                } else {
+                    if (result.have < result.threshold) {
+                        Text(lt("combine_waiting", "have" to result.have, "count" to result.threshold), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp))
+                        OutlinedButton(onClick = { vm.combine(row) }, enabled = !state.busy, shape = RoundedCornerShape(12.dp), modifier = Modifier.padding(top = 8.dp)) { Text(lt("check_again")) }
                     }
-                    when {
-                        row.status == "invited" -> LegacyChip(lt("guardian_invited"), ChipTone.Warn)
-                        open -> LegacyChip(lt("guarding_released"), ChipTone.Danger)
-                        else -> LegacyChip(lt("guarding_standing_by"), ChipTone.Ok)
-                    }
-                }
-                val step = state.pending[row.id]
-                when {
-                    row.status == "invited" && step != null -> GuardianCodeForm(
-                        step = step,
-                        busy = state.busy,
-                        onCode = { vm.setCode(row, it) },
-                        onConfirm = { vm.confirmCode(row) },
-                        onCancel = { vm.cancelCode(row) },
-                        onResend = { vm.requestCode(row, step.action) },
-                    )
-                    row.status == "invited" -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 12.dp)) {
-                        Button(onClick = { vm.requestCode(row, "accept") }, enabled = !state.busy, shape = RoundedCornerShape(12.dp)) { Text(lt("accept")) }
-                        OutlinedButton(onClick = { vm.requestCode(row, "decline") }, enabled = !state.busy, shape = RoundedCornerShape(12.dp)) { Text(lt("decline")) }
-                    }
-                    open -> {
-                        Text(lt("combine_text", "name" to row.owner_name), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(top = 12.dp))
-                        val result = state.results[row.id]
-                        if (result == null) {
-                            Button(onClick = { vm.combine(row) }, enabled = !state.busy, shape = RoundedCornerShape(12.dp), modifier = Modifier.padding(top = 10.dp)) { Text(lt("combine")) }
-                        } else {
-                            if (result.have < result.threshold) {
-                                Text(lt("combine_waiting", "have" to result.have, "count" to result.threshold), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp))
-                                OutlinedButton(onClick = { vm.combine(row) }, enabled = !state.busy, shape = RoundedCornerShape(12.dp), modifier = Modifier.padding(top = 8.dp)) { Text(lt("check_again")) }
-                            }
-                            if (result.recipients.isNotEmpty()) {
-                                Text(lt("codes_text"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
-                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    result.recipients.forEach { person ->
-                                        CodeRow(
-                                            person,
-                                            busy = state.busy,
-                                            onCopy = { code ->
-                                                clipboard.setText(AnnotatedString(code))
-                                                onToast(LegacyToast("copied"))
-                                            },
-                                            onResend = { vm.resend(row, person) },
-                                        )
-                                    }
-                                }
+                    if (result.recipients.isNotEmpty()) {
+                        Text(lt("codes_text"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp, bottom = 6.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            result.recipients.forEach { person ->
+                                CodeRow(
+                                    person,
+                                    busy = state.busy,
+                                    onCopy = onCopy,
+                                    onResend = { vm.resend(row, person) },
+                                )
                             }
                         }
                     }
-                    else -> Text(
-                        lt(if (row.sealed) "guarding_idle" else "guarding_wait_owner"),
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
                 }
             }
+            else -> Text(
+                lt(if (row.sealed) "guarding_idle" else "guarding_wait_owner"),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
+            )
         }
     }
 }

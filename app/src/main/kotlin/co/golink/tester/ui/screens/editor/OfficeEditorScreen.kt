@@ -4,7 +4,6 @@ import co.golink.tester.ui.i18n.tr
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
-import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -53,7 +52,7 @@ import co.golink.tester.ui.theme.LocalDarkTheme
 
 /**
  * Editor de documentos (docx/odt/xlsx/ods/csv…): o editor da web (/editor-embed) numa
- * WebView. A página não tem sessão — fala com a app por window.GoLinkEditor
+ * WebView. A página não tem sessão — fala com a app pela ponte [EditorBridge]
  * (ver [OfficeEditorViewModel]). Fechar e ir para segundo plano gravam antes.
  */
 @SuppressLint("SetJavaScriptEnabled")
@@ -114,6 +113,8 @@ fun OfficeEditorScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+    // Com a app em segundo plano pára os temporizadores JS (polls), depois de a gravação ter tempo de sair.
+    co.golink.tester.ui.common.PauseWebViewTimersInBackground({ webView })
 
     val editorUri = remember { Uri.parse(viewModel.editorUrl) }
 
@@ -142,7 +143,13 @@ fun OfficeEditorScreen(
                     settings.offscreenPreRaster = true
                     setBackgroundColor(if (dark) 0xFF151515.toInt() else 0xFFFFFFFF.toInt())
 
-                    addJavascriptInterface(EditorBridge(viewModel, dark) { webView }, "GoLinkEditor")
+                    // Ponte só para a origem do servidor (mensagens); sem suporte na WebView, a interface antiga.
+                    val bridge = EditorBridge(viewModel, dark)
+                    if (!installMessageBridge(this, "GoLinkEditorPort", editorUri, bridge)) {
+                        bridge.legacy = LegacyPageBridge(bridge, "__glkResolve") { webView }
+                            .also { addJavascriptInterface(it, "GoLinkEditor") }
+                    }
+                    tag = bridge
 
                     webViewClient = object : WebViewClient() {
                         // Só a página do editor corre aqui dentro (é a que tem a ponte);
@@ -150,8 +157,16 @@ fun OfficeEditorScreen(
                         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                             val url = request.url
                             if (url.host == editorUri.host && url.path == editorUri.path) return false
-                            runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                            // Só web e email: content:, file:, intent: e esquemas de outras apps ficam de fora.
+                            if (url.scheme?.lowercase() in setOf("http", "https", "mailto")) {
+                                runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                            }
                             return true
+                        }
+
+                        override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                            // A ponte antiga só responde à página do editor deste servidor (frame principal).
+                            (view.tag as? EditorBridge)?.legacy?.trusted = co.golink.tester.ui.screens.notes.sameSite(Uri.parse(url), editorUri)
                         }
 
                         override fun onPageFinished(view: WebView, url: String) {
@@ -206,7 +221,9 @@ fun OfficeEditorScreen(
                 }
             },
             onRelease = { view ->
-                view.removeJavascriptInterface("GoLinkEditor")
+                uninstallPageBridge(view, "GoLinkEditorPort", "GoLinkEditor")
+                // pauseTimers é global: não deixar as outras WebViews paradas.
+                runCatching { view.resumeTimers() }
                 view.destroy()
             },
         )
@@ -246,31 +263,22 @@ private fun EditorMessage(message: String, onRetry: (() -> Unit)?, onClose: () -
     }
 }
 
-/**
- * window.GoLinkEditor. Os métodos correm numa thread do WebView: o trabalho vai
- * para o ViewModel e a resposta volta pela thread principal (__glkResolve).
- */
+/** Ponte com a página do editor (ver [installMessageBridge]); o trabalho vai para o ViewModel. */
 private class EditorBridge(
     private val viewModel: OfficeEditorViewModel,
     private val dark: Boolean,
-    private val webView: () -> WebView?,
-) {
-    @JavascriptInterface
-    fun info(): String = viewModel.infoJson(dark)
+) : PageBridgeHost {
+    /** Só quando a WebView não suporta mensagens. */
+    var legacy: LegacyPageBridge? = null
 
-    @JavascriptInterface
-    fun request(id: Int, method: String, args: String) {
-        viewModel.request(id, method, args) { done ->
-            webView()?.post { webView()?.evaluateJavascript("window.__glkResolve && window.__glkResolve($done)", null) }
-        }
-    }
+    override fun info(): String = viewModel.infoJson(dark)
 
-    @JavascriptInterface
-    fun take(id: Int): String = viewModel.take(id)
+    override fun request(id: Int, method: String, args: String, onDone: (Int) -> Unit) =
+        viewModel.request(id, method, args, onDone)
 
-    @JavascriptInterface
-    fun toast(message: String) = viewModel.toast(message)
+    override fun take(id: Int): String = viewModel.take(id)
 
-    @JavascriptInterface
-    fun close() = viewModel.requestClose()
+    override fun toast(message: String) = viewModel.toast(message)
+
+    override fun close() = viewModel.requestClose()
 }

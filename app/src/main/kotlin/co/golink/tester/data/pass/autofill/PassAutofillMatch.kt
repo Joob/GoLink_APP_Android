@@ -6,13 +6,16 @@ import co.golink.tester.data.pass.obj
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import okhttp3.HttpUrl
 
 /**
  * A que logins corresponde o pedido de preenchimento. Lógica pura (testável na JVM).
- *  - Browser (webDomain): o host do item e o domínio da página têm de coincidir por
- *    sufixo de etiquetas ("accounts.google.com" ↔ "google.com"), nunca por substring.
+ *  - Browser (webDomain, só de browsers conhecidos): o host do item e o domínio da página têm de
+ *    coincidir por sufixo de etiquetas dentro do mesmo domínio registável (PSL), nunca por substring.
  *  - App: o item lembra o pacote em login.apps (escolhido em "Outros logins…") →
  *    correspondência forte; senão, heurística pelo nome do pacote (com.loja.android ↔ loja.pt).
+ *    A heurística NÃO é verificada: nunca entra nas sugestões do preenchimento (só ordena a lista
+ *    de "Outros logins…", onde o utilizador escolhe de propósito).
  */
 object PassAutofillMatch {
     enum class Strength { Exact, Domain, Heuristic }
@@ -28,7 +31,15 @@ object PassAutofillMatch {
     fun appsOf(item: PassItem): List<String> =
         (item.payload.obj("login")?.get("apps") as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
 
-    /** "accounts.google.com" ↔ "google.com": um é sufixo do outro em fronteira de etiqueta. */
+    /** eTLD+1 pela Public Suffix List (a do OkHttp): "a.b.github.io" → "b.github.io"; "co.uk" → null. */
+    fun registrableDomain(host: String): String? =
+        runCatching { HttpUrl.Builder().scheme("https").host(host).build().topPrivateDomain() }.getOrNull()
+
+    /**
+     * "accounts.google.com" ↔ "google.com": um é sufixo do outro em fronteira de etiqueta E os dois
+     * têm o mesmo domínio registável (PSL). Assim "x.github.io" não casa com "github.io" nem com
+     * "y.github.io" (alojamento partilhado), e "co.uk"/"com" nunca casam.
+     */
     fun domainsMatch(a: String, b: String): Boolean {
         val x = a.lowercase().trimEnd('.').removePrefix("www.")
         val y = b.lowercase().trimEnd('.').removePrefix("www.")
@@ -37,9 +48,9 @@ object PassAutofillMatch {
         val (short, long) = if (x.length <= y.length) x to y else y to x
         // O lado curto tem de ter pelo menos "nome.tld" (evita casar só com "co.uk"/"com").
         if (short.count { it == '.' } < 1) return false
-        val labels = short.split('.')
-        if (labels.size == 2 && labels[0].length <= 3 && labels[1].length <= 3 && labels[0] in NOISE) return false
-        return long.endsWith(".$short")
+        if (!long.endsWith(".$short")) return false
+        val reg = registrableDomain(short) ?: return false
+        return reg == registrableDomain(long)
     }
 
     /** Etiqueta principal do host ("shop.example.co.uk" → "example"). */
@@ -59,7 +70,8 @@ object PassAutofillMatch {
                 if (host == webDomain.lowercase().removePrefix("www.")) hits += Hit(i, Strength.Exact)
                 else if (domainsMatch(host, webDomain)) hits += Hit(i, Strength.Domain)
             }
-        } else if (!packageName.isNullOrBlank()) {
+        } else if (!packageName.isNullOrBlank() && !PassAutofillParser.isTrustedBrowser(packageName)) {
+            // Browser sem webDomain: não há destino fiável (nem login.apps nem heurística).
             val tokens = packageTokens(packageName)
             for (i in logins) {
                 if (packageName in appsOf(i)) { hits += Hit(i, Strength.Exact); continue }

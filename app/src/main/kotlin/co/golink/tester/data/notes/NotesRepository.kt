@@ -149,6 +149,7 @@ class NotesRepository @Inject constructor(
     private val http: NotesHttp,
     private val keys: E2EKeyManager,
     private val core: NotesCore,
+    private val keyCache: NoteKeyCache,
 ) {
     private val _state = MutableStateFlow(NotesState())
     val state: StateFlow<NotesState> = _state.asStateFlow()
@@ -157,7 +158,6 @@ class NotesRepository @Inject constructor(
     val trash: StateFlow<List<NoteItem>?> = _trash.asStateFlow()
 
     /** wrapped_key → K_note (abrir é crypto_box_seal_open: caro em listas grandes). */
-    private val keyCache = ConcurrentHashMap<String, ByteArray>()
     /** meta_enc → meta (decifrar só o que mudou). */
     private val metaCache = ConcurrentHashMap<String, NoteMeta>()
     private val loadMutex = Mutex()
@@ -167,7 +167,7 @@ class NotesRepository @Inject constructor(
 
     init {
         keys.addOnLock {
-            keyCache.clear()
+            // As K_note (NoteKeyCache) são zeradas no seu próprio addOnLock.
             metaCache.clear()
             contentStamps.clear()
             // O texto decifrado das notas também vive no QuickJS: fecha os Y.Doc de leitura.
@@ -236,9 +236,7 @@ class NotesRepository @Inject constructor(
     }
 
     private fun openKey(wrapped: String?): ByteArray? {
-        if (wrapped.isNullOrEmpty() || !keys.isUnlocked) return null
-        keyCache[wrapped]?.let { return it }
-        return runCatching { keys.openFileDataKey(wrapped) }.getOrNull()?.also { keyCache[wrapped] = it }
+        return keyCache.open(wrapped)
     }
 
     private fun parseNote(o: JsonObject): NoteItem? {
@@ -326,7 +324,7 @@ class NotesRepository @Inject constructor(
             put("wrapped_key", sealed)
             if (notebookId != null) put("notebook_id", notebookId) else put("notebook_id", JsonNull)
         })
-        keyCache[sealed] = key
+        keyCache.put(sealed, key)
         val note = (res["data"] as? JsonObject)?.let(::parseNote) ?: error("resposta sem nota")
         upsert(note)
         return note
@@ -340,17 +338,46 @@ class NotesRepository @Inject constructor(
         val enc = CalendarCrypto.encryptString(meta.toJson().toString(), key)
         metaCache[enc] = meta
         patch(id) { it.copy(meta = meta, metaEnc = enc, updatedAt = Instant.now().toString()) }
-        http.patch("/notes/$id", buildJsonObject { put("meta_enc", enc) })
+        revertOnFailure(id, { it.metaEnc == enc }, { it.copy(meta = note.meta, metaEnc = note.metaEnc, updatedAt = note.updatedAt) }) {
+            http.patch("/notes/$id", buildJsonObject { put("meta_enc", enc) })
+        }
     }
 
     suspend fun setPinned(id: String, pinned: Boolean) {
-        patch(id) { it.copy(pinnedAt = if (pinned) Instant.now().toString() else null) }
-        http.patch("/notes/$id/me", buildJsonObject { put("pinned", pinned) })
+        val before = note(id)?.pinnedAt
+        val at = if (pinned) Instant.now().toString() else null
+        patch(id) { it.copy(pinnedAt = at) }
+        revertOnFailure(id, { it.pinnedAt == at }, { it.copy(pinnedAt = before) }) {
+            http.patch("/notes/$id/me", buildJsonObject { put("pinned", pinned) })
+        }
     }
 
     suspend fun moveToNotebook(id: String, notebookId: String?) {
+        val before = note(id)?.notebookId
         patch(id) { it.copy(notebookId = notebookId) }
-        http.patch("/notes/$id/me", buildJsonObject { if (notebookId != null) put("notebook_id", notebookId) else put("notebook_id", JsonNull) })
+        revertOnFailure(id, { it.notebookId == notebookId }, { it.copy(notebookId = before) }) {
+            http.patch("/notes/$id/me", buildJsonObject { if (notebookId != null) put("notebook_id", notebookId) else put("notebook_id", JsonNull) })
+        }
+    }
+
+    /**
+     * Patch otimista: se o pedido falhar, repõe o anterior (só se a nota ainda tiver
+     * o valor otimista — uma mudança mais recente não é pisada) e volta a lançar.
+     */
+    private suspend fun revertOnFailure(
+        id: String,
+        stillOptimistic: (NoteItem) -> Boolean,
+        revert: (NoteItem) -> NoteItem,
+        call: suspend () -> Unit,
+    ) {
+        try {
+            call()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            patch(id) { if (stillOptimistic(it)) revert(it) else it }
+            throw e
+        }
     }
 
     /** Dono: vai para o lixo. Membro: sai da nota. */
@@ -404,6 +431,8 @@ class NotesRepository @Inject constructor(
     // ---- conteúdo fora do editor (pesquisa, Checklists) -----------------------
 
     private val contentStamps = ConcurrentHashMap<String, String>()
+    /** Notas cujo conteúdo carregado ficou incompleto (base/update ilegível ou páginas a mais). */
+    private val incompleteContent: MutableSet<String> = ConcurrentHashMap.newKeySet()
     /** Um pedido de cada vez por nota (o open() do núcleo reinicia o Y.Doc). */
     private val contentLocks = ConcurrentHashMap<String, Mutex>()
     /** Y.Doc de leitura abertos, do mais antigo para o mais recente (no máximo MAX_OPEN_CONTENT). */
@@ -447,6 +476,7 @@ class NotesRepository @Inject constructor(
         val ids = synchronized(openContent) { openContent.toList().also { openContent.clear() } }
         for (id in ids) contentLock(id).withLock {
             contentStamps.remove(id)
+            incompleteContent.remove(id)
             runCatching { core.close(contentDocId(id)) }
         }
     }
@@ -472,26 +502,38 @@ class NotesRepository @Inject constructor(
         var after = 0L
         var session: String? = null
         var page = 0
+        // Ilegíveis ou páginas por ler: o Y.Doc fica incompleto e não serve para derivar meta.
+        var failures = 0
+        var more = false
         while (page++ < 50) {
             val data = http.get("/notes/$id/content", mapOf("after" to after))
-            val s = data["session"] as? JsonObject ?: break
+            val s = data["session"] as? JsonObject
+            if (s == null) {
+                more = false
+                break
+            }
             val sid = s.jstr("id")
             if (session != null && session != sid) {
                 // Restauraram uma versão a meio: recomeça do zero.
-                updates.clear(); after = 0; session = null
+                updates.clear(); after = 0; session = null; failures = 0
                 continue
             }
             session = sid
-            s.jstr("base")?.let { b -> runCatching { cipher.decryptToB64(b) }.getOrNull()?.let(updates::add) }
+            s.jstr("base")?.let { b -> runCatching { cipher.decryptToB64(b) }.getOrNull()?.let(updates::add) ?: failures++ }
             for (u in (data["updates"] as? JsonArray).orEmpty()) {
                 val uo = u as? JsonObject ?: continue
-                uo.jstr("payload")?.let { p -> runCatching { cipher.decryptToB64(p) }.getOrNull()?.let(updates::add) }
+                uo.jstr("payload")?.let { p -> runCatching { cipher.decryptToB64(p) }.getOrNull()?.let(updates::add) ?: failures++ }
                 after = maxOf(after, uo["seq"]?.jsonPrimitive?.longOrNull ?: after)
             }
-            if (data["more"]?.jsonPrimitive?.booleanOrNull != true) break
+            more = data["more"]?.jsonPrimitive?.booleanOrNull == true
+            if (!more) break
         }
         core.open(docId)
         if (updates.isNotEmpty()) core.applyMany(docId, updates)
+        if (failures > 0 || more) {
+            android.util.Log.w("NotesRepository", "conteúdo incompleto: falhas=$failures truncado=$more")
+            incompleteContent += id
+        } else incompleteContent -= id
         contentStamps[id] = "$stamp#${session.orEmpty()}"
         return session
     }
@@ -548,6 +590,9 @@ class NotesRepository @Inject constructor(
         val note = note(noteId) ?: refreshOne(noteId) ?: error("nota desconhecida")
         val key = note.key ?: error("nota sem chave")
         val derived = withContent(noteId, fresh = true) { docId, session ->
+            // Y.Doc incompleto: o meta derivado apagaria título/contagens. Não grava nada (a
+            // caixa volta atrás com o aviso de erro); a nota abre-se no editor para a marcar.
+            if (noteId in incompleteContent) error("conteúdo da nota incompleto")
             if (session != null) {
                 val update = core.setTaskChecked(docId, uid, done)
                 if (update.isNotEmpty()) {
@@ -638,11 +683,15 @@ class NotesRepository @Inject constructor(
 
     /** Restaurar (como a web): o atual fica no histórico; depois o índice segue a versão. */
     suspend fun restoreVersion(id: String, versionId: String) {
-        withContent(id, fresh = true) { docId, _ -> saveVersion(id, docId, 0) }
+        withContent(id, fresh = true) { docId, _ ->
+            // Sem o estado completo, o "atual" guardado no histórico ficava truncado.
+            if (id in incompleteContent) error("conteúdo da nota incompleto")
+            saveVersion(id, docId, 0)
+        }
         http.post("/notes/$id/versions/$versionId/restore")
         contentStamps.remove(id)
         refreshOne(id)
-        withContent(id, fresh = true) { docId, _ -> saveDerived(id, docId) }
+        withContent(id, fresh = true) { docId, _ -> if (id !in incompleteContent) saveDerived(id, docId) }
     }
 
     /** Meta, tarefas e ficheiros derivados de um Y.Doc do núcleo. */

@@ -28,24 +28,36 @@ class LegacyCheckin @Inject constructor(
     private val prefs = context.getSharedPreferences("legacy_checkin", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    init {
+        // Versões antigas guardavam uma chave `last_<token>` por sessão e nunca a limpavam.
+        scope.launch {
+            val stale = prefs.all.keys.filter { it.startsWith("last_") }
+            if (stale.isNotEmpty()) prefs.edit { stale.forEach(::remove) }
+        }
+    }
+
     fun onForeground() {
         val session = tokenStore.state.value
         val token = session.token ?: return
         if (!session.otpValidated) return
 
-        // Por conta: trocar de conta não pode herdar o intervalo da anterior.
-        val key = "last_${token.hashCode()}"
+        // Um só registo, da sessão atual: outra conta (ou um novo login) não herda o
+        // intervalo da anterior e nada se acumula.
+        val owner = token.hashCode()
         val now = System.currentTimeMillis()
-        if (now - prefs.getLong(key, 0L) < THROTTLE_MS) return
+        val last = if (prefs.getInt(KEY_OWNER, 0) == owner) prefs.getLong(KEY_LAST, 0L) else 0L
+        if (now - last < THROTTLE_MS) return
 
         scope.launch {
             val sent = runCatching { api.checkin(buildJsonObject { put("source", "android") }).isSuccessful }
                 .getOrDefault(false)
-            if (sent) prefs.edit { putLong(key, now) }
+            if (sent) prefs.edit { putInt(KEY_OWNER, owner); putLong(KEY_LAST, now) }
         }
     }
 
     private companion object {
         const val THROTTLE_MS = 6 * 60 * 60 * 1000L
+        const val KEY_OWNER = "owner"
+        const val KEY_LAST = "last"
     }
 }

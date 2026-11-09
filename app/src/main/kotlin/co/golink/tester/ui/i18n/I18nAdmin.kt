@@ -20,6 +20,11 @@ object I18nAdmin {
         r("Sem resultados.", "No results.", "Aucun résultat.", "Sin resultados."),
         r("Utilizador", "User", "Utilisateur", "Usuario"),
         r("Último acesso", "Last login", "Dernière connexion", "Último acceso"),
+        // 2.ª ronda (A08 Baixos)
+        r("Adicionar crédito?", "Add credit?", "Ajouter du crédit ?", "¿Añadir crédito?"),
+        r("Vão ser creditados %s ao saldo deste utilizador.", "%s will be credited to this user's balance.", "%s seront crédités sur le solde de cet utilisateur.", "Se abonarán %s al saldo de este usuario."),
+        r("Abrir link denunciado?", "Open reported link?", "Ouvrir le lien signalé ?", "¿Abrir el enlace denunciado?"),
+        r("O conteúdo pode ser malicioso (malware, phishing). Abre-o só num ambiente seguro e não descarregues ficheiros.", "The content may be malicious (malware, phishing). Only open it in a safe environment and don't download files.", "Le contenu peut être malveillant (malware, hameçonnage). Ouvrez-le uniquement dans un environnement sûr et ne téléchargez aucun fichier.", "El contenido puede ser malicioso (malware, phishing). Ábrelo solo en un entorno seguro y no descargues archivos."),
         r("Agendada", "Scheduled", "Planifiée", "Programada"),
         r("Eliminada", "Deleted", "Supprimée", "Eliminada"),
         r("Pedido do admin", "Requested by admin", "Demandée par l'admin", "Solicitada por el admin"),
@@ -476,6 +481,28 @@ object I18nAdmin {
         r("Apagar este ficheiro definitivamente? Não é possível desfazer.", "Delete this file permanently? This cannot be undone.", "Supprimer définitivement ce fichier ? Action irréversible.", "¿Eliminar este archivo definitivamente? No se puede deshacer."),
         r("Ficheiro em fila para nova análise.", "File queued for a new scan.", "Fichier remis en file d'analyse.", "Archivo en cola para un nuevo análisis."),
         r("Ficheiro apagado.", "File deleted.", "Fichier supprimé.", "Archivo eliminado."),
+        // Correções 2026-11-10 (A08)
+        r("Não é possível eliminar: o utilizador tem uma subscrição ativa.", "Can't delete: the user has an active subscription.", "Suppression impossible : l'utilisateur a un abonnement actif.", "No se puede eliminar: el usuario tiene una suscripción activa."),
+        r("Tornar administrador?", "Make administrator?", "Nommer administrateur ?", "¿Hacer administrador?"),
+        r("Remover o papel de administrador?", "Remove administrator role?", "Retirer le rôle d'administrateur ?", "¿Quitar el rol de administrador?"),
+        r("%s passa a ter acesso total à plataforma. Confirma com a tua password.", "%s will get full access to the platform. Confirm with your password.", "%s aura un accès complet à la plateforme. Confirmez avec votre mot de passe.", "%s tendrá acceso total a la plataforma. Confirma con tu contraseña."),
+        r("%s perde o acesso à administração e a sessão é terminada em todos os aparelhos.", "%s loses access to the administration and is signed out of all devices.", "%s perd l'accès à l'administration et est déconnecté de tous les appareils.", "%s pierde el acceso a la administración y se cierra su sesión en todos los dispositivos."),
+        r("%s volta a poder entrar e usar a API.", "%s will be able to sign in and use the API again.", "%s pourra de nouveau se connecter et utiliser l'API.", "%s podrá volver a iniciar sesión y usar la API."),
+        r("Suspender conta?", "Suspend account?", "Suspendre le compte ?", "¿Suspender la cuenta?"),
+        r("%s deixa de conseguir entrar e todas as sessões são terminadas de imediato. Duração: %s.", "%s can no longer sign in and all sessions end immediately. Duration: %s.", "%s ne pourra plus se connecter et toutes les sessions sont fermées immédiatement. Durée : %s.", "%s ya no podrá iniciar sesión y todas las sesiones se cierran de inmediato. Duración: %s."),
+        r("Não foi possível carregar (%s)", "Couldn't load (%s)", "Chargement impossible (%s)", "No se ha podido cargar (%s)"),
+        r("Os administradores têm acesso total à plataforma. Confirma com a tua password.", "Administrators have full access to the platform. Confirm with your password.", "Les administrateurs ont un accès complet à la plateforme. Confirmez avec votre mot de passe.", "Los administradores tienen acceso total a la plataforma. Confirma con tu contraseña."),
+        r("Por inatividade", "Due to inactivity", "Pour inactivité", "Por inactividad"),
+        r("Gravado: %s. Falhou: %s (%s).", "Saved: %s. Failed: %s (%s).", "Enregistré : %s. Échec : %s (%s).", "Guardado: %s. Ha fallado: %s (%s)."),
+        r("Imagem demasiado grande (máximo %d MB)", "Image too large (max %d MB)", "Image trop volumineuse (max. %d Mo)", "Imagen demasiado grande (máximo %d MB)"),
+        r("Desligar o antivírus?", "Turn off the antivirus?", "Désactiver l'antivirus ?", "¿Desactivar el antivirus?"),
+        r("Os uploads novos deixam de ser analisados até voltares a ligar. Os ficheiros enviados entretanto não ficam em quarentena.", "New uploads stop being scanned until you turn it back on. Files uploaded in the meantime are not quarantined.", "Les nouveaux envois ne sont plus analysés jusqu'à la réactivation. Les fichiers envoyés entre-temps ne sont pas mis en quarantaine.", "Las nuevas subidas dejan de analizarse hasta que lo vuelvas a activar. Los archivos subidos mientras tanto no se ponen en cuarentena."),
+        r("Desligar", "Turn off", "Désactiver", "Desactivar"),
+        r("Não foi possível ler o ficheiro", "Couldn't read the file", "Impossible de lire le fichier", "No se ha podido leer el archivo"),
+        // Plano na app: sem compras (política de pagamentos da Play)
+        r("Ver plano", "View plan", "Voir le forfait", "Ver plan"),
+        r("A compra de planos tem de ser feita através do site.", "Plans must be purchased through the website.", "L'achat de forfaits doit se faire sur le site web.", "La compra de planes debe hacerse a través del sitio web."),
+        r("Plano atual, utilização e histórico", "Current plan, usage and history", "Forfait actuel, utilisation et historique", "Plan actual, uso e historial"),
     )
 
     val en: Map<String, String> = rows.associate { it[0] to it[1] }

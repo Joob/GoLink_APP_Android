@@ -31,6 +31,11 @@ data class BackupItem(
     val bucket: String? = null,
     // Caminho relativo real no telemóvel ("DCIM/Camera") — mostrado na web.
     val devicePath: String? = null,
+    // Ainda a ser escrito por outra app (IS_PENDING, ex.: câmara a processar):
+    // não se envia já — o worker guarda-o nas falhas (sem gastar tentativa) e
+    // retoma-o quando for publicado. Antes ficava invisível ao scan e o cursor
+    // passava-lhe à frente: nunca era enviado.
+    val pending: Boolean = false,
 ) {
     val isVideo: Boolean get() = collection == BackupCollection.VIDEOS
 }
@@ -59,6 +64,20 @@ class MediaScanner @Inject constructor(
     ): List<BackupItem> =
         if (ids.isEmpty()) emptyList()
         else ids.chunked(MAX_IN_ARGS).flatMap { query(collection, 0L, it.size, folders, ids = it, excludeMedia = excludeMedia) }
+
+    /**
+     * Tudo o que está na pasta até [maxId] (inclusive) — reconciliação do
+     * backup: ficheiros movidos para a pasta ou editados mantêm o id abaixo do
+     * cursor e o scan por cursor não os volta a ver.
+     */
+    fun scanUpTo(
+        collection: BackupCollection,
+        maxId: Long,
+        folders: Set<String>? = null,
+        excludeMedia: Set<BackupCollection> = emptySet(),
+    ): List<BackupItem> =
+        if (maxId <= 0L) emptyList()
+        else query(collection, 0L, Int.MAX_VALUE, folders, excludeMedia = excludeMedia, maxId = maxId)
 
     fun countNew(
         collection: BackupCollection,
@@ -147,11 +166,16 @@ class MediaScanner @Inject constructor(
         // Documentos/Downloads vêm de Files, que também tem as fotos/vídeos/
         // áudios: os tipos aqui indicados já são enviados pela sua colecção.
         excludeMedia: Set<BackupCollection> = emptySet(),
+        maxId: Long? = null,
     ): Pair<String, Array<String>> {
         val args = mutableListOf<String>()
         val base = if (ids != null) {
             args += ids.map { it.toString() }
             "${MediaStore.MediaColumns._ID} IN (${ids.joinToString(",") { "?" }})"
+        } else if (maxId != null) {
+            args += sinceId.toString()
+            args += maxId.toString()
+            "${MediaStore.MediaColumns._ID} > ? AND ${MediaStore.MediaColumns._ID} <= ?"
         } else {
             args += sinceId.toString()
             "${MediaStore.MediaColumns._ID} > ?"
@@ -241,6 +265,7 @@ class MediaScanner @Inject constructor(
         folders: Set<String>?,
         ids: Collection<Long>? = null,
         excludeMedia: Set<BackupCollection> = emptySet(),
+        maxId: Long? = null,
     ): List<BackupItem> {
         val out = mutableListOf<BackupItem>()
         // BUCKET_DISPLAY_NAME só existe na colecção Files a partir do Android 10;
@@ -254,10 +279,14 @@ class MediaScanner @Inject constructor(
             if (hasBucketColumn) add(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) add(MediaStore.MediaColumns.DATA)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(MediaStore.MediaColumns.RELATIVE_PATH)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(MediaStore.MediaColumns.IS_PENDING)
         }.toTypedArray()
-        val (selection, selectionArgs) = selectionFor(collection, sinceId, folders, ids, excludeMedia)
+        val (selection, selectionArgs) = selectionFor(collection, sinceId, folders, ids, excludeMedia, maxId)
         val sortOrder = "${MediaStore.MediaColumns._ID} ASC"
+        // O uri de cada item continua a ser o da colecção (a upload_key do
+        // servidor depende dele); só a consulta inclui os pendentes.
         val contentUri = contentUri(collection)
+        val queryUri = if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) MediaStore.setIncludePending(contentUri) else contentUri
 
         // Android 11+ strips "LIMIT" from the sortOrder string and throws
         // SQLiteException("Invalid token LIMIT"). On those releases we must use
@@ -270,11 +299,13 @@ class MediaScanner @Inject constructor(
                 putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
                 putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, sortOrder)
                 putInt(ContentResolver.QUERY_ARG_LIMIT, limit)
+                // Por omissão os IS_PENDING ficam de fora e o cursor saltava-os.
+                putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
             }
-            context.contentResolver.query(contentUri, projection, queryArgs, null)
+            context.contentResolver.query(queryUri, projection, queryArgs, null)
         } else {
             context.contentResolver.query(
-                contentUri,
+                queryUri,
                 projection,
                 selection,
                 selectionArgs,
@@ -289,6 +320,7 @@ class MediaScanner @Inject constructor(
             val bucketIdx = c.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
             val dataIdx = c.getColumnIndex(MediaStore.MediaColumns.DATA)
             val relIdx = c.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
+            val pendingIdx = c.getColumnIndex(MediaStore.MediaColumns.IS_PENDING)
             while (c.moveToNext()) {
                 val id = c.getLong(idIdx)
                 val name = c.getString(nameIdx) ?: "media-$id"
@@ -302,6 +334,7 @@ class MediaScanner @Inject constructor(
                     sizeBytes = size,
                     bucket = bucket,
                     devicePath = devicePathFrom(c, relIdx, dataIdx),
+                    pending = pendingIdx >= 0 && !c.isNull(pendingIdx) && c.getInt(pendingIdx) != 0,
                 )
             }
         }

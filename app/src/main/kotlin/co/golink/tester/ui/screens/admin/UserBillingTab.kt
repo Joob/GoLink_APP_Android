@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,6 +25,7 @@ import co.golink.tester.domain.admin.TransactionData
 import co.golink.tester.ui.i18n.tr
 import co.golink.tester.ui.screens.settings.SettingsAccent
 import co.golink.tester.ui.screens.settings.SettingsCard
+import co.golink.tester.ui.screens.settings.SettingsDialog
 import co.golink.tester.ui.screens.settings.SettingsField
 import co.golink.tester.ui.screens.settings.SettingsNotice
 import co.golink.tester.ui.screens.settings.SettingsPrimaryButton
@@ -51,6 +53,10 @@ class UserBillingViewModel @Inject constructor(
         val error: String? = null,
         val crediting: Boolean = false,
         val message: String? = null,
+        val messageIsError: Boolean = false,
+        val loadingMore: Boolean = false,
+        /** Sobe a cada crédito aceite: o ecrã limpa o campo só aí. */
+        val credited: Int = 0,
     )
 
     private val _state = MutableStateFlow(UiState())
@@ -59,14 +65,25 @@ class UserBillingViewModel @Inject constructor(
     init { load() }
 
     fun load(page: Int = 1) {
-        if (page == 1) _state.update { it.copy(isLoading = true, error = null) }
+        if (page == 1) {
+            _state.update { it.copy(isLoading = true, error = null) }
+        } else {
+            // Toques repetidos em "Carregar mais" não duplicam pedidos.
+            if (_state.value.loadingMore) return
+            _state.update { it.copy(loadingMore = true) }
+        }
         viewModelScope.launch {
             if (page == 1) repository.userSubscription(userId).onSuccess { s -> _state.update { it.copy(subscription = s) } }
             repository.userTransactions(userId, page)
                 .onSuccess { (l, more) ->
-                    _state.update { s -> s.copy(transactions = if (page == 1) l else s.transactions + l, page = page, hasMore = more, isLoading = false) }
+                    _state.update { s -> s.copy(transactions = if (page == 1) l else (s.transactions + l).distinctBy { x -> x.idString }, page = page, hasMore = more, isLoading = false, loadingMore = false) }
                 }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (${t.message})") } }
+                .onFailure { t ->
+                    _state.update {
+                        if (page == 1) it.copy(isLoading = false, loadingMore = false, error = "Não foi possível carregar (%s)".tr().format(t.message.orEmpty()))
+                        else it.copy(loadingMore = false, message = t.message, messageIsError = true)
+                    }
+                }
         }
     }
 
@@ -74,8 +91,11 @@ class UserBillingViewModel @Inject constructor(
         _state.update { it.copy(crediting = true, message = null) }
         viewModelScope.launch {
             repository.creditUser(userId, amount)
-                .onSuccess { _state.update { it.copy(crediting = false, message = "Crédito adicionado".tr()) }; load() }
-                .onFailure { t -> _state.update { it.copy(crediting = false, message = t.message) } }
+                .onSuccess {
+                    _state.update { it.copy(crediting = false, message = "Crédito adicionado".tr(), messageIsError = false, credited = it.credited + 1) }
+                    load()
+                }
+                .onFailure { t -> _state.update { it.copy(crediting = false, message = t.message ?: "Erro".tr(), messageIsError = true) } }
         }
     }
 }
@@ -108,17 +128,29 @@ internal fun UserBillingTab(subscriptionType: String, viewModel: UserBillingView
 
     if (subscriptionType == "metered") {
         var amount by remember { mutableStateOf("") }
+        var confirming by remember { mutableStateOf(false) }
+        // O campo só é limpo quando o crédito é aceite (num erro fica para corrigir).
+        LaunchedEffect(state.credited) { if (state.credited > 0) amount = "" }
         SettingsCard(title = "Adicionar crédito".tr()) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SettingsField("Valor".tr(), amount, { amount = it.replace(',', '.') }, keyboardType = KeyboardType.Decimal)
-                state.message?.let { SettingsNotice(it, SettingsAccent) }
+                state.message?.let { SettingsNotice(it, if (state.messageIsError) MaterialTheme.colorScheme.error else SettingsAccent) }
                 val v = amount.toDoubleOrNull()
                 SettingsPrimaryButton(
                     "Adicionar crédito".tr(),
-                    onClick = { viewModel.credit(v ?: 0.0); amount = "" },
-                    enabled = v != null && v > 0,
+                    onClick = { confirming = true },
+                    enabled = v != null && v > 0 && !state.crediting,
                     loading = state.crediting,
                 )
+                if (confirming && v != null) {
+                    SettingsDialog(
+                        title = "Adicionar crédito?".tr(),
+                        message = "Vão ser creditados %s ao saldo deste utilizador.".tr().format(amount),
+                        confirmText = "Adicionar crédito".tr(),
+                        onConfirm = { confirming = false; viewModel.credit(v) },
+                        onDismiss = { confirming = false },
+                    )
+                }
             }
         }
     }
@@ -128,7 +160,7 @@ internal fun UserBillingTab(subscriptionType: String, viewModel: UserBillingView
             AdminInfoRow("—", "Sem transações.".tr())
         } else {
             state.transactions.forEach { TransactionLine(it) }
-            if (state.hasMore) AdminLoadMore(false) { viewModel.load(state.page + 1) }
+            if (state.hasMore) AdminLoadMore(state.loadingMore) { viewModel.load(state.page + 1) }
         }
     }
 }

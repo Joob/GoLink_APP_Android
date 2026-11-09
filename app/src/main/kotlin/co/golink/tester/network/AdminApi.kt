@@ -275,12 +275,20 @@ interface AdminApi {
     @POST("api/subscriptions/admin/users/{id}/credit")
     suspend fun creditUser(@Path("id") id: String, @Body body: co.golink.tester.domain.admin.AmountRequest): Response<ResponseBody>
 
-    @DELETE("api/subscriptions/admin/transactions/{id}")
+    // --- Faturas (app) ---
+    @DELETE("api/admin/transactions/{id}")
     suspend fun deleteTransaction(@Path("id") id: String): Response<ResponseBody>
 
-    // --- Faturas (app) ---
     @GET("api/admin/transactions")
-    suspend fun transactions(@Query("page") page: Int = 1, @Query("per_page") perPage: Int = 50): Response<co.golink.tester.domain.admin.TransactionsResponse>
+    suspend fun transactions(
+        @Query("page") page: Int = 1,
+        @Query("per_page") perPage: Int = 50,
+        /** paid | failed | cancelled | refunded (null = todas). */
+        @Query("state") state: String? = null,
+        @Query("search") search: String? = null,
+        /** 1 = meta.stats com as contagens globais. */
+        @Query("stats") stats: Int? = null,
+    ): Response<co.golink.tester.domain.admin.TransactionsResponse>
 
     @GET("api/admin/users/{id}/transactions")
     suspend fun userTransactions(@Path("id") id: String, @Query("page") page: Int = 1): Response<co.golink.tester.domain.admin.TransactionsResponse>
@@ -309,7 +317,8 @@ interface AdminApi {
         @retrofit2.http.Part file: okhttp3.MultipartBody.Part,
     ): Response<co.golink.tester.domain.admin.SettingImageResponse>
 
-    @GET("api/admin/settings/flush-cache")
+    // POST: o GET fica fora do audit log (AuditAdmin ignora GET/HEAD).
+    @POST("api/admin/settings/flush-cache")
     suspend fun flushCache(): Response<ResponseBody>
 
     @POST("api/admin/settings/social-service")

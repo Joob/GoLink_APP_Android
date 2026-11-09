@@ -10,6 +10,13 @@ data class NotificationsResponse(
     val data: List<NotificationEnvelope> = emptyList(),
 )
 
+/** GET api/notifications/unread-count — sondagem leve do badge. */
+@Serializable
+data class UnreadCountResponse(
+    val unread: Int = 0,
+    val latest_at: String? = null,
+)
+
 @Serializable
 data class NotificationEnvelope(
     val data: NotificationData,

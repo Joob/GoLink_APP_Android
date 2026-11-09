@@ -62,9 +62,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -116,7 +114,6 @@ fun ShareDialog(
 ) {
     val item = state.item
     val isFolder = item is BrowseItem.Folder
-    val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
     val share = state.share
 
@@ -149,7 +146,7 @@ fun ShareDialog(
                     keyPending = state.keyPending,
                     onCopy = {
                         val link = share.link ?: return@LinkReadyView
-                        clipboard.setText(AnnotatedString(link))
+                        co.golink.tester.ui.common.copyLinkToClipboard(context, "share-link", link)
                         onCopy(link)
                     },
                     onShowEmailDialog = { onShowEmailDialog(true) },
@@ -449,7 +446,8 @@ private fun ShareForm(
                 ) {
                     OutlinedTextField(
                         value = password,
-                        onValueChange = { password = it },
+                        // O servidor recusa passwords acima de 72 (bcrypt): 422.
+                        onValueChange = { password = it.take(72) },
                         label = { Text((if (share?.protected == true) "Nova password" else "Password").tr()) },
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
@@ -835,6 +833,9 @@ private fun EmailRecipientsDialog(
     onConfirm: (List<String>) -> Unit,
 ) {
     var text by remember { mutableStateOf("") }
+    val emails = text.split(",", ";", "\n").map { it.trim() }.filter { it.isNotBlank() }
+    // O servidor aceita no máximo 10 destinatários por envio.
+    val tooMany = emails.size > co.golink.tester.data.share.ShareRepository.MAX_EMAILS
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -875,6 +876,10 @@ private fun EmailRecipientsDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
+                    isError = tooMany,
+                    supportingText = if (emails.size > 1 || tooMany) { {
+                        Text("%d de %d no máximo".tr().format(emails.size, co.golink.tester.data.share.ShareRepository.MAX_EMAILS))
+                    } } else null,
                 )
                 Spacer(Modifier.height(20.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -883,9 +888,8 @@ private fun EmailRecipientsDialog(
                     }
                     Spacer(Modifier.width(8.dp))
                     Button(
-                        enabled = text.isNotBlank(),
+                        enabled = emails.isNotEmpty() && !tooMany,
                         onClick = {
-                            val emails = text.split(",", ";", "\n").map { it.trim() }.filter { it.isNotBlank() }
                             onConfirm(emails)
                             onDismiss()
                         },

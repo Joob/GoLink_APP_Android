@@ -392,9 +392,10 @@ fun EventEditor(
                     }
                     EditorDivider()
 
-                    // Repetição
+                    // Repetição. Quem não gere o evento (convidado que pode editar) não a muda:
+                    // o servidor ignora-a (06#8), por isso fica só à vista.
                     var repeatMenu by remember { mutableStateOf(false) }
-                    EditorRow(Icons.Outlined.Repeat, onClick = { repeatMenu = true }) {
+                    EditorRow(Icons.Outlined.Repeat, onClick = if (manages) ({ repeatMenu = true }) else null) {
                         Box(Modifier.weight(1f)) {
                             Text(repeatLabel(f.repeat, f.rule, f.repeatUntil != null), fontSize = 14.sp)
                             DropdownMenu(expanded = repeatMenu, onDismissRequest = { repeatMenu = false }) {
@@ -407,13 +408,13 @@ fun EventEditor(
                                 }
                             }
                         }
-                        Text("tocar para mudar".tr(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (manages) Text("tocar para mudar".tr(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if (f.repeat != "none") {
                         EditorRow(null) {
                             Text("Até".tr(), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                            PickerText(f.repeatUntil?.let(::fmtDate) ?: f.rule.count?.let(::timesLabel) ?: "Nunca".tr()) { pickDate = "until" }
-                            if (f.repeatUntil != null || f.rule.count != null) {
+                            PickerText(f.repeatUntil?.let(::fmtDate) ?: f.rule.count?.let(::timesLabel) ?: "Nunca".tr()) { if (manages) pickDate = "until" }
+                            if (manages && (f.repeatUntil != null || f.rule.count != null)) {
                                 IconButton(onClick = { f = f.copy(repeatUntil = null, rule = f.rule.copy(count = null)) }, modifier = Modifier.size(28.dp)) {
                                     Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp))
                                 }
@@ -424,10 +425,17 @@ fun EventEditor(
 
                     // Alertas
                     var alertsDialog by remember { mutableStateOf(false) }
-                    EditorRow(Icons.Outlined.NotificationsNone, onClick = { alertsDialog = true }) {
+                    EditorRow(Icons.Outlined.NotificationsNone, onClick = if (manages) ({ alertsDialog = true }) else null) {
                         Text(
                             if (f.alerts.isEmpty()) "Sem alerta".tr() else f.alerts.sorted().joinToString(", ") { alertLabel(it, long = true) },
                             fontSize = 14.sp, modifier = Modifier.weight(1f),
+                        )
+                    }
+                    if (!manages) {
+                        Text(
+                            "Só o organizador muda a repetição e os alertas".tr(),
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 60.dp, end = 16.dp, bottom = 10.dp),
                         )
                     }
                     EditorDivider()
@@ -683,7 +691,7 @@ internal fun DateDialog(current: LocalDate, onDismiss: () -> Unit, onPick: (Loca
         confirmButton = {
             TextButton(onClick = {
                 state.selectedDateMillis?.let { onPick(Instant.ofEpochMilli(it).atOffset(ZoneOffset.UTC).toLocalDate()) } ?: onDismiss()
-            }) { Text("OK") }
+            }) { Text("OK".tr()) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar".tr()) } },
     ) { DatePicker(state = state) }
@@ -695,7 +703,7 @@ private fun TimeDialog(current: LocalTime, onDismiss: () -> Unit, onPick: (Local
     val state = rememberTimePickerState(initialHour = current.hour, initialMinute = current.minute, is24Hour = true)
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = { onPick(LocalTime.of(state.hour, state.minute)) }) { Text("OK") } },
+        confirmButton = { TextButton(onClick = { onPick(LocalTime.of(state.hour, state.minute)) }) { Text("OK".tr()) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar".tr()) } },
         text = { TimePicker(state = state) },
     )
@@ -726,7 +734,7 @@ internal fun AlertsDialog(current: List<Int>, onDismiss: () -> Unit, onDone: (Li
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onDone(picked.distinct().sorted()) }) { Text("OK") } },
+        confirmButton = { TextButton(onClick = { onDone(picked.distinct().sorted()) }) { Text("OK".tr()) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar".tr()) } },
     )
 }

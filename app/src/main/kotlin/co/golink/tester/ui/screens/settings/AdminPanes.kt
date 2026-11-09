@@ -314,7 +314,7 @@ fun InviteRegistersPane(viewModel: InviteRegistersViewModel = hiltViewModel()) {
                 if (state.isSubmitting) {
                     CircularProgressIndicator(strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(18.dp))
                 } else {
-                    Text("Convidar")
+                    Text("Convidar".tr())
                 }
             }
         }
@@ -348,9 +348,9 @@ fun InviteRegistersPane(viewModel: InviteRegistersViewModel = hiltViewModel()) {
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
             title = { Text("Remover convite".tr()) },
-            text = { Text("Remover o convite de ${invite.email}?") },
+            text = { Text("Remover o convite de %s?".tr().format(invite.email)) },
             confirmButton = {
-                TextButton(onClick = { viewModel.deleteInvite(invite.id); pendingDelete = null }) { Text("Remover") }
+                TextButton(onClick = { viewModel.deleteInvite(invite.id); pendingDelete = null }) { Text("Remover".tr()) }
             },
             dismissButton = {
                 TextButton(onClick = { pendingDelete = null }) { Text("Cancelar".tr()) }
@@ -386,7 +386,7 @@ private fun InviteRow(invite: InviteItem, onResend: () -> Unit, onDelete: () -> 
                 }
             }
             IconButton(onClick = onDelete) {
-                Icon(Icons.Filled.Delete, contentDescription = "Remover", tint = MaterialTheme.colorScheme.error)
+                Icon(Icons.Filled.Delete, contentDescription = "Remover".tr(), tint = MaterialTheme.colorScheme.error)
             }
         }
     }

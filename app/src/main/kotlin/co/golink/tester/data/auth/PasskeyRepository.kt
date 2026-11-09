@@ -79,8 +79,8 @@ class PasskeyRepository @Inject constructor(
 
         val token = response.body()?.get("data")?.jsonObject?.get("token")?.jsonPrimitive?.contentOrNull
             ?: throw AuthError.Unknown("Sem token na resposta")
-        tokenStore.setPendingToken(token)
-        tokenStore.markOtpValidated()
+        // Passkey dispensa o OTP: uma só escrita e uma só emissão (sem passar por OtpRequired).
+        tokenStore.setToken(token, otpValidated = true)
     }.recoverCatching { throw map(it) }
 
     suspend fun list(): Result<List<PasskeyInfo>> = runCatching {

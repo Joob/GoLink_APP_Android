@@ -11,10 +11,17 @@ import co.golink.tester.data.legacy.LegacyState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import co.golink.tester.ui.i18n.lt
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -50,6 +57,14 @@ private val KNOWN_ERRORS = setOf(
     "legacy_last_recipient",
     "legacy_not_enough_guardians",
     "legacy_guardian_unreadable",
+    "legacy_not_invited",
+    "legacy_already_accepted",
+    "legacy_wrong_account",
+    "legacy_e2e_required",
+    "legacy_missing_relays",
+    "legacy_combine_failed",
+    "legacy_step_up_password",
+    "legacy_step_up_expired",
 )
 
 fun legacyErrorKey(e: Throwable): String {
@@ -63,7 +78,18 @@ class LegacyViewModel @Inject constructor(
     private val backend: co.golink.tester.data.config.BackendUrlHolder,
     private val browse: co.golink.tester.data.browse.BrowseRepository,
     private val keys: co.golink.tester.data.encryption.E2EKeyManager,
+    session: co.golink.tester.data.auth.SessionManager,
 ) : ViewModel() {
+    /** O que a conta tem para o step-up: password (não social) e/ou passkeys. */
+    data class StepUpAccount(val socialite: Boolean = false, val hasPasskeys: Boolean = false)
+
+    val stepUpAccount: StateFlow<StepUpAccount> = session.state
+        .map { state ->
+            val user = (state as? co.golink.tester.data.auth.AuthState.Authenticated)?.user
+            StepUpAccount(socialite = user?.socialiteAccount == true, hasPasskeys = user?.hasPasskeys == true)
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, StepUpAccount())
+
     /** Página da web do Legacy (o que a app ainda não faz). */
     fun webUrl(path: String): String = backend.current.trimEnd('/') + path
 
@@ -121,9 +147,42 @@ class LegacyViewModel @Inject constructor(
 
     fun arm() = run(genericError = true) { repo.vaultAction("arm") }
     fun resume() = run { repo.vaultAction("resume") }
-    /** Desarmar ou, depois de aberto, revogar (o servidor decide pelo estado). */
-    fun disarm() = run { repo.vaultAction("disarm") }
-    fun pause(until: String) = run { repo.vaultAction("pause", buildJsonObject { put("until", until) }) }
+
+    /**
+     * Desarmar/revogar (o servidor decide pelo estado) ou pausar, com step-up.
+     * `step_up: true` vai sempre, para o servidor validar mesmo com LEGACY_STEP_UP
+     * desligado. Erro do step-up → [onStepUpError] (o diálogo fica aberto); o resto
+     * fecha-o e vai para o snackbar.
+     */
+    fun stepUpAction(
+        request: LegacyStepUpRequest,
+        password: String?,
+        passkeyToken: String?,
+        onStepUpError: (String) -> Unit,
+        onDone: () -> Unit,
+    ) = viewModelScope.launch {
+        val body = buildJsonObject {
+            if (request is LegacyStepUpRequest.Pause) put("until", request.until)
+            put("step_up", true)
+            if (!passkeyToken.isNullOrBlank()) put("passkey_token", passkeyToken)
+            else if (!password.isNullOrEmpty()) put("password", password)
+        }
+        val action = if (request is LegacyStepUpRequest.Pause) "pause" else "disarm"
+        _ui.update { it.copy(pending = it.pending + 1) }
+        runCatching { repo.vaultAction(action, body) }
+            .onSuccess { onDone() }
+            .onFailure { e ->
+                val code = (e as? LegacyException)?.code
+                if (code == "legacy_step_up_password" || code == "legacy_step_up_expired") {
+                    onStepUpError("err_$code")
+                } else {
+                    onDone()
+                    toast(LegacyToast(legacyErrorKey(e), true))
+                }
+            }
+        _ui.update { it.copy(pending = it.pending - 1) }
+        if (legacy.value.vault?.rekey_required == true) settle()
+    }
 
     /** Não grava o que já lá está (nem gera linha na Activity). */
     fun save(patch: JsonObject) {
@@ -291,6 +350,7 @@ data class LegacyActivityState(
 @HiltViewModel
 class LegacyActivityViewModel @Inject constructor(
     private val repo: LegacyRepository,
+    keys: co.golink.tester.data.encryption.E2EKeyManager,
 ) : ViewModel() {
     private val _state = MutableStateFlow(LegacyActivityState())
     val state: StateFlow<LegacyActivityState> = _state.asStateFlow()
@@ -298,6 +358,24 @@ class LegacyActivityViewModel @Inject constructor(
     /** Sobe a cada carga: a resposta de uma anterior já não conta. */
     private var request = 0
     private var started = false
+
+    init {
+        // Bloqueio E2E: as linhas decifradas saem da memória (como o LegacyRepository);
+        // ao desbloquear, recarrega se o ecrã já estava aberto.
+        viewModelScope.launch {
+            var wiped = false
+            keys.unlocked.collect { unlocked ->
+                if (!unlocked) {
+                    request++
+                    wiped = true
+                    _state.update { LegacyActivityState(category = it.category) }
+                } else if (wiped) {
+                    wiped = false
+                    if (started) load()
+                }
+            }
+        }
+    }
 
     fun start() {
         if (started) return
@@ -317,7 +395,8 @@ class LegacyActivityViewModel @Inject constructor(
         runCatching { repo.events(category.takeIf { it != "all" }, cursor) }
             .onSuccess { page ->
                 if (req != request) return@onSuccess
-                _state.update { s -> s.copy(rows = if (cursor != null) s.rows + page.rows else page.rows, cursor = page.cursor, loading = false) }
+                // Chaves únicas na LazyColumn: uma linha repetida entre páginas não entra duas vezes.
+                _state.update { s -> s.copy(rows = if (cursor != null) (s.rows + page.rows).distinctBy { it.id } else page.rows, cursor = page.cursor, loading = false) }
             }
             .onFailure {
                 if (req != request) return@onFailure
@@ -356,4 +435,33 @@ class LegacyActivityViewModel @Inject constructor(
     }
 
     fun setExporting(on: Boolean) = _state.update { it.copy(exporting = on) }
+
+    /**
+     * CSV de todas as páginas para o documento escolhido. Corre no viewModelScope (mudar de
+     * pane não o corta) e, se falhar, apaga o documento em vez de o deixar truncado.
+     */
+    fun exportCsv(resolver: android.content.ContentResolver, uri: android.net.Uri, onError: () -> Unit) = viewModelScope.launch {
+        if (_state.value.exporting) return@launch
+        setExporting(true)
+        runCatching {
+            val rows = allRows()
+            val csv = withContext(Dispatchers.Default) {
+                val header = listOf(lt("csv_date"), lt("csv_category"), lt("csv_event"))
+                val lines = listOf(header) + rows.map { listOf(dateTime(it.createdAt), lt("log_${it.category}"), eventText(it)) }
+                lines.joinToString("\r\n") { line -> line.joinToString(",") { co.golink.tester.data.legacy.LegacyCrypto.csvCell(it) } }
+            }
+            withContext(Dispatchers.IO) {
+                resolver.openOutputStream(uri, "wt")?.use { out ->
+                    out.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
+                    out.write(csv.toByteArray(Charsets.UTF_8))
+                } ?: error("sem saída")
+            }
+        }.onFailure {
+            withContext(NonCancellable + Dispatchers.IO) {
+                runCatching { android.provider.DocumentsContract.deleteDocument(resolver, uri) }
+            }
+            if (it !is kotlinx.coroutines.CancellationException) onError()
+        }
+        setExporting(false)
+    }
 }

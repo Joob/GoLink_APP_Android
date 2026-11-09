@@ -37,7 +37,8 @@ enum class VerifyState { Loading, Done, Expired, Failed }
 
 /**
  * Link "Confirmar email" aberto na app: faz o mesmo GET que o browser faria ao
- * URL assinado (sem reescrever o host nem seguir o redirect — 302 é sucesso).
+ * URL assinado (sem reescrever o host nem seguir o redirect — só o 302 para
+ * /successfully-verified é sucesso).
  */
 @HiltViewModel
 class VerifyEmailViewModel @Inject constructor(
@@ -56,12 +57,19 @@ class VerifyEmailViewModel @Inject constructor(
                 runCatching {
                     val request = Request.Builder().url(url).header("Accept", "application/json").get().build()
                     client.newBuilder().followRedirects(false).followSslRedirects(false).build()
-                        .newCall(request).execute().use { it.code }
+                        .newCall(request).execute().use { it.code to it.header("Location") }
                 }.fold(
-                    onSuccess = { code ->
-                        when (code) {
-                            in 200..399 -> VerifyState.Done
-                            403, 404, 422 -> VerifyState.Expired
+                    onSuccess = { (code, location) ->
+                        // Contrato do VerifyEmailController: sucesso = redirect para
+                        // /successfully-verified; erros = 422/404 em JSON. Outro redirect
+                        // (ex.: para o login) não é um sucesso.
+                        val verifiedRedirect = location?.substringBefore('?')?.trimEnd('/')
+                            ?.endsWith("/successfully-verified") == true
+                        when {
+                            code == 200 || code == 204 -> VerifyState.Done
+                            code in 300..399 && verifiedRedirect -> VerifyState.Done
+                            code in 300..399 -> VerifyState.Failed
+                            code == 403 || code == 404 || code == 422 -> VerifyState.Expired
                             else -> VerifyState.Failed
                         }
                     },

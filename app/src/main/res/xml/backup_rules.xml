@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Android ≤ 11 (allowBackup=false já desliga o backup; fica coerente com
+     data_extraction_rules.xml): só as preferências de aparência. As cifradas
+     (auth_prefs_v2, app_security_pin_v2, calendar_alarms_v2 e as antigas) ficam de fora. -->
 <full-backup-content>
-    <exclude domain="sharedpref" path="auth_prefs.xml" />
+    <include domain="sharedpref" path="app_theme.xml" />
+    <include domain="sharedpref" path="app_language.xml" />
+    <include domain="sharedpref" path="ui_view_prefs.xml" />
+    <include domain="sharedpref" path="app_drawer.xml" />
 </full-backup-content>

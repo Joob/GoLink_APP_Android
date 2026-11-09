@@ -2,7 +2,9 @@ package co.golink.tester.data.calendar
 
 import android.content.Context
 import androidx.hilt.work.HiltWorker
+import androidx.work.Constraints
 import androidx.work.CoroutineWorker
+import androidx.work.NetworkType
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -34,7 +36,7 @@ import kotlinx.coroutines.sync.withLock
 
 /**
  * Lembretes no aparelho (espelho de services/calendarAlerts.js, mas com
- * AlarmManager para tocarem com a app fechada). Agenda as próximas 26 h ao
+ * AlarmManager para tocarem com a app fechada). Agenda os próximos 7 dias ao
  * desbloquear, quando um evento muda e de 6 em 6 h (worker). O sino do
  * servidor continua a chegar, com texto genérico.
  */
@@ -61,21 +63,32 @@ class CalendarAlarmScheduler @Inject constructor(
             .launchIn(scope)
     }
 
-    suspend fun sync() = mutex.withLock {
+    /** false: falhou a rede/servidor (o worker volta a tentar); true: feito ou nada a fazer. */
+    suspend fun sync(): Boolean = mutex.withLock {
         // Worker num processo novo: a chave só está em memória se "manter
         // desbloqueado" a conseguir repor (como o E2EGate ao abrir a app).
-        if (!keys.isUnlocked && !(keys.hasDeviceKey && runCatching { keys.restoreFromDevice() }.getOrDefault(false))) return@withLock
+        if (!keys.isUnlocked && !(keys.hasDeviceKey && runCatching { keys.restoreFromDevice() }.getOrDefault(false))) {
+            // Os alarmes já agendados acabam ao fim da janela: avisa ("lembretes em pausa").
+            CalendarReminderPrefs.onKeyMissing(context)
+            return@withLock true
+        }
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             WORK,
-            ExistingPeriodicWorkPolicy.KEEP,
-            PeriodicWorkRequestBuilder<CalendarAlarmWorker>(6, TimeUnit.HOURS).build(),
+            // UPDATE: as instalações antigas ganham a constraint de rede sem perder o ritmo.
+            ExistingPeriodicWorkPolicy.UPDATE,
+            PeriodicWorkRequestBuilder<CalendarAlarmWorker>(6, TimeUnit.HOURS)
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .build(),
         )
         // Sem K_cal os eventos de membro ficavam "locked" e os alarmes bons eram cancelados.
-        if (repo.calendars.value.isEmpty() && repo.loadCalendars().isFailure) return@withLock
+        // Só lê (não cria os calendários por omissão a quem nunca abriu o Calendário).
+        if (repo.calendars.value.isEmpty() && repo.loadCalendars(createDefaults = false).isFailure) return@withLock false
         val now = Instant.now()
-        // Alertas até 26 h; um alerta de 1 semana antes pede eventos até 26 h + 7 dias.
+        // Alertas até 7 dias (a chave pode não voltar a estar em memória tão cedo: sem
+        // "manter desbloqueado" o worker não consegue decifrar); um alerta de 1 semana
+        // antes pede eventos até 7 + 7 dias.
         val horizon = now.plusSeconds(WINDOW_S)
-        val fetched = repo.fetchEvents(now.minusSeconds(3600), horizon.plusSeconds(MAX_LEAD_S)).getOrElse { return@withLock }
+        val fetched = repo.fetchEvents(now.minusSeconds(3600), horizon.plusSeconds(MAX_LEAD_S)).getOrElse { return@withLock false }
         // Ilegíveis agora (ex.: calendário que não abriu): mantêm os alarmes que já tinham.
         val lockedIds = fetched.filter { it.locked }.map { it.id }.toSet()
         // Convites recusados não tocam (como na web).
@@ -104,29 +117,42 @@ class CalendarAlarmScheduler @Inject constructor(
         }
         val kept = if (lockedIds.isEmpty()) emptyList()
         else store.all().filter { it.eventId in lockedIds && it.fireAt > now.toEpochMilli() }
-        store.replace(alarms + kept)
+        // O sistema limita os alarmes por app (500): ficam os mais próximos; o resto entra nas syncs seguintes.
+        val next = (alarms + kept).sortedBy { it.fireAt }.take(MAX_ALARMS)
+        store.replace(next)
+        CalendarReminderPrefs.onSynced(context, hadAlarms = next.isNotEmpty())
+        true
     }
 
     fun syncAsync() = scope.launch { sync() }
 
     companion object {
         private const val WORK = "calendar_alarms"
-        private const val WINDOW_S = 26 * 3600L
+        private const val WINDOW_S = 7 * 24 * 3600L
+        private const val MAX_ALARMS = 200
 
         /** Alerta mais antecipado que o servidor aceita (CalendarEvent::MAX_ALERT_MINUTES). */
         private const val MAX_LEAD_S = 7 * 24 * 3600L
     }
 }
 
-/** Reagenda de 6 em 6 h (só quando a chave E2E está em memória). */
+/** Reagenda de 6 em 6 h, com rede (só quando a chave E2E está em memória). */
 @HiltWorker
 class CalendarAlarmWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted params: WorkerParameters,
     private val scheduler: CalendarAlarmScheduler,
 ) : CoroutineWorker(appContext, params) {
-    override suspend fun doWork(): Result {
-        runCatching { scheduler.sync() }
-        return Result.success()
+    override suspend fun doWork(): Result = try {
+        when {
+            scheduler.sync() -> Result.success()
+            // Rede/servidor: tenta outra vez (com recuo), mas não para sempre.
+            runAttemptCount < 3 -> Result.retry()
+            else -> Result.success()
+        }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (_: Throwable) {
+        Result.success()
     }
 }

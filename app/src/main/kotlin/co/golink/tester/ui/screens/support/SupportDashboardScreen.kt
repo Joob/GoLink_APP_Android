@@ -73,11 +73,12 @@ fun SupportDashboardScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { viewModel.refresh() }
+    PollWhileResumed { viewModel.poll() }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Support Desk") },
+                title = { Text("Support Desk".tr()) },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null) }
                 },

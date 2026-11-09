@@ -23,6 +23,8 @@ object EncryptedFileCodec {
     const val TAG_LEN = 16
     private const val PREFIX_LEN = 8
     const val DEFAULT_CHUNK = 65536
+    /** Teto aceite para o chunk_size do header (a web e a app usam 64 KiB). */
+    private const val MAX_CHUNK = 16 * 1024 * 1024
 
     private fun u32be(n: Int): ByteArray =
         byteArrayOf((n ushr 24).toByte(), (n ushr 16).toByte(), (n ushr 8).toByte(), n.toByte())
@@ -47,7 +49,10 @@ object EncryptedFileCodec {
         require(header.size == HEADER_LEN) { "header inválido" }
         require(header.copyOfRange(0, 4).contentEquals(MAGIC)) { "magic inválido" }
         require(header[4].toInt() == VERSION && header[5].toInt() == CIPHER_AES256GCM) { "versão/cifra não suportada" }
-        return Header(u32be(header, 6), header.copyOfRange(10, 18))
+        // chunk_size vem do servidor/partilha: 0 dava divisão por zero, enorme dava overflow/OOM.
+        val chunkSize = u32be(header, 6)
+        require(chunkSize in 1..MAX_CHUNK) { "chunk_size inválido" }
+        return Header(chunkSize, header.copyOfRange(10, 18))
     }
 
     private fun sealChunk(key: SecretKeySpec, plain: ByteArray, i: Int, isLast: Boolean, prefix: ByteArray, header: ByteArray): ByteArray {

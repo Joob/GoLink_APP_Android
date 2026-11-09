@@ -9,6 +9,7 @@ import co.golink.tester.domain.activity.toEntry
 import co.golink.tester.domain.browse.BrowseItem
 import co.golink.tester.domain.browse.toItem
 import co.golink.tester.network.ActivityApi
+import co.golink.tester.ui.i18n.tr
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,13 +27,16 @@ class ActivityRepository @Inject constructor(
         val response = api.recent()
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val body = response.body() ?: error("Resposta vazia")
-        ActivitySection.entries.associateWith { section ->
-            val dto = body.data[section.key]
-            ActivityPage(
-                entries = dto?.items.orEmpty().map { it.decEntry() },
-                hasMore = dto?.has_more ?: false,
-                page = dto?.page ?: 1,
-            )
+        // Abrir os nomes selados fora da main thread (como feed/summary).
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            ActivitySection.entries.associateWith { section ->
+                val dto = body.data[section.key]
+                ActivityPage(
+                    entries = dto?.items.orEmpty().map { it.decEntry() },
+                    hasMore = dto?.has_more ?: false,
+                    page = dto?.page ?: 1,
+                )
+            }
         }
     }
 
@@ -41,7 +45,7 @@ class ActivityRepository @Inject constructor(
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val dto = response.body()?.data?.get(section.key)
         ActivityPage(
-            entries = dto?.items.orEmpty().map { it.decEntry() },
+            entries = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { dto?.items.orEmpty().map { it.decEntry() } },
             hasMore = dto?.has_more ?: false,
             page = dto?.page ?: page,
         )
@@ -52,7 +56,7 @@ class ActivityRepository @Inject constructor(
         val response = api.item(type, item.id, page)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val body = response.body() ?: error("Resposta vazia")
-        ActivityPage(entries = body.data.map { it.decEntry() }, hasMore = body.has_more, page = body.page)
+        ActivityPage(entries = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { body.data.map { it.decEntry() } }, hasMore = body.has_more, page = body.page)
     }
 
     suspend fun feed(cursor: String?): Result<co.golink.tester.domain.activity.FeedPage> = runCatching {
@@ -74,7 +78,7 @@ class ActivityRepository @Inject constructor(
                 val dec = env.data.decrypted()
                 (dec.toItem() as? BrowseItem.File)?.let { file ->
                     val parent = dec.relationships?.parent?.data?.attributes
-                    file to ((keys.openNameOrNull(parent?.name_encrypted) ?: parent?.name)?.takeIf { it.isNotBlank() && it != "•" } ?: "O meu Drive")
+                    file to ((keys.openNameOrNull(parent?.name_encrypted) ?: parent?.name)?.takeIf { it.isNotBlank() && it != "•" } ?: "O meu Drive".tr())
                 }
             }.filter { (f, _) -> f.name.isNotBlank() && f.name != "•" }
             val groups = files.groupBy { (f, _) -> "${f.filesizeBytes}|${f.name.lowercase()}" }

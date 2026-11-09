@@ -279,6 +279,9 @@ fun CalendarScreen(
                 }
                 if (state.loading || state.searching) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
                 else Spacer(Modifier.height(2.dp))
+                if (!searchOpen && !e2eLocked && instances.any { !it.event.raw.alerts.isNullOrEmpty() }) ExactAlarmBanner()
+                // Sem a chave, o worker não reagenda: os lembretes acabam ao fim da janela.
+                if (e2eLocked) ReminderPauseBanner()
 
                 val bottom = PaddingValues(bottom = 96.dp)
                 when {
@@ -589,6 +592,9 @@ private fun ColumnScope.CalendarDrawerMenu(
     }
     others.forEach { CalendarToggleRow(it, onToggle, onSettings) }
 
+    DrawerLabel("Lembretes".tr())
+    LockScreenTitleToggle()
+
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 8.dp, top = 18.dp, bottom = 8.dp)) {
         Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(13.dp), tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.width(6.dp))
@@ -711,6 +717,113 @@ private fun MiniMonth(cursor: LocalDate, onSelect: (LocalDate) -> Unit, onWeek: 
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Definição do aparelho (desligada por omissão): o título do evento também no ecrã
+ * de bloqueio. Desligada, a versão pública diz só "Lembrete do calendário" e a hora.
+ */
+@Composable
+private fun LockScreenTitleToggle() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var on by remember { mutableStateOf(co.golink.tester.data.calendar.CalendarReminderPrefs.showTitleOnLockScreen(context)) }
+    val set: (Boolean) -> Unit = { value ->
+        on = value
+        co.golink.tester.data.calendar.CalendarReminderPrefs.setShowTitleOnLockScreen(context, value)
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { set(!on) }.padding(start = 12.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Mostrar o título no ecrã de bloqueio".tr(), fontSize = 14.sp)
+            Text(
+                "Desligado: só \"Lembrete do calendário\" e a hora.".tr(),
+                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        androidx.compose.material3.Switch(checked = on, onCheckedChange = set)
+    }
+}
+
+/**
+ * Sem "manter desbloqueado" e sem abrir a app, o worker não tem a chave E2E e deixa
+ * de reagendar: os alarmes acabam ao fim da última janela. Desbloquear (sync) limpa.
+ */
+@Composable
+private fun ReminderPauseBanner() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val flow = remember { co.golink.tester.data.calendar.CalendarReminderPrefs.pausedUntil(context) }
+    val until by flow.collectAsStateWithLifecycle()
+    val end = until ?: return
+    val text = if (end > System.currentTimeMillis()) {
+        val day = java.time.Instant.ofEpochMilli(end).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        "Sem a chave de encriptação neste aparelho, os lembretes só estão agendados até %s. Desbloqueia para os retomar.".tr()
+            .format(co.golink.tester.ui.common.prefDateShort(day))
+    } else {
+        "Sem a chave de encriptação neste aparelho, os lembretes deixaram de ser agendados. Desbloqueia para os retomar.".tr()
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFFD97706).copy(alpha = 0.12f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Text("Lembretes em pausa".tr(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(text, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/**
+ * Android 12+: sem a permissão de alarme exato (negada por omissão no 14+) os lembretes
+ * ficam aproximados (Doze). Aviso discreto com atalho para a definição do sistema; o
+ * receiver reagenda ao mudar a permissão. "Agora não" fica guardado no aparelho.
+ */
+@Composable
+private fun ExactAlarmBanner() {
+    if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = remember { context.getSharedPreferences("calendar_ui", android.content.Context.MODE_PRIVATE) }
+    var dismissed by remember { mutableStateOf(prefs.getBoolean("exact_alarm_dismissed", false)) }
+    fun allowed() = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S ||
+        context.getSystemService(android.app.AlarmManager::class.java)?.canScheduleExactAlarms() != false
+    var canExact by remember { mutableStateOf(allowed()) }
+    // Volta das definições do sistema: volta a ler a permissão.
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        canExact = allowed()
+        onPauseOrDispose { }
+    }
+    if (dismissed || canExact) return
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFFD97706).copy(alpha = 0.12f))
+            .padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Os lembretes podem chegar atrasados".tr(), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text("Permite alarmes exatos para os lembretes tocarem à hora certa.".tr(), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            TextButton(onClick = {
+                runCatching {
+                    context.startActivity(
+                        android.content.Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+                            .setData(android.net.Uri.parse("package:" + context.packageName)),
+                    )
+                }
+            }) { Text("Permitir".tr()) }
+            TextButton(onClick = {
+                dismissed = true
+                prefs.edit().putBoolean("exact_alarm_dismissed", true).apply()
+            }) { Text("Agora não".tr(), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
 }

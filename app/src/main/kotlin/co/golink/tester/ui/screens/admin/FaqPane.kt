@@ -93,7 +93,7 @@ class FaqViewModel @Inject constructor(
                 .onSuccess { r ->
                     _state.update { it.copy(entries = r.data, categories = r.categories, locales = r.locales.ifEmpty { it.locales }, ai = r.ai, isLoading = false) }
                 }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (${t.message})") } }
+                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (%s)".tr().format(t.message.orEmpty())) } }
         }
     }
 

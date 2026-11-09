@@ -105,29 +105,40 @@ class LegacyGuardingRepository @Inject constructor(
         val bySlot = linkedMapOf(blob.slot to blob.share)
         for (sealed in release.relays) {
             runCatching { LegacyCrypto.openRelay(sealed, release.vault_id, release.epoch, open) }
-                .onSuccess { (slot, share) -> if (blob.roster.any { it.slot == slot }) bySlot[slot] = share }
+                // A minha parte vem do blob selado a mim; um relay (qualquer um o sela à
+                // minha chave pública) nunca a pode substituir.
+                .onSuccess { (slot, share) -> if (slot != blob.slot && blob.roster.any { it.slot == slot }) bySlot[slot] = share }
                 .onFailure { android.util.Log.w("Legacy", "parte de outro guardião ilegível", it) }
         }
 
-        if (bySlot.size < release.threshold) return@withContext LegacyCombineResult(release.threshold, bySlot.size, release.status, emptyList())
+        // O quórum vem do blob selado; o do servidor só tem de bater certo.
+        val threshold = blob.threshold
+        if (threshold != release.threshold) throw LegacyException("legacy_combine_failed")
 
-        val kVault = LegacyCrypto.combineShares(bySlot.values.toList(), release.threshold)
-        if (!LegacyCrypto.isVaultKey(kVault, release.vault_check)) throw LegacyException("legacy_combine_failed")
+        if (bySlot.size < threshold) return@withContext LegacyCombineResult(threshold, bySlot.size, release.status, emptyList())
 
-        LegacyCombineResult(
-            release.threshold,
-            bySlot.size,
-            release.status,
-            release.recipients.map { r ->
-                LegacyCombinedRecipient(
-                    r.id,
-                    r.email,
-                    r.meta_enc?.let { runCatching { LegacyMeta(LegacyCrypto.decryptJson(it, kVault)) }.getOrNull() } ?: LegacyMeta(JsonObject(emptyMap())),
-                    // Um código ilegível não pode esconder os dos outros.
-                    r.code_vault?.let { runCatching { CalendarCrypto.decryptString(it, kVault) }.getOrNull() },
-                )
-            },
-        )
+        val kVault = LegacyCrypto.combineShares(bySlot.values.toList(), threshold)
+        try {
+            if (!LegacyCrypto.isVaultKey(kVault, release.vault_check)) throw LegacyException("legacy_combine_failed")
+
+            LegacyCombineResult(
+                threshold,
+                bySlot.size,
+                release.status,
+                release.recipients.map { r ->
+                    LegacyCombinedRecipient(
+                        r.id,
+                        r.email,
+                        r.meta_enc?.let { runCatching { LegacyMeta(LegacyCrypto.decryptJson(it, kVault)) }.getOrNull() } ?: LegacyMeta(JsonObject(emptyMap())),
+                        // Um código ilegível não pode esconder os dos outros.
+                        r.code_vault?.let { runCatching { CalendarCrypto.decryptString(it, kVault) }.getOrNull() },
+                    )
+                },
+            )
+        } finally {
+            kVault.fill(0)
+            bySlot.values.forEach { it.fill(0) }
+        }
     }
 
     private fun <T> Response<T>.bodyOrThrow(): T = legacyBody()

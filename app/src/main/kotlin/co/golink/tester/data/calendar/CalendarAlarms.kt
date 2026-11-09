@@ -11,8 +11,6 @@ import android.content.SharedPreferences
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import co.golink.tester.MainActivity
 import co.golink.tester.ui.i18n.I18n
 import co.golink.tester.domain.calendar.CalendarAlarm
@@ -20,7 +18,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
 /**
- * Alarmes do calendário (AlarmManager). O índice vive em EncryptedSharedPreferences
+ * Alarmes do calendário (AlarmManager). O índice vive em preferências cifradas (EncryptedPrefs)
  * para o receiver (que corre sem a app aberta e sem a chave E2E) conseguir
  * mostrar o título e reagendar depois de reiniciar o telemóvel. Apagado no logout.
  */
@@ -29,13 +27,7 @@ class CalendarAlarmStore(private val context: Context) {
     private val serializer = ListSerializer(CalendarAlarm.serializer())
 
     private val prefs: SharedPreferences by lazy {
-        EncryptedSharedPreferences.create(
-            context,
-            "calendar_alarms",
-            MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
+        co.golink.tester.data.settings.EncryptedPrefs.create(context, "calendar_alarms")
     }
 
     private val alarmManager get() = context.getSystemService(AlarmManager::class.java)
@@ -64,19 +56,26 @@ class CalendarAlarmStore(private val context: Context) {
         save(next)
     }
 
-    /** Depois de reiniciar: os alarmes do sistema perderam-se, o índice não. */
+    /**
+     * Depois de reiniciar: os alarmes do sistema perderam-se, o índice não. Os que
+     * deviam ter tocado há pouco (telemóvel desligado) aparecem como "atrasado".
+     */
     @Synchronized
     fun rescheduleAll() {
         val now = System.currentTimeMillis()
-        val future = all().filter { it.fireAt > now }
+        val all = all()
+        val future = all.filter { it.fireAt > now }
         future.forEach(::schedule)
         save(future)
+        all.filter { it.fireAt in (now - LATE_WINDOW_MS)..now }.forEach { notify(it, late = true) }
     }
 
     @Synchronized
     fun clear() {
         all().forEach(::cancel)
         runCatching { prefs.edit().clear().apply() }
+        // Título no ecrã de bloqueio e "lembretes em pausa" eram desta conta.
+        CalendarReminderPrefs.clear(context)
         // Os já publicados têm o título decifrado: não ficam na barra depois do logout.
         runCatching {
             val manager = context.getSystemService(NotificationManager::class.java)
@@ -94,10 +93,13 @@ class CalendarAlarmStore(private val context: Context) {
         return hit
     }
 
-    private fun pending(id: String, flags: Int): PendingIntent? = PendingIntent.getBroadcast(
+    // A identidade do PendingIntent é o data (o id do alarme), não o hash do
+    // requestCode: dois ids com o mesmo hashCode substituíam-se/cancelavam-se.
+    private fun pending(id: String, flags: Int, legacy: Boolean = false): PendingIntent? = PendingIntent.getBroadcast(
         context,
         id.hashCode(),
-        Intent(context, CalendarAlarmReceiver::class.java).setAction(ACTION_FIRE).putExtra(EXTRA_ID, id),
+        Intent(context, CalendarAlarmReceiver::class.java).setAction(ACTION_FIRE).putExtra(EXTRA_ID, id)
+            .apply { if (!legacy) data = android.net.Uri.fromParts("golink-alarm", id, null) },
         flags or PendingIntent.FLAG_IMMUTABLE,
     )
 
@@ -113,15 +115,19 @@ class CalendarAlarmStore(private val context: Context) {
     }
 
     private fun cancel(alarm: CalendarAlarm) {
-        pending(alarm.id, PendingIntent.FLAG_NO_CREATE)?.let { pi ->
-            alarmManager?.cancel(pi)
-            pi.cancel()
+        // legacy: os agendados antes de o Intent levar o data (3.85 e anteriores).
+        listOf(false, true).forEach { legacy ->
+            pending(alarm.id, PendingIntent.FLAG_NO_CREATE, legacy)?.let { pi ->
+                alarmManager?.cancel(pi)
+                pi.cancel()
+            }
         }
     }
 
-    fun notify(alarm: CalendarAlarm) {
+    fun notify(alarm: CalendarAlarm, late: Boolean = false) {
         ensureChannel()
-        val body = reminderBody(alarm)
+        val body = reminderBody(alarm).let { if (late) "$it (${I18n.t("atrasado")})" else it }
+        val title = alarm.title.ifBlank { I18n.t("(sem título)") }
         val open = PendingIntent.getActivity(
             context,
             alarm.id.hashCode(),
@@ -131,9 +137,21 @@ class CalendarAlarmStore(private val context: Context) {
                 .putExtra(EXTRA_DATE, alarm.date),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        // O título vem decifrado (E2E): no ecrã de bloqueio só "Lembrete do
+        // calendário" e a hora — o resto aparece depois de desbloquear. Com a
+        // opção do Calendário ligada, o título também aparece bloqueado.
+        val lockTitle = CalendarReminderPrefs.showTitleOnLockScreen(context)
+        val publicVersion = NotificationCompat.Builder(context, CHANNEL)
+            .setSmallIcon(android.R.drawable.ic_menu_my_calendar)
+            .setContentTitle(if (lockTitle) title else I18n.t("Lembrete do calendário"))
+            .setContentText(body)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .build()
         val n = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_my_calendar)
-            .setContentTitle(alarm.title.ifBlank { I18n.t("(sem título)") })
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicVersion)
+            .setContentTitle(title)
             .setContentText(body)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -164,7 +182,6 @@ class CalendarAlarmStore(private val context: Context) {
     }
 
     private fun ensureChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         if (manager.getNotificationChannel(CHANNEL) != null) return
         manager.createNotificationChannel(
@@ -179,13 +196,19 @@ class CalendarAlarmStore(private val context: Context) {
         const val EXTRA_ID = "alarm_id"
         const val EXTRA_EVENT = "calendar_event"
         const val EXTRA_DATE = "calendar_date"
+
+        /** Abrir só o Calendário (aviso "lembretes em pausa"). */
+        const val EXTRA_OPEN_CALENDAR = "calendar_open"
+
+        /** Alertas perdidos (telemóvel desligado) ainda mostrados como "atrasado". */
+        private const val LATE_WINDOW_MS = 30 * 60_000L
     }
 }
 
 /** Dispara o lembrete; depois de reiniciar/atualizar a app volta a agendar. */
 class CalendarAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        // EncryptedSharedPreferences + Keystore são lentos: fora da main thread.
+        // Keystore (preferências cifradas) é lenta: fora da main thread.
         val pending = goAsync()
         val app = context.applicationContext
         Thread {
@@ -197,6 +220,16 @@ class CalendarAlarmReceiver : BroadcastReceiver() {
                         ?.let(store::notify)
                     Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED,
                     "android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" -> store.rescheduleAll()
+                    // Os alarmes têm o instante absoluto calculado no fuso antigo (dias inteiros à
+                    // meia-noite local): recalcula tudo pelo sync (com a chave, se houver).
+                    Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_TIME_CHANGED -> {
+                        store.rescheduleAll()
+                        androidx.work.WorkManager.getInstance(app).enqueueUniqueWork(
+                            "calendar_alarms_now",
+                            androidx.work.ExistingWorkPolicy.REPLACE,
+                            androidx.work.OneTimeWorkRequestBuilder<CalendarAlarmWorker>().build(),
+                        )
+                    }
                 }
             } catch (_: Throwable) {
                 // Sem índice legível não há nada a mostrar nem a reagendar.

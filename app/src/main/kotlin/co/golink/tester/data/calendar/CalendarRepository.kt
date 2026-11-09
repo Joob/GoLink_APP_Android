@@ -102,6 +102,8 @@ class CalendarRepository @Inject constructor(
         // As K_cal decifradas não sobrevivem ao lock.
         // Também volta a criar os de defeito para a próxima conta (logout → login).
         keys.addOnLock {
+            // K_cal zeradas antes de largar as referências (não ficam na heap até ao GC).
+            _calendars.value.forEach { it.key?.fill(0) }
             _calendars.value = emptyList()
             bootstrapped = false
         }
@@ -120,12 +122,16 @@ class CalendarRepository @Inject constructor(
 
     // ---- calendários ---------------------------------------------------------
 
-    suspend fun loadCalendars(): Result<List<CalInfo>> = runCatching {
+    /**
+     * [createDefaults] false (lembretes em segundo plano): só lê, não cria os
+     * calendários por omissão a quem nunca abriu o Calendário.
+     */
+    suspend fun loadCalendars(createDefaults: Boolean = true): Result<List<CalInfo>> = runCatching {
         withContext(Dispatchers.IO) {
             var list = api.calendars().ok().data
             // Primeira visita: os calendários de defeito são criados pelo cliente
             // (o servidor não consegue cifrar os nomes). Uma vez por sessão.
-            if (list.isEmpty() && keys.isUnlocked) {
+            if (createDefaults && list.isEmpty() && keys.isUnlocked) {
                 bootstrap.withLock {
                     if (!bootstrapped) {
                         createDefaults()
@@ -147,15 +153,25 @@ class CalendarRepository @Inject constructor(
             Triple("Família", "pink", "personal"),
             Triple("Aniversários", "slate", "birthdays"),
         )
-        defaults.forEachIndexed { i, (name, color, kind) ->
-            val key = CalendarCrypto.genKey()
-            api.createCalendar(buildJsonObject {
-                put("kind", kind)
-                put("color", color)
-                put("position", i)
-                put("name_encrypted", CalendarCrypto.encryptString(I18n.t(name), key))
-                put("wrapped_key", keys.sealForSelf(key))
-            }).okUnit()
+        // Tudo ou nada: com uma falha a meio a lista deixava de vir vazia e os que
+        // faltavam nunca eram criados. Desfaz os criados e tenta na próxima vez.
+        val created = mutableListOf<String>()
+        try {
+            defaults.forEachIndexed { i, (name, color, kind) ->
+                val key = CalendarCrypto.genKey()
+                val response = api.createCalendar(buildJsonObject {
+                    put("kind", kind)
+                    put("color", color)
+                    put("position", i)
+                    put("name_encrypted", CalendarCrypto.encryptString(I18n.t(name), key))
+                    put("wrapped_key", keys.sealForSelf(key))
+                })
+                response.okUnit()
+                response.body()?.data?.id?.let(created::add)
+            }
+        } catch (e: Throwable) {
+            created.forEach { id -> runCatching { api.deleteCalendar(id) } }
+            throw e
         }
     }
 
@@ -245,9 +261,15 @@ class CalendarRepository @Inject constructor(
 
     // ---- eventos ---------------------------------------------------------------
 
+    /** A última listagem veio cortada pelo servidor (demasiados eventos no intervalo). */
+    @Volatile var lastEventsTruncated: Boolean = false
+        private set
+
     suspend fun fetchEvents(from: Instant, to: Instant): Result<List<CalEvent>> = runCatching {
         withContext(Dispatchers.IO) {
-            api.events(from.toString(), to.toString()).ok().data.map(::decryptEvent)
+            val res = api.events(from.toString(), to.toString()).ok()
+            lastEventsTruncated = res.truncated
+            res.data.map(::decryptEvent)
         }
     }
 

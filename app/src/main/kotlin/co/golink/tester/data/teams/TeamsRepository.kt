@@ -7,6 +7,7 @@ import co.golink.tester.domain.teams.ConvertToTeamFolderRequest
 import co.golink.tester.domain.teams.CreateTeamFolderRequest
 import co.golink.tester.domain.teams.TeamInvitation
 import co.golink.tester.network.TeamsApi
+import co.golink.tester.ui.i18n.tr
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -36,7 +37,26 @@ class TeamsRepository @Inject constructor(
 
     suspend fun dissolve(id: String): Result<Unit> = runCatching {
         val response = api.dissolveTeamFolder(id)
-        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        if (!response.isSuccessful) throw teamError(response)
+    }
+
+    /** Erro de sair/dissolver com a mensagem do servidor (traduzida quando a conhecemos). */
+    class TeamActionError(message: String) : Exception(message)
+
+    private fun teamError(response: retrofit2.Response<*>): TeamActionError {
+        val message = runCatching {
+            val body = kotlinx.serialization.json.Json.parseToJsonElement(response.errorBody()?.string().orEmpty())
+            ((body as? kotlinx.serialization.json.JsonObject)?.get("message") as? kotlinx.serialization.json.JsonPrimitive)?.content
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+        return TeamActionError(
+            when {
+                // Sem mensagem ou 403: o "HTTP 403" é o que o failText do Browse sabe explicar.
+                message == null || response.code() == 403 -> "HTTP ${response.code()}"
+                message.startsWith("The owner can't leave") -> "O dono não pode sair da pasta de equipa: dissolve-a".tr()
+                message.startsWith("You are not member") -> "Já não és membro desta pasta de equipa".tr()
+                else -> message
+            },
+        )
     }
 
     /** Código HTTP no erro: 410 usado/expirado, 403 outra conta. */
@@ -65,7 +85,7 @@ class TeamsRepository @Inject constructor(
 
     suspend fun leave(id: String): Result<Unit> = runCatching {
         val response = api.leaveTeamFolder(id)
-        check(response.isSuccessful) { "HTTP ${response.code()}" }
+        if (!response.isSuccessful) throw teamError(response)
     }
 
     /** Ids dos membros online agora (null se falhar — fica o que veio na listagem). */

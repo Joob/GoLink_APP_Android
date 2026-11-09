@@ -171,11 +171,23 @@ object Recurrence {
         return out
     }
 
+    /** Espelho de allDayEnd (calendarRecurrence.js): mesmo nº de dias e a hora local do fim original. */
+    internal fun allDayEnd(start: Instant, end: Instant, zone: ZoneId): (Instant) -> Instant {
+        val s = start.atZone(zone)
+        val e = end.atZone(zone)
+        val days = java.time.temporal.ChronoUnit.DAYS.between(s.toLocalDate(), e.toLocalDate())
+        val endTime = e.toLocalTime()
+        return { occ -> ZonedDateTime.of(occ.atZone(zone).toLocalDate().plusDays(days), endTime, zone).toInstant() }
+    }
+
     fun expand(events: List<CalEvent>, from: Instant, to: Instant): List<CalInstance> =
         events.flatMap { ev ->
             val duration = Duration.between(ev.start, ev.end)
+            // Dia inteiro: a duração é em dias de calendário (allDayEnd no JS), não em ms;
+            // num dia de 23/25 h (mudança de hora) o fim não passa para o dia seguinte.
+            val endOf: (Instant) -> Instant = if (ev.allDay) allDayEnd(ev.start, ev.end, ev.zone) else { s -> s.plus(duration) }
             occurrences(ev.start, ev.end, ev.repeat, ev.repeatUntil, ev.zone, from, to, ev.repeatRule).map { s ->
-                CalInstance(ev, s, s.plus(duration), "${ev.id}@${s.toEpochMilli()}")
+                CalInstance(ev, s, endOf(s), "${ev.id}@${s.toEpochMilli()}")
             }
         }.sortedWith(compareBy<CalInstance> { it.start }.thenByDescending { Duration.between(it.start, it.end) })
 }

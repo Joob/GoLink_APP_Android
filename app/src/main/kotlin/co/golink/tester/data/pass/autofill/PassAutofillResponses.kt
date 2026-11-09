@@ -36,7 +36,11 @@ object PassAutofillResponses {
 
     /** Lista de sugestões para um pedido (inline no teclado se o IME as pedir). */
     fun fill(context: Context, target: PassAutofillTarget, state: PassState, needsReprompt: Boolean, inline: InlineSuggestionsRequest?): FillResponse {
-        val hits = PassAutofillMatch.match(state.items, target.packageName, target.webDomain).take(MAX_SUGGESTIONS)
+        // Só correspondências verificadas (domínio de browser conhecido ou pacote em login.apps).
+        // A heurística pelo nome do pacote (com.evil.paypal ↔ paypal.com) nunca preenche.
+        val hits = PassAutofillMatch.match(state.items, target.packageName, target.webDomain)
+            .filter { it.strength != PassAutofillMatch.Strength.Heuristic }
+            .take(MAX_SUGGESTIONS)
         val specs = inlineSpecs(inline)
         val b = FillResponse.Builder()
         hits.forEachIndexed { i, hit ->

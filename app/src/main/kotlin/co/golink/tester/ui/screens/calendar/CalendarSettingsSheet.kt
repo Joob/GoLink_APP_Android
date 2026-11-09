@@ -145,7 +145,7 @@ fun CalendarSettingsSheet(
                         value = email,
                         onValueChange = { email = it },
                         singleLine = true,
-                        placeholder = { Text("nome@exemplo.com") },
+                        placeholder = { Text("nome@exemplo.com".tr()) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.fillMaxWidth(),

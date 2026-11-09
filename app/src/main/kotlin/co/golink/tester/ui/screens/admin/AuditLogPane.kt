@@ -101,10 +101,10 @@ class AuditLogViewModel @Inject constructor(
         val s = _state.value
         repository.auditLogs(page, s.action, s.onlyFailed)
             .onSuccess { (rows, more) ->
-                _state.update { it.copy(logs = if (page == 1) rows else it.logs + rows, hasMore = more, page = page, isLoading = false, isLoadingMore = false) }
+                _state.update { it.copy(logs = if (page == 1) rows else (it.logs + rows).distinctBy { x -> x.idString }, hasMore = more, page = page, isLoading = false, isLoadingMore = false) }
             }
             .onFailure { t ->
-                _state.update { it.copy(isLoading = false, isLoadingMore = false, error = if (page == 1) "Não foi possível carregar (${t.message})" else it.error) }
+                _state.update { it.copy(isLoading = false, isLoadingMore = false, error = if (page == 1) "Não foi possível carregar (%s)".tr().format(t.message.orEmpty()) else it.error) }
             }
     }
 }

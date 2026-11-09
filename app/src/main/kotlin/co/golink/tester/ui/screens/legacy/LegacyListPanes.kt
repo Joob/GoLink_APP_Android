@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -47,8 +49,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -284,7 +284,7 @@ fun LegacyGuardiansPane(legacy: LegacyState, busy: Boolean, vm: LegacyViewModel,
                         Text(name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
                         val relation = g.meta.str("relation")?.takeIf { it.isNotBlank() }
                         Text(
-                            listOfNotNull(relation, lt("key_part", "n" to ((g.dto.slot ?: index) + 1), "total" to total)).joinToString(" · "),
+                            listOfNotNull(relation, lt("key_part", "n" to (g.dto.slot ?: (index + 1)), "total" to total)).joinToString(" · "),
                             fontSize = 12.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -346,98 +346,128 @@ fun LegacyGuardiansPane(legacy: LegacyState, busy: Boolean, vm: LegacyViewModel,
     }
 }
 
-/** People › Recipients: lista expansível, um aberto de cada vez. */
+/** People › Recipients: lista expansível, um aberto de cada vez. Linhas para a LazyColumn do LegacyScreen. */
 @Composable
-fun LegacyRecipientsPane(legacy: LegacyState, onToast: (LegacyToast) -> Unit, onDialog: (LegacyDialog) -> Unit) {
+fun legacyRecipientsContent(legacy: LegacyState, onToast: (LegacyToast) -> Unit, onDialog: (LegacyDialog) -> Unit): LazyListScope.() -> Unit {
     var open by rememberSaveable { mutableStateOf<String?>(null) }
     var revealed by rememberSaveable { mutableStateOf<String?>(null) }
-    val clipboard = LocalClipboardManager.current
-    val guardianEmails = legacy.guardians.map { it.dto.email.lowercase() }.toSet()
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(lt("recipients_intro"), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (legacy.recipients.isEmpty()) {
-            LegacyCard { Text(lt("no_recipients"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    val copySecret = rememberLegacyCopy()
+    // Código à vista: fora de capturas, gravações e miniatura dos recentes.
+    LegacySecureWhile(revealed != null)
+    val guardianEmails = remember(legacy.guardians) { legacy.guardians.map { it.dto.email.lowercase() }.toSet() }
+    return {
+        item(key = "recipients_intro") {
+            Text(lt("recipients_intro"), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        legacy.recipients.forEach { p ->
-            val name = personName(p.meta, p.dto.email)
-            val sealed = legacy.items.filter { it.dto.state == "sealed" && p.dto.id in it.dto.recipient_ids }
-            val expanded = open == p.dto.id
-            val guardian = p.dto.email.lowercase() in guardianEmails
-            LegacyCard(
-                border = if (expanded) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else null,
-                contentPadding = 0,
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().clickable { open = if (expanded) null else p.dto.id }.padding(14.dp),
-                ) {
-                    LegacyAvatar(name, p.dto.email, size = 40)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f, fill = false))
-                            Spacer(Modifier.width(6.dp))
-                            RoleTag(lt(if (guardian) "role_guardian" else "role_recipient"), guardian)
-                        }
-                        val relation = p.meta.str("relation")?.takeIf { it.isNotBlank() }
-                        Text(
-                            listOfNotNull(relation, lt("gets_n", "count" to sealed.size)).joinToString(" · "),
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                AnimatedVisibility(expanded) {
-                    Column(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp)) {
-                        Column(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(legacyMuted()).padding(horizontal = 10.dp, vertical = 4.dp),
-                        ) {
-                            if (sealed.isEmpty()) Text(lt("receives_nothing"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
-                            sealed.forEach { item ->
-                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                                    ItemIcon(item, size = 28)
-                                    Spacer(Modifier.width(10.dp))
-                                    Text(itemName(item), fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
-                                    Text(itemType(item), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 10.dp)) {
-                            Icon(Icons.Outlined.MailOutline, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(lt("delivered_by", "email" to p.dto.email), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
-                            Text(lt("col_code") + ": ", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            when {
-                                p.code == null -> Text(lt("code_unreadable"), fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
-                                revealed == p.dto.id -> {
-                                    Text(p.code, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f, fill = false))
-                                    TextButton(onClick = {
-                                        clipboard.setText(AnnotatedString(p.code))
-                                        onToast(LegacyToast("copied"))
-                                    }) { Text(lt("copy"), fontSize = 12.sp) }
-                                }
-                                else -> TextButton(onClick = { revealed = p.dto.id }) { Text(lt("show_code"), fontSize = 12.sp) }
-                            }
-                            Spacer(Modifier.weight(1f))
-                            if (legacy.editable) RowActions(onEdit = { onDialog(LegacyDialog.Person("recipient", p)) }, onRemove = { onDialog(LegacyDialog.RemoveRecipient(p)) })
-                        }
-                    }
-                }
-            }
+        if (legacy.recipients.isEmpty()) {
+            item(key = "recipients_empty") { LegacyCard { Text(lt("no_recipients"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+        }
+        items(legacy.recipients, key = { "recipient_${it.dto.id}" }) { p ->
+            RecipientCard(
+                p,
+                legacy,
+                expanded = open == p.dto.id,
+                revealed = revealed == p.dto.id,
+                guardian = p.dto.email.lowercase() in guardianEmails,
+                onToggle = { open = if (open == p.dto.id) null else p.dto.id },
+                onReveal = { revealed = p.dto.id },
+                onCopy = { code ->
+                    copySecret(code)
+                    onToast(LegacyToast("copied"))
+                },
+                onDialog = onDialog,
+            )
         }
         if (legacy.editable) {
-            OutlinedButton(onClick = { onDialog(LegacyDialog.Person("recipient")) }, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(lt("add_recipient"))
+            item(key = "recipients_add") {
+                OutlinedButton(onClick = { onDialog(LegacyDialog.Person("recipient")) }, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(lt("add_recipient"))
+                }
             }
         }
-        NoteLine(lt("recipients_note"))
+        item(key = "recipients_note") { NoteLine(lt("recipients_note")) }
+    }
+}
+
+@Composable
+private fun RecipientCard(
+    p: co.golink.tester.domain.legacy.LegacyRecipient,
+    legacy: LegacyState,
+    expanded: Boolean,
+    revealed: Boolean,
+    guardian: Boolean,
+    onToggle: () -> Unit,
+    onReveal: () -> Unit,
+    onCopy: (String) -> Unit,
+    onDialog: (LegacyDialog) -> Unit,
+) {
+    val name = personName(p.meta, p.dto.email)
+    val sealed = remember(legacy.items, p.dto.id) { legacy.items.filter { it.dto.state == "sealed" && p.dto.id in it.dto.recipient_ids } }
+    LegacyCard(
+        border = if (expanded) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else null,
+        contentPadding = 0,
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(14.dp),
+        ) {
+            LegacyAvatar(name, p.dto.email, size = 40)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f, fill = false))
+                    Spacer(Modifier.width(6.dp))
+                    RoleTag(lt(if (guardian) "role_guardian" else "role_recipient"), guardian)
+                }
+                val relation = p.meta.str("relation")?.takeIf { it.isNotBlank() }
+                Text(
+                    listOfNotNull(relation, lt("gets_n", "count" to sealed.size)).joinToString(" · "),
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        AnimatedVisibility(expanded) {
+            Column(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp)) {
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(legacyMuted()).padding(horizontal = 10.dp, vertical = 4.dp),
+                ) {
+                    if (sealed.isEmpty()) Text(lt("receives_nothing"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
+                    sealed.forEach { item ->
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                            ItemIcon(item, size = 28)
+                            Spacer(Modifier.width(10.dp))
+                            Text(itemName(item), fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+                            Text(itemType(item), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 10.dp)) {
+                    Icon(Icons.Outlined.MailOutline, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(lt("delivered_by", "email" to p.dto.email), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+                    Text(lt("col_code") + ": ", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    when {
+                        p.code == null -> Text(lt("code_unreadable"), fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                        revealed -> {
+                            val code = p.code
+                            Text(code, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f, fill = false))
+                            TextButton(onClick = { onCopy(code) }) { Text(lt("copy"), fontSize = 12.sp) }
+                        }
+                        else -> TextButton(onClick = onReveal) { Text(lt("show_code"), fontSize = 12.sp) }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    if (legacy.editable) RowActions(onEdit = { onDialog(LegacyDialog.Person("recipient", p)) }, onRemove = { onDialog(LegacyDialog.RemoveRecipient(p)) })
+                }
+            }
+        }
     }
 }
 

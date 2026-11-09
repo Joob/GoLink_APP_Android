@@ -1,9 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Só preferências de aparência passam para outro aparelho / backup. Tudo o resto fica:
+  token, chaves E2E/partilha, Pass, PIN e alarmes (auth_prefs_v2, app_security_pin_v2,
+  calendar_alarms_v2 e as EncryptedSharedPreferences antigas, todas seladas pela
+  Keystore, que não migra), estado do backup, bases de dados e ficheiros.
+  Com <include>, o que não está listado é excluído.
+-->
 <data-extraction-rules>
     <cloud-backup>
-        <exclude domain="sharedpref" path="auth_prefs.xml" />
+        <include domain="sharedpref" path="app_theme.xml" />
+        <include domain="sharedpref" path="app_language.xml" />
+        <include domain="sharedpref" path="ui_view_prefs.xml" />
+        <include domain="sharedpref" path="app_drawer.xml" />
     </cloud-backup>
     <device-transfer>
-        <exclude domain="sharedpref" path="auth_prefs.xml" />
+        <include domain="sharedpref" path="app_theme.xml" />
+        <include domain="sharedpref" path="app_language.xml" />
+        <include domain="sharedpref" path="ui_view_prefs.xml" />
+        <include domain="sharedpref" path="app_drawer.xml" />
     </device-transfer>
 </data-extraction-rules>

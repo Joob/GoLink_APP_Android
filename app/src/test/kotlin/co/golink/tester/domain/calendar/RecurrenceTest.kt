@@ -21,6 +21,17 @@ class RecurrenceTest {
     }
 
     @Test
+    fun `dia inteiro semanal termina a meia-noite local no dia de 23 h`() {
+        // Domingo 22/03 (inverno, UTC+0) a repetir: a 29/03 a hora muda e o dia tem 23 h.
+        val start = Instant.parse("2026-03-22T00:00:00Z")
+        val end = Instant.parse("2026-03-23T00:00:00Z")
+        val endOf = Recurrence.allDayEnd(start, end, lisbon)
+        // Em ms (24 h) dava 2026-03-30T00:00Z = 01:00 de segunda; tem de ser 00:00 local.
+        assertEquals("2026-03-29T23:00:00Z", endOf(Instant.parse("2026-03-29T00:00:00Z")).toString())
+        assertEquals("2026-03-23T00:00:00Z", endOf(start).toString())
+    }
+
+    @Test
     fun `mensal no dia 31 fica no ultimo dia do mes`() {
         val list = occ("2026-01-31T10:00:00Z", "2026-01-31T11:00:00Z", "monthly", null, "2026-01-01T00:00:00Z", "2026-05-01T00:00:00Z", ZoneId.of("UTC"))
         assertEquals(listOf("2026-01-31T10:00:00Z", "2026-02-28T10:00:00Z", "2026-03-31T10:00:00Z", "2026-04-30T10:00:00Z"), list)

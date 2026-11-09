@@ -99,7 +99,8 @@ fun UploadProgressBanner(
         if (bannerState == BannerState.Uploading) {
             if (startTime == 0L) startTime = System.currentTimeMillis()
             while (true) {
-                withFrameMillis { now = it }
+                // Mesma base que startTime (o tempo de frame vem do nanoTime).
+                withFrameMillis { now = System.currentTimeMillis() }
                 kotlinx.coroutines.delay(500)
             }
         } else {
@@ -406,7 +407,7 @@ private fun UploadRow(
                 IconButton(onClick = onCancel, modifier = Modifier.size(32.dp)) {
                     Icon(
                         Icons.Filled.Close,
-                        contentDescription = "Remover",
+                        contentDescription = "Remover".tr(),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(16.dp),
                     )
@@ -450,7 +451,7 @@ private fun UploadRow(
             )
             UploadTask.State.Conflict -> Row(verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.material3.TextButton(onClick = onOverwrite, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
-                    Text("Substituir", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                    Text("Substituir".tr(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
                 }
                 androidx.compose.material3.TextButton(onClick = onSkip, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
                     Text("Não substituir".tr(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

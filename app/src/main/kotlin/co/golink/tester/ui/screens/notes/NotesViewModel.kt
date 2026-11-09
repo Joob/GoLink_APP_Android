@@ -148,9 +148,15 @@ class NotesViewModel @Inject constructor(
     /** wrapped_key de notas vistas nas respostas de /api/notes/… (as únicas que open_sealed abre). */
     private val noteKeys: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+    /** name_encrypted vistos em /api/notes/… (os únicos que open_name abre: nomes de cadernos). */
+    private val noteNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
     private fun rememberWrappedKeys(path: String, body: String) {
         // Respostas com conteúdo (relay, versões) não trazem chaves.
         if ("/collab" in path || path.endsWith("/content") || "/versions/" in path) return
+        if (body.contains("\"name_encrypted\"")) {
+            NAME_ENCRYPTED.findAll(body).forEach { noteNames += it.groupValues[1].replace("\\/", "/") }
+        }
         if (!body.contains("\"wrapped_key\"")) return
         // Varrimento sem parse (listas grandes); base64 não tem aspas nem escapes.
         WRAPPED_KEY.findAll(body).forEach { noteKeys += it.groupValues[1].replace("\\/", "/") }
@@ -256,7 +262,7 @@ class NotesViewModel @Inject constructor(
             _pageReady.value = true
             JsonNull
         }
-        "open_name" -> JsonPrimitive(withContext(Dispatchers.Default) { keys.openNameOrNull(args.string("sealed")) } ?: throw BridgeError(422, "unreadable"))
+        "open_name" -> if (args.string("sealed") !in noteNames) throw BridgeError(403, "unknown_name") else JsonPrimitive(withContext(Dispatchers.Default) { keys.openNameOrNull(args.string("sealed")) } ?: throw BridgeError(422, "unreadable"))
         "seal_name" -> JsonPrimitive(withContext(Dispatchers.Default) { keys.sealName(args.string("name")) } ?: throw BridgeError(403, "e2e_locked"))
         "drive_pick" -> drivePick(args)
         "file_links" -> fileLinks(args)
@@ -488,3 +494,4 @@ class NotesViewModel @Inject constructor(
 }
 
 private val WRAPPED_KEY = Regex("\"wrapped_key\"\\s*:\\s*\"([^\"]+)\"")
+private val NAME_ENCRYPTED = Regex("\"name_encrypted\"\\s*:\\s*\"([^\"]+)\"")

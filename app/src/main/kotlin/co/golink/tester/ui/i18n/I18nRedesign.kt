@@ -37,6 +37,7 @@ object I18nRedesign {
         r("Sem resultados em %s", "No results in %s", "Aucun résultat dans %s", "Sin resultados en %s"),
         r("Pesquisar em tudo", "Search all", "Tout rechercher", "Buscar en todo"),
         r("Nada encontrado", "Nothing found", "Rien trouvé", "No se encontró nada"),
+        r("Pesquisa limitada aos primeiros 10 000 itens", "Search limited to the first 10,000 items", "Recherche limitée aux 10 000 premiers éléments", "Búsqueda limitada a los primeros 10 000 elementos"),
         // Backups por dispositivo
         // Editor de documentos: formatos ao criar
         r("Formato", "Format", "Format", "Formato"),
@@ -359,6 +360,20 @@ object I18nRedesign {
         r("Backup em pausa", "Backup paused", "Sauvegarde en pause", "Copia en pausa"),
         r("Este telemóvel está em pausa na Web. Nada é enviado até retomares.", "This phone is paused on the web. Nothing is uploaded until you resume.", "Ce téléphone est en pause sur le Web. Rien n'est envoyé tant que vous ne reprenez pas.", "Este teléfono está en pausa en la Web. No se envía nada hasta que lo reanudes."),
         r("Não foi possível retomar — verifica a ligação e tenta de novo.", "Couldn't resume — check your connection and try again.", "Impossible de reprendre — vérifiez la connexion et réessayez.", "No se pudo reanudar — comprueba la conexión e inténtalo de nuevo."),
+        // Erros do backup automático (guardados em PT canónico, traduzidos no ecrã)
+        r("Sem sessão activa — inicia sessão para activar o backup.", "Not signed in — sign in to turn on the backup.", "Aucune session — connectez-vous pour activer la sauvegarde.", "Sin sesión — inicia sesión para activar la copia."),
+        r("Falta permissão para ler fotos/vídeos. Reactiva a permissão e tenta de novo.", "Permission to read photos/videos is missing. Allow it again and retry.", "L'autorisation de lire les photos/vidéos manque. Réactivez-la et réessayez.", "Falta el permiso para leer fotos/vídeos. Vuelve a activarlo e inténtalo de nuevo."),
+        r("Sem ligação ao servidor — a tentar de novo.", "No connection to the server — retrying.", "Pas de connexion au serveur — nouvelle tentative.", "Sin conexión con el servidor — reintentando."),
+        r("Sessão expirou — volta a iniciar sessão.", "Session expired — please sign in again.", "Session expirée — reconnectez-vous.", "La sesión ha caducado — vuelve a iniciar sesión."),
+        r("O servidor recusou o pedido. A tentar de novo.", "The server refused the request. Retrying.", "Le serveur a refusé la demande. Nouvelle tentative.", "El servidor rechazó la solicitud. Reintentando."),
+        r("Backups automáticos pausados a partir da Web.", "Automatic backups paused from the web.", "Sauvegardes automatiques mises en pause depuis le Web.", "Copias automáticas pausadas desde la Web."),
+        r("Backup deste telemóvel em pausa na Web.", "This phone's backup is paused on the web.", "La sauvegarde de ce téléphone est en pause sur le Web.", "La copia de este teléfono está en pausa en la Web."),
+        r("Sem espaço na conta — backup em pausa até libertares espaço.", "No space left in your account — backup paused until you free up space.", "Plus d'espace sur le compte — sauvegarde en pause jusqu'à ce que vous libériez de l'espace.", "Sin espacio en la cuenta — copia en pausa hasta que liberes espacio."),
+        r("%d ficheiro(s) falharam", "%d file(s) failed", "%d fichier(s) en échec", "%d archivo(s) fallaron"),
+        r("Não foi possível activar o backup.", "Couldn't turn on the backup.", "Impossible d'activer la sauvegarde.", "No se pudo activar la copia."),
+        r("Não foi possível iniciar o backup.", "Couldn't start the backup.", "Impossible de lancer la sauvegarde.", "No se pudo iniciar la copia."),
+        r("Transferência incompleta", "Download incomplete", "Téléchargement incomplet", "Descarga incompleta"),
+        r("%d ficheiro(s) não incluídos: %s", "%d file(s) not included: %s", "%d fichier(s) non inclus : %s", "%d archivo(s) no incluidos: %s"),
         // Secções da lista/grelha
         r("Ficheiros", "Files", "Fichiers", "Archivos"),
         r("1 pasta", "1 folder", "1 dossier", "1 carpeta"),
@@ -527,6 +542,7 @@ object I18nRedesign {
         r("Juntar num ficheiro .zip", "Bundle into a .zip file", "Regrouper dans un fichier .zip", "Juntar en un archivo .zip"),
         r("Podes sair da app — a transferência continua.", "You can leave the app — the download keeps going.", "Vous pouvez quitter l'app — le téléchargement continue.", "Puedes salir de la app — la descarga continúa."),
         r("Transferência cancelada", "Download cancelled", "Téléchargement annulé", "Descarga cancelada"),
+        r("Transferência interrompida pelo sistema. Tenta de novo.", "Download stopped by the system. Please try again.", "Téléchargement interrompu par le système. Réessayez.", "Descarga interrumpida por el sistema. Inténtalo de nuevo."),
         r("Transferência concluída", "Download complete", "Téléchargement terminé", "Descarga completada"),
         r("em curso", "in progress", "en cours", "en curso"),
         r("no teu dispositivo enquanto transfere", "on your device while downloading", "sur votre appareil pendant le téléchargement", "en tu dispositivo mientras descarga"),
@@ -614,6 +630,16 @@ object I18nRedesign {
         r("Avançado", "Advanced", "Avancé", "Avanzado"),
         r("Procurar de novo na galeria", "Rescan the gallery", "Analyser à nouveau la galerie", "Volver a buscar en la galería"),
         r("Tenta outra vez os ficheiros que falharam. Os que já estão guardados não são enviados de novo.", "Tries the files that failed again. Items already saved aren't uploaded again.", "Réessaie les fichiers qui ont échoué. Ceux déjà enregistrés ne sont pas renvoyés.", "Vuelve a intentar los archivos que fallaron. Los ya guardados no se envían de nuevo."),
+        // Backup: permissões e transferências (review A05, 2026-11-10)
+        r("Sem permissão para %s — o resto do backup continua. Reativa-a nas definições do telemóvel.", "No permission for %s — the rest of the backup continues. Turn it back on in the phone settings.", "Pas d'autorisation pour %s — le reste de la sauvegarde continue. Réactivez-la dans les paramètres du téléphone.", "Sin permiso para %s — el resto de la copia continúa. Vuelve a activarlo en los ajustes del teléfono."),
+        r("Permissão necessária", "Permission needed", "Autorisation nécessaire", "Permiso necesario"),
+        r("O acesso às fotos e vídeos foi recusado. Para ativar o backup, permite-o nas definições da app.", "Access to photos and videos was denied. To turn on the backup, allow it in the app settings.", "L'accès aux photos et vidéos a été refusé. Pour activer la sauvegarde, autorisez-le dans les paramètres de l'app.", "Se denegó el acceso a fotos y vídeos. Para activar la copia, permítelo en los ajustes de la app."),
+        r("Abrir definições", "Open settings", "Ouvrir les paramètres", "Abrir ajustes"),
+        r("Acesso limitado às fotos", "Limited photo access", "Accès limité aux photos", "Acceso limitado a las fotos"),
+        r("O backup só vê as fotos e vídeos que escolheste. As novas só entram se as escolheres ou se permitires o acesso a todas.", "The backup only sees the photos and videos you picked. New ones are only included if you pick them or allow access to all.", "La sauvegarde ne voit que les photos et vidéos choisies. Les nouvelles n'y entrent que si vous les choisissez ou autorisez l'accès à toutes.", "La copia solo ve las fotos y vídeos que elegiste. Las nuevas solo entran si las eliges o permites el acceso a todas."),
+        r("Escolher mais", "Pick more", "En choisir plus", "Elegir más"),
+        r("A transferir…", "Downloading…", "Téléchargement…", "Descargando…"),
+        r("O Android não deixou continuar a transferência em segundo plano. Tenta de novo com a app aberta.", "Android didn't allow the download to continue in the background. Try again with the app open.", "Android n'a pas permis de poursuivre le téléchargement en arrière-plan. Réessayez avec l'app ouverte.", "Android no permitió continuar la descarga en segundo plano. Inténtalo de nuevo con la app abierta."),
 
         // Tokens API: origem de cada token (2026-11-02)
         r("Login", "Login", "Connexion", "Inicio de sesión"),
@@ -681,7 +707,16 @@ object I18nRedesign {
         r("Ocultar nas apps recentes", "Hide in recent apps", "Masquer dans les apps récentes", "Ocultar en apps recientes"),
         r("Pré-visualização em branco", "Blank preview", "Aperçu vide", "Vista previa en blanco"),
         r("Pré-visualização em branco, bloqueia capturas de ecrã", "Blank preview, blocks screenshots", "Aperçu vide, bloque les captures d'écran", "Vista previa en blanco, bloquea capturas de pantalla"),
+        r("Com «Agora», a app fica oculta nos recentes e as capturas de ecrã ficam bloqueadas", "With “Now”, the app is hidden in recents and screenshots are blocked", "Avec « Immédiatement », l'app est masquée dans les récentes et les captures d'écran sont bloquées", "Con «Ahora», la app se oculta en recientes y las capturas de pantalla quedan bloqueadas"),
         r("para confirmar que és tu", "to confirm it's you", "pour confirmer que c'est vous", "para confirmar que eres tú"),
+        // A09 (2026-11-10): tokens com step-up, campos de password, reenvio do código de email.
+        r("Esconder password", "Hide password", "Masquer le mot de passe", "Ocultar contraseña"),
+        r("Mostrar password", "Show password", "Afficher le mot de passe", "Mostrar contraseña"),
+        r("Revogar este token?", "Revoke this token?", "Révoquer ce jeton ?", "¿Revocar este token?"),
+        r("É o token desta sessão: revogá-lo termina a sessão nesta app.", "This is this session's token: revoking it signs you out of this app.", "C'est le jeton de cette session : le révoquer vous déconnecte de cette app.", "Es el token de esta sesión: revocarlo cierra la sesión en esta app."),
+        r("As apps ou scripts que o usam deixam de ter acesso.", "Apps or scripts using it will lose access.", "Les apps ou scripts qui l'utilisent perdront l'accès.", "Las apps o scripts que lo usan perderán el acceso."),
+        r("Não foi possível criar o token", "Could not create the token", "Impossible de créer le jeton", "No se pudo crear el token"),
+        r("Confirma de novo com a password ou a passkey para reenviar o código.", "Confirm again with your password or passkey to resend the code.", "Confirmez à nouveau avec votre mot de passe ou votre clé d'accès pour renvoyer le code.", "Confirma de nuevo con tu contraseña o llave de acceso para reenviar el código."),
         r("mínimo 8 caracteres", "at least 8 characters", "8 caractères minimum", "mínimo 8 caracteres"),
         r("6 dígitos", "6 digits", "6 chiffres", "6 dígitos"),
         // Menu do item + Partilhar (redesign 2026-11-05)
@@ -720,6 +755,24 @@ object I18nRedesign {
         r("Ao convidar alguém, esta pasta passa a pasta de equipa.", "Inviting someone turns this folder into a team folder.", "Inviter quelqu'un transforme ce dossier en dossier d'équipe.", "Al invitar a alguien, esta carpeta pasa a ser de equipo."),
         r("Com acesso", "With access", "Avec accès", "Con acceso"),
         r("Atingiste o limite de membros do teu plano", "You've reached your plan's member limit", "Vous avez atteint la limite de membres de votre forfait", "Has alcanzado el límite de miembros de tu plan"),
+        r("O dono não pode sair da pasta de equipa: dissolve-a", "The owner can't leave the team folder: dissolve it instead", "Le propriétaire ne peut pas quitter le dossier d'équipe : dissolvez-le", "El propietario no puede salir de la carpeta de equipo: disuélvela"),
+        r("Já não és membro desta pasta de equipa", "You're no longer a member of this team folder", "Vous n'êtes plus membre de ce dossier d'équipe", "Ya no eres miembro de esta carpeta de equipo"),
+        // 2.ª ronda do review (2026-11-11): bloqueio, Definições, segurança.
+        r("A biometria do aparelho mudou. Usa o PIN para desbloquear.", "Your device's biometrics changed. Use your PIN to unlock.", "La biométrie de l'appareil a changé. Utilisez votre code PIN pour déverrouiller.", "La biometría del dispositivo ha cambiado. Usa tu PIN para desbloquear."),
+        r("A biometria do aparelho mudou. Confirma com o código do telemóvel.", "Your device's biometrics changed. Confirm with your phone's screen lock.", "La biométrie de l'appareil a changé. Confirmez avec le code de votre téléphone.", "La biometría del dispositivo ha cambiado. Confirma con el código del teléfono."),
+        r("Não foi possível carregar a atividade de segurança.", "Couldn't load your security activity.", "Impossible de charger l'activité de sécurité.", "No se ha podido cargar la actividad de seguridad."),
+        r("mínimo 3 caracteres", "at least 3 characters", "3 caractères minimum", "mínimo 3 caracteres"),
+        r("Remover o convite de %s?", "Remove the invitation for %s?", "Supprimer l'invitation de %s ?", "¿Eliminar la invitación de %s?"),
+        r("Erro a carregar planos: %s", "Couldn't load plans: %s", "Impossible de charger les forfaits : %s", "Error al cargar los planes: %s"),
+        r("Erro a iniciar checkout: %s", "Couldn't start checkout: %s", "Impossible de démarrer le paiement : %s", "Error al iniciar el pago: %s"),
+        r("%d entrada", "%d entry", "%d entrée", "%d entrada"),
+        r("%d entradas", "%d entries", "%d entrées", "%d entradas"),
+        r("Falta %d dia para regularizar. Depois disso, uploads e partilhas ficam pausados.", "%d day left to settle payment. After that, uploads and sharing are paused.", "Il reste %d jour pour régulariser. Ensuite, les envois et les partages seront suspendus.", "Queda %d día para regularizar. Después, las subidas y los compartidos quedarán en pausa."),
+        r("Faltam %d dias para regularizar. Depois disso, uploads e partilhas ficam pausados.", "%d days left to settle payment. After that, uploads and sharing are paused.", "Il reste %d jours pour régulariser. Ensuite, les envois et les partages seront suspendus.", "Quedan %d días para regularizar. Después, las subidas y los compartidos quedarán en pausa."),
+        r("%d dispositivo com sessão iniciada na tua conta.", "%d device is signed in to your account.", "%d appareil est connecté à votre compte.", "%d dispositivo tiene la sesión iniciada en tu cuenta."),
+        r("Claro", "Light", "Clair", "Claro"),
+        r("Escuro", "Dark", "Sombre", "Oscuro"),
+        r("A terminar as outras sessões…", "Signing out other sessions…", "Déconnexion des autres sessions…", "Cerrando las demás sesiones…"),
     )
 
     val en: Map<String, String> = rows.associate { it[0] to it[1] }

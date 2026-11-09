@@ -387,8 +387,19 @@ fun MobileBackupsScreen(
                         4 -> co.golink.tester.ui.screens.browse.DateGroup.YEAR
                         else -> co.golink.tester.ui.screens.browse.DateGroup.MONTH
                     }
-                    val sections = remember(state.items, state.sortMode, granularity, byDate, state.foldersFirst) {
-                        co.golink.tester.ui.screens.browse.browseSections(sortBackupItems(state.items, state.sortMode), byDate, granularity, state.foldersFirst)
+                    // Pastas de backup com milhares de fotos: ordenar e agrupar fora do
+                    // main thread (antes corria na composição e engasgava a UI). Até à
+                    // primeira conta fica a lista anterior.
+                    val sectionItems = state.items
+                    val sectionSort = state.sortMode
+                    val sectionFoldersFirst = state.foldersFirst
+                    val sections by androidx.compose.runtime.produceState(
+                        initialValue = emptyList<co.golink.tester.ui.screens.browse.MonthSection>(),
+                        sectionItems, sectionSort, granularity, byDate, sectionFoldersFirst,
+                    ) {
+                        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                            co.golink.tester.ui.screens.browse.browseSections(sortBackupItems(sectionItems, sectionSort), byDate, granularity, sectionFoldersFirst)
+                        }
                     }
                     // Barra de tamanho: escala pelo maior item da lista (pastas incluídas, como na web).
                     val listMaxBytes = remember(state.items) {
@@ -396,10 +407,29 @@ fun MobileBackupsScreen(
                     }
                     var collapsed by remember(state.tab, state.folderStack.size) { mutableStateOf(setOf<String>()) }
                     val toggle: (String) -> Unit = { k -> collapsed = if (k in collapsed) collapsed - k else collapsed + k }
+                    // Scroll infinito: perto do fim pede a página seguinte (100 ficheiros).
+                    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+                    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+                    val hasMore = state.hasMore
+                    // items.size: depois de cada página volta a medir (uma falha não repete sozinha).
+                    LaunchedEffect(gridState, listState, state.viewMode, hasMore, state.items.size) {
+                        if (!hasMore) return@LaunchedEffect
+                        androidx.compose.runtime.snapshotFlow {
+                            if (state.viewMode == ViewMode.GRID) {
+                                val info = gridState.layoutInfo
+                                info.totalItemsCount > 0 && (info.visibleItemsInfo.lastOrNull()?.index ?: 0) >= info.totalItemsCount - 12
+                            } else {
+                                val info = listState.layoutInfo
+                                info.totalItemsCount > 0 && (info.visibleItemsInfo.lastOrNull()?.index ?: 0) >= info.totalItemsCount - 8
+                            }
+                        }
+                            .collect { nearEnd -> if (nearEnd) viewModel.loadMore() }
+                    }
                     if (state.viewMode == ViewMode.GRID) {
                         val gap = if (zoom >= 3) 4.dp else 8.dp
                         LazyVerticalGrid(
                             columns = GridCells.Fixed(co.golink.tester.ui.screens.browse.gridColumnsFor(zoom)),
+                            state = gridState,
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(start = if (zoom >= 3) 8.dp else 16.dp, end = if (zoom >= 3) 8.dp else 16.dp, top = 8.dp, bottom = 56.dp),
                             horizontalArrangement = Arrangement.spacedBy(gap),
@@ -440,9 +470,15 @@ fun MobileBackupsScreen(
                                     }
                                 }
                             }
+                            if (state.hasMore) {
+                                item(key = "load-more", span = { GridItemSpan(maxLineSpan) }, contentType = "load-more") {
+                                    BackupLoadMoreFooter(state.loadingMore, viewModel::loadMore)
+                                }
+                            }
                         }
                     } else {
                         LazyColumn(
+                            state = listState,
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 56.dp),
                             verticalArrangement = Arrangement.spacedBy(if (zoom == 0) 8.dp else 6.dp),
@@ -470,6 +506,9 @@ fun MobileBackupsScreen(
                                         selectionMode = state.selectMode,
                                     )
                                 }
+                            }
+                            if (state.hasMore) {
+                                item(key = "load-more", contentType = "load-more") { BackupLoadMoreFooter(state.loadingMore, viewModel::loadMore) }
                             }
                         }
                     }
@@ -777,6 +816,15 @@ private fun EmptyDivisionState(tab: MobileBackupTab) {
             Spacer(Modifier.height(12.dp))
             Text(msg, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+/** Rodapé do scroll infinito: roda enquanto pede a página seguinte. */
+@Composable
+private fun BackupLoadMoreFooter(loading: Boolean, onLoadMore: () -> Unit) {
+    Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+        if (loading) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+        else androidx.compose.material3.TextButton(onClick = onLoadMore) { Text("Carregar mais".tr()) }
     }
 }
 

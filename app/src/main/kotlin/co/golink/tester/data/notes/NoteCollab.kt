@@ -34,6 +34,8 @@ sealed interface CollabEvent {
     data object RemoteChange : CollabEvent
     /** Sessão reiniciada (versão restaurada, acesso perdido): reabrir a nota. */
     data object Reset : CollabEvent
+    /** O servidor recusou o envio (4xx definitivo: 403/413/422…): o lote fica por gravar ("Não gravada"). */
+    data class Rejected(val status: Int) : CollabEvent
 }
 
 /**
@@ -66,6 +68,12 @@ class NoteCollab(
     private var pollJob: Job? = null
     @Volatile private var destroyed = false
     @Volatile private var closing = false
+    /** Falhas seguidas (rede/5xx) para o recuo exponencial do envio e do poll. */
+    private var flushFailures = 0
+    private var pollFailures = 0
+    /** Envio recusado de vez: não volta a tentar até nova edição (como `rejected` no collab.js). */
+    @Volatile var rejected: Boolean = false
+        private set
 
     /** Em segundo plano o polling abranda (como document.hidden na web). */
     @Volatile var foreground: Boolean = true
@@ -121,6 +129,7 @@ class NoteCollab(
     fun localUpdate(updateB64: String) {
         if (updateB64.isEmpty() || destroyed || !canEdit) return
         synchronized(pending) { pending += updateB64 }
+        rejected = false
         scheduleFlush(FLUSH_DELAY)
     }
 
@@ -146,7 +155,7 @@ class NoteCollab(
             } catch (e: Exception) {
                 // Não perder o lote: volta à fila tal como estava.
                 synchronized(pending) { pending.addAll(0, batch) }
-                if (!destroyed) scheduleFlush(2_000)
+                if (!destroyed) scheduleFlush(backoff(++flushFailures))
                 return
             }
             try {
@@ -157,15 +166,25 @@ class NoteCollab(
                 })
                 res["seq"]?.jsonPrimitive?.longOrNull?.let { appliedSeq = maxOf(appliedSeq, it) }
                 sinceBase++
+                flushFailures = 0
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 if (e is NotesHttpException && e.message == "collab_reset") {
+                    // Fica na fila (pending.unshift na web): quem trata o reset reenvia-o na sessão nova.
+                    synchronized(pending) { pending.add(0, merged) }
                     emit(CollabEvent.Reset)
                     return
                 }
-                // Volta para a fila: segue no próximo envio.
+                if (e is NotesHttpException && isFatal(e.status)) {
+                    // Repetir não muda nada (sem acesso, grande demais, inválido): pára e avisa.
+                    synchronized(pending) { pending.add(0, merged) }
+                    rejected = true
+                    emit(CollabEvent.Rejected(e.status))
+                    return
+                }
+                // Volta para a fila: segue no próximo envio, cada vez mais espaçado.
                 synchronized(pending) { pending.add(0, merged) }
-                if (!destroyed) scheduleFlush(2_000)
+                if (!destroyed) scheduleFlush(backoff(++flushFailures))
             }
         }
     }
@@ -277,7 +296,7 @@ class NoteCollab(
             else -> POLL_SOLO
         }
         pollJob = scope.launch {
-            delay(delayMs)
+            delay(if (pollFailures > 0) maxOf(delayMs, backoff(pollFailures)) else delayMs)
             poll()
         }
     }
@@ -294,17 +313,19 @@ class NoteCollab(
                 return
             }
             applyState(state)
+            pollFailures = 0
         } catch (e: NotesHttpException) {
-            // Sem rede: tenta no próximo ciclo. Sem acesso / nota apagada: reabrir.
+            // Sem rede: tenta no próximo ciclo (com recuo). Sem acesso / nota apagada: reabrir.
             if (e.status == 403 || e.status == 404) {
                 emit(CollabEvent.Reset)
                 again = false
-            }
+            } else pollFailures++
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             // Resposta estranha (JSON, núcleo): regista e continua — nunca parar o sync.
             Log.w(TAG, "poll falhou", e)
+            pollFailures++
         } finally {
             pollMutex.unlock()
             if (again && !destroyed) schedulePoll()
@@ -331,6 +352,12 @@ class NoteCollab(
             runCatching { core.close(noteId) }
         }
     }
+
+    /** 4xx definitivos (o collab.js chama-lhe isFatal): 408/429 voltam a tentar. */
+    private fun isFatal(status: Int) = status in 400..499 && status != 408 && status != 429
+
+    /** 2 s, 4 s, 8 s… até 30 s. */
+    private fun backoff(failures: Int): Long = minOf(30_000L, 2_000L shl (failures - 1).coerceIn(0, 4))
 
     private companion object {
         const val TAG = "NoteCollab"

@@ -43,7 +43,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.golink.tester.data.legacy.LegacyState
-import co.golink.tester.ui.components.dialogs.ConfirmDialog
 import co.golink.tester.ui.i18n.lt
 import co.golink.tester.domain.legacy.LegacyTimelineDto
 import java.time.Instant
@@ -60,6 +59,7 @@ fun LegacyTimingPane(legacy: LegacyState, busy: Boolean, vm: LegacyViewModel) {
     val editable = legacy.editable && !busy
     var confirmDisarm by remember { mutableStateOf(false) }
     var pausing by remember { mutableStateOf(false) }
+    var pauseUntil by remember { mutableStateOf<String?>(null) }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         LegacyCard {
@@ -130,18 +130,15 @@ fun LegacyTimingPane(legacy: LegacyState, busy: Boolean, vm: LegacyViewModel) {
         }
     }
 
+    // Desarmar e pausar pedem step-up (password ou passkey).
     if (confirmDisarm) {
-        ConfirmDialog(
-            title = lt("disarm_title"),
-            message = lt("disarm_text"),
-            confirmText = lt("disarm"),
-            destructive = true,
-            onDismiss = { confirmDisarm = false },
-            onConfirm = { confirmDisarm = false; vm.disarm() },
-        )
+        LegacyStepUpDialog(LegacyStepUpRequest.Disarm(revoke = false), vm, onDismiss = { confirmDisarm = false })
     }
     if (pausing) {
-        PauseDialog(onDismiss = { pausing = false }, onPause = { day -> pausing = false; vm.pause(day) })
+        PauseDialog(onDismiss = { pausing = false }, onPause = { day -> pausing = false; pauseUntil = day })
+    }
+    pauseUntil?.let { day ->
+        LegacyStepUpDialog(LegacyStepUpRequest.Pause(day), vm, onDismiss = { pauseUntil = null })
     }
 }
 

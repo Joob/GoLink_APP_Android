@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.sync.withPermit
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -57,6 +58,8 @@ data class UploadTask(
     // Recusado por passar o limite por ficheiro do plano (413 upload_limit):
     // definitivo — o backup não volta a tentar. Valor = limite formatado ("5 GB").
     val overLimit: String? = null,
+    // Recusado por falta de espaço na conta (507 storage-full): definitivo.
+    val storageFull: Boolean = false,
 ) {
     enum class State { Queued, Uploading, Completed, Failed, Cancelled, Conflict }
 }
@@ -194,6 +197,7 @@ class UploadManager @Inject constructor(
                     treeUri = treeUri?.toString(),
                     overwrite = overwrite,
                     replacesId = replacesId,
+                    mime = metadata.mimeType,
                 ),
         )
     }
@@ -216,7 +220,10 @@ class UploadManager @Inject constructor(
         for (r in pending) {
             val uri = Uri.parse(r.uri)
             val readable = runCatching { resolver.openFileDescriptor(uri, "r")?.use { true } ?: false }.getOrDefault(false)
-            if (!readable) {
+            // Fonte na nuvem sem permissão persistente: a cópia local (ou o
+            // ciphertext já pronto) chega para continuar o envio.
+            val local = (r.copyPath ?: r.e2e?.tempPath)?.let(::File)?.takeIf { it.exists() }
+            if (!readable && local == null) {
                 forgetTask(r.taskId)
                 update { list ->
                     list + UploadTask(
@@ -230,11 +237,12 @@ class UploadManager @Inject constructor(
                 }
                 continue
             }
-            val metadata = readMetadata(uri)
+            val metadata = if (readable) readMetadata(uri) else recordMetadata(r)
             // O ficheiro mudou desde então: o progresso guardado já não serve.
-            if (metadata.size != r.size) {
+            if (readable && metadata.size != r.size) {
                 r.e2e?.tempPath?.let { File(it).delete() }
-                resumeStore.update(r.taskId) { it.copy(size = metadata.size, chunks = null, e2e = null) }
+                r.copyPath?.let { File(it).delete() }
+                resumeStore.update(r.taskId) { it.copy(size = metadata.size, chunks = null, e2e = null, copyPath = null) }
             }
             sources[r.taskId] = Source(uri, r.parentId, replacesId = r.replacesId, treeUri = r.treeUri?.let(Uri::parse), overwrite = r.overwrite)
             update { list ->
@@ -248,6 +256,30 @@ class UploadManager @Inject constructor(
             }
             runTask(r.taskId, uri, metadata, r.parentId, overwrite = r.overwrite, replacesId = r.replacesId)
         }
+    }
+
+    /** Metadados guardados no registo (o original já não abre, mas há cópia local). */
+    private fun recordMetadata(r: UploadResumeStore.Record): FileMetadata {
+        val dot = r.name.lastIndexOf('.')
+        return FileMetadata(
+            displayName = r.name,
+            baseName = if (dot > 0) r.name.substring(0, dot) else r.name,
+            extension = if (dot in 0 until r.name.lastIndex) r.name.substring(dot + 1) else "",
+            mimeType = r.mime ?: "application/octet-stream",
+            // O tamanho do registo escolhe o mesmo caminho (chunks) que fez a cópia.
+            size = r.size,
+        )
+    }
+
+    /** Lê os metadados do original; se já não abrir e houver cópia local, usa o registo. */
+    private fun metadataFor(taskId: String, uri: Uri): FileMetadata {
+        val r = resumeStore.get(taskId)
+        val local = (r?.copyPath ?: r?.e2e?.tempPath)?.let(::File)?.takeIf { it.exists() }
+        if (r != null && local != null) {
+            val readable = runCatching { resolver.openFileDescriptor(uri, "r")?.use { true } ?: false }.getOrDefault(false)
+            if (!readable) return recordMetadata(r)
+        }
+        return readMetadata(uri)
     }
 
     /**
@@ -302,7 +334,9 @@ class UploadManager @Inject constructor(
         if (trackCreated) createdWanted += task.id
 
         val job = runTask(task.id, uri, metadata, parentId)
-        job.invokeOnCompletion { temp.delete() }
+        // Documento em claro: sobrescreve antes de apagar (newdoc_/newtext_ também
+        // são varridos no arranque se o processo morrer antes disto).
+        job.invokeOnCompletion { co.golink.tester.data.encryption.PlaintextCache.wipe(temp) }
 
         return task.id to job
     }
@@ -312,8 +346,24 @@ class UploadManager @Inject constructor(
     /** 413 com corpo {type:"upload_limit"}: o ficheiro passa o limite do plano do dono. */
     private class UploadLimitException(val limitFormatted: String) : RuntimeException("upload_limit")
 
+    /** 507 {type:"storage-full"}: a conta não tem espaço. Definitivo, sem repetições. */
+    private class StorageFullException : RuntimeException("storage_full")
+
+    /**
+     * Foto/vídeo tirado pela câmara da app (cache/camera, em claro): apaga-se
+     * quando a tarefa termina ou é descartada. Restos sem envio pendente são
+     * varridos no arranque (UploadResumeStore).
+     */
+    private fun deleteCameraCapture(taskId: String) {
+        val uri = sources[taskId]?.uri ?: return
+        if (uri.authority != "${context.packageName}.fileprovider") return
+        val name = uri.lastPathSegment ?: return
+        runCatching { File(File(context.cacheDir, "camera"), name).delete() }
+    }
+
     /** Falha HTTP definitiva: 413 por limite do plano vira [UploadLimitException]; o resto, mensagem. */
     private fun failHttp(code: Int, body: String?): Nothing {
+        if (code == 507) throw StorageFullException()
         if (code == 413 && body?.contains("\"upload_limit\"") == true) {
             val limit = runCatching {
                 kotlinx.serialization.json.Json.parseToJsonElement(body)
@@ -382,6 +432,7 @@ class UploadManager @Inject constructor(
                 }
                 }
                 update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Completed, progress = 1f, errorMessage = null, waitingForNetwork = false, networkError = false) else it } }
+                deleteCameraCapture(taskId)
                 forgetTask(taskId)
                 if (mobileBackup) _completedBackup.value = System.currentTimeMillis()
                 else _completed.value = System.currentTimeMillis()
@@ -401,6 +452,10 @@ class UploadManager @Inject constructor(
                     forgetTask(taskId)
                     val message = "Ficheiro acima do limite do teu plano (%s por ficheiro).".tr().format(t.limitFormatted)
                     update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Failed, errorMessage = message, waitingForNetwork = false, networkError = false, overLimit = t.limitFormatted) else it } }
+                } else if (t is StorageFullException) {
+                    forgetTask(taskId)
+                    val message = "Sem espaço de armazenamento disponível".tr()
+                    update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Failed, errorMessage = message, waitingForNetwork = false, networkError = false, storageFull = true) else it } }
                 } else {
                     val isNetwork = t is java.io.IOException
                     val isLocked = t.message == "e2e_locked"
@@ -448,6 +503,7 @@ class UploadManager @Inject constructor(
     }
 
     fun skipConflict(taskId: String) {
+        deleteCameraCapture(taskId)
         forgetTask(taskId)
         sources.remove(taskId)
         update { list -> list.filter { it.id != taskId } }
@@ -455,6 +511,7 @@ class UploadManager @Inject constructor(
 
     fun cancel(taskId: String) {
         jobs.remove(taskId)?.cancel()
+        deleteCameraCapture(taskId)
         forgetTask(taskId)
         sources.remove(taskId)
         update { list -> list.filter { it.id != taskId } }
@@ -467,8 +524,8 @@ class UploadManager @Inject constructor(
         val source = sources[taskId] ?: return
         val current = _tasks.value.firstOrNull { it.id == taskId } ?: return
         if (current.state != UploadTask.State.Failed) return
-        val metadata = readMetadata(source.uri).copy(displayName = current.name)
-        update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Queued, progress = 0f, errorMessage = null, networkError = false, e2eLocked = false, overLimit = null) else it } }
+        val metadata = metadataFor(taskId, source.uri).copy(displayName = current.name)
+        update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Queued, progress = 0f, errorMessage = null, networkError = false, e2eLocked = false, overLimit = null, storageFull = false) else it } }
         if (!source.mobileBackup) track(taskId, source.uri, metadata, source.parentId, overwrite = source.overwrite, replacesId = source.replacesId, treeUri = source.treeUri)
         runTask(taskId, source.uri, metadata, source.parentId, overwrite = source.overwrite, mobileBackup = source.mobileBackup, backupFolder = source.backupFolder, backupPath = source.backupPath, replacesId = source.replacesId)
     }
@@ -480,7 +537,7 @@ class UploadManager @Inject constructor(
     fun clearFinished() {
         val keptIds = _tasks.value.filter { it.state == UploadTask.State.Queued || it.state == UploadTask.State.Uploading }.map { it.id }.toSet()
         // Falhados descartados pelo utilizador: deixam de ser retomados.
-        _tasks.value.filter { it.id !in keptIds }.forEach { forgetTask(it.id) }
+        _tasks.value.filter { it.id !in keptIds }.forEach { deleteCameraCapture(it.id); forgetTask(it.id) }
         sources.keys.retainAll(keptIds)
         update { list -> list.filter { it.id in keptIds } }
     }
@@ -503,12 +560,18 @@ class UploadManager @Inject constructor(
     // Cancela e remove todos os uploads de backup, em curso ou não. Chamado ao
     // desactivar o backup automático: os jobs vivem num scope próprio e não
     // morrem com o worker.
-    fun cancelBackups() {
+    // [discardResume]: backup desligado — larga também o progresso por chunks.
+    // O worker parado pelo sistema mantém-no: o tick seguinte continua.
+    fun cancelBackups(discardResume: Boolean = false) {
         val ids = _tasks.value.filter { it.mobileBackup }.map { it.id }.toSet()
         ids.forEach { jobs.remove(it)?.cancel() }
+        if (discardResume) resumeStore.forgetBackups()
         sources.keys.removeAll(ids)
         update { list -> list.filterNot { it.id in ids } }
     }
+
+    /** Chamado pelo worker em cada execução: larga o progresso do backup com mais de 24 h. */
+    fun purgeStaleBackupResume() = resumeStore.purgeStaleBackups()
 
     fun clearAll() {
         _tasks.value.filterNot { it.mobileBackup }.forEach { forgetTask(it.id) }
@@ -586,7 +649,7 @@ class UploadManager @Inject constructor(
 
         val temp = File.createTempFile("e2e_", ".enc", context.cacheDir)
         try {
-            (resolver.openInputStream(uri) ?: error("não foi possível ler o ficheiro")).use { input ->
+            (openSourceStream(uri, mobileBackup) ?: error("não foi possível ler o ficheiro")).use { input ->
                 temp.outputStream().use { out ->
                     EncryptedFileCodec.encryptStream(input, out, dataKey)
                 }
@@ -768,8 +831,12 @@ class UploadManager @Inject constructor(
         markUploading(taskId)
         // Retoma (app fechada a meio): o ciphertext já está em disco e a data key
         // guardada no Keystore — continua dos chunks que o servidor já tem.
-        val tracked = !mobileBackup && resumeStore.isTracked(taskId)
-        val saved = resumeStore.get(taskId)?.e2e?.takeIf { tracked && File(it.tempPath).exists() }
+        // Backup: registo com id fixo pela upload_key, porque cada execução do
+        // worker cria uma tarefa nova; sem FGS o job é cortado aos ~10 min e o
+        // vídeo continuava do zero (e voltava a cifrar) em cada tick.
+        val resumeId = if (mobileBackup) backupResumeId(uri, metadata) else taskId
+        val tracked = if (mobileBackup) ensureBackupRecord(resumeId, uri, metadata) else resumeStore.isTracked(taskId)
+        val saved = resumeStore.get(resumeId)?.e2e?.takeIf { tracked && File(it.tempPath).exists() }
         val savedKey = saved?.let { runCatching { resumeStore.unwrapKey(it.keyIv, it.keyCt) }.getOrNull() }
         val resumed = saved != null && savedKey != null
 
@@ -815,20 +882,20 @@ class UploadManager @Inject constructor(
 
         val temp = when {
             resumed -> File(saved!!.tempPath)
-            tracked -> resumeStore.tempFileFor(taskId)
+            tracked -> resumeStore.tempFileFor(resumeId)
             else -> File.createTempFile("e2e_", ".enc", context.cacheDir)
         }
         try {
             // 1) cifra para o temp (memory-safe)
             if (!resumed) {
-                (resolver.openInputStream(uri) ?: error("não foi possível ler o ficheiro")).use { input ->
+                (openSourceStream(uri, mobileBackup) ?: error("não foi possível ler o ficheiro")).use { input ->
                     temp.outputStream().use { out ->
                         EncryptedFileCodec.encryptStream(input, out, dataKey)
                     }
                 }
                 if (tracked) {
                     val (iv, ct) = resumeStore.wrapKey(dataKey)
-                    resumeStore.update(taskId) {
+                    resumeStore.update(resumeId) {
                         it.copy(
                             chunks = null,
                             e2e = UploadResumeStore.E2EState(
@@ -850,8 +917,8 @@ class UploadManager @Inject constructor(
             // 2) envia o ciphertext por chunks (tamanho exato do temp), vários
             //    em paralelo; o temp lê-se em qualquer posição.
             val total = temp.length()
-            val chunkCount = maxOf(1, ((total + CHUNK_SIZE - 1) / CHUNK_SIZE).toInt())
-            val plan = chunkPlan(taskId, tracked, total, chunkCount) {
+            val chunkCount = chunkCountFor(total)
+            val plan = chunkPlan(resumeId, tracked, total, chunkCount) {
                 "${UUID.randomUUID()}-${metadata.displayName.replace(Regex("[\\\\/:*?\"<>|]"), "_")}"
             }
             val cipherName = plan.chunkName
@@ -862,7 +929,7 @@ class UploadManager @Inject constructor(
                     totalBytes = total,
                     readChunk = { i -> readAt(channel, i.toLong() * CHUNK_SIZE, minOf(CHUNK_SIZE.toLong(), total - i.toLong() * CHUNK_SIZE).toInt()) },
                     alreadyUploaded = plan.uploaded.toSet(),
-                    onChunkDone = { i -> if (tracked) resumeStore.markChunk(taskId, i) },
+                    onChunkDone = { i -> if (tracked) resumeStore.markChunk(resumeId, i) },
                 ) { chunkIndex, chunkBytes, isLast ->
                     api.uploadChunk(
                         name = textPart(if (nameEncrypted != null) "•" else metadata.baseName),
@@ -930,12 +997,40 @@ class UploadManager @Inject constructor(
                 e2eShareService.registerFileKeyForOwnerShares(fileId, dataKey)
             }
 
+            // Backup concluído: o registo (e o ciphertext) já não fazem falta.
+            if (mobileBackup) resumeStore.forget(resumeId)
             updateProgress(taskId, 1f)
+        } catch (t: Throwable) {
+            // Backup: só rede, cancelamento e conta cheia mantêm o progresso;
+            // o resto (limite do plano, 4xx, partes perdidas) recomeça do zero.
+            if (mobileBackup && t !is java.io.IOException && t !is kotlinx.coroutines.CancellationException && t !is StorageFullException) {
+                resumeStore.forget(resumeId)
+            }
+            throw t
         } finally {
             // Registado para retoma: o ciphertext fica até o upload sair da fila
             // (concluído/cancelado apaga-o via forgetTask).
             if (!tracked) temp.delete()
         }
+    }
+
+    private fun backupResumeId(uri: Uri, metadata: FileMetadata): String = "bk_" + backupUploadKey(uri, metadata)
+
+    /** Cria (se faltar) o registo de retoma de um ficheiro do backup. */
+    private fun ensureBackupRecord(resumeId: String, uri: Uri, metadata: FileMetadata): Boolean {
+        if (resumeStore.isTracked(resumeId)) return true
+        resumeStore.put(
+            UploadResumeStore.Record(
+                taskId = resumeId,
+                userId = restoredFor.orEmpty(),
+                uri = uri.toString(),
+                name = metadata.displayName,
+                size = metadata.size,
+                mime = metadata.mimeType,
+                backupKey = resumeId.removePrefix("bk_"),
+            ),
+        )
+        return true
     }
 
     private suspend fun uploadChunked(
@@ -957,14 +1052,19 @@ class UploadManager @Inject constructor(
         val mobileFlag = if (mobileBackup) "1" else null
 
         // Fonte com acesso aleatório (a maioria: ficheiros locais, MediaStore):
-        // chunks em paralelo e com retoma. Streams sem posição (alguns
-        // fornecedores na nuvem) seguem pelo envio sequencial abaixo.
-        val seekable = openSeekable(uri)
-        if (seekable != null) {
+        // chunks em paralelo e com retoma. Streams sem posição (Drive/Fotos na
+        // nuvem) são primeiro copiados para filesDir (registados) ou para o
+        // cache: assim também retomam e reenviam as partes em falta. Só se a
+        // cópia falhar com rede (ex.: sem espaço) seguem pelo envio sequencial.
+        val tracked = !mobileBackup && resumeStore.isTracked(taskId)
+        val savedCopy = resumeStore.get(taskId)?.copyPath?.let(::File)?.takeIf { tracked && it.exists() }
+        val direct = if (savedCopy == null) openSeekable(uri) else null
+        val copy = savedCopy ?: if (direct == null) localCopyForChunks(taskId, uri, tracked) else null
+        val seekable = direct ?: copy?.let { openSeekable(Uri.fromFile(it)) }
+        if (seekable != null) try {
             seekable.use { (pfd, channel) ->
                 val total = channel.size()
-                val chunkCount = maxOf(1, ((total + CHUNK_SIZE - 1) / CHUNK_SIZE).toInt())
-                val tracked = !mobileBackup && resumeStore.isTracked(taskId)
+                val chunkCount = chunkCountFor(total)
                 val plan = chunkPlan(taskId, tracked, total, chunkCount) { chunkOriginalName }
                 sendChunks(
                     taskId = taskId,
@@ -993,7 +1093,11 @@ class UploadManager @Inject constructor(
                 }
             }
             return
+        } finally {
+            // Cópia não registada (cache): não fica para trás. A registada sai com o registo.
+            if (copy != null && !tracked) copy.delete()
         }
+        if (copy != null && !tracked) copy.delete() // cópia vazia: não abriu como fonte
 
         val total = metadata.size
         var sent = 0L
@@ -1020,22 +1124,26 @@ class UploadManager @Inject constructor(
                 val isLast = reachedEof || (total > 0L && sent + filled >= total)
 
                 val chunkBytes = if (filled == buffer.size) buffer.copyOf() else buffer.copyOf(filled)
-                val chunkBody = chunkBytes.toRequestBody("application/octet-stream".toMediaTypeOrNull())
-                val chunkPart = MultipartBody.Part.createFormData("chunk", chunkOriginalName, chunkBody)
-                val response = api.uploadChunk(
-                    name = textPart(metadata.baseName),
-                    extension = textPart(metadata.extension),
-                    parentId = parentId?.let { textPart(it) },
-                    isLastChunk = textPart(if (isLast) "1" else "0"),
-                    chunkIndex = textPart(plainChunkIndex.toString()),
-                    totalChunks = if (total > 0L) textPart(((total + CHUNK_SIZE - 1) / CHUNK_SIZE).toString()) else null,
-                    overwriteExisting = if (overwrite && isLast) textPart("1") else null,
-                    mobileBackup = mobileFlag?.let { textPart(it) },
-                    folder = backupBucket?.let { textPart(it) },
-                    chunk = chunkPart,
-                )
-                if (response.code() == 409) throw ConflictException()
-                if (!response.isSuccessful) failHttp(response.code(), response.errorBody()?.string())
+                // Sem posição na fonte não há como reler um chunk: o atual fica em
+                // memória e repete-se aqui (rede/429/5xx) em vez de recomeçar do 0.
+                val response = sendSequentialChunk(taskId) {
+                    api.uploadChunk(
+                        name = textPart(metadata.baseName),
+                        extension = textPart(metadata.extension),
+                        parentId = parentId?.let { textPart(it) },
+                        isLastChunk = textPart(if (isLast) "1" else "0"),
+                        chunkIndex = textPart(plainChunkIndex.toString()),
+                        totalChunks = if (total > 0L) textPart(((total + CHUNK_SIZE - 1) / CHUNK_SIZE).toString()) else null,
+                        overwriteExisting = if (overwrite && isLast) textPart("1") else null,
+                        mobileBackup = mobileFlag?.let { textPart(it) },
+                        folder = backupBucket?.let { textPart(it) },
+                        devicePath = if (mobileBackup) backupPath?.takeIf { it.isNotBlank() }?.let { textPart(it) } else null,
+                        chunk = MultipartBody.Part.createFormData(
+                            "chunk", chunkOriginalName,
+                            chunkBytes.toRequestBody("application/octet-stream".toMediaTypeOrNull()),
+                        ),
+                    )
+                }
                 sent += filled
                 plainChunkIndex++
                 if (total > 0L) updateProgress(taskId, sent.toFloat() / total.toFloat())
@@ -1052,6 +1160,82 @@ class UploadManager @Inject constructor(
     }
 
     private class ChunkPlan(val chunkName: String, val uploaded: List<Int>)
+
+    /**
+     * Copia uma fonte sem posição para um ficheiro local: filesDir/upload_resume
+     * quando o envio está registado (retoma depois de fechar a app), senão o
+     * cache. Sem rede a falha propaga-se (o envio repete quando ela voltar);
+     * com rede (ex.: disco cheio) devolve null e segue o envio sequencial.
+     */
+    private suspend fun localCopyForChunks(taskId: String, uri: Uri, tracked: Boolean): File? {
+        val ctx = kotlinx.coroutines.currentCoroutineContext()
+        val dest = if (tracked) resumeStore.copyFileFor(taskId) else File.createTempFile("upl_", ".src", context.cacheDir)
+        try {
+            (resolver.openInputStream(uri) ?: error("Não foi possível ler o ficheiro")).use { input ->
+                dest.outputStream().use { out ->
+                    // Cancelável a meio (ficheiros grandes na nuvem demoram a copiar).
+                    val buf = ByteArray(256 * 1024)
+                    while (true) {
+                        ctx.ensureActive()
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                    }
+                }
+            }
+        } catch (e: java.io.IOException) {
+            dest.delete()
+            if (!isOnline()) throw e
+            return null
+        } catch (t: Throwable) {
+            dest.delete()
+            throw t
+        }
+        if (tracked) resumeStore.update(taskId) { it.copy(copyPath = dest.absolutePath, chunks = null) }
+        return dest
+    }
+
+    /**
+     * Um chunk do envio sequencial, com as mesmas repetições do [sendChunks]:
+     * sem rede espera que volte, 429/5xx com backoff, 409/507/4xx definitivos.
+     * Devolve a resposta com sucesso.
+     */
+    private suspend fun sendSequentialChunk(
+        taskId: String,
+        send: suspend () -> retrofit2.Response<okhttp3.ResponseBody>,
+    ): retrofit2.Response<okhttp3.ResponseBody> {
+        var attempt = 0
+        while (true) {
+            val result = try {
+                send()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: java.io.IOException) {
+                null
+            }
+            if (result != null) {
+                if (result.code() == 409) throw ConflictException()
+                if (result.isSuccessful) return result
+                val errBody = result.errorBody()?.string()
+                val retryable = result.code() == 429 || (result.code() >= 500 && result.code() != 507)
+                if (!retryable) failHttp(result.code(), errBody)
+                attempt++
+                if (attempt >= CHUNK_MAX_ATTEMPTS) failHttp(result.code(), errBody)
+                val retryAfter = result.headers()["Retry-After"]?.toLongOrNull()
+                connectivity.delayOrRetryNow(retryAfter?.times(1000) ?: backoffMs(attempt))
+                continue
+            }
+            if (!isOnline()) {
+                setWaiting(taskId, true)
+                try { waitForNetwork() } finally { setWaiting(taskId, false) }
+                continue
+            }
+            attempt++
+            if (attempt >= CHUNK_MAX_ATTEMPTS) throw ChunkNetworkException("Falha de rede ao enviar o ficheiro".tr())
+            setWaiting(taskId, true)
+            try { connectivity.delayOrRetryNow(backoffMs(attempt)) } finally { setWaiting(taskId, false) }
+        }
+    }
 
     /**
      * Nome do .part e chunks já aceites. Retoma o plano guardado se for do mesmo
@@ -1133,12 +1317,10 @@ class UploadManager @Inject constructor(
                         return body
                     }
                     val errBody = result.errorBody()?.string()
-                    if (isLast && result.code() == 422 && errBody?.contains("missing_chunks") == true) {
-                        val missing = Regex("""\d+""").findAll(errBody.substringAfter("missing_chunks\":", ""))
-                            .mapNotNull { it.value.toIntOrNull() }.toList()
-                        throw MissingChunksException(missing)
+                    if (isLast && result.code() == 422) {
+                        parseMissingChunks(errBody)?.let { throw MissingChunksException(it) }
                     }
-                    val retryable = result.code() == 429 || result.code() >= 500
+                    val retryable = isRetryableChunkStatus(result.code())
                     if (!retryable) failHttp(result.code(), errBody)
                     attempt++
                     if (attempt >= CHUNK_MAX_ATTEMPTS) failHttp(result.code(), errBody)
@@ -1362,13 +1544,36 @@ class UploadManager @Inject constructor(
     }
 
     /**
+     * Backup: no Android 10+ o MediaStore entrega as fotos sem a localização
+     * EXIF, a não ser que se peça o original com ACCESS_MEDIA_LOCATION. Só
+     * muda o stream lido — o [uri] (e por isso a upload_key) fica o mesmo.
+     * Sem a permissão, ou se o original não abrir, lê como antes.
+     */
+    private fun openSourceStream(uri: Uri, mobileBackup: Boolean): java.io.InputStream? {
+        if (mobileBackup &&
+            android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
+            uri.authority == android.provider.MediaStore.AUTHORITY &&
+            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_MEDIA_LOCATION) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            runCatching { resolver.openInputStream(android.provider.MediaStore.setRequireOriginal(uri)) }
+                .getOrNull()?.let { return it }
+        }
+        return resolver.openInputStream(uri)
+    }
+
+    /**
      * Chave de idempotência do backup: fixa por ficheiro deste aparelho (o uri
      * do MediaStore traz colecção e id; tamanho e nome mudam se for editado),
      * por isso um reenvio — no retry ou num tick seguinte — é reconhecido.
      */
-    private fun backupUploadKey(uri: Uri, metadata: FileMetadata): String {
+    private fun backupUploadKey(uri: Uri, metadata: FileMetadata): String =
+        backupUploadKey(uri, metadata.displayName, metadata.size)
+
+    /** A mesma upload_key que o envio manda (o worker usa-a para perguntar ao servidor antes de enviar). */
+    fun backupUploadKey(uri: Uri, displayName: String, size: Long): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
-            .digest("${deviceIdentity.id}|$uri|${metadata.size}|${metadata.displayName}".toByteArray())
+            .digest("${deviceIdentity.id}|$uri|$size|$displayName".toByteArray())
         return digest.take(24).joinToString("") { "%02x".format(it) }
     }
 
@@ -1385,6 +1590,23 @@ class UploadManager @Inject constructor(
         private const val CHUNK_PARALLEL = 3
         private const val CHUNK_MAX_ATTEMPTS = 8
         private const val CHUNK_THRESHOLD = 1024L * 1024 * 25
+
+        // Regras puras do envio por chunks (testadas em UploadChunkRulesTest).
+
+        internal fun chunkCountFor(total: Long): Int = maxOf(1, ((total + CHUNK_SIZE - 1) / CHUNK_SIZE).toInt())
+
+        /**
+         * Partes em falta de um 422 `{"message":"missing_chunks","missing_chunks":[…]}`
+         * (StoreFileChunksAction); null se o corpo não for este erro.
+         */
+        internal fun parseMissingChunks(body: String?): List<Int>? {
+            if (body == null || !body.contains("missing_chunks")) return null
+            val list = body.substringAfter("\"missing_chunks\":", "").substringAfter('[', "").substringBefore(']')
+            return Regex("""\d+""").findAll(list).mapNotNull { it.value.toIntOrNull() }.toList()
+        }
+
+        // 429 e 5xx repetem; 507 = conta sem espaço (repetir não muda nada).
+        internal fun isRetryableChunkStatus(code: Int): Boolean = code == 429 || (code >= 500 && code != 507)
     }
 
     // No fim da classe: o init corre por ordem textual e as corrotinas (IO)

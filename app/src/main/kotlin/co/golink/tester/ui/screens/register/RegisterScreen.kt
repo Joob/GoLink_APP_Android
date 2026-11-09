@@ -1,5 +1,7 @@
 package co.golink.tester.ui.screens.register
 
+import co.golink.tester.ui.common.autofillHint
+import co.golink.tester.ui.common.AutofillField
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -82,6 +84,7 @@ fun RegisterScreen(
             icon = Icons.Outlined.Email,
             type = KeyboardType.Email,
             enabled = !state.emailLocked,
+            autofill = AutofillField.NewEmail,
         )
         Spacer(Modifier.height(14.dp))
         Field(
@@ -93,6 +96,7 @@ fun RegisterScreen(
             icon = Icons.Outlined.Lock,
             type = KeyboardType.Password,
             password = true,
+            autofill = AutofillField.NewPassword,
         )
         Spacer(Modifier.height(14.dp))
         Field(
@@ -164,6 +168,7 @@ private fun Field(
     password: Boolean = false,
     enabled: Boolean = true,
     onDone: (() -> Unit)? = null,
+    autofill: AutofillField? = null,
 ) {
     Text(
         text = label,
@@ -191,6 +196,7 @@ private fun Field(
         ),
         keyboardActions = KeyboardActions(onDone = { onDone?.invoke() }),
         shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth()
+            .then(if (autofill == null) Modifier else Modifier.autofillHint(autofill, onFill = onChange)),
     )
 }

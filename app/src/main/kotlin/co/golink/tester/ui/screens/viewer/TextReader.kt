@@ -121,6 +121,7 @@ internal fun TextReader(
     editing: Boolean,
     draft: String,
     onDraftChange: (String) -> Unit,
+    truncated: Boolean = false,
 ) {
     val ext = name.substringAfterLast('.', "").lowercase()
     val isJson = ext == "json"
@@ -181,6 +182,19 @@ internal fun TextReader(
                         }
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+                    // Ficheiro maior que o limite de leitura: só se mostra o início e a
+                    // edição fica bloqueada (gravar apagaria o resto do ficheiro).
+                    if (truncated && !editing) {
+                        Text(
+                            "Pré-visualização parcial: o ficheiro é demasiado grande para ser mostrado ou editado aqui.".tr(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f))
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                        )
+                    }
 
                     Box(Modifier.weight(1f)) {
                         if (editing) {

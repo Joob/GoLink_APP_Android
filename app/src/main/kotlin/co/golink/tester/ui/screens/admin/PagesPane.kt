@@ -87,7 +87,7 @@ class PagesViewModel @Inject constructor(
         viewModelScope.launch {
             repository.pages()
                 .onSuccess { l -> _state.update { it.copy(pages = l, isLoading = false) } }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (${t.message})") } }
+                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (%s)".tr().format(t.message.orEmpty())) } }
         }
     }
 

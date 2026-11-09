@@ -40,13 +40,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -60,6 +60,7 @@ import co.golink.tester.data.legacy.LegacyOpenedItem
 import co.golink.tester.domain.legacy.LegacyInviteDto
 import co.golink.tester.domain.legacy.LegacyOpenDto
 import co.golink.tester.ui.i18n.lt
+import co.golink.tester.ui.i18n.tr
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -164,7 +165,7 @@ private fun PublicShell(onBack: () -> Unit, snackbar: SnackbarHostState? = null,
             TopAppBar(
                 title = { Text("Legacy", fontWeight = FontWeight.SemiBold) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null) }
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar".tr()) }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
@@ -261,9 +262,12 @@ fun LegacyCheckinScreen(token: String, onBack: () -> Unit, vm: LegacyPublicViewM
 fun LegacyOpenScreen(token: String, onBack: () -> Unit, vm: LegacyPublicViewModel = hiltViewModel()) {
     LaunchedEffect(token) { vm.loadOpen(token) }
     val state by vm.open.collectAsStateWithLifecycle()
-    var code by rememberSaveable { mutableStateOf("") }
+    // Fora do saved state: o código não fica no Bundle da atividade.
+    var code by remember { mutableStateOf("") }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.saved) { state.saved?.let { snackbar.showSnackbar(it) } }
+    // Código a ser escrito ou conteúdo decifrado: fora de capturas e da miniatura dos recentes.
+    LegacySecureWhile(code.isNotEmpty() || state.items != null)
     PublicShell(onBack, snackbar) {
         val vault = state.vault
         val items = state.items
@@ -286,7 +290,8 @@ fun LegacyOpenScreen(token: String, onBack: () -> Unit, vm: LegacyPublicViewMode
                     label = { Text(lt("open_code")) },
                     singleLine = true,
                     textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, autoCorrectEnabled = false),
+                    // Password: o teclado não aprende nem sugere o código.
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, autoCorrectEnabled = false, keyboardType = KeyboardType.Password),
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                 )
                 if (state.wrongCode) Text(lt("open_wrong_code"), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 6.dp))

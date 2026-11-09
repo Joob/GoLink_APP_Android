@@ -3,6 +3,8 @@ package co.golink.tester.ui.i18n
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -52,6 +54,7 @@ fun LanguageMenu(
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
+                .minimumInteractiveComponentSize()
                 .clip(RoundedCornerShape(999.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
                 .border(
@@ -59,7 +62,7 @@ fun LanguageMenu(
                     MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
                     RoundedCornerShape(999.dp),
                 )
-                .clickable { open = true }
+                .clickable(role = Role.Button) { open = true }
                 .padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
         ) {
             Text(current.flag, fontSize = 15.sp)

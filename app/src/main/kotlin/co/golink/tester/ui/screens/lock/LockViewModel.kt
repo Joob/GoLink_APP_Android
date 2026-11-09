@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import co.golink.tester.data.AppLogger
 import co.golink.tester.data.auth.AuthRepository
+import co.golink.tester.data.settings.AppLockBiometricKey
 import co.golink.tester.data.settings.AppLockManager
 import co.golink.tester.data.settings.AppSecurityPreferences
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -25,6 +26,7 @@ class LockViewModel @Inject constructor(
     private val lockManager: AppLockManager,
     private val authRepository: AuthRepository,
     private val logger: AppLogger,
+    private val bioKey: AppLockBiometricKey,
 ) : ViewModel() {
 
     /** Biometria ligada e utilizável neste momento. */
@@ -53,6 +55,8 @@ class LockViewModel @Inject constructor(
             val ok = withContext(Dispatchers.Default) { securityPrefs.verifyPin(pin) }
             if (ok) {
                 securityPrefs.resetFailures()
+                // PIN certo prova a identidade: a biometria invalidada pode voltar a valer.
+                if (bioKey.invalidated) bioKey.reset()
                 logger.log("Security", "Desbloqueado com PIN")
                 lockManager.unlock()
             } else {
@@ -72,9 +76,34 @@ class LockViewModel @Inject constructor(
         }
     }
 
-    fun onBiometricSuccess() {
+    /** Chave do Keystore para o CryptoObject (ou invalidada / sem suporte). */
+    fun biometricKeyState(): AppLockBiometricKey.State = bioKey.state()
+
+    fun resetBiometricKey(): AppLockBiometricKey.State {
+        bioKey.reset()
+        return bioKey.state()
+    }
+
+    /**
+     * [cipher] = o do CryptoObject autenticado; [usedCrypto] = o prompt levou CryptoObject.
+     * Devolve false se a chave não abriu (o ecrã volta a mostrar o pedido).
+     */
+    fun onBiometricSuccess(cipher: javax.crypto.Cipher?, usedCrypto: Boolean): Boolean {
+        if (usedCrypto && !bioKey.verify(cipher)) {
+            logger.log("Security", "Biometria sem CryptoObject válido")
+            return false
+        }
         securityPrefs.resetFailures()
         logger.log("Security", "Desbloqueado com biometria")
+        lockManager.unlock()
+        return true
+    }
+
+    /** Sem PIN e biometria invalidada: o código do telemóvel prova a identidade. */
+    fun onDeviceCredentialSuccess() {
+        bioKey.reset()
+        securityPrefs.resetFailures()
+        logger.log("Security", "Desbloqueado com o código do telemóvel (biometria alterada)")
         lockManager.unlock()
     }
 

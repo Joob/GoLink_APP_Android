@@ -19,6 +19,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import co.golink.tester.data.AppLogger
 import co.golink.tester.data.settings.AppLockManager
+import co.golink.tester.data.settings.SecureScreens
 import co.golink.tester.ui.navigation.AppNavHost
 import co.golink.tester.ui.theme.VueFileManagerTheme
 import dagger.hilt.android.AndroidEntryPoint
@@ -57,6 +58,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         // Só no arranque "a sério": ao recriar ou ao voltar pelos recentes o
         // sistema reentrega o Intent original do lembrete.
         val fromHistory = (intent.flags and android.content.Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
+        externalStart = savedInstanceState == null && !fromHistory && !isLauncherIntent(intent)
         if (savedInstanceState == null && !fromHistory) {
             co.golink.tester.ui.navigation.CalendarDeepLink.from(intent)
             co.golink.tester.ui.navigation.InboxDeepLink.from(intent)
@@ -75,7 +77,11 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             when (event) {
                 Lifecycle.Event.ON_START -> {
                     lockManager.onForeground()
-                    legacyCheckin.onForeground()
+                    // Check-in do Legacy só quando o utilizador abre a app (não por share,
+                    // App Link ou notificação) e só depois de passar o bloqueio da app.
+                    checkinWhenUnlocked = !externalStart
+                    externalStart = false
+                    maybeLegacyCheckin()
                     sessionManager.resyncIfNeeded()
                     logger.log("App", "App em primeiro plano")
                 }
@@ -89,6 +95,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                     applyPrivacyMode()
                 }
                 Lifecycle.Event.ON_STOP -> {
+                    checkinWhenUnlocked = false
                     // Rodar o ecrã / mudar de tema recria a atividade: não é sair da app.
                     if (!isChangingConfigurations) lockManager.onBackground()
                     logger.log("App", "App em segundo plano")
@@ -97,6 +104,10 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             }
         })
         applyPrivacyMode()
+        // Ecrãs seguros (Pass) a entrar/sair: recalcula o FLAG_SECURE.
+        lifecycleScope.launch { SecureScreens.active.collect { applyPrivacyMode() } }
+        // PIN/biometria aceites: o check-in pendente deste arranque conta agora.
+        lifecycleScope.launch { lockManager.locked.collect { maybeLegacyCheckin() } }
         setContent {
             VueFileManagerTheme(darkTheme = co.golink.tester.ui.theme.AppThemeMode.isDark()) {
                 androidx.compose.foundation.layout.Box(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
@@ -112,13 +123,16 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 
     // Android 13+: só a miniatura dos recentes fica em branco (capturas continuam).
     // Antes do 13 não há alternativa ao FLAG_SECURE (bloqueia também capturas).
+    // O FLAG_SECURE é decidido só aqui: modo privado OU um ecrã seguro ativo (Pass).
     private fun applyPrivacyMode() {
-        val on = lockManager.hideInRecents
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val hide = lockManager.hideInRecents || lockManager.locksOnLeave
+        val legacy = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+        if (!legacy) {
             // Folhas/popups são janelas próprias (a camada não as tapa): sem captura,
             // ao voltar o sistema mostra o splash em vez do conteúdo.
-            setRecentsScreenshotEnabled(!(on || lockManager.locksOnLeave))
-        } else if (on) {
+            setRecentsScreenshotEnabled(!hide)
+        }
+        if (SecureScreens.active.value > 0 || (legacy && hide)) {
             window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         } else {
             window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
@@ -150,9 +164,24 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
     }
 
     // Lembrete do calendário tocado com a app já aberta.
+    // Arranque por share, App Link ou notificação: esse ON_START não é um check-in do Legacy.
+    private var externalStart = false
+    private var checkinWhenUnlocked = false
+
+    private fun isLauncherIntent(intent: android.content.Intent?): Boolean =
+        intent?.action == android.content.Intent.ACTION_MAIN && intent.hasCategory(android.content.Intent.CATEGORY_LAUNCHER)
+
+    private fun maybeLegacyCheckin() {
+        if (!checkinWhenUnlocked || lockManager.locked.value) return
+        checkinWhenUnlocked = false
+        legacyCheckin.onForeground()
+    }
+
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // Chega antes do ON_START quando a app volta do fundo.
+        externalStart = !isLauncherIntent(intent)
         co.golink.tester.ui.navigation.CalendarDeepLink.from(intent)
         co.golink.tester.ui.navigation.InboxDeepLink.from(intent)
         co.golink.tester.ui.navigation.AppLinkRouter.from(intent, fromNewIntent = true)

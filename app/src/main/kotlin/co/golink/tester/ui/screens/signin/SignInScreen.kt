@@ -1,5 +1,7 @@
 package co.golink.tester.ui.screens.signin
 
+import co.golink.tester.ui.common.autofillHint
+import co.golink.tester.ui.common.AutofillField
 import co.golink.tester.ui.i18n.tr
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -86,7 +88,8 @@ fun SignInScreen(
                 imeAction = ImeAction.Next,
             ),
             shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth()
+                .autofillHint(AutofillField.Email, onFill = viewModel::onEmail),
         )
         Spacer(Modifier.height(14.dp))
 
@@ -111,7 +114,7 @@ fun SignInScreen(
                 }
             },
             shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().autofillHint(AutofillField.Password, onFill = viewModel::onPassword),
         )
 
         Row(

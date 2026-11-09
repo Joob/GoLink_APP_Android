@@ -57,14 +57,14 @@ fun SplashScreen() {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Bottom,
             ) {
-                Text("Encrypted Cloud Storage", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("Armazenamento na cloud cifrado".tr(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))
-                Text("Encrypted & Private", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Cifrado e privado".tr(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(48.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Made with ", style = MaterialTheme.typography.bodySmall)
+                    Text("Feito com ".tr(), style = MaterialTheme.typography.bodySmall)
                     Icon(Icons.Filled.Favorite, contentDescription = null, tint = Color(0xFFE53E3E), modifier = Modifier.size(14.dp))
-                    Text(" by GoLink.co", style = MaterialTheme.typography.bodySmall)
+                    Text(" por GoLink.co".tr(), style = MaterialTheme.typography.bodySmall)
                 }
             }
         }

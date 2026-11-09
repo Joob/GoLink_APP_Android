@@ -80,7 +80,7 @@ fun E2EEncryptedFlash(
             )
             Spacer(Modifier.width(6.dp))
             Text(
-                text = "End-to-end encrypted",
+                text = "Encriptado ponta-a-ponta".tr(),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = BrandGreen,
@@ -107,7 +107,7 @@ fun E2EEncryptedBadge(modifier: Modifier = Modifier) {
         )
         Spacer(Modifier.width(6.dp))
         Text(
-            text = "End-to-end encrypted",
+            text = "Encriptado ponta-a-ponta".tr(),
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
             color = BrandGreen,

@@ -32,18 +32,23 @@ object I18n {
 
     fun current(): Lang = languages.firstOrNull { it.code == lang } ?: languages.first()
 
-    // Instalação nova (sem escolha guardada) arranca em inglês.
+    // Instalação nova (sem escolha guardada) segue a língua do sistema, se suportada; senão inglês.
     var lang by mutableStateOf(EN)
         private set
 
+    /** Chamado quando o utilizador escolhe a língua (a App envia-a ao servidor: emails/push). */
+    @Volatile var onUserChange: ((String) -> Unit)? = null
+
     fun init(context: Context) {
-        lang = prefs(context).getString(KEY, EN) ?: EN
+        val system = java.util.Locale.getDefault().language.lowercase()
+        lang = prefs(context).getString(KEY, null) ?: system.takeIf { it in listOf(PT, EN, FR, ES) } ?: EN
     }
 
     fun set(context: Context, code: String) {
         if (code !in listOf(PT, EN, FR, ES)) return
         prefs(context).edit().putString(KEY, code).apply()
         lang = code
+        onUserChange?.invoke(code)
     }
 
     fun t(pt: String): String = when (lang) {
@@ -333,3 +338,12 @@ object I18n {
 
 /** Atalho: "Texto em PT".tr() devolve a tradução no idioma activo. */
 fun String.tr(): String = I18n.t(this)
+
+/**
+ * Plural simples: [one] e [other] são chaves PT com "%d" (ex. "%d entrada" / "%d entradas").
+ * Singular para 1 (e para 0 em francês, que diz "0 entrée").
+ */
+fun trPlural(one: String, other: String, n: Int): String {
+    val singular = n == 1 || (n == 0 && I18n.lang == I18n.FR)
+    return (if (singular) one else other).tr().format(n)
+}

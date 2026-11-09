@@ -561,11 +561,12 @@ private fun StorageCard(storage: StorageUsage, canUpgrade: Boolean, onUpgrade: (
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        // Como na web: plano fixo mostra sempre o upgrade; com pouco espaço o apelo é mais forte.
-        if (storage.isLow || canUpgrade) {
+        // Sem apelo à compra na app (política de pagamentos da Play): com pouco
+        // espaço só leva ao plano atual, onde se explica que a compra é no site.
+        if (storage.isLow && canUpgrade) {
             Spacer(Modifier.height(6.dp))
             Text(
-                (if (storage.isLow) "Obter mais espaço".tr() else "Melhorar plano".tr()) + " →",
+                "Ver plano".tr() + " →",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = accent,

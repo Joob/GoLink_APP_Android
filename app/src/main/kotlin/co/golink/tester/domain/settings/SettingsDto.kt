@@ -188,6 +188,9 @@ data class TokenSource(
 @Serializable
 data class CreateTokenRequest(
     val name: String,
+    // Step-up exigido pelo servidor: password atual ou passkey (purpose create_token).
+    val password: String? = null,
+    val passkey_token: String? = null,
 )
 
 @Serializable

@@ -90,6 +90,14 @@ object Envelope {
 
     fun deriveKey(password: String, salt: ByteArray, ops: Long, mem: Long, kdfAlg: String = KDF_ALG_ARGON2): ByteArray {
         val pw = password.toByteArray(Charsets.UTF_8)
+        return try {
+            deriveKeyBytes(pw, salt, ops, mem, kdfAlg)
+        } finally {
+            pw.fill(0)
+        }
+    }
+
+    private fun deriveKeyBytes(pw: ByteArray, salt: ByteArray, ops: Long, mem: Long, kdfAlg: String): ByteArray {
         if (kdfAlg == KDF_ALG_PBKDF2) {
             // PBKDF2-HMAC-SHA256 sobre os bytes da password como chave HMAC, IGUAL
             // ao WebCrypto da Web (deriveBits com key = TextEncoder().encode(pw)).
@@ -130,8 +138,11 @@ object Envelope {
                 for (k in 0 until hLen) t[k] = (t[k].toInt() xor u[k].toInt()).toByte()
             }
             System.arraycopy(t, 0, out, (i - 1) * hLen, hLen)
+            t.fill(0)
+            u.fill(0)
         }
-        return out.copyOf(dkLen)
+        block.fill(0)
+        return out.copyOf(dkLen).also { out.fill(0) }
     }
 
     // PBKDF2: ops = iterações (600k = OWASP, igual à Web), mem não se aplica (0).
@@ -178,6 +189,9 @@ object Envelope {
     }
 
     fun unwrapSecretKey(ciphertext: ByteArray, nonce: ByteArray, wrappingKey: ByteArray): ByteArray {
+        // O nativo lê sempre 32 B de chave e 24 B de nonce: tamanhos errados = leitura fora do buffer.
+        require(wrappingKey.size == KEY_BYTES) { "unwrap: wrapping key tem de ter 32 bytes" }
+        require(nonce.size == SecretBox.NONCEBYTES && ciphertext.size >= SecretBox.MACBYTES) { "e2e_bad_blob: wrap com tamanhos inválidos" }
         val out = ByteArray(ciphertext.size - SecretBox.MACBYTES)
         check(ls.cryptoSecretBoxOpenEasy(out, ciphertext, ciphertext.size.toLong(), nonce, wrappingKey)) { "unwrap falhou (segredo errado)" }
         return out

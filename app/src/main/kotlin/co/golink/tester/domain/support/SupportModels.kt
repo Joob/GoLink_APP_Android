@@ -116,6 +116,8 @@ data class MessageAttributes(
     val author_title: String? = null,
     val author_avatar: String? = null,
     val author_is_team: Boolean = false,
+    /** Escrita por quem está a ver (servidores antigos não o enviam → null). */
+    val is_mine: Boolean? = null,
     val created_at: String? = null,
     val message_type: String? = null,
     val deletion_request: DeletionRequestState? = null,

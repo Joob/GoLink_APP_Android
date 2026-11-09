@@ -38,10 +38,20 @@ object PassCrypto {
         val alg = (kdf["alg"] as? JsonPrimitive)?.contentOrNull ?: Envelope.KDF_ALG_PBKDF2
         val ops = (kdf["ops"] as? JsonPrimitive)?.longOrNull ?: 600_000L
         val mem = (kdf["mem"] as? JsonPrimitive)?.longOrNull ?: 0L
+        // Os parâmetros vêm do ficheiro: limitar antes de derivar (CPU/OOM nativo, overflow de Int).
+        when (alg) {
+            Envelope.KDF_ALG_PBKDF2 -> require(ops in 100_000L..5_000_000L) { "kdf" }
+            Envelope.KDF_ALG_ARGON2 -> require(ops in 1L..20L && mem in 8_192L..(1L shl 30)) { "kdf" }
+            else -> throw IllegalArgumentException("kdf")
+        }
         val salt = Envelope.unb64((kdf["salt"] as JsonPrimitive).content)
         val key = Envelope.deriveKey(password, salt, ops, mem, alg)
         val data = (file["data"] as JsonPrimitive).content
-        val list = decryptJson(data, key) as? JsonArray ?: return emptyList()
+        val list = try {
+            decryptJson(data, key) as? JsonArray ?: return emptyList()
+        } finally {
+            key.fill(0)
+        }
         return list.mapNotNull { (it as? JsonObject)?.let(PassImporters::fromPortable) }
     }
 

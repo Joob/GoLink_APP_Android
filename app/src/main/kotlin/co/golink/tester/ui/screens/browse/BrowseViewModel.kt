@@ -166,6 +166,8 @@ data class SearchSheetState(
     val recents: List<BrowseItem> = emptyList(),
     val loading: Boolean = false,
     val recentsLoading: Boolean = false,
+    /** Índice de nomes cifrados cortado pelo servidor (> 10 000 itens). */
+    val indexTruncated: Boolean = false,
 )
 
 /** Atividade recente (modo Latest): uma página por secção, pela ordem do ecrã. */
@@ -310,9 +312,9 @@ class BrowseViewModel @Inject constructor(
         viewModelScope.launch {
             downloader.events.collect { ev ->
                 when (ev) {
-                    is FileDownloader.Event.Started -> _state.update { it.copy(toast = "Download iniciado: ${ev.name}") }
-                    is FileDownloader.Event.Completed -> _state.update { it.copy(toast = "Download concluído: ${ev.name}") }
-                    is FileDownloader.Event.Failed -> _state.update { it.copy(toast = "Falha em ${ev.name}: ${ev.message}") }
+                    is FileDownloader.Event.Started -> _state.update { it.copy(toast = "Download iniciado: %s".tr().format(ev.name)) }
+                    is FileDownloader.Event.Completed -> _state.update { it.copy(toast = "Download concluído: %s".tr().format(ev.name)) }
+                    is FileDownloader.Event.Failed -> _state.update { it.copy(toast = "Falha em %s: %s".tr().format(ev.name, ev.message)) }
                 }
             }
         }
@@ -564,7 +566,7 @@ class BrowseViewModel @Inject constructor(
                 repository.searchProgressive(query, tab).collect { items ->
                     if (current()) _searchSheet.update { it.copy(results = items) }
                 }
-                if (current()) _searchSheet.update { it.copy(loading = false) }
+                if (current()) _searchSheet.update { it.copy(loading = false, indexTruncated = repository.nameIndexTruncated) }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (t: Throwable) {
@@ -883,9 +885,14 @@ class BrowseViewModel @Inject constructor(
 
     /** Envia para [parentId]; os nomes visíveis só servem se for a pasta aberta. */
     fun uploadTo(uris: List<Uri>, parentId: String?) {
-        val names = if (parentId == currentParentId()) visibleFileNames() else emptyMap()
+        val visible = if (parentId == currentParentId()) visibleFileNames() else emptyMap()
         viewModelScope.launch {
-            if (!canUpload(uris)) return@launch
+            if (!canUpload(uris, parentId)) return@launch
+            // Só as páginas carregadas não chegam (20 por página): junta o índice de
+            // nomes cifrados da pasta de destino (espaço privado).
+            val names = if (isPrivateTarget(parentId)) {
+                runCatching { repository.encryptedFileNamesIn(parentId) }.getOrDefault(emptyMap()) + visible
+            } else visible
             // Ler metadados (ContentResolver) de cada ficheiro fora da main thread.
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 uris.forEach { uploadManager.enqueue(it, parentId, names) }
@@ -895,19 +902,21 @@ class BrowseViewModel @Inject constructor(
 
     /**
      * Verificações antes de enviar, como na web: nenhum ficheiro acima do limite
-     * de envio (admin) e espaço para o lote inteiro (só em contas com teto).
+     * por ficheiro do utilizador (plano pago ou Free, meta.upload do /api/user) e
+     * espaço para o lote inteiro (só em contas com teto). Em pastas de equipa ou
+     * partilhadas conta o limite do dono: decide o servidor (413 upload_limit).
      * Sem resposta do servidor deixa seguir — ele valida no fim. Recusa o lote
      * todo e mostra o motivo.
      */
-    private suspend fun canUpload(uris: List<Uri>): Boolean {
+    private suspend fun canUpload(uris: List<Uri>, parentId: String?): Boolean {
         val files = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { uploadManager.sizes(uris) }
 
-        val limit = configRepository.load().getOrNull()?.upload
-        val limitBytes = limit?.limitBytes
+        val user = (sessionManager.state.value as? AuthState.Authenticated)?.user
+        val limitBytes = user?.uploadLimitBytes?.takeIf { isPrivateTarget(parentId) }
         if (limitBytes != null) {
             val tooBig = files.firstOrNull { it.second > limitBytes }
             if (tooBig != null) {
-                val label = limit.limitLabel ?: formatBytes(limitBytes)
+                val label = user?.uploadLimitLabel ?: formatBytes(limitBytes)
                 _state.update {
                     it.copy(
                         uploadBlocked = UploadBlock(
@@ -1023,12 +1032,9 @@ class BrowseViewModel @Inject constructor(
         }
     }
 
-    private fun copyToClipboard(label: String, text: String) {
-        runCatching {
-            val cm = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            cm.setPrimaryClip(android.content.ClipData.newPlainText(label, text))
-        }
-    }
+    // Links com #k= (chave E2E) vão marcados como sensíveis.
+    private fun copyToClipboard(label: String, text: String) =
+        co.golink.tester.ui.common.copyLinkToClipboard(appContext, label, text)
 
     fun uploadFolder(treeUri: Uri) {
         val parentId = currentParentId()
@@ -1041,7 +1047,7 @@ class BrowseViewModel @Inject constructor(
                 _state.update { it.copy(toast = "Pasta vazia ou sem ficheiros".tr()) }
                 return@launch
             }
-            if (!canUpload(entries.map { it.first })) return@launch
+            if (!canUpload(entries.map { it.first }, parentId)) return@launch
             // Mantém a estrutura: cria a pasta raiz e as subpastas antes de enviar
             // (antes ia tudo solto para a pasta atual e os nomes repetidos colidiam).
             val encryptName = isPrivateNameContext() && isPrivateTarget(parentId)
@@ -1837,6 +1843,7 @@ class BrowseViewModel @Inject constructor(
                 if (mode is BrowseMode.TeamFolder) clearTeamFolderNames(mode, all)
             }
             .onFailure { t ->
+                if (t.isFolderGone(mode)) return leaveGoneFolder()
                 // Numa recarga silenciosa não apagamos a vista por um erro de rede.
                 if (silent) {
                     _state.update { it.copy(isRefreshing = false) }
@@ -1880,12 +1887,20 @@ class BrowseViewModel @Inject constructor(
             is BrowseMode.SharedWithMe -> teamsRepository.sharedWithMeFingerprint(mode.id)
             // Team Folders próprias: uploads de membros / da web aparecem logo.
             is BrowseMode.TeamFolder -> teamsRepository.teamFolderFingerprint(mode.id)
-            // Sem endpoint de fingerprint: assinatura da 1.ª página (links criados/revogados/expirados).
-            BrowseMode.Shared -> repository.listShared(page = 1, query = browseQuery()).map { p ->
-                "${p.total}|" + p.items.joinToString(",") { "${it.id}:${it.share?.token}:${it.share?.active}" }
+            // Links públicos: fingerprint leve (antes descarregava e decifrava a 1.ª página a cada 5 s).
+            // Um servidor sem o endpoint (404) cai na assinatura da 1.ª página.
+            BrowseMode.Shared -> repository.sharedFingerprint().recoverCatching { t ->
+                if (t.message != "HTTP 404") throw t
+                repository.listShared(page = 1, query = browseQuery()).getOrThrow().let { p ->
+                    "${p.total}|" + p.items.joinToString(",") { "${it.id}:${it.share?.token}:${it.share?.active}" }
+                }
             }
             else -> return
-        }.getOrNull() ?: return
+        }.getOrElse { t ->
+            // Pasta apagada ou sem acesso (403/404): sai dela em vez de sondar um 404 a cada 5 s.
+            if (mode == _state.value.mode && t.isFolderGone(mode)) leaveGoneFolder()
+            return
+        }
         if (mode != _state.value.mode) return // navegou entretanto
 
         val previous = lastFingerprint
@@ -1894,6 +1909,25 @@ class BrowseViewModel @Inject constructor(
             _remoteChanges.value++
             loadCurrent(silent = true)
         }
+    }
+
+    /** 403/404 de uma pasta concreta (não da raiz): foi apagada ou o acesso acabou. */
+    private fun Throwable.isFolderGone(mode: BrowseMode): Boolean {
+        val id = when (mode) {
+            is BrowseMode.Folder -> mode.id
+            is BrowseMode.SharedWithMe -> mode.id
+            is BrowseMode.TeamFolder -> mode.id
+            else -> null
+        }
+        return id != null && (message == "HTTP 403" || message == "HTTP 404")
+    }
+
+    /** Volta à raiz da secção (1.º crumb), como a web. */
+    private fun leaveGoneFolder() {
+        lastFingerprint = null
+        _state.update { it.copy(toast = "Já não tens acesso a esta pasta".tr()) }
+        val first = _state.value.crumbs.firstOrNull()
+        if (first == null || (first.origin == null && first.id != null)) openRoot() else goToCrumb(0)
     }
 
     private fun handleSimple(result: Result<List<BrowseItem>>, mode: BrowseMode) {

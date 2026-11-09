@@ -144,13 +144,13 @@ class NotificationsRepository @Inject constructor(
     /**
      * Com a app à vista, de minuto a minuto (recua se falhar) e já ao voltar.
      * Em segundo plano não há ecrã a atualizar, mas sem push só isto mantém o
-     * badge: um pedido de vez em quando, sem repetir o que acabou de ser pedido.
+     * badge: um pedido leve (só o contador) de vez em quando.
      */
     private suspend fun poll(shown: Boolean) {
         if (!shown) delay(BACKGROUND_POLL_MS)
         var failures = 0
         while (true) {
-            val ok = refresh().isSuccess
+            val ok = (if (shown) refresh() else backgroundCheck()).isSuccess
             failures = if (ok) 0 else failures + 1
             if (shown) {
                 if (ok) restoreBadge()
@@ -159,6 +159,32 @@ class NotificationsRepository @Inject constructor(
                 delay(BACKGROUND_POLL_MS)
             }
         }
+    }
+
+    /**
+     * Em segundo plano só interessa o badge: pede o contador (e a data da mais
+     * recente) e só vai buscar a lista inteira quando difere do que já há. Um
+     * servidor antigo (sem a rota) cai no refresh completo.
+     */
+    private suspend fun backgroundCheck(): Result<Unit> {
+        val response = try {
+            api.unreadCount()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            return Result.failure(e)
+        }
+        if (response.code() == 404) return refresh()
+        if (!response.isSuccessful) return Result.failure(IllegalStateException("HTTP ${response.code()}"))
+        val body = response.body() ?: return refresh()
+        val list = _items.value
+        val localLatest = list.mapNotNull { it.createdAtInstant?.epochSecond }.maxOrNull()
+        val remoteLatest = body.latest_at?.let { runCatching { java.time.Instant.parse(it).epochSecond }.getOrNull() }
+        // A lista traz no máximo UNREAD_CAP não lidas (GetUserNotificationsController).
+        val same = loaded.value && pending.get() == 0 &&
+            body.unread.coerceAtMost(UNREAD_CAP) == list.count { !it.isRead } &&
+            remoteLatest == localLatest
+        return if (same) Result.success(Unit) else refresh()
     }
 
     // O contador não muda quando o badge some sem passar por aqui: notificação
@@ -220,5 +246,6 @@ class NotificationsRepository @Inject constructor(
     private companion object {
         const val FOREGROUND_POLL_MS = 60_000L
         const val BACKGROUND_POLL_MS = 15 * 60_000L
+        const val UNREAD_CAP = 500
     }
 }

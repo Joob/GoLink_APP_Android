@@ -16,11 +16,17 @@ import co.golink.tester.network.SupportApi
 import co.golink.tester.ui.i18n.tr
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -28,6 +34,7 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.source
 import retrofit2.Response
 import javax.inject.Inject
 
@@ -39,6 +46,7 @@ data class PickedFile(val uri: Uri, val name: String, val size: Long)
 
 /** Lê nome/tamanho e converte os ficheiros escolhidos em partes multipart "attachments[]". */
 internal class AttachmentReader(private val context: Context) {
+    /** Consulta o ContentResolver: chamar fora da main thread ([describeAll]). */
     fun describe(uri: Uri): PickedFile {
         var name = "file"
         var size = 0L
@@ -48,13 +56,50 @@ internal class AttachmentReader(private val context: Context) {
                 c.getColumnIndex(OpenableColumns.SIZE).takeIf { it >= 0 }?.let { size = c.getLong(it) }
             }
         }
+        // Sem SIZE no provider: conta os bytes até passar o limite (não lê o resto).
+        if (size <= 0L) size = countUpTo(uri, SUPPORT_MAX_FILE_BYTES + 1)
         return PickedFile(uri, name, size)
     }
 
-    fun parts(files: List<PickedFile>): List<MultipartBody.Part> = files.map { f ->
-        val mime = context.contentResolver.getType(f.uri) ?: "application/octet-stream"
-        val bytes = context.contentResolver.openInputStream(f.uri)?.use { it.readBytes() } ?: ByteArray(0)
-        MultipartBody.Part.createFormData("attachments[]", f.name, bytes.toRequestBody(mime.toMediaTypeOrNull()))
+    private fun countUpTo(uri: Uri, limit: Long): Long = runCatching {
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            val buf = ByteArray(64 * 1024)
+            var total = 0L
+            while (total < limit) {
+                val n = input.read(buf)
+                if (n < 0) break
+                total += n
+            }
+            total
+        } ?: 0L
+    }.getOrDefault(0L)
+
+    suspend fun describeAll(uris: List<Uri>): List<PickedFile> = withContext(Dispatchers.IO) { uris.map { describe(it) } }
+
+    /**
+     * Partes "attachments[]" em streaming: o ficheiro é lido pelo OkHttp ao
+     * enviar (fora da main thread) em vez de ir inteiro para a memória.
+     */
+    suspend fun parts(files: List<PickedFile>): List<MultipartBody.Part> = withContext(Dispatchers.IO) {
+        files.map { f ->
+            val mime = (context.contentResolver.getType(f.uri) ?: "application/octet-stream").toMediaTypeOrNull()
+            MultipartBody.Part.createFormData("attachments[]", f.name, UriRequestBody(context, f.uri, f.size, mime))
+        }
+    }
+}
+
+/** Corpo que lê o URI só no writeTo (reabre o stream a cada escrita). */
+private class UriRequestBody(
+    private val context: Context,
+    private val uri: Uri,
+    private val size: Long,
+    private val mediaType: okhttp3.MediaType?,
+) : RequestBody() {
+    override fun contentType(): okhttp3.MediaType? = mediaType
+    override fun contentLength(): Long = if (size > 0) size else -1L
+    override fun writeTo(sink: okio.BufferedSink) {
+        val input = context.contentResolver.openInputStream(uri) ?: throw java.io.IOException("Não foi possível ler o ficheiro".tr())
+        input.source().use { sink.writeAll(it) }
     }
 }
 
@@ -150,32 +195,48 @@ class SupportListViewModel @Inject constructor(
 
     fun loadMore() {
         val s = _state.value
-        if (!s.isLoading && s.hasMore) load(s.page + 1)
+        if (!s.isLoading && s.hasMore && loadJob?.isActive != true) load(s.page + 1)
     }
 
-    private fun load(page: Int) {
-        _state.update { it.copy(isLoading = true, error = null) }
-        viewModelScope.launch {
-            val s = _state.value
-            runCatching {
+    /** Atualização periódica (só na 1.ª página e sem pedido em curso), sem spinner. */
+    fun poll() {
+        val s = _state.value
+        if (s.page == 1 && !s.isLoading && loadJob?.isActive != true) load(1, silent = true)
+    }
+
+    /** Pedido em curso: a página 1 (troca de filtro) cancela o anterior. */
+    private var loadJob: Job? = null
+
+    // A pesquisa só se aplica com "Procurar" (refresh cancela o pedido anterior), por isso não entra aqui.
+    private fun filterKey(s: SupportListUiState) = listOf(s.filter, s.assigned, s.priority, s.category)
+
+    private fun load(page: Int, silent: Boolean = false) {
+        if (page == 1) loadJob?.cancel()
+        if (!silent) _state.update { it.copy(isLoading = true, error = null) }
+        // Filtro lido antes de lançar: uma resposta de outro filtro é descartada.
+        val s = _state.value
+        loadJob = viewModelScope.launch {
+            val result = runCatching {
                 val response = if (isAdmin) {
                     api.adminTickets(page, s.filter, s.query.ifBlank { null }, s.assigned, s.priority, s.category)
                 } else {
                     api.tickets(page, s.filter)
                 }
                 check(response.isSuccessful) { "HTTP ${response.code()}" }
-                response.body() ?: error("Resposta vazia")
-            }.onSuccess { body ->
+                response.body() ?: error("Resposta vazia".tr())
+            }
+            if (!currentCoroutineContext().isActive || filterKey(_state.value) != filterKey(s)) return@launch
+            result.onSuccess { body ->
                 val items = body.data.map { it.data }
                 _state.update {
                     it.copy(
                         isLoading = false,
-                        tickets = if (page == 1) items else it.tickets + items,
+                        tickets = if (page == 1) items else (it.tickets + items).distinctBy { x -> x.id },
                         page = page,
                         hasMore = (body.meta?.current_page ?: 1) < (body.meta?.last_page ?: 1),
                     )
                 }
-            }.onFailure { t -> _state.update { it.copy(isLoading = false, error = t.message) } }
+            }.onFailure { t -> _state.update { it.copy(isLoading = false, error = if (silent) it.error else t.message) } }
 
             // Contagens dos separadores (falha não bloqueia a lista).
             if (isAdmin && page == 1) {
@@ -209,17 +270,21 @@ class SupportDashboardViewModel @Inject constructor(
         refresh()
     }
 
-    fun refresh() {
-        _state.update { it.copy(isLoading = true, error = null) }
+    fun refresh(silent: Boolean = false) {
+        if (!silent) _state.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
+            val range = _state.value.range
             runCatching {
-                val response = api.adminDashboard(_state.value.range)
+                val response = api.adminDashboard(range)
                 check(response.isSuccessful) { "HTTP ${response.code()}" }
-                response.body() ?: error("Resposta vazia")
-            }.onSuccess { data -> _state.update { it.copy(isLoading = false, data = data) } }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, error = t.message) } }
+                response.body() ?: error("Resposta vazia".tr())
+            }.onSuccess { data -> if (_state.value.range == range) _state.update { it.copy(isLoading = false, data = data) } }
+                .onFailure { t -> if (!silent) _state.update { it.copy(isLoading = false, error = t.message) } }
         }
     }
+
+    /** Atualização periódica sem spinner. */
+    fun poll() { if (!_state.value.isLoading) refresh(silent = true) }
 }
 
 // ---------------------------------------------------------------- Detalhe
@@ -258,17 +323,21 @@ class SupportTicketViewModel @Inject constructor(
     val isAdmin: Boolean = savedStateHandle.get<Boolean>("admin") ?: false
     private val reader = AttachmentReader(context)
 
-    /** Permissões de staff (admins e membros da Support Team). */
-    val permissions = userRepository.me.value?.supportStaff
-    val myId: String? = userRepository.me.value?.id
+    /**
+     * Utilizador atual (permissões de staff e id). Observado: num arranque a
+     * frio (link de notificação) ainda pode ser null quando o ecrã abre.
+     */
+    val me: StateFlow<co.golink.tester.domain.user.User?> = userRepository.me
 
     private val _state = MutableStateFlow(SupportTicketUiState())
     val state: StateFlow<SupportTicketUiState> = _state.asStateFlow()
 
     init {
         refresh(markRead = true)
-        if (isAdmin && permissions?.can_assign == true) {
+        if (isAdmin) {
             viewModelScope.launch {
+                // Espera pelas permissões (podem chegar depois de abrir o ecrã).
+                me.first { it?.supportStaff?.can_assign == true }
                 runCatching { api.adminAgents().body()?.data.orEmpty() }
                     .onSuccess { agents -> _state.update { it.copy(agents = agents) } }
             }
@@ -285,7 +354,10 @@ class SupportTicketViewModel @Inject constructor(
         )
     }
 
-    fun refresh(markRead: Boolean = false) {
+    /** Atualização periódica do fio (como o setInterval da web); erros de rede calados. */
+    fun poll() { if (!_state.value.isSending && !_state.value.isBusy) refresh(markRead = true, silent = true) }
+
+    fun refresh(markRead: Boolean = false, silent: Boolean = false) {
         viewModelScope.launch {
             runCatching {
                 val response = if (isAdmin) api.adminTicket(ticketId) else api.ticket(ticketId)
@@ -306,18 +378,16 @@ class SupportTicketViewModel @Inject constructor(
                 }
                 // Abrir a thread é o que limpa os não lidos.
                 if (markRead) runCatching { if (isAdmin) api.adminMarkRead(ticketId) else api.markRead(ticketId) }
-            }.onFailure { t -> _state.update { it.copy(isLoading = false, toast = t.message) } }
+            }.onFailure { t -> _state.update { it.copy(isLoading = false, toast = if (silent) it.toast else t.message) } }
         }
     }
 
-    fun addAttachments(uris: List<Uri>) {
-        val current = _state.value.attachments
-        val picked = uris.map(reader::describe)
+    fun addAttachments(uris: List<Uri>) = viewModelScope.launch {
+        val picked = reader.describeAll(uris)
         val tooBig = picked.filter { it.size > SUPPORT_MAX_FILE_BYTES }
-        val accepted = (current + (picked - tooBig.toSet())).take(SUPPORT_MAX_FILES)
         _state.update {
             it.copy(
-                attachments = accepted,
+                attachments = (it.attachments + (picked - tooBig.toSet())).take(SUPPORT_MAX_FILES),
                 toast = if (tooBig.isNotEmpty()) "Ficheiro acima de 10 MB ignorado".tr() else it.toast,
             )
         }
@@ -429,16 +499,18 @@ class SupportTicketViewModel @Inject constructor(
         }
     }
 
-    fun cancelDeletion(requestId: String) = action {
+    // O banner de eliminação só se atualiza depois de o DELETE ter sido aceite.
+    fun cancelDeletion(requestId: String) = action(onSuccess = { if (!isAdmin) sessionManager.refreshUser() }) {
         if (isAdmin) api.adminCancelDeletion(ticketId, requestId) else api.cancelDeletion(ticketId, requestId)
-    }.also { if (!isAdmin) viewModelScope.launch { sessionManager.refreshUser() } }
+    }
 
     fun consumeToast() = _state.update { it.copy(toast = null) }
 
-    private fun action(call: suspend () -> Response<*>) {
+    private fun action(onSuccess: suspend () -> Unit = {}, call: suspend () -> Response<*>) {
         _state.update { it.copy(isBusy = true) }
         viewModelScope.launch {
             val response = runCatching { call() }.getOrNull()
+            if (response?.isSuccessful == true) onSuccess()
             _state.update {
                 it.copy(
                     isBusy = false,
@@ -500,9 +572,15 @@ class NewTicketViewModel @Inject constructor(
         if (_state.value.assist != null) _state.update { it.copy(assist = null) }
     }
 
-    fun addAttachments(uris: List<Uri>) {
-        val picked = uris.map(reader::describe).filter { it.size <= SUPPORT_MAX_FILE_BYTES }
-        _state.update { it.copy(attachments = (it.attachments + picked).take(SUPPORT_MAX_FILES)) }
+    fun addAttachments(uris: List<Uri>) = viewModelScope.launch {
+        val all = reader.describeAll(uris)
+        val picked = all.filter { it.size <= SUPPORT_MAX_FILE_BYTES }
+        _state.update {
+            it.copy(
+                attachments = (it.attachments + picked).take(SUPPORT_MAX_FILES),
+                error = if (picked.size < all.size) "Ficheiro acima de 10 MB ignorado".tr() else it.error,
+            )
+        }
     }
 
     fun removeAttachment(file: PickedFile) = _state.update { it.copy(attachments = it.attachments - file) }

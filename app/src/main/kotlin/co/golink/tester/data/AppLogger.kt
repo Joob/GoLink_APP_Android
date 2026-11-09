@@ -1,6 +1,7 @@
 package co.golink.tester.data
 
 import android.util.Log
+import co.golink.tester.BuildConfig
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -24,7 +25,8 @@ class AppLogger @Inject constructor() {
             if (_entries.size >= 500) _entries.removeFirst()
             _entries.addLast(LogEntry(System.currentTimeMillis(), tag, message))
         }
-        Log.d(tag, message)
+        // Só em debug: no release o registo fica na app (ecrã de diagnóstico), não no logcat.
+        if (BuildConfig.DEBUG) Log.d(tag, message)
     }
 
     fun getEntries(): List<LogEntry> = synchronized(_entries) { _entries.reversed() }

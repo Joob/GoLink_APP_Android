@@ -269,7 +269,7 @@ internal fun PasskeysSection(
             },
             onDismiss = viewModel::dismissConfirmation,
         ) {
-            if (!socialiteAccount) SettingsField("Password atual".tr(), password, { password = it }, isPassword = true)
+            if (!socialiteAccount) SettingsField("Password atual".tr(), password, { password = it }, isPassword = true, imeAction = androidx.compose.ui.text.input.ImeAction.Done)
             if (hasPasskeys || state.passkeys.isNotEmpty()) {
                 TextButton(
                     onClick = {

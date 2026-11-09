@@ -81,6 +81,9 @@ data class MobileBackupsState(
     // Telemóvel cujos backups se mostram (device_id no browse); null = todos
     // (só se o resumo falhar). Abre no próprio aparelho, como a web.
     val selectedDeviceId: String? = null,
+    // Scroll infinito: há mais páginas de ficheiros no nível / a pedir a seguinte.
+    val hasMore: Boolean = false,
+    val loadingMore: Boolean = false,
 )
 
 @HiltViewModel
@@ -139,12 +142,12 @@ class MobileBackupsViewModel @Inject constructor(
         viewModelScope.launch { moveManager.completedTick.collect { if (it > 0) refresh() } }
     }
 
-    // Lista e contagens ao vivo: cada upload concluído (backup automático ou
-    // manual) recarrega logo. O primeiro tick é imediato; durante um backup
-    // grande os seguintes juntam-se (conflate) e há no máximo um a cada 3 s.
+    // Uploads manuais concluídos recarregam logo (no máximo um a cada 3 s).
+    // Os do backup automático já mudam a assinatura do syncLoop: recarregar
+    // também aqui duplicava os ~6 pedidos do refresh a cada ficheiro enviado.
     private fun observeUploadsForCounts() {
         viewModelScope.launch {
-            merge(uploadManager.completedBackupTick, uploadManager.completedTick)
+            uploadManager.completedTick
                 .filter { it > 0 }
                 .conflate()
                 .collect {
@@ -157,7 +160,8 @@ class MobileBackupsViewModel @Inject constructor(
     // false até o primeiro resumo (ou a sua falha) definir o telemóvel.
     private var deviceResolved = false
 
-    fun loadSummary() {
+    /** [refreshCounts]: atualizar também os badges (do resumo, ou count_only em servidores antigos). */
+    fun loadSummary(refreshCounts: Boolean = false) {
         viewModelScope.launch {
             repository.mobileBackupSummary()
                 .onSuccess { summary ->
@@ -169,9 +173,23 @@ class MobileBackupsViewModel @Inject constructor(
                         ?: ids.firstOrNull()
                     _state.update { it.copy(summary = summary, selectedDeviceId = chosen) }
                     if (!deviceResolved || chosen != previous) showDevice()
+                    else if (refreshCounts) loadCounts()
                 }
-                .onFailure { if (!deviceResolved) showDevice() }
+                .onFailure {
+                    if (!deviceResolved) showDevice()
+                    // O resumo guardado está velho: os badges vêm do count_only.
+                    else if (refreshCounts) loadCounts(fromSummary = false)
+                }
         }
+    }
+
+    /** Ficheiros por separador do telemóvel escolhido, vindos do resumo (null: servidor antigo). */
+    private fun summaryCounts(): Map<MobileBackupTab, Int>? {
+        val s = _state.value
+        val summary = s.summary ?: return null
+        val device = (summary.devices + listOfNotNull(summary.legacy)).firstOrNull { it.id == s.selectedDeviceId } ?: return null
+        val counts = device.counts ?: return null
+        return MobileBackupTab.entries.associateWith { counts[it.apiKey] ?: 0 }
     }
 
     /** Escolher outro telemóvel nos cartões: volta à raiz e recarrega. */
@@ -237,7 +255,10 @@ class MobileBackupsViewModel @Inject constructor(
     }
     fun setSortMode(mode: SortMode) {
         viewPreferences.setSortMode(co.golink.tester.data.settings.ViewPreferences.SCOPE_BACKUP, mode)
+        val partial = _state.value.hasMore
         _state.update { it.copy(sortMode = mode) }
+        // Só com páginas por carregar: a ordem do servidor muda as páginas seguintes.
+        if (partial && mode != lastServerSort) load()
     }
 
     fun setFoldersFirst(value: Boolean) {
@@ -304,7 +325,7 @@ class MobileBackupsViewModel @Inject constructor(
             pendingDeletes -= ids
             result
                 .onSuccess { _state.update { it.copy(toast = "Movido para o lixo".tr()) } }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message ?: "erro"}") } }
+                .onFailure { t -> _state.update { it.copy(toast = FAILED_TOAST.tr()) } }
             refresh()
         }
     }
@@ -314,15 +335,19 @@ class MobileBackupsViewModel @Inject constructor(
         // start another — just let it finish (avoids the resume->reload loop).
         // A correr: marca para recarregar no fim (senão perdia-se o upload/apagar
         // que aconteceu a meio do pedido).
-        if (loadJob?.isActive == true) reloadPending = true else load()
-        loadCounts()
-        loadSummary()
+        if (loadJob?.isActive == true) reloadPending = true else reload()
+        // Os badges vêm no resumo (1 pedido em vez de 1 + 4 count_only).
+        loadSummary(refreshCounts = true)
     }
 
-    private fun loadCounts() {
+    private fun loadCounts(fromSummary: Boolean = true) {
         if (!deviceResolved) return
+        if (fromSummary) summaryCounts()?.let { counts ->
+            _state.update { it.copy(counts = counts) }
+            return
+        }
         val deviceId = _state.value.selectedDeviceId
-        // Um total por separador (count_only) — barato, sem transferir a lista.
+        // Servidor sem `counts` no resumo: um total por separador (count_only).
         MobileBackupTab.entries.forEach { tab ->
             viewModelScope.launch {
                 repository.countMobileBackup(tab.apiKey, deviceId)
@@ -349,8 +374,8 @@ class MobileBackupsViewModel @Inject constructor(
 
     fun download(item: BrowseItem.File) {
         downloader.downloadFile(item)
-            .onSuccess { _state.update { it.copy(toast = "Download iniciado: ${item.name}") } }
-            .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+            .onSuccess { _state.update { it.copy(toast = "Download iniciado: %s".tr().format(item.name)) } }
+            .onFailure { t -> _state.update { it.copy(toast = FAILED_TOAST.tr()) } }
     }
 
     // Download genérico (ficheiro ou pasta) — usado pelo menu "…" das pastas.
@@ -358,8 +383,8 @@ class MobileBackupsViewModel @Inject constructor(
         when (item) {
             is BrowseItem.File -> download(item)
             is BrowseItem.Folder -> downloader.downloadFolder(item)
-                .onSuccess { _state.update { it.copy(toast = "A preparar zip: ${item.name}") } }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+                .onSuccess { _state.update { it.copy(toast = "A preparar zip: %s".tr().format(item.name)) } }
+                .onFailure { t -> _state.update { it.copy(toast = FAILED_TOAST.tr()) } }
         }
     }
 
@@ -369,10 +394,10 @@ class MobileBackupsViewModel @Inject constructor(
         viewModelScope.launch {
             filesRepository.rename(item, trimmed)
                 .onSuccess {
-                    _state.update { it.copy(toast = "Renomeado") }
-                    load()
+                    _state.update { it.copy(toast = "Renomeado".tr()) }
+                    reload()
                 }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message ?: "erro"}") } }
+                .onFailure { t -> _state.update { it.copy(toast = FAILED_TOAST.tr()) } }
         }
     }
 
@@ -384,10 +409,10 @@ class MobileBackupsViewModel @Inject constructor(
                 .onSuccess {
                     onDone(null)
                     _state.update { it.copy(toast = "Pasta convertida".tr()) }
-                    load()
+                    reload()
                     teamsRepository.clearEncryptedNames(folderId)
                 }
-                .onFailure { t -> onDone("Falha: ${t.message}") }
+                .onFailure { t -> onDone(FAILED_TOAST.tr()) }
         }
     }
 
@@ -401,7 +426,7 @@ class MobileBackupsViewModel @Inject constructor(
                     }
                     _state.update { it.copy(toast = "Pedido criado — link copiado".tr()) }
                 }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+                .onFailure { t -> _state.update { it.copy(toast = FAILED_TOAST.tr()) } }
         }
     }
 
@@ -409,7 +434,7 @@ class MobileBackupsViewModel @Inject constructor(
         viewModelScope.launch {
             repository.navigation()
                 .onSuccess { sections -> _state.update { it.copy(navigationTree = sections) } }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message ?: "erro"}") } }
+                .onFailure { t -> _state.update { it.copy(toast = FAILED_TOAST.tr()) } }
         }
     }
 
@@ -436,11 +461,11 @@ class MobileBackupsViewModel @Inject constructor(
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
                     _state.update { it.copy(toast = "Partilha criada".tr()) }
-                    load()
+                    reload()
                 }
                 .onFailure { t ->
                     _shareState.update { it?.copy(isWorking = false) }
-                    _state.update { it.copy(toast = "Falha: ${t.message}") }
+                    _state.update { it.copy(toast = FAILED_TOAST.tr()) }
                 }
         }
     }
@@ -464,11 +489,11 @@ class MobileBackupsViewModel @Inject constructor(
                 .onSuccess { info ->
                     _shareState.update { it?.copy(share = info, isWorking = false) }
                     _state.update { it.copy(toast = "Partilha actualizada".tr()) }
-                    load()
+                    reload()
                 }
                 .onFailure { t ->
                     _shareState.update { it?.copy(isWorking = false) }
-                    _state.update { it.copy(toast = "Falha: ${t.message}") }
+                    _state.update { it.copy(toast = FAILED_TOAST.tr()) }
                 }
         }
     }
@@ -482,11 +507,11 @@ class MobileBackupsViewModel @Inject constructor(
                 .onSuccess {
                     _shareState.value = null
                     _state.update { it.copy(toast = "Partilha revogada".tr()) }
-                    load()
+                    reload()
                 }
                 .onFailure { t ->
                     _shareState.update { it?.copy(isWorking = false) }
-                    _state.update { it.copy(toast = "Falha: ${t.message}") }
+                    _state.update { it.copy(toast = FAILED_TOAST.tr()) }
                 }
         }
     }
@@ -500,7 +525,7 @@ class MobileBackupsViewModel @Inject constructor(
                 .onSuccess { svg -> _shareState.update { it?.copy(qrSvg = svg, loadingQr = false) } }
                 .onFailure { t ->
                     _shareState.update { it?.copy(loadingQr = false) }
-                    _state.update { it.copy(toast = "Falha QR: ${t.message}") }
+                    _state.update { it.copy(toast = FAILED_TOAST.tr()) }
                 }
         }
     }
@@ -517,14 +542,39 @@ class MobileBackupsViewModel @Inject constructor(
         viewModelScope.launch {
             shareRepository.sendByEmail(token, emails)
                 .onSuccess { _state.update { it.copy(toast = "Email enviado".tr()) } }
-                .onFailure { t -> _state.update { it.copy(toast = "Falha: ${t.message}") } }
+                .onFailure { t -> _state.update { it.copy(toast = FAILED_TOAST.tr()) } }
             _shareState.update { it?.copy(sendingEmail = false) }
         }
     }
 
     private var reloadPending = false
 
-    private fun load() {
+    // Páginas já carregadas do nível atual e a última que o servidor tem.
+    private var loadedPages = 0
+    private var lastPage = 1
+    private var lastServerSort: SortMode? = null
+
+    // A mesma ordenação no servidor que no ecrã (como o BrowseViewModel).
+    private fun serverSort(mode: SortMode): Pair<String, String> = when (mode) {
+        SortMode.ALPHA_ASC -> "name" to "ASC"
+        SortMode.ALPHA_DESC -> "name" to "DESC"
+        SortMode.DATE_DESC -> "created_at" to "DESC"
+        SortMode.DATE_ASC -> "created_at" to "ASC"
+        SortMode.SIZE_DESC -> "filesize" to "DESC"
+        SortMode.SIZE_ASC -> "filesize" to "ASC"
+        SortMode.TYPE_ASC -> "type" to "ASC"
+        SortMode.TYPE_DESC -> "type" to "DESC"
+    }
+
+    /** Recarrega as páginas que já estavam à vista (fingerprint, renomear, partilhar…). */
+    private fun reload() = load(pages = loadedPages)
+
+    /**
+     * Pastas + 1.ª página de ficheiros do nível (raiz ou pasta), já filtrados por
+     * tipo e telemóvel no servidor; [pages] > 1 volta a pedir as que já estavam
+     * carregadas (no máximo [MAX_RELOAD_PAGES]) para a lista não encolher.
+     */
+    private fun load(pages: Int = 1) {
         reloadPending = false
         if (!deviceResolved) {
             _state.update { it.copy(isRefreshing = false) }
@@ -533,34 +583,78 @@ class MobileBackupsViewModel @Inject constructor(
         val current = _state.value.tab
         val deviceId = _state.value.selectedDeviceId
         val folder = _state.value.folderStack.lastOrNull()
+        val sortMode = _state.value.sortMode
+        val (sort, direction) = serverSort(sortMode)
         // Cancel any previous in-flight load (e.g. when switching tabs) so we
         // never have two list requests racing.
         loadJob?.cancel()
         // Only show the full-screen spinner on the first load (nothing to show
         // yet). On a refresh with data already on screen, reload silently and
         // keep the list visible — no flicker back to a spinner.
-        _state.update { it.copy(isLoading = it.items.isEmpty(), error = null) }
+        _state.update { it.copy(isLoading = it.items.isEmpty(), error = null, loadingMore = false) }
         loadJob = viewModelScope.launch {
-            // Devolve as pastas de backup + ficheiros do nível (raiz ou pasta),
-            // já filtrados por tipo e telemóvel no servidor. As contagens dos
-            // separadores vêm de loadCounts, por isso aqui não mexemos nelas.
-            repository.listMobileBackupTree(current.apiKey, folder?.id, deviceId)
-                .onSuccess { items ->
-                    // distinctBy: ids repetidos vindos do servidor rebentavam o
-                    // LazyColumn ("Key was already used") e a app ia abaixo. Corre
-                    // fora do main thread para não bloquear a UI em listas grandes;
-                    // a ordenação final é feita na composição consoante o sortMode.
-                    val deduped = withContext(Dispatchers.Default) { items.distinctBy { it.id } }
-                    _state.update { it.copy(items = deduped.filterNot { i -> i.id in pendingDeletes }, isLoading = false, isRefreshing = false) }
-                    if (reloadPending) load()
+            val want = pages.coerceIn(1, MAX_RELOAD_PAGES)
+            val acc = ArrayList<BrowseItem>()
+            var last = 1
+            var got = 0
+            for (page in 1..want) {
+                val paged = repository.listMobileBackupTreePage(current.apiKey, folder?.id, deviceId, page, sort, direction)
+                    .getOrElse { t ->
+                        // Cancelamento (troca de aba, navegar para o viewer e voltar,
+                        // novo load a substituir este) não é um erro — não o mostres.
+                        // O runCatching do repositório embrulha a CancellationException
+                        // num Result.failure, daí este guard aqui.
+                        if (t is kotlinx.coroutines.CancellationException) return@launch
+                        _state.update { it.copy(isLoading = false, isRefreshing = false, error = t.message) }
+                        return@launch
+                    }
+                acc += paged.items
+                last = paged.lastPage
+                got = page
+                if (page >= last) break
+            }
+            // distinctBy: ids repetidos (uma página que escorregou com um upload
+            // novo) rebentavam o LazyColumn ("Key was already used").
+            val deduped = withContext(Dispatchers.Default) { acc.distinctBy { it.id } }
+            loadedPages = got
+            lastPage = last
+            lastServerSort = sortMode
+            _state.update {
+                it.copy(
+                    items = deduped.filterNot { i -> i.id in pendingDeletes },
+                    isLoading = false,
+                    isRefreshing = false,
+                    hasMore = got < last,
+                )
+            }
+            if (reloadPending) reload()
+        }
+    }
+
+    /** Fim da lista à vista: pede a página seguinte de ficheiros do nível. */
+    fun loadMore() {
+        if (loadJob?.isActive == true || loadedPages == 0 || loadedPages >= lastPage) return
+        val current = _state.value.tab
+        val deviceId = _state.value.selectedDeviceId
+        val folder = _state.value.folderStack.lastOrNull()
+        val (sort, direction) = serverSort(lastServerSort ?: _state.value.sortMode)
+        val next = loadedPages + 1
+        _state.update { it.copy(loadingMore = true) }
+        loadJob = viewModelScope.launch {
+            repository.listMobileBackupTreePage(current.apiKey, folder?.id, deviceId, next, sort, direction)
+                .onSuccess { paged ->
+                    val merged = withContext(Dispatchers.Default) {
+                        (_state.value.items + paged.items.filterNot { i -> i.id in pendingDeletes }).distinctBy { it.id }
+                    }
+                    loadedPages = next
+                    lastPage = paged.lastPage
+                    _state.update { it.copy(items = merged, loadingMore = false, hasMore = next < paged.lastPage) }
+                    if (reloadPending) reload()
                 }
                 .onFailure { t ->
-                    // Cancelamento (troca de aba, navegar para o viewer e voltar,
-                    // novo load a substituir este) não é um erro — não o mostres.
-                    // O runCatching do repositório embrulha a CancellationException
-                    // num Result.failure, daí este guard aqui.
                     if (t is kotlinx.coroutines.CancellationException) return@onFailure
-                    _state.update { it.copy(isLoading = false, isRefreshing = false, error = t.message) }
+                    // Fica o botão/scroll para tentar outra vez.
+                    _state.update { it.copy(loadingMore = false) }
                 }
         }
     }
@@ -577,17 +671,34 @@ class MobileBackupsViewModel @Inject constructor(
             repository.mobileBackupFingerprint().onSuccess { v ->
                 val prev = syncStamp
                 syncStamp = v
-                if (prev != null && prev != v) refresh()
+                if (prev != null && prev != v) syncDirty = true
+            }
+            // Durante um backup a assinatura muda a cada ficheiro: junta as
+            // mudanças e recarrega no máximo uma vez a cada SYNC_REFRESH_MIN_MS.
+            val now = System.currentTimeMillis()
+            if (syncDirty && now - lastSyncRefreshAt >= SYNC_REFRESH_MIN_MS) {
+                syncDirty = false
+                lastSyncRefreshAt = now
+                refresh()
             }
             kotlinx.coroutines.delay(5_000)
         }
     }
 
+    private var syncDirty = false
+    private var lastSyncRefreshAt = 0L
+    private companion object {
+        const val SYNC_REFRESH_MIN_MS = 10_000L
+        const val MAX_RELOAD_PAGES = 10
+
+        /** Toast genérico: a mensagem da exceção (inglês/técnica) fica de fora. */
+        const val FAILED_TOAST = "Não foi possível concluir. Tenta de novo."
+    }
+
     /** Puxar para baixo em cada aba: recarrega lista + contagens dessa aba. */
     fun pullRefresh() {
         _state.update { it.copy(isRefreshing = true) }
-        loadCounts()
-        loadSummary()
+        loadSummary(refreshCounts = true)
         load()
     }
 }

@@ -25,8 +25,10 @@ data class BackupDevice(
     val folders: Int = 0,
     val items: Int = 0,
     val bytes: Long = 0,
-    /** Itens por separador (photos/videos/audios/files). */
+    /** Pastas de origem por separador (photos/videos/audios/files). */
     val tabs: Map<String, Int> = emptyMap(),
+    /** Ficheiros por separador (photos/videos/audios/files); null em servidores antigos. */
+    val counts: Map<String, Int>? = null,
 )
 
 @Serializable
@@ -40,3 +42,14 @@ data class BackupTotals(
 
 @Serializable
 data class PauseDeviceBody(val paused: Boolean)
+
+/** POST mobile-backup/check: até 500 upload_key; o servidor devolve as que já existem. */
+@Serializable
+data class BackupKeysCheckBody(val upload_keys: List<String>)
+
+@Serializable
+data class BackupKeysCheckResponse(
+    val existing: List<String> = emptyList(),
+    // false = servidor sem a coluna upload_key (não sabe responder).
+    val supported: Boolean = true,
+)

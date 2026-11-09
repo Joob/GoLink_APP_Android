@@ -270,13 +270,20 @@ class OfficeEditorViewModel @Inject constructor(
             // Comentários: o corpo já vem cifrado da página nos ficheiros E2E.
             "comments_list" -> api("GET", "file/${f.id}/comments")
             "comments_create" -> api("POST", "file/${f.id}/comments", args)
-            "comments_update" -> api("PATCH", "comments/${args.string("id")}", JsonObject(args - "id"))
-            "comments_resolve" -> api("POST", "comments/${args.string("id")}/resolve", JsonObject(emptyMap()))
-            "comments_reopen" -> api("POST", "comments/${args.string("id")}/reopen", JsonObject(emptyMap()))
-            "comments_delete" -> api("DELETE", "comments/${args.string("id")}")
+            // O id entra no caminho: só UUID (senão "../" chegava a qualquer rota da API).
+            "comments_update" -> api("PATCH", "comments/${commentId(args)}", JsonObject(args - "id"))
+            "comments_resolve" -> api("POST", "comments/${commentId(args)}/resolve", JsonObject(emptyMap()))
+            "comments_reopen" -> api("POST", "comments/${commentId(args)}/reopen", JsonObject(emptyMap()))
+            "comments_delete" -> api("DELETE", "comments/${commentId(args)}")
             "comments_settings" -> api("PUT", "file/${f.id}/comment-settings", args)
             else -> throw BridgeError(400, "unknown_method")
         }
+    }
+
+    private fun commentId(args: JsonObject): String {
+        val id = args.string("id")
+        if (!UUID_RE.matches(id)) throw BridgeError(400, "invalid_id")
+        return android.net.Uri.encode(id)
     }
 
     /**
@@ -327,6 +334,9 @@ class OfficeEditorViewModel @Inject constructor(
     override fun onCleared() {
         // A página fechou com a cópia a meio: não reter o resultado no UploadManager.
         pendingCopy?.let { (taskId, job) -> job.invokeOnCompletion { uploadManager.takeCreated(taskId) } }
+        // Data key E2E do documento: não fica na heap depois de o editor fechar.
+        dataKey?.fill(0)
+        dataKey = null
         super.onCleared()
     }
 
@@ -365,10 +375,8 @@ class OfficeEditorViewModel @Inject constructor(
         val token = tokenStore.token
         val basename = android.net.Uri.encode(f.basename.ifBlank { f.name }, "/")
         // Cache-buster: o URL do ficheiro não muda entre gravações.
-        val query = buildList {
-            if (!token.isNullOrBlank()) add("token=${android.net.Uri.encode(token)}")
-            add("v=${System.currentTimeMillis()}")
-        }.joinToString("&")
+        // Só o header Authorization (o ?token= ficava nos access logs).
+        val query = "v=${System.currentTimeMillis()}"
         val request = Request.Builder().url("$backend/file/$basename?$query").apply {
             if (!token.isNullOrBlank()) addHeader("Authorization", "Bearer $token")
             addHeader("Cache-Control", "no-cache")
@@ -455,3 +463,5 @@ class OfficeEditorViewModel @Inject constructor(
 
     private suspend fun unb64(value: String): ByteArray = withContext(Dispatchers.Default) { Base64.getDecoder().decode(value) }
 }
+
+private val UUID_RE = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")

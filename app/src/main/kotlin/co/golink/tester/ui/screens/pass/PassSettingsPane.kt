@@ -85,7 +85,6 @@ fun PassSettingsPane(vm: PassViewModel, state: PassState, bioAvailable: Boolean,
     var preview by remember { mutableStateOf<List<PassDraft>?>(null) }
     var filePassword by remember { mutableStateOf<JsonObject?>(null) }
     var exportAsk by remember { mutableStateOf(false) }
-    var exportPassword by remember { mutableStateOf("") }
     var folderEdit by remember { mutableStateOf<PassFolder?>(null) }
     var folderDelete by remember { mutableStateOf<PassFolder?>(null) }
 
@@ -98,9 +97,9 @@ fun PassSettingsPane(vm: PassViewModel, state: PassState, bioAvailable: Boolean,
             }
         }
     }
+    // A password do ficheiro fica no ViewModel (prepareExport) para sobreviver à recriação da atividade.
     val createExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
-        if (uri != null) vm.exportEncrypted(uri, exportPassword)
-        exportPassword = ""
+        vm.exportEncrypted(uri)
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -252,23 +251,40 @@ fun PassSettingsPane(vm: PassViewModel, state: PassState, bioAvailable: Boolean,
     if (exportAsk) {
         var a by remember { mutableStateOf("") }
         var b by remember { mutableStateOf("") }
+        var secret by remember { mutableStateOf("") }
+        var wrong by remember { mutableStateOf(false) }
+        var checking by remember { mutableStateOf(false) }
         AlertDialog(
-            onDismissRequest = { exportAsk = false },
+            onDismissRequest = { if (!checking) exportAsk = false },
             title = { Text(pt("export_title")) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(pt("export_encrypted_text"), fontSize = 14.sp)
                     OutlinedTextField(a, { a = it }, singleLine = true, placeholder = { Text(pt("export_password")) }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(b, { b = it }, singleLine = true, placeholder = { Text(pt("export_password_again")) }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                    // Como na web: exportar o cofre inteiro pede sempre a passphrase E2E atual.
+                    Text(pt("export_confirm"), fontSize = 12.5.sp, color = p.muted, modifier = Modifier.padding(top = 4.dp))
+                    OutlinedTextField(
+                        secret, { secret = it; wrong = false }, singleLine = true, isError = wrong,
+                        placeholder = { Text(pt("unlock_placeholder")) }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (wrong) Text(pt("unlock_wrong"), color = PassRose, fontSize = 12.sp)
                 }
             },
             confirmButton = {
-                TextButton(enabled = a.length >= 8 && a == b, onClick = {
-                    exportAsk = false
-                    exportPassword = a
-                    vm.expectExternal()
-                    createExport.launch("golink-pass-${java.time.LocalDate.now()}.json")
-                }) { Text(pt("export")) }
+                TextButton(enabled = a.length >= 8 && a == b && secret.isNotEmpty() && !checking, onClick = {
+                    checking = true
+                    scope.launch {
+                        val ok = vm.verifySecret(secret)
+                        checking = false
+                        if (!ok) { wrong = true; return@launch }
+                        secret = ""
+                        exportAsk = false
+                        vm.prepareExport(a)
+                        vm.expectExternal()
+                        createExport.launch("golink-pass-${java.time.LocalDate.now()}.json")
+                    }
+                }) { Text(if (checking) pt("unlocking") else pt("export")) }
             },
             dismissButton = { TextButton(onClick = { exportAsk = false }) { Text(pt("cancel")) } },
         )

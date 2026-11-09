@@ -76,9 +76,6 @@ class PassViewModel @Inject constructor(
     /** Câmara / seletor de imagens: voltar deles não pede o PIN da app. */
     fun expectExternal() = lockManager.expectExternalReturn()
 
-    /** Ao sair do Pass: manter FLAG_SECURE se a app já o usa (Android < 13 com "esconder nos recentes"). */
-    fun keepSecureFlag(): Boolean = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU && lockManager.hideInRecents
-
     private fun fail(e: Throwable) {
         if (e is kotlinx.coroutines.CancellationException) throw e
         toast(if (e is PassConflictException) pt("conflict") else pt("error"))
@@ -194,8 +191,25 @@ class PassViewModel @Inject constructor(
         }
     }
 
-    /** Export cifrado para o ficheiro escolhido (SAF CreateDocument). */
-    fun exportEncrypted(uri: Uri, password: String) = viewModelScope.launch {
+    /**
+     * Password do export à espera do seletor SAF. Fica no ViewModel (sobrevive à rotação/tema),
+     * nunca em disco nem no SavedState; se o processo morrer, o export aborta.
+     */
+    private var pendingExportPassword: String? = null
+
+    fun prepareExport(password: String) { pendingExportPassword = password }
+
+    /** Export cifrado para o ficheiro escolhido (SAF CreateDocument). uri null = cancelado. */
+    fun exportEncrypted(uri: Uri?) = viewModelScope.launch {
+        val password = pendingExportPassword
+        pendingExportPassword = null
+        if (uri == null) return@launch
+        if (password == null || password.length < 8) {
+            // Nunca exportar com password vazia/curta (ex.: processo recriado no seletor): apagar o ficheiro vazio.
+            withContext(Dispatchers.IO) { runCatching { android.provider.DocumentsContract.deleteDocument(context.contentResolver, uri) } }
+            toast(pt("error"))
+            return@launch
+        }
         _busy.value = true
         try {
             val text = withContext(Dispatchers.Default) { PassCrypto.encryptExport(repo.portable(), password) }

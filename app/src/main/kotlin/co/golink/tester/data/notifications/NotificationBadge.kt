@@ -31,7 +31,6 @@ object NotificationBadge {
     const val EXTRA_OPEN_INBOX = "open_inbox"
 
     fun ensureChannel(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         if (manager.getNotificationChannel(CHANNEL_BADGE) != null) return
         val channel = NotificationChannel(
@@ -98,7 +97,7 @@ object NotificationBadge {
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         launchIntent.putExtra(EXTRA_OPEN_INBOX, true)
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or
-            (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+            PendingIntent.FLAG_IMMUTABLE
         return PendingIntent.getActivity(context, 0, launchIntent, flags)
     }
 }

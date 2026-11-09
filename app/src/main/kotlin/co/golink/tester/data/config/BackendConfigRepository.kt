@@ -1,40 +1,39 @@
 package co.golink.tester.data.config
 
 import android.content.Context
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
+import co.golink.tester.BuildConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 
-private val Context.configDataStore by preferencesDataStore(name = "backend_config")
-
+/**
+ * URL do backend. SharedPreferences simples (leitura síncrona, sem bloquear
+ * o arranque num DataStore). Nenhuma versão chegou a gravar o DataStore
+ * `backend_config` antigo (o ecrã de configuração nunca esteve numa rota), por
+ * isso não há nada a migrar de lá.
+ */
 @Singleton
 class BackendConfigRepository @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext context: Context,
 ) {
-    val backendUrl: Flow<String> =
-        context.configDataStore.data.map { it[KEY_URL] ?: DEFAULT_URL }
+    private val prefs = context.getSharedPreferences("backend_url", Context.MODE_PRIVATE)
 
-    suspend fun currentUrl(): String =
-        context.configDataStore.data.map { it[KEY_URL] ?: DEFAULT_URL }.first()
+    fun currentUrl(): String = prefs.getString(KEY_URL, null) ?: DEFAULT_URL
 
-    suspend fun setBackendUrl(url: String) {
+    /** Só https (http apenas em debug, para um servidor local). */
+    fun setBackendUrl(url: String) {
         val normalized = normalize(url)
-        context.configDataStore.edit { it[KEY_URL] = normalized }
+        require(normalized.startsWith("https://") || BuildConfig.DEBUG) { "https obrigatório" }
+        prefs.edit().putString(KEY_URL, normalized).commit()
     }
 
-    suspend fun clear() {
-        context.configDataStore.edit { it.remove(KEY_URL) }
+    fun clear() {
+        prefs.edit().remove(KEY_URL).commit()
     }
 
     companion object {
         const val DEFAULT_URL = "https://golink.co"
-        private val KEY_URL = stringPreferencesKey("backend_url")
+        private const val KEY_URL = "backend_url"
 
         fun normalize(raw: String): String {
             val trimmed = raw.trim().trimEnd('/')

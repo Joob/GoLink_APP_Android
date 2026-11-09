@@ -1,0 +1,130 @@
+{
+  "data": [
+    {
+      "data": {
+        "id": "8c1f0f3e-5d55-4c41-9a63-0d2b0f6a1a01",
+        "type": "folder",
+        "attributes": {
+          "name": "Equipa",
+          "name_encrypted": null,
+          "color": "#00BC7E",
+          "emoji": {"codes": "1F680", "char": "🚀", "name": "rocket"},
+          "filesize": "12.0 MB",
+          "filesize_bytes": 12582912,
+          "isTeamFolder": true,
+          "parent_id": null,
+          "is_team_root": true,
+          "owner_id": "u-1",
+          "device_path": null,
+          "items": 3,
+          "trashed_items": 0,
+          "created_at": "07. Nov. 2026, 10:12",
+          "updated_at": "08. Nov. 2026, 09:01",
+          "created_at_iso": "2026-11-07T10:12:00.000000Z",
+          "updated_at_iso": "2026-11-08T09:01:00.000000Z",
+          "deleted_at": null
+        },
+        "relationships": {
+          "members": {
+            "data": [
+              {"data": {"id": "u-1", "type": "member", "attributes": {"email": "ana@x.pt", "name": "Ana", "avatar": null, "color": "#f00", "permission": "owner", "online": true}}},
+              {"data": {"id": "u-1", "type": "member", "attributes": {"email": "ana@x.pt", "name": "Ana", "avatar": null, "color": "#f00", "permission": "owner", "online": true}}},
+              {"data": {"id": "u-2", "type": "member", "attributes": {"email": "rui@x.pt", "name": "Rui", "avatar": null, "color": null, "permission": "can-edit", "online": false}}}
+            ]
+          },
+          "user": {"data": {"type": "user", "id": "u-1", "attributes": {"name": "Ana", "avatar": null, "color": "#f00"}}}
+        }
+      }
+    },
+    {
+      "data": {
+        "id": "f-1",
+        "type": "image",
+        "attributes": {
+          "filesize": "2.0 MB",
+          "filesize_bytes": 2097152,
+          "name": "IMG_0001.jpg",
+          "name_encrypted": "v1.abc",
+          "basename": "a1b2c3.jpg",
+          "mimetype": "jpg",
+          "file_url": "https://tester.golink.co/file/a1b2c3.jpg",
+          "thumbnail": {"xs": "https://tester.golink.co/thumbnail/xs-a1b2c3.jpg", "md": "https://tester.golink.co/thumbnail/md-a1b2c3.jpg"},
+          "parent_id": "8c1f0f3e-5d55-4c41-9a63-0d2b0f6a1a01",
+          "encrypted": true,
+          "scan_status": null,
+          "content_revision": 0,
+          "owner_id": "u-1",
+          "created_at": "07. Nov. 2026, 10:12",
+          "updated_at": "07. Nov. 2026, 10:12",
+          "created_at_iso": "2026-11-07T10:12:00.000000Z",
+          "updated_at_iso": "2026-11-07T10:12:00.000000Z",
+          "captured_at_iso": "2026-11-01T18:30:00",
+          "deleted_at": null
+        },
+        "relationships": {
+          "shared": {
+            "data": {
+              "id": "s-1",
+              "type": "shared",
+              "attributes": {
+                "permission": "visitor",
+                "protected": true,
+                "item_id": "f-1",
+                "protectedPasswordShow": false,
+                "expire_in": 25,
+                "expire_in_minutes": 1500,
+                "expires_at": "2026-11-09T11:12:00.000000Z",
+                "download_limit": null,
+                "download_count": 0,
+                "view_limit": 5,
+                "view_count": 1,
+                "showpassword_in": null,
+                "token": "tok123",
+                "link": "https://tester.golink.co/share/tok123",
+                "type": "file",
+                "active": true,
+                "owner_upload_limit": 10737418240
+              }
+            }
+          },
+          "parent": {"data": {"type": "folder", "id": "8c1f0f3e-5d55-4c41-9a63-0d2b0f6a1a01", "attributes": {"name": "Equipa", "name_encrypted": null}}},
+          "exif": {"data": {"type": "exif", "id": 7, "attributes": {"date_time_original": "01. Nov. 2026", "height": "3024", "width": 4032, "iso": null}}}
+        }
+      }
+    },
+    {
+      "data": {
+        "id": "f-2",
+        "type": "file",
+        "attributes": {
+          "filesize": "1.0 KB",
+          "filesize_bytes": 1024,
+          "name": "notas.txt",
+          "name_encrypted": null,
+          "basename": "x9.txt",
+          "mimetype": "txt",
+          "file_url": "https://tester.golink.co/file/x9.txt",
+          "thumbnail": null,
+          "parent_id": null,
+          "encrypted": false,
+          "scan_status": "pending",
+          "content_revision": 2,
+          "owner_id": "u-1",
+          "created_at": "07. Nov. 2026, 10:12",
+          "updated_at": "07. Nov. 2026, 10:12",
+          "created_at_iso": "2026-11-07T10:12:00.000000Z",
+          "updated_at_iso": "2026-11-07T10:12:00.000000Z",
+          "captured_at_iso": null,
+          "deleted_at": null
+        },
+        "relationships": []
+      }
+    }
+  ],
+  "links": {"first": "https://tester.golink.co/api/browse/folders/x?page=1", "last": "https://tester.golink.co/api/browse/folders/x?page=1", "next": null, "prev": null},
+  "meta": {
+    "paginate": {"currentPage": 1, "from": 1, "lastPage": 1, "path": "https://tester.golink.co/api/browse/folders/x", "perPage": 50, "to": 50, "total": 3},
+    "stats": {"folders": 1, "video": 0, "image": 1, "audio": 0, "file": 1, "files": 2, "bytes": 2098176},
+    "root": null
+  }
+}

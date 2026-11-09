@@ -224,12 +224,17 @@ data class EncryptNamesBody(
 data class NameIndexResponse(
     val files: List<NameIndexItem> = emptyList(),
     val folders: List<NameIndexItem> = emptyList(),
+    // Servidor novo: os ficheiros trazem parent_id (servidor antigo: false, sem pasta).
+    val with_parent: Boolean = false,
+    // Acima de 10 000 itens o servidor corta o índice (GetNameIndexController).
+    val truncated: Boolean = false,
 )
 
 @Serializable
 data class NameIndexItem(
     val id: String,
     val type: String? = null,
+    val parent_id: String? = null,
     val name_encrypted: String,
 )
 

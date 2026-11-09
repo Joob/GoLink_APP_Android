@@ -2,7 +2,6 @@ package co.golink.tester.ui.screens.legacy
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +11,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -28,7 +29,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -37,13 +39,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import co.golink.tester.data.legacy.LegacyCrypto
 import co.golink.tester.data.legacy.LegacyEventRow
 import co.golink.tester.ui.i18n.lt
 import co.golink.tester.ui.screens.admin.AdminLoadMore
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
 import java.time.Instant
 import java.time.LocalDate
@@ -53,77 +51,74 @@ import java.time.format.DateTimeFormatter
 
 private val CATEGORIES = listOf("all", "checkin", "vault", "people", "settings")
 
-/** Activity.vue. Cada linha vem selada à chave pública do dono: o servidor só vê a categoria e a data. */
+/**
+ * Activity.vue. Cada linha vem selada à chave pública do dono: o servidor só vê a categoria e a data.
+ * Devolve as linhas para a LazyColumn do LegacyScreen (o registo cresce com "carregar mais").
+ */
 @Composable
-fun LegacyActivityPane(vm: LegacyActivityViewModel, checkins: Int, onToast: (LegacyToast) -> Unit) {
+fun legacyActivityContent(vm: LegacyActivityViewModel, checkins: Int, onToast: (LegacyToast) -> Unit): LazyListScope.() -> Unit {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val toast by rememberUpdatedState(onToast)
 
     LaunchedEffect(Unit) { vm.start() }
     // "Ainda estou aqui" noutro pane: junta a linha nova ao topo.
     LaunchedEffect(checkins) { if (checkins > 0) vm.refresh() }
 
-    // Gerado no aparelho: o servidor não consegue ler o registo. Inclui as páginas por carregar.
+    // Gerado no aparelho (o servidor não consegue ler o registo), no viewModelScope: mudar de pane não o corta.
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            vm.setExporting(true)
-            runCatching {
-                val rows = vm.allRows()
-                val header = listOf(lt("csv_date"), lt("csv_category"), lt("csv_event"))
-                val lines = listOf(header) + rows.map { listOf(dateTime(it.createdAt), lt("log_${it.category}"), eventText(it)) }
-                val csv = lines.joinToString("\r\n") { line -> line.joinToString(",") { LegacyCrypto.csvCell(it) } }
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openOutputStream(uri)?.use { out ->
-                        out.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
-                        out.write(csv.toByteArray(Charsets.UTF_8))
-                    } ?: error("sem saída")
-                }
-            }.onFailure { onToast(LegacyToast("error", true)) }
-            vm.setExporting(false)
-        }
+        if (uri != null) vm.exportCsv(context.applicationContext.contentResolver, uri) { toast(LegacyToast("error", true)) }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f)) {
-                LegacyFilterChips(
-                    options = CATEGORIES.map { it to lt("log_$it") },
-                    selected = state.category,
-                    onSelect = { if (it != state.category) vm.setCategory(it) },
-                )
-            }
-            IconButton(
-                onClick = {
-                    val name = if (state.category == "all") "legacy-activity.csv" else "legacy-activity-${state.category}.csv"
-                    exportLauncher.launch(name)
-                },
-                enabled = state.rows.isNotEmpty() && !state.exporting,
-            ) {
-                Icon(Icons.Outlined.FileDownload, contentDescription = lt("export_csv"), modifier = Modifier.size(20.dp))
+    val today = remember { LocalDate.now() }
+    // Agrupar só quando as linhas mudam, não a cada recomposição.
+    val groups = remember(state.rows, today) { state.rows.groupBy { groupOf(it.createdAt, today) } }
+    val s = state
+
+    return {
+        item(key = "activity_filters") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    LegacyFilterChips(
+                        options = CATEGORIES.map { it to lt("log_$it") },
+                        selected = s.category,
+                        onSelect = { if (it != s.category) vm.setCategory(it) },
+                    )
+                }
+                IconButton(
+                    onClick = {
+                        val name = if (s.category == "all") "legacy-activity.csv" else "legacy-activity-${s.category}.csv"
+                        exportLauncher.launch(name)
+                    },
+                    enabled = s.rows.isNotEmpty() && !s.exporting,
+                ) {
+                    Icon(Icons.Outlined.FileDownload, contentDescription = lt("export_csv"), modifier = Modifier.size(20.dp))
+                }
             }
         }
 
         when {
-            state.loading && state.rows.isEmpty() -> Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(strokeWidth = 2.dp)
-            }
-            state.failed -> LegacyCard {
-                Text(lt("error"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedButton(onClick = { vm.load() }, shape = RoundedCornerShape(12.dp), modifier = Modifier.padding(top = 10.dp)) { Text(lt("retry")) }
-            }
-            state.rows.isEmpty() -> LegacyCard { Text(lt("no_activity"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            else -> {
-                val today = LocalDate.now()
-                state.rows.groupBy { groupOf(it.createdAt, today) }.forEach { (group, rows) ->
-                    SectionLabel(group.second, Modifier.padding(top = 6.dp))
-                    rows.forEach { row -> ActivityRow(row, today) }
+            s.loading && s.rows.isEmpty() -> item(key = "activity_loading") {
+                Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(strokeWidth = 2.dp)
                 }
+            }
+            s.failed -> item(key = "activity_failed") {
+                LegacyCard {
+                    Text(lt("error"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedButton(onClick = { vm.load() }, shape = RoundedCornerShape(12.dp), modifier = Modifier.padding(top = 10.dp)) { Text(lt("retry")) }
+                }
+            }
+            s.rows.isEmpty() -> item(key = "activity_empty") {
+                LegacyCard { Text(lt("no_activity"), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+            else -> groups.forEach { (group, rows) ->
+                item(key = "activity_group_${group.first}") { SectionLabel(group.second, Modifier.padding(top = 6.dp)) }
+                items(rows, key = { "activity_${it.id}" }) { row -> ActivityRow(row, today) }
             }
         }
 
-        if (state.cursor != null) AdminLoadMore(loading = state.loading) { vm.load(state.cursor) }
+        if (s.cursor != null) item(key = "activity_more") { AdminLoadMore(loading = s.loading) { vm.load(s.cursor) } }
     }
 }
 

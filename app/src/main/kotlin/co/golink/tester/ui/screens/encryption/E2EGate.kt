@@ -30,6 +30,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.SecureFlagPolicy
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -46,6 +48,10 @@ enum class GateMode { Checking, Prompt, ShowRecovery, Recover, ResetCode, Reset,
 class E2EGateViewModel @Inject constructor(
     private val keys: E2EKeyManager,
 ) : ViewModel() {
+    companion object {
+        /** Mínimo da passphrase no setup e no reset (igual à web, E2EKeyGate.vue). */
+        const val MIN_SECRET_LENGTH = 12
+    }
 
     val unlocked: StateFlow<Boolean> = keys.unlocked
     // Configurado no servidor — usado para saber se escondemos a tabela/navegação.
@@ -93,10 +99,10 @@ class E2EGateViewModel @Inject constructor(
         // termina e fica mais tempo se o loading demorar. Só um piso anti-flash de
         // 700ms, IGUAL à web (E2EKeyGate.vue). Antes eram 10s fixos → irrealista.
         submitMinMillis = 700L
-        // Mínimo 8 chars NO SETUP (wrap = alvo de brute-force offline); no unlock
+        // Mínimo 12 chars NO SETUP (wrap = alvo de brute-force offline); no unlock
         // não, para chaves antigas continuarem a abrir. Igual à Web.
-        if (!configured && secret.length < 8) {
-            error = "A passphrase tem de ter pelo menos 8 caracteres.".tr()
+        if (!configured && secret.length < MIN_SECRET_LENGTH) {
+            error = "Mínimo %d caracteres".tr().format(MIN_SECRET_LENGTH)
             return
         }
         run("segredo errado".tr()) {
@@ -112,7 +118,7 @@ class E2EGateViewModel @Inject constructor(
         }
     }
 
-    fun confirmRecoverySaved() { mode = GateMode.Done }
+    fun confirmRecoverySaved() { recoveryKey = null; mode = GateMode.Done }
 
     /** Cancelar o unlock (X): fecha o diálogo. A tabela continua escondida
      *  (configurado && !unlocked) e o placeholder reabre o gate. Só no unlock
@@ -160,8 +166,8 @@ class E2EGateViewModel @Inject constructor(
 
     fun submitReset(secret: String) {
         if (secret.isBlank() || working) return
-        if (secret.length < 12) {
-            error = "Mínimo %d caracteres".tr().format(12)
+        if (secret.length < MIN_SECRET_LENGTH) {
+            error = "Mínimo %d caracteres".tr().format(MIN_SECRET_LENGTH)
             return
         }
         run("falhou".tr()) {
@@ -220,6 +226,8 @@ class E2EGateViewModel @Inject constructor(
                     // Blob com tamanhos inválidos: o registo no servidor está
                     // corrompido — dizer "segredo errado" mandava procurar no
                     // sítio errado.
+                    cause == "e2e_recovery_incomplete" ->
+                        "A chave de recuperação está incompleta.".tr()
                     cause.startsWith("e2e_bad_blob") ->
                         "Os dados de encriptação no servidor estão inválidos.".tr()
                     else -> errMsg
@@ -243,7 +251,9 @@ fun E2EGate(viewModel: E2EGateViewModel = hiltViewModel()) {
 
     // Só é dismissível no unlock de uma conta já configurada; setup/recovery/reset
     // mantêm-se obrigatórios (dismiss() faz a verificação).
-    Dialog(onDismissRequest = { viewModel.dismiss() }) {
+    // FLAG_SECURE no próprio diálogo: passphrase e recovery key fora de screenshots,
+    // gravações de ecrã e miniaturas dos recentes, seja qual for a definição da app.
+    Dialog(onDismissRequest = { viewModel.dismiss() }, properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn)) {
         Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.fillMaxWidth().padding(20.dp)) {
                 when (mode) {
@@ -268,6 +278,7 @@ fun E2EGate(viewModel: E2EGateViewModel = hiltViewModel()) {
                         button = "Guardar".tr(),
                         viewModel = viewModel,
                         onSubmit = viewModel::submitReset,
+                        needsConfirm = true,
                     )
                     else -> SecretContent(
                         title = if (viewModel.configured) "Desbloquear os teus ficheiros".tr() else "Proteger os teus ficheiros".tr(),
@@ -276,6 +287,10 @@ fun E2EGate(viewModel: E2EGateViewModel = hiltViewModel()) {
                         viewModel = viewModel,
                         onSubmit = viewModel::submitSecret,
                         showForgot = viewModel.configured,
+                        // Setup: confirmar a passphrase (uma gralha só se resolvia com a recovery key).
+                        needsConfirm = !viewModel.configured,
+                        // "Manter desbloqueado" também no setup (antes ficava ligado sem se ver).
+                        showKeep = true,
                         // X só no unlock de conta configurada.
                         onClose = if (viewModel.configured) viewModel::dismiss else null,
                     )
@@ -350,8 +365,12 @@ private fun SecretContent(
     onSubmit: (String) -> Unit,
     showForgot: Boolean = false,
     onClose: (() -> Unit)? = null,
+    needsConfirm: Boolean = false,
+    showKeep: Boolean = false,
 ) {
     var secret by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    var mismatch by remember { mutableStateOf(false) }
     if (onClose != null && !viewModel.working) {
         androidx.compose.foundation.layout.Row(
             Modifier.fillMaxWidth(),
@@ -394,7 +413,7 @@ private fun SecretContent(
 
         OutlinedTextField(
             value = secret,
-            onValueChange = { secret = it; if (viewModel.error != null) viewModel.clearError() },
+            onValueChange = { secret = it; mismatch = false; if (viewModel.error != null) viewModel.clearError() },
             singleLine = true,
             isError = viewModel.error != null,
             visualTransformation = PasswordVisualTransformation(),
@@ -403,9 +422,22 @@ private fun SecretContent(
                 .fillMaxWidth()
                 .offset { androidx.compose.ui.unit.IntOffset(shake.value.toInt(), 0) },
         )
+        if (needsConfirm) {
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = confirm,
+                onValueChange = { confirm = it; mismatch = false },
+                singleLine = true,
+                isError = mismatch,
+                placeholder = { Text("Confirmar password".tr()) },
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (mismatch) { Spacer(Modifier.height(6.dp)); Text("As passwords não coincidem".tr(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        }
         viewModel.error?.let { Spacer(Modifier.height(6.dp)); Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-        if (showForgot) {
-            // Só no desbloqueio (conta já configurada).
+        if (showKeep) {
             androidx.compose.foundation.layout.Row(
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -418,7 +450,9 @@ private fun SecretContent(
             }
         }
         Spacer(Modifier.height(14.dp))
-        GateButton(button, enabled = secret.isNotBlank()) { onSubmit(secret) }
+        GateButton(button, enabled = secret.isNotBlank() && (!needsConfirm || confirm.isNotBlank())) {
+            if (needsConfirm && secret != confirm) mismatch = true else onSubmit(secret)
+        }
     }
     if (showForgot && !viewModel.working) {
         TextButton(onClick = viewModel::startRecover, modifier = Modifier.fillMaxWidth()) {
