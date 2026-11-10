@@ -60,11 +60,30 @@ data class UploadTask(
     val overLimit: String? = null,
     // Recusado por falta de espaço na conta (507 storage-full): definitivo.
     val storageFull: Boolean = false,
+    // A cifrar o ficheiro no dispositivo (antes de enviar): fração já cifrada.
+    val encrypting: Boolean = false,
+    val encryptProgress: Float = 0f,
+    // Último byte enviado: o servidor está a juntar as partes (cancelar já não o desfaz).
+    val finalizing: Boolean = false,
 ) {
-    enum class State { Queued, Uploading, Completed, Failed, Cancelled, Conflict }
+    // Stalled: sem bytes a avançar durante 60 s — abortado e posto de lado, com
+    // a retoma guardada, até o utilizador carregar em "Reenviar".
+    enum class State { Queued, Uploading, Completed, Failed, Cancelled, Conflict, Stalled }
 }
 
 private const val MAX_PARALLEL_USER_UPLOADS = 3
+private const val STALL_MS = 60_000L
+
+/** Sem progresso durante [STALL_MS] com um pedido em curso e rede. */
+class StalledException : RuntimeException("stalled")
+
+/** Estado do watchdog de parados de um envio (pedidos em curso + último avanço). */
+private class StallWatch {
+    val last = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+    val active = java.util.concurrent.atomic.AtomicInteger(0)
+    @Volatile var finalizing = false
+    fun touch() = last.set(System.currentTimeMillis())
+}
 private const val MEMBER_KEYS_TTL_MS = 60_000L
 
 @Singleton
@@ -438,7 +457,11 @@ class UploadManager @Inject constructor(
                 else _completed.value = System.currentTimeMillis()
             } catch (t: Throwable) {
                 if (t is kotlinx.coroutines.CancellationException) throw t
-                if (t is ConflictException) {
+                if (t is StalledException) {
+                    // Mantém o registo de retoma: "Reenviar" continua dos chunks aceites.
+                    // Não é repetido sozinho (rede/unlock só repetem Failed).
+                    update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Stalled, errorMessage = "Parado — sem progresso".tr(), waitingForNetwork = false, networkError = false, encrypting = false, finalizing = false) else it } }
+                } else if (t is ConflictException) {
                     forgetTask(taskId)
                     if (overwrite) {
                         // O utilizador pediu "Substituir" e o servidor voltou a
@@ -471,6 +494,7 @@ class UploadManager @Inject constructor(
                 }
             } finally {
                 if (permit) userUploadPermits.release()
+                lastPermille.remove(taskId)
                 // Só a própria entrada: um retry já pode ter posto um job novo.
                 coroutineContext[Job]?.let { jobs.remove(taskId, it) }
             }
@@ -509,12 +533,21 @@ class UploadManager @Inject constructor(
         update { list -> list.filter { it.id != taskId } }
     }
 
+    // Synchronized (o mesmo lock do retry/overwriteConflict): antes, um retry
+    // automático (rede a voltar) a meio do cancel recriava o registo de retoma e
+    // lançava um job sem linha na UI, que ainda retomava no arranque seguinte.
+    @Synchronized
     fun cancel(taskId: String) {
+        val chunkName = resumeStore.get(taskId)?.chunks?.chunkName
         jobs.remove(taskId)?.cancel()
         deleteCameraCapture(taskId)
         forgetTask(taskId)
         sources.remove(taskId)
         update { list -> list.filter { it.id != taskId } }
+        // Partes já recebidas pelo servidor: apaga-as já (senão ficavam 24 h).
+        if (chunkName != null) scope.launch {
+            runCatching { api.cancelChunks(co.golink.tester.network.CancelChunksBody(chunkName)) }
+        }
     }
 
     // Synchronized: rede a voltar + "Repetir todos" ao mesmo tempo lançavam
@@ -523,15 +556,20 @@ class UploadManager @Inject constructor(
     fun retry(taskId: String) {
         val source = sources[taskId] ?: return
         val current = _tasks.value.firstOrNull { it.id == taskId } ?: return
-        if (current.state != UploadTask.State.Failed) return
+        if (current.state != UploadTask.State.Failed && current.state != UploadTask.State.Stalled) return
         val metadata = metadataFor(taskId, source.uri).copy(displayName = current.name)
-        update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Queued, progress = 0f, errorMessage = null, networkError = false, e2eLocked = false, overLimit = null, storageFull = false) else it } }
+        update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Queued, progress = 0f, errorMessage = null, networkError = false, e2eLocked = false, overLimit = null, storageFull = false, encrypting = false, finalizing = false) else it } }
         if (!source.mobileBackup) track(taskId, source.uri, metadata, source.parentId, overwrite = source.overwrite, replacesId = source.replacesId, treeUri = source.treeUri)
         runTask(taskId, source.uri, metadata, source.parentId, overwrite = source.overwrite, mobileBackup = source.mobileBackup, backupFolder = source.backupFolder, backupPath = source.backupPath, replacesId = source.replacesId)
     }
 
     fun retryFailed() {
         _tasks.value.filter { it.state == UploadTask.State.Failed }.forEach { retry(it.id) }
+    }
+
+    /** "Reenviar parados": volta a pôr na fila os que pararam (continuam dos chunks aceites). */
+    fun retryStalled() {
+        _tasks.value.filter { it.state == UploadTask.State.Stalled }.forEach { retry(it.id) }
     }
 
     fun clearFinished() {
@@ -549,7 +587,7 @@ class UploadManager @Inject constructor(
     fun pruneFinishedBackups(keepLast: Int = 0) {
         // Failed também: as falhas ficam guardadas no worker e são retomadas
         // como tarefas novas — sem isto somava-se uma linha falhada por execução.
-        val finished = setOf(UploadTask.State.Completed, UploadTask.State.Cancelled, UploadTask.State.Failed)
+        val finished = setOf(UploadTask.State.Completed, UploadTask.State.Cancelled, UploadTask.State.Failed, UploadTask.State.Stalled)
         val done = _tasks.value.filter { it.mobileBackup && it.state in finished }
         if (done.size <= keepLast) return
         val removeIds = done.dropLast(keepLast).map { it.id }.toSet()
@@ -573,11 +611,24 @@ class UploadManager @Inject constructor(
     /** Chamado pelo worker em cada execução: larga o progresso do backup com mais de 24 h. */
     fun purgeStaleBackupResume() = resumeStore.purgeStaleBackups()
 
-    fun clearAll() {
-        _tasks.value.filterNot { it.mobileBackup }.forEach { forgetTask(it.id) }
-        jobs.keys.toList().forEach { jobs.remove(it)?.cancel() }
-        sources.clear()
-        update { emptyList() }
+    // [includeBackups]: false no X do banner do explorador (os backups vivem no
+    // ecrã próprio e antes eram cancelados por arrasto); true ao terminar sessão.
+    @Synchronized
+    fun clearAll(includeBackups: Boolean = true) {
+        val targets = _tasks.value.filter { includeBackups || !it.mobileBackup }.map { it.id }.toSet()
+        targets.forEach { id -> resumeStore.get(id)?.chunks?.chunkName?.let { name ->
+            scope.launch { runCatching { api.cancelChunks(co.golink.tester.network.CancelChunksBody(name)) } }
+        } }
+        _tasks.value.filter { it.id in targets && !it.mobileBackup }.forEach { forgetTask(it.id) }
+        if (includeBackups) {
+            jobs.keys.toList().forEach { jobs.remove(it)?.cancel() }
+            sources.clear()
+            update { emptyList() }
+        } else {
+            targets.forEach { jobs.remove(it)?.cancel() }
+            sources.keys.removeAll(targets)
+            update { list -> list.filterNot { it.id in targets } }
+        }
     }
 
     private suspend fun uploadSingle(
@@ -588,17 +639,27 @@ class UploadManager @Inject constructor(
         overwrite: Boolean,
     ) {
         markUploading(taskId)
-        val fileBody = streamingRequestBody(uri, metadata.mimeType, metadata.size) { p ->
-            updateProgress(taskId, p)
+        val response = withStallWatch { watch ->
+            val fileBody = streamingRequestBody(uri, metadata.mimeType, metadata.size, onBytes = { watch.touch() }) { p ->
+                updateProgress(taskId, p)
+                if (p >= 1f) { watch.finalizing = true; setFinalizing(taskId, true) }
+            }
+            val filePart = MultipartBody.Part.createFormData("file", metadata.displayName, fileBody)
+            watch.active.incrementAndGet()
+            watch.touch()
+            try {
+                api.upload(
+                    name = textPart(metadata.baseName),
+                    extension = textPart(metadata.extension),
+                    parentId = parentId?.let { textPart(it) },
+                    overwriteExisting = if (overwrite) textPart("1") else null,
+                    file = filePart,
+                )
+            } finally {
+                watch.active.decrementAndGet()
+                setFinalizing(taskId, false)
+            }
         }
-        val filePart = MultipartBody.Part.createFormData("file", metadata.displayName, fileBody)
-        val response = api.upload(
-            name = textPart(metadata.baseName),
-            extension = textPart(metadata.extension),
-            parentId = parentId?.let { textPart(it) },
-            overwriteExisting = if (overwrite) textPart("1") else null,
-            file = filePart,
-        )
         if (response.code() == 409) throw ConflictException()
         if (!response.isSuccessful) failHttp(response.code(), response.errorBody()?.string())
         rememberCreated(taskId, response.body()?.data)
@@ -651,12 +712,20 @@ class UploadManager @Inject constructor(
         try {
             (openSourceStream(uri, mobileBackup) ?: error("não foi possível ler o ficheiro")).use { input ->
                 temp.outputStream().use { out ->
-                    EncryptedFileCodec.encryptStream(input, out, dataKey)
+                    encryptWithProgress(taskId, input, out, dataKey, metadata.size)
                 }
             }
-            val fileBody = temp.asRequestBody("application/octet-stream".toMediaTypeOrNull())
+            val response = withStallWatch { watch ->
+            val total = temp.length()
+            val fileBody = countingFileBody(temp) { sent ->
+                watch.touch()
+                if (total > 0L) updateProgressThrottled(taskId, sent, total)
+                if (sent >= total) { watch.finalizing = true; setFinalizing(taskId, true) }
+            }
             val filePart = MultipartBody.Part.createFormData("file", metadata.displayName, fileBody)
-            val response = if (mobileBackup) api.uploadMobileBackup(
+            watch.active.incrementAndGet()
+            watch.touch()
+            try { if (mobileBackup) api.uploadMobileBackup(
                 name = textPart(if (nameEncrypted != null) "•" else metadata.baseName),
                 extension = textPart(metadata.extension),
                 overwriteExisting = if (overwrite) textPart("1") else null,
@@ -679,7 +748,11 @@ class UploadManager @Inject constructor(
                 wrappedDataKey = textPart(wrapped),
                 mediaType = textPart(mediaType),
                 nameEncrypted = nameEncrypted?.let { textPart(it) },
-            )
+            ) } finally {
+                watch.active.decrementAndGet()
+                setFinalizing(taskId, false)
+            }
+            }
             if (response.code() == 409) throw ConflictException()
             if (!response.isSuccessful) failHttp(response.code(), response.errorBody()?.string())
 
@@ -695,6 +768,8 @@ class UploadManager @Inject constructor(
                     try {
                         val sealed = e2eKeyManager.sealForPublicKey(dataKey, r.public_key!!)
                         api.shareFileKey(fileId, co.golink.tester.domain.encryption.ShareKeyBody(r.user_id, sealed))
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
                     } catch (e: Throwable) {
                         // sem acesso p/ este membro; segue
                     }
@@ -708,6 +783,8 @@ class UploadManager @Inject constructor(
                         fileId,
                         encryptedThumb.toRequestBody("application/octet-stream".toMediaTypeOrNull()),
                     )
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
                 } catch (e: Throwable) {
                     // sem thumb; segue
                 }
@@ -749,6 +826,9 @@ class UploadManager @Inject constructor(
             // ao próprio (fallback) → o dono não abriria o ficheiro. Falha
             // transitória → tenta de novo no próximo upload.
             api.folderMemberKeys(folderId).body()?.also { memberKeysCache[folderId] = System.currentTimeMillis() to it }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Cancelado (X): antes era engolido e o envio seguia selado ao próprio.
+            throw e
         } catch (e: Throwable) {
             null
         }
@@ -890,7 +970,7 @@ class UploadManager @Inject constructor(
             if (!resumed) {
                 (openSourceStream(uri, mobileBackup) ?: error("não foi possível ler o ficheiro")).use { input ->
                     temp.outputStream().use { out ->
-                        EncryptedFileCodec.encryptStream(input, out, dataKey)
+                        encryptWithProgress(taskId, input, out, dataKey, metadata.size)
                     }
                 }
                 if (tracked) {
@@ -930,7 +1010,7 @@ class UploadManager @Inject constructor(
                     readChunk = { i -> readAt(channel, i.toLong() * CHUNK_SIZE, minOf(CHUNK_SIZE.toLong(), total - i.toLong() * CHUNK_SIZE).toInt()) },
                     alreadyUploaded = plan.uploaded.toSet(),
                     onChunkDone = { i -> if (tracked) resumeStore.markChunk(resumeId, i) },
-                ) { chunkIndex, chunkBytes, isLast ->
+                ) { chunkIndex, chunkBody, isLast ->
                     api.uploadChunk(
                         name = textPart(if (nameEncrypted != null) "•" else metadata.baseName),
                         extension = textPart(metadata.extension),
@@ -943,10 +1023,7 @@ class UploadManager @Inject constructor(
                         mobileBackup = if (mobileBackup) textPart("1") else null,
                         folder = if (mobileBackup) backupFolder?.takeIf { it.isNotBlank() }?.let { textPart(it) } else null,
                         devicePath = if (mobileBackup) backupPath?.takeIf { it.isNotBlank() }?.let { textPart(it) } else null,
-                        chunk = MultipartBody.Part.createFormData(
-                            "chunk", cipherName,
-                            chunkBytes.toRequestBody("application/octet-stream".toMediaTypeOrNull()),
-                        ),
+                        chunk = MultipartBody.Part.createFormData("chunk", cipherName, chunkBody),
                         encrypted = textPart("1"),
                         wrappedDataKey = textPart(wrapped),
                         mediaType = textPart(mediaType),
@@ -971,6 +1048,8 @@ class UploadManager @Inject constructor(
                     try {
                         val sealed = e2eKeyManager.sealForPublicKey(dataKey, r.public_key!!)
                         api.shareFileKey(fileId, co.golink.tester.domain.encryption.ShareKeyBody(r.user_id, sealed))
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
                     } catch (e: Throwable) {
                     }
                 }
@@ -983,6 +1062,8 @@ class UploadManager @Inject constructor(
                         fileId,
                         encryptedThumb.toRequestBody("application/octet-stream".toMediaTypeOrNull()),
                     )
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
                 } catch (e: Throwable) {
                 }
             }
@@ -1003,14 +1084,16 @@ class UploadManager @Inject constructor(
         } catch (t: Throwable) {
             // Backup: só rede, cancelamento e conta cheia mantêm o progresso;
             // o resto (limite do plano, 4xx, partes perdidas) recomeça do zero.
-            if (mobileBackup && t !is java.io.IOException && t !is kotlinx.coroutines.CancellationException && t !is StorageFullException) {
+            if (mobileBackup && t !is java.io.IOException && t !is kotlinx.coroutines.CancellationException && t !is StorageFullException && t !is StalledException) {
                 resumeStore.forget(resumeId)
             }
             throw t
         } finally {
             // Registado para retoma: o ciphertext fica até o upload sair da fila
-            // (concluído/cancelado apaga-o via forgetTask).
-            if (!tracked) temp.delete()
+            // (concluído/cancelado apaga-o via forgetTask). Cancelado a meio da
+            // cifra, o registo já foi esquecido antes de o tempPath lá estar:
+            // sem isto o .enc (do tamanho do ficheiro) ficava em filesDir.
+            if (!tracked || !resumeStore.isTracked(resumeId)) temp.delete()
         }
     }
 
@@ -1073,7 +1156,7 @@ class UploadManager @Inject constructor(
                     readChunk = { i -> readAt(channel, i.toLong() * CHUNK_SIZE, minOf(CHUNK_SIZE.toLong(), total - i.toLong() * CHUNK_SIZE).toInt()) },
                     alreadyUploaded = plan.uploaded.toSet(),
                     onChunkDone = { i -> if (tracked) resumeStore.markChunk(taskId, i) },
-                ) { chunkIndex, chunkBytes, isLast ->
+                ) { chunkIndex, chunkBody, isLast ->
                     api.uploadChunk(
                         name = textPart(metadata.baseName),
                         extension = textPart(metadata.extension),
@@ -1085,10 +1168,7 @@ class UploadManager @Inject constructor(
                         mobileBackup = mobileFlag?.let { textPart(it) },
                         folder = backupBucket?.let { textPart(it) },
                         devicePath = if (mobileBackup) backupPath?.takeIf { it.isNotBlank() }?.let { textPart(it) } else null,
-                        chunk = MultipartBody.Part.createFormData(
-                            "chunk", plan.chunkName,
-                            chunkBytes.toRequestBody("application/octet-stream".toMediaTypeOrNull()),
-                        ),
+                        chunk = MultipartBody.Part.createFormData("chunk", plan.chunkName, chunkBody),
                     )
                 }
             }
@@ -1126,7 +1206,7 @@ class UploadManager @Inject constructor(
                 val chunkBytes = if (filled == buffer.size) buffer.copyOf() else buffer.copyOf(filled)
                 // Sem posição na fonte não há como reler um chunk: o atual fica em
                 // memória e repete-se aqui (rede/429/5xx) em vez de recomeçar do 0.
-                val response = sendSequentialChunk(taskId) {
+                val response = sendSequentialChunk(taskId) { watch ->
                     api.uploadChunk(
                         name = textPart(metadata.baseName),
                         extension = textPart(metadata.extension),
@@ -1140,7 +1220,7 @@ class UploadManager @Inject constructor(
                         devicePath = if (mobileBackup) backupPath?.takeIf { it.isNotBlank() }?.let { textPart(it) } else null,
                         chunk = MultipartBody.Part.createFormData(
                             "chunk", chunkOriginalName,
-                            chunkBytes.toRequestBody("application/octet-stream".toMediaTypeOrNull()),
+                            countingBody(chunkBytes) { watch.touch() },
                         ),
                     )
                 }
@@ -1202,20 +1282,24 @@ class UploadManager @Inject constructor(
      */
     private suspend fun sendSequentialChunk(
         taskId: String,
-        send: suspend () -> retrofit2.Response<okhttp3.ResponseBody>,
-    ): retrofit2.Response<okhttp3.ResponseBody> {
+        send: suspend (StallWatch) -> retrofit2.Response<okhttp3.ResponseBody>,
+    ): retrofit2.Response<okhttp3.ResponseBody> = withStallWatch { watch ->
         var attempt = 0
         while (true) {
+            watch.active.incrementAndGet()
+            watch.touch()
             val result = try {
-                send()
+                send(watch)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: java.io.IOException) {
                 null
+            } finally {
+                watch.active.decrementAndGet()
             }
             if (result != null) {
                 if (result.code() == 409) throw ConflictException()
-                if (result.isSuccessful) return result
+                if (result.isSuccessful) return@withStallWatch result
                 val errBody = result.errorBody()?.string()
                 val retryable = result.code() == 429 || (result.code() >= 500 && result.code() != 507)
                 if (!retryable) failHttp(result.code(), errBody)
@@ -1235,6 +1319,8 @@ class UploadManager @Inject constructor(
             setWaiting(taskId, true)
             try { connectivity.delayOrRetryNow(backoffMs(attempt)) } finally { setWaiting(taskId, false) }
         }
+        @Suppress("UNREACHABLE_CODE")
+        error("unreachable")
     }
 
     /**
@@ -1278,9 +1364,12 @@ class UploadManager @Inject constructor(
         readChunk: (Int) -> ByteArray,
         alreadyUploaded: Set<Int> = emptySet(),
         onChunkDone: (Int) -> Unit = {},
-        send: suspend (index: Int, bytes: ByteArray, isLast: Boolean) -> retrofit2.Response<okhttp3.ResponseBody>,
-    ): String? = kotlinx.coroutines.coroutineScope {
+        send: suspend (index: Int, body: RequestBody, isLast: Boolean) -> retrofit2.Response<okhttp3.ResponseBody>,
+    ): String? = withStallWatch { watch ->
         val uploaded = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+        // Bytes já escritos de cada chunk em curso: a barra avança dentro do
+        // chunk (antes só saltava de 5 em 5 MB) e alimenta o watchdog.
+        val inflight = java.util.concurrent.ConcurrentHashMap<Int, Long>()
         val lastIndex = chunkCount - 1
         // Retoma: os chunks que o servidor já aceitou não voltam a ser enviados
         // (se alguma parte tiver desaparecido, o 422 missing_chunks repõe-na).
@@ -1290,7 +1379,7 @@ class UploadManager @Inject constructor(
         if (uploaded.isNotEmpty() && totalBytes > 0L) updateProgress(taskId, uploaded.values.sum().toFloat() / totalBytes.toFloat())
 
         fun reportProgress() {
-            if (totalBytes > 0L) updateProgress(taskId, uploaded.values.sum().toFloat() / totalBytes.toFloat())
+            if (totalBytes > 0L) updateProgressThrottled(taskId, uploaded.values.sum() + inflight.values.sum(), totalBytes)
         }
 
         suspend fun sendOne(i: Int, isLast: Boolean): String? {
@@ -1300,12 +1389,31 @@ class UploadManager @Inject constructor(
                     if (ctx[Job]?.isActive == false) throw kotlinx.coroutines.CancellationException()
                 }
                 val bytes = readChunk(i)
+                val body = countingBody(bytes) { n ->
+                    inflight[i] = n
+                    watch.touch()
+                    // Último chunk todo escrito: o servidor está a juntar as partes.
+                    if (isLast && n >= bytes.size && !watch.finalizing) {
+                        watch.finalizing = true
+                        setFinalizing(taskId, true)
+                    }
+                    reportProgress()
+                }
+                watch.active.incrementAndGet()
+                watch.touch()
                 val result = try {
-                    send(i, bytes, isLast)
+                    send(i, body, isLast)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: java.io.IOException) {
                     null // rede: repete abaixo
+                } finally {
+                    watch.active.decrementAndGet()
+                    inflight.remove(i)
+                    if (isLast && watch.finalizing) {
+                        watch.finalizing = false
+                        setFinalizing(taskId, false)
+                    }
                 }
                 if (result != null) {
                     if (result.code() == 409) throw ConflictException()
@@ -1353,7 +1461,7 @@ class UploadManager @Inject constructor(
         var rounds = 0
         while (true) {
             try {
-                return@coroutineScope sendOne(lastIndex, isLast = true)
+                return@withStallWatch sendOne(lastIndex, isLast = true)
             } catch (e: MissingChunksException) {
                 if (++rounds > 3 || e.indices.isEmpty()) error("O servidor não recebeu todas as partes do ficheiro".tr())
                 e.indices.forEach { uploaded.remove(it) }
@@ -1365,6 +1473,104 @@ class UploadManager @Inject constructor(
     }
 
     private fun backoffMs(attempt: Int): Long = minOf(30_000L, 1000L shl (attempt - 1).coerceIn(0, 5))
+
+    /**
+     * Corre [block] com um watchdog: se houver pedidos em curso, rede e nenhum
+     * byte avançar durante [STALL_MS], lança [StalledException] (cancela os
+     * pedidos). Não conta nas esperas de rede/backoff (sem pedido em curso) nem
+     * enquanto o servidor junta as partes ([StallWatch.finalizing]).
+     */
+    private suspend fun <T> withStallWatch(block: suspend kotlinx.coroutines.CoroutineScope.(StallWatch) -> T): T =
+        kotlinx.coroutines.coroutineScope {
+            val watch = StallWatch()
+            val dog = launch {
+                while (true) {
+                    kotlinx.coroutines.delay(5_000)
+                    if (watch.active.get() == 0 || watch.finalizing || !isOnline()) {
+                        watch.touch()
+                        continue
+                    }
+                    if (System.currentTimeMillis() - watch.last.get() > STALL_MS) throw StalledException()
+                }
+            }
+            try {
+                block(watch)
+            } finally {
+                dog.cancel()
+            }
+        }
+
+    /** Corpo de um chunk que reporta os bytes já escritos no socket. */
+    private fun countingBody(bytes: ByteArray, onSent: (Long) -> Unit): RequestBody = object : RequestBody() {
+        override fun contentType() = "application/octet-stream".toMediaTypeOrNull()
+        override fun contentLength() = bytes.size.toLong()
+        override fun writeTo(sink: BufferedSink) {
+            var off = 0
+            while (off < bytes.size) {
+                val n = minOf(64 * 1024, bytes.size - off)
+                sink.write(bytes, off, n)
+                sink.flush()
+                off += n
+                onSent(off.toLong())
+            }
+        }
+    }
+
+    /** Ficheiro inteiro (ciphertext do envio único E2E) com progresso por bytes. */
+    private fun countingFileBody(file: File, onSent: (Long) -> Unit): RequestBody = object : RequestBody() {
+        override fun contentType() = "application/octet-stream".toMediaTypeOrNull()
+        override fun contentLength() = file.length()
+        override fun writeTo(sink: BufferedSink) {
+            file.inputStream().use { input ->
+                val buf = ByteArray(64 * 1024)
+                var sent = 0L
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    sink.write(buf, 0, n)
+                    sink.flush()
+                    sent += n
+                    onSent(sent)
+                }
+            }
+        }
+    }
+
+    /**
+     * Cifra em streaming com progresso e cancelável a meio: antes o X não
+     * parava a cifra (ciclo bloqueante) e o ficheiro inteiro era cifrado na mesma.
+     */
+    private suspend fun encryptWithProgress(taskId: String, input: java.io.InputStream, out: java.io.OutputStream, dataKey: ByteArray, size: Long) {
+        val ctx = kotlinx.coroutines.currentCoroutineContext()
+        var done = 0L
+        var lastPct = -1
+        update { list -> list.map { if (it.id == taskId) it.copy(encrypting = true, encryptProgress = 0f) else it } }
+        try {
+            EncryptedFileCodec.encryptStream(input, out, dataKey, onChunk = { n ->
+                ctx.ensureActive()
+                done += n
+                if (size > 0L) {
+                    val pct = ((done * 100) / size).toInt()
+                    if (pct != lastPct) {
+                        lastPct = pct
+                        update { list -> list.map { if (it.id == taskId) it.copy(encryptProgress = (done.toFloat() / size).coerceIn(0f, 1f)) else it } }
+                    }
+                }
+            })
+        } finally {
+            update { list -> list.map { if (it.id == taskId) it.copy(encrypting = false) else it } }
+        }
+    }
+
+    // Progresso por bytes, só quando muda uma décima de ponto (não martela o StateFlow).
+    private val lastPermille = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private fun updateProgressThrottled(taskId: String, sent: Long, total: Long) {
+        val pm = ((sent.coerceAtMost(total) * 1000) / total).toInt()
+        if (lastPermille.put(taskId, pm) != pm) updateProgress(taskId, sent.toFloat() / total.toFloat())
+    }
+
+    private fun setFinalizing(taskId: String, value: Boolean) =
+        update { list -> list.map { if (it.id == taskId && it.finalizing != value) it.copy(finalizing = value) else it } }
 
     private fun isOnline(): Boolean = connectivity.isOnline()
 
@@ -1459,6 +1665,7 @@ class UploadManager @Inject constructor(
         uri: Uri,
         mimeType: String,
         size: Long,
+        onBytes: (() -> Unit)? = null,
         onProgress: ((Float) -> Unit)? = null,
     ): RequestBody =
         object : RequestBody() {
@@ -1478,6 +1685,7 @@ class UploadManager @Inject constructor(
                     while (input.read(buf).also { n = it } != -1) {
                         sink.write(buf, 0, n)
                         sent += n
+                        onBytes?.invoke()
                         if (onProgress != null && size > 0L) {
                             val pct = ((sent * 100) / size).toInt()
                             if (pct != lastPct) {

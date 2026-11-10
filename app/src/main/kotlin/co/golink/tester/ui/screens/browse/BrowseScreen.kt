@@ -1298,6 +1298,7 @@ fun BrowseScreen(
                         onCancelTask = viewModel::cancelUpload,
                         onRetryTask = viewModel::retryUpload,
                         onRetryFailed = viewModel::retryFailedUploads,
+                        onRetryStalled = viewModel::retryStalledUploads,
                         onOverwrite = viewModel::overwriteConflict,
                         onSkip = viewModel::skipConflict,
                         onViewFiles = { viewModel.refresh(); viewModel.dismissCompletedUploads() },

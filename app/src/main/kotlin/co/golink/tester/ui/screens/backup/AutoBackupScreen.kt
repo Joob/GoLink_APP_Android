@@ -871,6 +871,7 @@ private fun RecentRow(
                 UploadTask.State.Failed -> (task.errorMessage?.takeIf { it.isNotBlank() } ?: "Falhou".tr()) to err
                 UploadTask.State.Conflict -> "Nome repetido no servidor".tr() to err
                 UploadTask.State.Cancelled -> "Cancelado".tr() to MaterialTheme.colorScheme.onSurfaceVariant
+                UploadTask.State.Stalled -> "Parado — sem progresso".tr() to err
             }
             Text(sub, style = MaterialTheme.typography.labelSmall, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (task.state == UploadTask.State.Uploading) {

@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -51,6 +52,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import co.golink.tester.data.pass.PassItem
+import co.golink.tester.data.pass.PassLogin
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import co.golink.tester.data.pass.PassState
 import co.golink.tester.data.pass.Totp
 import co.golink.tester.ui.i18n.pt
@@ -94,7 +99,11 @@ fun PassTotpPane(vm: PassViewModel, state: PassState, onNewWithKey: (PassPrefill
     var pending by remember { mutableStateOf<String?>(null) } // chave lida, à espera do login
 
     val accept: (String?) -> Unit = { raw ->
-        if (raw != null && Totp.parse(raw) != null) pending = raw.trim() else vm.toast(pt("qr_invalid"))
+        when {
+            raw != null && Totp.parse(raw) != null -> pending = raw.trim()
+            raw != null && raw.startsWith("otpauth-migration:", ignoreCase = true) -> vm.toast(pt("totp_form.qr_migration"))
+            else -> vm.toast(pt("qr_invalid"))
+        }
     }
     var photoUri by remember { mutableStateOf<Uri?>(null) }
     val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
@@ -158,26 +167,10 @@ fun PassTotpPane(vm: PassViewModel, state: PassState, onNewWithKey: (PassPrefill
     }
 
     if (enterKey) {
-        var key by remember { mutableStateOf("") }
-        val valid = Totp.parse(key) != null
-        AlertDialog(
-            onDismissRequest = { enterKey = false },
-            title = { Text(pt("enter_key")) },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = key,
-                        onValueChange = { key = it },
-                        placeholder = { Text(pt("ph.totp")) },
-                        isError = key.isNotBlank() && !valid,
-                        textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    if (key.isNotBlank() && !valid) Text(pt("totp_invalid"), color = PassRose, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
-                }
-            },
-            confirmButton = { TextButton(enabled = valid, onClick = { enterKey = false; pending = key.trim() }) { Text(pt("confirm")) } },
-            dismissButton = { TextButton(onClick = { enterKey = false }) { Text(pt("cancel")) } },
+        TotpAddSheet(
+            onDismiss = { enterKey = false },
+            onScan = { enterKey = false; chooser = true },
+            onDone = { raw -> enterKey = false; pending = raw },
         )
     }
 
@@ -189,6 +182,28 @@ fun PassTotpPane(vm: PassViewModel, state: PassState, onNewWithKey: (PassPrefill
             title = { Text(pt("pick_login")) },
             text = {
                 Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    // Só o 2FA, sem site/password (como o "Add account" dos autenticadores).
+                    ChooserRow(Icons.Outlined.Key, pt("totp_form.save_only")) {
+                        pending = null
+                        val account = cfg?.account.orEmpty()
+                        val name = cfg?.issuer?.ifEmpty { null } ?: account.ifEmpty { "2FA" }
+                        scope.launch {
+                            vm.save(
+                                null,
+                                JsonObject(
+                                    mapOf(
+                                        "type" to JsonPrimitive("login"),
+                                        "name" to JsonPrimitive(name),
+                                        "folder" to JsonNull,
+                                        "favourite" to JsonPrimitive(false),
+                                        "notes" to JsonPrimitive(""),
+                                        "login" to PassLogin("", account, "", raw).toJson(),
+                                    ),
+                                ),
+                                null,
+                            )
+                        }
+                    }
                     ChooserRow(Icons.Outlined.Add, pt("new_login")) {
                         pending = null
                         onNewWithKey(PassPrefill(name = cfg?.issuer.orEmpty(), username = cfg?.account.orEmpty(), totp = raw))

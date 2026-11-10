@@ -81,6 +81,29 @@ object Totp {
         return cfg.takeIf(::valid)
     }
 
+    /**
+     * Inverso de [parse] (espelho de buildOtpauth em totp.js): com tudo por defeito
+     * devolve só a base32; caso contrário um otpauth:// com os parâmetros.
+     */
+    fun build(secret: String, issuer: String = "", account: String = "", algorithm: String = "SHA1", digits: Int = 6, period: Int = 30): String {
+        val key = secret.uppercase().replace(Regex("[\\s-]"), "").trimEnd('=')
+        val alg = algorithm.uppercase()
+        if (alg == "SHA1" && digits == 6 && period == 30) return key
+        // ':' no emissor partiria o rótulo "Emissor:conta"; o parâmetro issuer mantém o original.
+        val label = if (issuer.isNotEmpty()) "${issuer.replace(':', ' ')}:$account" else account
+        val q = buildList {
+            add("secret=" + enc(key))
+            if (issuer.isNotEmpty()) add("issuer=" + enc(issuer))
+            add("algorithm=$alg")
+            add("digits=$digits")
+            add("period=$period")
+        }.joinToString("&")
+        return "otpauth://totp/${enc(label)}?$q"
+    }
+
+    /** encodeURIComponent (espaço → %20). */
+    private fun enc(s: String): String = java.net.URLEncoder.encode(s, "UTF-8").replace("+", "%20")
+
     /** decodeURIComponent (o "+" fica "+"). */
     private fun dec(s: String): String = runCatching { URLDecoder.decode(s.replace("+", "%2B"), "UTF-8") }.getOrDefault(s)
 

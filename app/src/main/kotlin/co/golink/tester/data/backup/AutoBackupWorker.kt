@@ -653,7 +653,8 @@ class AutoBackupWorker @AssistedInject constructor(
                 success = false,
                 // Sem espaço (507): a mensagem já vem traduzida; o marcador mantém a pausa por quota.
                 error = if (task?.storageFull == true) "HTTP 507" else task?.errorMessage,
-                transient = task?.overLimit == null && (task == null || task.networkError || task.e2eLocked || task.storageFull || isTransientError(task.errorMessage)),
+                // Parado (sem progresso 60 s): volta no próximo ciclo, continua dos chunks aceites.
+                transient = task?.overLimit == null && (task == null || task.state == UploadTask.State.Stalled || task.networkError || task.e2eLocked || task.storageFull || isTransientError(task.errorMessage)),
                 overLimit = task?.overLimit,
             )
         }

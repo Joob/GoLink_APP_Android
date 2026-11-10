@@ -72,6 +72,7 @@ fun UploadProgressBanner(
     onCancelTask: (String) -> Unit = {},
     onRetryTask: (String) -> Unit = {},
     onRetryFailed: () -> Unit = {},
+    onRetryStalled: () -> Unit = {},
     onOverwrite: (String) -> Unit = {},
     onSkip: (String) -> Unit = {},
     onViewFiles: () -> Unit = {},
@@ -80,24 +81,35 @@ fun UploadProgressBanner(
     var expanded by remember { mutableStateOf(true) }
     val active = tasks.count { it.state == UploadTask.State.Uploading || it.state == UploadTask.State.Queued }
     val failed = tasks.count { it.state == UploadTask.State.Failed }
+    val stalled = tasks.count { it.state == UploadTask.State.Stalled }
     val done = tasks.count { it.state == UploadTask.State.Completed }
     val total = tasks.size
-    val totalBytes = tasks.sumOf { it.sizeBytes }
-    val uploadedBytes = tasks.sumOf { (it.progress.toDouble() * it.sizeBytes).roundToLong() }
+    // Geral por bytes só sobre o que conta para chegar a 100%: concluídos + em
+    // envio/fila. Falhados, conflitos e parados ficam de fora (antes um falhado
+    // deixava o geral preso abaixo de 100%).
+    val counted = tasks.filter {
+        it.state == UploadTask.State.Completed || it.state == UploadTask.State.Uploading || it.state == UploadTask.State.Queued
+    }
+    val totalBytes = counted.sumOf { it.sizeBytes }
+    val uploadedBytes = counted.sumOf {
+        if (it.state == UploadTask.State.Completed) it.sizeBytes else (it.progress.toDouble() * it.sizeBytes).roundToLong()
+    }
     val overallProgress = if (totalBytes > 0) uploadedBytes.toFloat() / totalBytes.toFloat() else 0f
 
     val bannerState = when {
         active > 0 -> BannerState.Uploading
-        failed > 0 -> BannerState.Failed
+        failed > 0 || stalled > 0 -> BannerState.Failed
         done == total && total > 0 -> BannerState.Done
         else -> BannerState.Empty
     }
 
     var startTime by remember { mutableLongStateOf(0L) }
+    // Bytes já enviados quando esta sessão de envio começou (o ETA usa só os desta sessão).
+    var startBytes by remember { mutableLongStateOf(0L) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(bannerState) {
         if (bannerState == BannerState.Uploading) {
-            if (startTime == 0L) startTime = System.currentTimeMillis()
+            if (startTime == 0L) { startTime = System.currentTimeMillis(); startBytes = uploadedBytes }
             while (true) {
                 // Mesma base que startTime (o tempo de frame vem do nanoTime).
                 withFrameMillis { now = System.currentTimeMillis() }
@@ -107,9 +119,10 @@ fun UploadProgressBanner(
             startTime = 0L
         }
     }
-    val etaSeconds: Long? = if (bannerState == BannerState.Uploading && startTime > 0L && uploadedBytes > 0L) {
+    val sessionBytes = (uploadedBytes - startBytes).coerceAtLeast(0L)
+    val etaSeconds: Long? = if (bannerState == BannerState.Uploading && startTime > 0L && sessionBytes > 0L) {
         val elapsed = ((now - startTime).coerceAtLeast(1L)) / 1000.0
-        val rate = uploadedBytes / elapsed
+        val rate = sessionBytes / elapsed
         if (rate > 0) ((totalBytes - uploadedBytes) / rate).toLong().coerceAtLeast(0L) else null
     } else null
 
@@ -124,6 +137,7 @@ fun UploadProgressBanner(
             active = active,
             done = done,
             failed = failed,
+            stalled = stalled,
             total = total,
             totalBytes = totalBytes,
             uploadedBytes = uploadedBytes,
@@ -173,9 +187,16 @@ fun UploadProgressBanner(
                 }
                 if (bannerState == BannerState.Failed || bannerState == BannerState.Done) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                    // Só parados → "Reenviar parados (N)"; com falhados, repete os dois.
+                    val onlyStalled = bannerState == BannerState.Failed && failed == 0
                     BannerFooter(
                         state = bannerState,
-                        onPrimary = if (bannerState == BannerState.Failed) onRetryFailed else onViewFiles,
+                        primaryOverride = if (onlyStalled) "Reenviar parados (%d)".tr().format(stalled) else null,
+                        onPrimary = when {
+                            bannerState != BannerState.Failed -> onViewFiles
+                            onlyStalled -> onRetryStalled
+                            else -> ({ onRetryFailed(); if (stalled > 0) onRetryStalled() })
+                        },
                         onSecondary = onDismiss,
                     )
                 }
@@ -190,6 +211,7 @@ private fun BannerHeader(
     active: Int,
     done: Int,
     failed: Int,
+    stalled: Int = 0,
     total: Int,
     totalBytes: Long,
     uploadedBytes: Long,
@@ -222,12 +244,12 @@ private fun BannerHeader(
         )
     }
     val title = when (state) {
-        BannerState.Uploading -> "A carregar ${done + active} de $total".let {
-            // Show items currently being uploaded; the screenshot showed "A carregar 10 de 12"
-            // (counting in-progress + done as in-flight progress indicator)
-            "A carregar ${(done + 1).coerceAtMost(total)} de $total"
+        BannerState.Uploading -> "A carregar %d de %d".tr().format((done + 1).coerceAtMost(total), total)
+        BannerState.Failed -> when {
+            failed == 0 -> "%d parado(s)".tr().format(stalled)
+            failed == 1 -> "1 ficheiro falhou"
+            else -> "$failed ficheiros falharam"
         }
-        BannerState.Failed -> if (failed == 1) "1 ficheiro falhou" else "$failed ficheiros falharam"
         BannerState.Done -> if (total == 1) "1 ficheiro carregado" else "$total ficheiros carregados"
         BannerState.Empty -> "Carregamento"
     }
@@ -327,7 +349,7 @@ private fun UploadRow(
     val isConflict = task.state == UploadTask.State.Conflict
     val rowBg = when {
         isFailed -> MaterialTheme.colorScheme.error.copy(alpha = 0.08f)
-        isConflict -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.08f)
+        isConflict || task.state == UploadTask.State.Stalled -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.08f)
         else -> Color.Transparent
     }
     Row(
@@ -376,8 +398,9 @@ private fun UploadRow(
             )
             if (task.state == UploadTask.State.Uploading) {
                 Spacer(Modifier.height(6.dp))
+                // Barra deste ficheiro (a cifrar: fração cifrada; depois, bytes enviados).
                 LinearProgressIndicator(
-                    progress = { task.progress.coerceIn(0f, 1f) },
+                    progress = { (if (task.encrypting) task.encryptProgress else task.progress).coerceIn(0f, 1f) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(4.dp)
@@ -415,12 +438,13 @@ private fun UploadRow(
             }
             UploadTask.State.Uploading -> Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "${(task.progress * 100).toInt()}%",
+                    "${((if (task.encrypting) task.encryptProgress else task.progress) * 100).toInt()}%",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.primary,
                 )
-                IconButton(onClick = onCancel, modifier = Modifier.size(32.dp)) {
+                // A finalizar: o servidor já junta as partes — cancelar não o desfaria.
+                IconButton(onClick = onCancel, enabled = !task.finalizing, modifier = Modifier.size(32.dp)) {
                     Icon(
                         Icons.Filled.Close,
                         contentDescription = "Cancelar".tr(),
@@ -435,6 +459,19 @@ private fun UploadRow(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                IconButton(onClick = onCancel, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "Cancelar".tr(),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+            UploadTask.State.Stalled -> Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.TextButton(onClick = onRetry, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
+                    Text("Reenviar".tr(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                }
                 IconButton(onClick = onCancel, modifier = Modifier.size(32.dp)) {
                     Icon(
                         Icons.Filled.Close,
@@ -464,10 +501,11 @@ private fun UploadRow(
 @Composable
 private fun BannerFooter(
     state: BannerState,
+    primaryOverride: String? = null,
     onPrimary: () -> Unit,
     onSecondary: () -> Unit,
 ) {
-    val primaryLabel = if (state == BannerState.Failed) "Repetir falhados".tr() else "Ver ficheiros".tr()
+    val primaryLabel = primaryOverride ?: if (state == BannerState.Failed) "Repetir falhados".tr() else "Ver ficheiros".tr()
     val secondaryLabel = if (state == BannerState.Failed) "Dispensar" else "Fechar".tr()
     Row(
         modifier = Modifier
@@ -515,12 +553,17 @@ private fun rowSubtitle(task: UploadTask): String = when (task.state) {
     UploadTask.State.Conflict -> "Já existe · substituir?".tr()
     UploadTask.State.Uploading -> if (task.waitingForNetwork) {
         "Sem ligação · retoma automaticamente".tr()
+    } else if (task.finalizing) {
+        "A finalizar…".tr()
+    } else if (task.encrypting) {
+        "%s · %d%%".format("A encriptar".tr(), (task.encryptProgress * 100).toInt())
     } else {
         val uploaded = (task.progress.toDouble() * task.sizeBytes).roundToLong()
         "${humanBytes(uploaded)} de ${humanBytes(task.sizeBytes)}"
     }
     UploadTask.State.Queued -> "Em espera · ${humanBytes(task.sizeBytes)}"
     UploadTask.State.Cancelled -> "Cancelado"
+    UploadTask.State.Stalled -> "%s · %s".format("Parado — sem progresso".tr(), humanBytes(task.sizeBytes))
 }
 
 private fun humanBytes(bytes: Long): String {

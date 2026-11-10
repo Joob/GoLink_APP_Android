@@ -105,7 +105,9 @@ object EncryptedFileCodec {
     }
 
     /** Cifra em streaming (memory-safe) input -> output. Igual ao encryptStream do PHP. */
-    fun encryptStream(input: java.io.InputStream, output: java.io.OutputStream, dataKey: ByteArray, chunkSize: Int = DEFAULT_CHUNK, prefix: ByteArray? = null) {
+    // [onChunk]: chamado após cada bloco com os bytes em claro lidos — progresso e
+    // cancelamento (pode lançar CancellationException para parar a cifra).
+    fun encryptStream(input: java.io.InputStream, output: java.io.OutputStream, dataKey: ByteArray, chunkSize: Int = DEFAULT_CHUNK, prefix: ByteArray? = null, onChunk: ((Int) -> Unit)? = null) {
         val key = keyOf(dataKey)
         val pfx = prefix ?: java.security.SecureRandom().let { ByteArray(PREFIX_LEN).also(it::nextBytes) }
         require(pfx.size == PREFIX_LEN) { "prefix tem de ter $PREFIX_LEN bytes" }
@@ -118,6 +120,7 @@ object EncryptedFileCodec {
             val next = if (cur.size == chunkSize) readFully(input, chunkSize) else ByteArray(0)
             val isLast = next.isEmpty()
             output.write(sealChunk(key, cur, i, isLast, pfx, header))
+            onChunk?.invoke(cur.size)
             if (isLast) break
             cur = next; i++
         }

@@ -268,6 +268,7 @@ fun CalendarScreen(
                         onPrev = { viewModel.step(-1) },
                         onNext = { viewModel.step(1) },
                         onToday = viewModel::today,
+                        onYear = { y -> viewModel.select(state.cursor.withYear(y)) },
                         onSearch = { searchOpen = true },
                     )
                     Segmented(
@@ -405,8 +406,11 @@ private fun TopBar(
     onPrev: () -> Unit,
     onNext: () -> Unit,
     onToday: () -> Unit,
+    onYear: (Int) -> Unit,
     onSearch: () -> Unit,
 ) {
+    var yearPicker by remember { mutableStateOf(false) }
+    if (yearPicker) YearPickerDialog(current = cursor.year, onPick = { yearPicker = false; onYear(it) }, onDismiss = { yearPicker = false })
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 6.dp),
@@ -426,11 +430,12 @@ private fun TopBar(
                 )
             } else {
                 Text(fmtMonthName(cursor), fontSize = 21.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
-                Text(
-                    " ${cursor.year}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 2.dp),
-                )
             }
+            // Ano clicável: abre a grelha para saltar diretamente para outro ano.
+            Text(
+                " ${cursor.year} ▾", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                modifier = Modifier.padding(bottom = 2.dp).clip(RoundedCornerShape(6.dp)).clickable { yearPicker = true }.padding(horizontal = 2.dp),
+            )
         }
         IconButton(onClick = onSearch) { Icon(Icons.Outlined.Search, contentDescription = "Pesquisar eventos".tr(), modifier = Modifier.size(20.dp)) }
         IconButton(onClick = onPrev) { Icon(Icons.Filled.ChevronLeft, contentDescription = null) }
@@ -447,6 +452,60 @@ private fun TopBar(
             Text(LocalDate.now().dayOfMonth.toString(), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         }
     }
+}
+
+/** Grelha de 12 anos com páginas (‹ ›) para mudar diretamente de ano. */
+@Composable
+private fun YearPickerDialog(current: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
+    var start by remember { mutableStateOf(current - current % 12) }
+    val thisYear = LocalDate.now().year
+    val primary = MaterialTheme.colorScheme.primary
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar".tr()) } },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Escolher ano".tr(), modifier = Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                IconButton(onClick = { start -= 12 }, enabled = start > 1900) { Icon(Icons.Filled.ChevronLeft, contentDescription = null) }
+                IconButton(onClick = { start += 12 }, enabled = start < 2400) { Icon(Icons.Filled.ChevronRight, contentDescription = null) }
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("$start – ${start + 11}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                (0 until 4).forEach { r ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        (0 until 3).forEach { c ->
+                            val y = start + r * 3 + c
+                            val sel = y == current
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .then(
+                                        when {
+                                            sel -> Modifier.background(primary)
+                                            y == thisYear -> Modifier.border(1.5.dp, primary, RoundedCornerShape(10.dp))
+                                            else -> Modifier.background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+                                        },
+                                    )
+                                    .clickable { onPick(y) },
+                            ) {
+                                Text(
+                                    y.toString(), fontSize = 14.sp,
+                                    fontWeight = if (sel || y == thisYear) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (sel) Color.White else MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    )
 }
 
 private fun shortMonth(d: LocalDate): String =

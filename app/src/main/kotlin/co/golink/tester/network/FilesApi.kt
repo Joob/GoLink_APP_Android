@@ -94,6 +94,10 @@ interface FilesApi {
     @POST("api/file/{id}/versions/{version}/restore")
     suspend fun restoreFileVersion(@Path("id") id: String, @Path("version") version: String): Response<ResponseBody>
 
+    // Upload cancelado: apaga já as partes recebidas (CancelFileChunksController).
+    @HTTP(method = "DELETE", path = "api/upload/chunks", hasBody = true)
+    suspend fun cancelChunks(@Body body: CancelChunksBody): Response<ResponseBody>
+
     @HTTP(method = "POST", path = "api/remove", hasBody = true)
     suspend fun remove(@Body body: DeleteItemsRequest): Response<ApiEnvelope<Unit>>
 
@@ -253,3 +257,7 @@ interface FilesApi {
     @POST("api/upload/remote")
     suspend fun remoteUpload(@Body body: co.golink.tester.domain.files.RemoteUploadRequest): Response<okhttp3.ResponseBody>
 }
+
+/** Nome do .part de um upload por chunks cancelado. */
+@kotlinx.serialization.Serializable
+data class CancelChunksBody(val name: String)

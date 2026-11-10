@@ -11,6 +11,7 @@ object I18nCalendar {
         // Navegação e vistas
         r("Calendário", "Calendar", "Agenda", "Calendario"),
         r("Mês", "Month", "Mois", "Mes"),
+r("Escolher ano", "Choose year", "Choisir l’année", "Elegir año"),
         r("Agenda", "Agenda", "Planning", "Agenda"),
         r("Dia", "Day", "Jour", "Día"),
         r("Evento", "Event", "Événement", "Evento"),

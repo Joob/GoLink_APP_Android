@@ -43,6 +43,20 @@ class PassLogicTest {
         assertEquals("482 913", Totp.format("482913"))
     }
 
+    @Test
+    fun totpBuildRoundTrip() {
+        // Por defeito: só a base32 (igual ao buildOtpauth da web).
+        assertEquals("JBSWY3DPEHPK3PXP", Totp.build("jbsw y3dp ehpk 3pxp", "GitHub", "a@b.c"))
+        val uri = Totp.build("JBSWY3DPEHPK3PXP", "Git:Hub", "a b@c", "SHA256", 8, 60)
+        assertEquals("otpauth://totp/Git%20Hub%3Aa%20b%40c?secret=JBSWY3DPEHPK3PXP&issuer=Git%3AHub&algorithm=SHA256&digits=8&period=60", uri)
+        val cfg = Totp.parse(uri)!!
+        assertEquals("Git:Hub", cfg.issuer)
+        assertEquals("a b@c", cfg.account)
+        assertEquals(8, cfg.digits)
+        assertEquals(60, cfg.period)
+        assertEquals("SHA256", cfg.algorithm)
+    }
+
     // ---- Força: valores gerados pelo strength.js da web ----
     @Test
     fun strengthMatchesWeb() {

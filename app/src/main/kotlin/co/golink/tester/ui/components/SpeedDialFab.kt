@@ -129,6 +129,10 @@ fun BoxScope.SpeedDialFab(
             .navigationBarsPadding()
             .padding(start = 16.dp, end = 16.dp, bottom = bottomOffset + 16.dp),
     ) {
+        // Pilha rápida e cartão sobrepostos (não empilhados): numa Column, o cartão
+        // entrava já com o tamanho todo e empurrava a pilha (ainda a sair) para o
+        // topo — via-se o "Mais opções" lá em cima a piscar.
+        Box(contentAlignment = Alignment.BottomEnd) {
         if (quick.isNotEmpty()) {
             val items = buildList {
                 if (rest.isNotEmpty()) add(
@@ -136,27 +140,18 @@ fun BoxScope.SpeedDialFab(
                 )
                 addAll(quick.reversed())
             }
-            QuickStack(items, visible = open && !showMore) { action ->
+            // A trocar para o cartão: a pilha sai logo, sem animação.
+            QuickStack(items, visible = open && !showMore, instantExit = showMore) { action ->
                 if (action.quick) {
                     onOpenChange(false)
                     action.onClick()
                 } else action.onClick()
             }
         }
-        AnimatedVisibility(
-            visible = open && (quick.isEmpty() || showMore),
-            enter = scaleIn(
-                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
-                initialScale = 0.2f,
-                transformOrigin = TransformOrigin(1f, 1f),
-            ) + fadeIn(tween(140)),
-            exit = scaleOut(tween(140), targetScale = 0.2f, transformOrigin = TransformOrigin(1f, 1f)) +
-                fadeOut(tween(120)),
-        ) {
-            MenuCard(if (quick.isEmpty()) actions else rest) { action ->
-                onOpenChange(false)
-                action.onClick()
-            }
+        AnimatedMenuCard(open && (quick.isEmpty() || showMore), if (quick.isEmpty()) actions else rest) { action ->
+            onOpenChange(false)
+            action.onClick()
+        }
         }
         Spacer(Modifier.height(16.dp))
 
@@ -181,9 +176,26 @@ fun BoxScope.SpeedDialFab(
     }
 }
 
+/** Cartão do menu com a animação de entrada/saída a partir do "+". */
+@Composable
+private fun AnimatedMenuCard(visible: Boolean, actions: List<SpeedDialAction>, onClick: (SpeedDialAction) -> Unit) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = scaleIn(
+            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
+            initialScale = 0.2f,
+            transformOrigin = TransformOrigin(1f, 1f),
+        ) + fadeIn(tween(140)),
+        exit = scaleOut(tween(140), targetScale = 0.2f, transformOrigin = TransformOrigin(1f, 1f)) +
+            fadeOut(tween(120)),
+    ) {
+        MenuCard(actions, onClick)
+    }
+}
+
 /** Pilha de botões rápidos (rótulo em pílula + botão quadrado), de cima para baixo. */
 @Composable
-private fun QuickStack(items: List<SpeedDialAction>, visible: Boolean, onClick: (SpeedDialAction) -> Unit) {
+private fun QuickStack(items: List<SpeedDialAction>, visible: Boolean, instantExit: Boolean = false, onClick: (SpeedDialAction) -> Unit) {
     Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         items.forEachIndexed { index, action ->
             // Escalonado a partir do "+": o mais próximo entra primeiro.
@@ -193,7 +205,8 @@ private fun QuickStack(items: List<SpeedDialAction>, visible: Boolean, onClick: 
                 enter = slideInVertically(tween(200, delay)) { it / 2 } +
                     fadeIn(tween(160, delay)) +
                     scaleIn(tween(200, delay), initialScale = 0.6f, transformOrigin = TransformOrigin(1f, 0.5f)),
-                exit = fadeOut(tween(100)) + scaleOut(tween(120), targetScale = 0.6f, transformOrigin = TransformOrigin(1f, 0.5f)),
+                exit = if (instantExit) androidx.compose.animation.ExitTransition.None
+                else fadeOut(tween(100)) + scaleOut(tween(120), targetScale = 0.6f, transformOrigin = TransformOrigin(1f, 0.5f)),
             ) {
                 QuickRow(action) { onClick(action) }
             }

@@ -1142,9 +1142,11 @@ class BrowseViewModel @Inject constructor(
     }
     fun retryUpload(taskId: String) = uploadManager.retry(taskId)
     fun retryFailedUploads() = uploadManager.retryFailed()
+    fun retryStalledUploads() = uploadManager.retryStalled()
     fun clearAllUploads() {
-        val had = uploads.value.any { it.state == UploadTask.State.Uploading || it.state == UploadTask.State.Queued }
-        uploadManager.clearAll()
+        val had = uploads.value.any { !it.mobileBackup && (it.state == UploadTask.State.Uploading || it.state == UploadTask.State.Queued) }
+        // Só os do explorador: os backups têm o seu ecrã (antes eram cancelados por arrasto).
+        uploadManager.clearAll(includeBackups = false)
         if (had) {
             _state.update { it.copy(toast = "Uploads cancelados".tr()) }
             loadCurrent() // refresh de confirmação
