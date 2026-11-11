@@ -23,7 +23,17 @@ object AppThemeMode {
             .getOrDefault(Mode.SYSTEM)
     }
 
+    /** Escolha do utilizador neste aparelho (a App envia-a ao servidor, como a web). */
+    @Volatile var onUserChange: ((Mode) -> Unit)? = null
+
     fun set(context: Context, value: Mode) {
+        prefs(context).edit().putString(KEY, value.name).apply()
+        mode = value
+        onUserChange?.invoke(value)
+    }
+
+    /** Tema vindo da conta (definido na web): aplica sem o reenviar. */
+    fun applyFromAccount(context: Context, value: Mode) {
         prefs(context).edit().putString(KEY, value.name).apply()
         mode = value
     }

@@ -116,6 +116,11 @@ data class SettingsAttributes(
     val date_format: String? = null,
     /** 0 = domingo, 1 = segunda, 6 = sábado. */
     val week_start: Int? = null,
+    /** light | dark | system (Preferências, partilhado com a web). */
+    val theme_mode: String? = null,
+    val news_emails: Boolean? = null,
+    val tips_emails: Boolean? = null,
+    val weekly_summary: Boolean? = null,
 )
 
 @Serializable
@@ -205,6 +210,12 @@ data class User(
     val holidayCountry: String? = null,
     val dateFormat: String? = null,
     val weekStart: Int? = null,
+    /** Preferências da conta (iguais à web: Settings › Preferences). */
+    val language: String? = null,
+    val themeMode: String? = null,
+    val newsEmails: Boolean = true,
+    val tipsEmails: Boolean = false,
+    val weeklySummary: Boolean = false,
 ) {
     companion object {
         fun fromResponse(response: UserResponse): User {
@@ -241,9 +252,14 @@ data class User(
                 city = settings?.city,
                 postalCode = settings?.postal_code,
                 country = settings?.country,
-            holidayCountry = settings?.holiday_country,
+                holidayCountry = settings?.holiday_country,
                 dateFormat = settings?.date_format,
                 weekStart = settings?.week_start,
+                language = settings?.language,
+                themeMode = settings?.theme_mode,
+                newsEmails = settings?.news_emails ?: true,
+                tipsEmails = settings?.tips_emails ?: false,
+                weeklySummary = settings?.weekly_summary ?: false,
                 state = settings?.state,
                 isPastDue = subscription?.attributes?.is_past_due == true,
                 isPaymentSuspended = subscription?.attributes?.is_suspended == true,

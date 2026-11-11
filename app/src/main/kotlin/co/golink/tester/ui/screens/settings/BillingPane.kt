@@ -48,6 +48,7 @@ import co.golink.tester.domain.billing.Invoice
 import co.golink.tester.domain.billing.Plan
 import co.golink.tester.domain.user.User
 import co.golink.tester.ui.i18n.bt
+import co.golink.tester.ui.i18n.tr
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -75,6 +76,7 @@ internal fun BillingPane(
     onLoadMoreInvoices: () -> Unit,
     onDownload: (Invoice?) -> Unit,
     isSavingDetails: Boolean,
+    detailsSavedAt: Long,
     onSaveDetails: (Map<String, String>) -> Unit,
 ) {
     PaneColumn {
@@ -93,7 +95,7 @@ internal fun BillingPane(
         PlansSection(summary, plans)
         if (summary.cards.isNotEmpty()) CardsSection(summary.cards)
         InvoicesSection(summary, invoices, hasMoreInvoices, isLoadingInvoices, downloadingInvoice, onLoadMoreInvoices, onDownload)
-        BillingDetailsSection(summary.billing, isSavingDetails, onSaveDetails)
+        BillingDetailsSection(summary.billing, isSavingDetails, detailsSavedAt, onSaveDetails)
         WebOnlyNote()
     }
 }
@@ -215,12 +217,12 @@ private fun PlansSection(summary: BillingSummary, plans: List<Plan>) {
     val hasMonthly = plans.any { it.interval == "month" }
     val recommendedName = plans.firstOrNull { it.id == summary.recommended_plan_id }?.name
 
-    // "N meses grátis": compara o anual com 12× o mensal do mesmo nome.
-    val monthsFree = plans.filter { it.interval == "year" }.mapNotNull { y ->
-        val m = plans.firstOrNull { it.interval == "month" && it.name == y.name }?.amount ?: return@mapNotNull null
-        val ya = y.amount ?: return@mapNotNull null
-        if (m <= 0) null else ((m * 12 - ya) / m).roundToInt()
-    }.maxOrNull() ?: 0
+    // "N meses grátis": compara o anual com 12× o mensal do mesmo nome; como na web
+    // (PlanSection.vue), vale o plano com menos desconto e anual sem mensal conta 0.
+    val monthsFree = plans.filter { it.interval == "year" }.map { y ->
+        val m = plans.firstOrNull { it.interval == "month" && it.name == y.name }?.amount ?: 0.0
+        if (m > 0) 12 - (y.amount ?: 0.0) / m else 0.0
+    }.minOrNull()?.let { maxOf(0, it.roundToInt()) } ?: 0
 
     PaneSection(bt("plans_title"))
     PaneCard {
@@ -420,16 +422,17 @@ private fun InvoiceRow(inv: Invoice, downloading: Boolean, canDownload: Boolean,
 // ── Dados de faturação (editáveis: não é pagamento) ─────────────────────
 
 @Composable
-private fun BillingDetailsSection(details: BillingDetails, isSaving: Boolean, onSave: (Map<String, String>) -> Unit) {
+private fun BillingDetailsSection(details: BillingDetails, isSaving: Boolean, savedAt: Long, onSave: (Map<String, String>) -> Unit) {
     var editing by remember { mutableStateOf(false) }
+    // Fecha só quando o servidor aceitou tudo (antes fechava antes do resultado e,
+    // se falhasse, perdiam-se as alterações).
+    val firstSavedAt = remember { savedAt }
+    androidx.compose.runtime.LaunchedEffect(savedAt) { if (savedAt != firstSavedAt) editing = false }
     PaneSection(bt("bd_title"), action = if (editing) null else bt("edit"), onAction = { editing = true })
     PaneCard {
         Text(bt("bd_desc"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (editing) {
-            BillingDetailsForm(details, isSaving, onCancel = { editing = false }) { changes ->
-                onSave(changes)
-                editing = false
-            }
+            BillingDetailsForm(details, isSaving, onCancel = { editing = false }) { changes -> onSave(changes) }
         } else {
             DetailRow(bt("bd_name"), details.name?.ifBlank { null } ?: details.profile_name)
             DetailRow(bt("bd_vat"), details.vat_number)
@@ -470,7 +473,8 @@ private fun ColumnScope.BillingDetailsForm(
         "country" to details.country.orEmpty(),
         "invoice_email" to details.invoice_email.orEmpty(),
     )
-    var values by remember(details) { mutableStateOf(original) }
+    // Sem chave: um resumo novo (gravação parcial) não apaga o que ainda falta gravar.
+    var values by remember { mutableStateOf(original) }
     fun set(key: String, v: String) { values = values + (key to v) }
     val changes = values.filter { (k, v) -> v.trim() != original[k]?.trim() }.mapValues { it.value.trim() }
 
@@ -487,12 +491,15 @@ private fun ColumnScope.BillingDetailsForm(
         Spacer(Modifier.height(6.dp))
         CountryDropdown(value = values.getValue("country"), onValueChange = { set("country", it) })
     }
+    val invoiceEmail = values.getValue("invoice_email").trim()
+    val badEmail = invoiceEmail.isNotEmpty() && !android.util.Patterns.EMAIL_ADDRESS.matcher(invoiceEmail).matches()
     SettingsField(
         bt("bd_email"),
         values.getValue("invoice_email"),
         { set("invoice_email", it) },
         keyboardType = KeyboardType.Email,
-        supportingText = details.account_email?.let { bt("bd_email_hint", "email" to it) },
+        isError = badEmail,
+        supportingText = if (badEmail) "Email inválido".tr() else details.account_email?.let { bt("bd_email_hint", "email" to it) },
         imeAction = ImeAction.Done,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -500,7 +507,7 @@ private fun ColumnScope.BillingDetailsForm(
         SettingsPrimaryButton(
             text = bt("save"),
             onClick = { onSave(changes) },
-            enabled = changes.isNotEmpty(),
+            enabled = changes.isNotEmpty() && !badEmail,
             loading = isSaving,
             modifier = Modifier.weight(1f),
         )
@@ -554,7 +561,7 @@ private fun usageColor(percent: Double): Color = when {
 private fun perInterval(interval: String?): String = if (interval == "year") bt("per_year") else bt("per_month")
 
 private fun brandName(brand: String?): String = when (brand?.lowercase()) {
-    null, "" -> "Card"
+    null, "" -> "Cartão".tr()
     "amex", "american express" -> "Amex"
     "mastercard" -> "Mastercard"
     else -> brand.replaceFirstChar { it.uppercase() }
@@ -563,11 +570,13 @@ private fun brandName(brand: String?): String = when (brand?.lowercase()) {
 private fun cardLabel(card: BillingCard): String = "${brandName(card.brand)} •••• ${card.last4.orEmpty()}"
 
 private fun day(iso: String): String = runCatching {
-    OffsetDateTime.parse(iso).atZoneSameInstant(ZoneId.systemDefault()).format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))
+    // Na língua da app (não na do sistema).
+    OffsetDateTime.parse(iso).atZoneSameInstant(ZoneId.systemDefault())
+        .format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(co.golink.tester.ui.common.appLocale()))
 }.getOrDefault(iso.take(10))
 
 private fun addressLines(d: BillingDetails): String? {
-    val country = d.country?.takeIf { it.length == 2 }?.let { Locale("", it).displayCountry } ?: d.country
+    val country = d.country?.takeIf { it.length == 2 }?.let { Locale("", it).getDisplayCountry(co.golink.tester.ui.common.appLocale()) } ?: d.country
     return listOf(
         d.address,
         listOfNotNull(d.postal_code?.ifBlank { null }, d.city?.ifBlank { null }).joinToString(" "),

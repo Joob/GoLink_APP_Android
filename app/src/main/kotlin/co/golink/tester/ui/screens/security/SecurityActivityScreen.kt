@@ -37,7 +37,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import co.golink.tester.domain.security.SecurityEvent
 import co.golink.tester.ui.i18n.tr
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -68,10 +67,10 @@ fun SecurityActivityScreen(
         snackbarHost = { SnackbarHost(snackbarHost) },
     ) { padding ->
         SecurityActivityContent(
-            items = state.events.map { SecurityItemUi(it.id, it.event, it.createdAt, it.ip, it.userAgent) },
+            items = state.items,
             isLoading = state.isLoading,
-            hasMore = false,
-            onLoadMore = {},
+            hasMore = state.hasMore,
+            onLoadMore = viewModel::loadMore,
             modifier = Modifier.padding(padding),
         )
     }

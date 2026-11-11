@@ -321,3 +321,31 @@ data class StorageInsights(
     val largest: List<co.golink.tester.domain.browse.BrowseItem.File>,
 )
 
+
+/** GET api/user/sessions?count=1 */
+@Serializable
+data class SessionsCountResponse(
+    val count: Int = 0,
+)
+
+// ── 2FA (TOTP) ─────────────────────────────────────────────────────────
+/** Password atual OU passkey_token (finalidade two_factor). */
+@Serializable
+data class TwoFactorStepUp(
+    val password: String? = null,
+    val passkey_token: String? = null,
+)
+
+@Serializable
+data class TwoFactorCode(val code: String)
+
+@Serializable
+data class TwoFactorSetupResponse(
+    val secret: String,
+    val otpauth_url: String,
+)
+
+@Serializable
+data class TwoFactorCodesResponse(
+    val recovery_codes: List<String> = emptyList(),
+)

@@ -250,7 +250,8 @@ class E2EKeyManager @Inject constructor(
         val resp = api.get()
         if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code()}")
         val body = resp.body() ?: throw java.io.IOException("resposta vazia do servidor")
-        return runCatching {
+        // Argon2/PBKDF2 demoram centenas de ms: nunca no thread de UI (ANR).
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { runCatching {
             val key = Envelope.deriveKey(
                 secret,
                 Envelope.unb64(body.pwd_salt!!),
@@ -263,7 +264,7 @@ class E2EKeyManager @Inject constructor(
             } finally {
                 key.fill(0)
             }
-        }.getOrNull()?.let { opened -> opened.contentEquals(sk).also { opened.fill(0) } } == true
+        }.getOrNull()?.let { opened -> opened.contentEquals(sk).also { opened.fill(0) } } == true }
     }
 
     /** Envia o código de confirmação para o email da conta. */
@@ -302,13 +303,16 @@ class E2EKeyManager @Inject constructor(
         val alg = Envelope.defaultKdfAlg()
         val ops = Envelope.defaultKdfOps()
         val mem = Envelope.defaultKdfMem()
-        val key = Envelope.deriveKey(secret, salt, ops, mem, alg)
-        val wrapped = Envelope.wrapSecretKey(sk, key)
-        // Self-test: o novo wrap tem de reabrir antes de o gravar. Se falhasse,
-        // a passphrase antiga deixava de servir e a nova nunca abriria.
-        val reopened = runCatching {
-            Envelope.unwrapSecretKey(wrapped.ciphertext, wrapped.nonce, Envelope.deriveKey(secret, salt, ops, mem, alg))
-        }.getOrNull()
+        // As duas derivações (wrap + self-test) fora do thread de UI.
+        val (wrapped, reopened) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            val key = Envelope.deriveKey(secret, salt, ops, mem, alg)
+            val w = Envelope.wrapSecretKey(sk, key)
+            // Self-test: o novo wrap tem de reabrir antes de o gravar. Se falhasse,
+            // a passphrase antiga deixava de servir e a nova nunca abriria.
+            w to runCatching {
+                Envelope.unwrapSecretKey(w.ciphertext, w.nonce, Envelope.deriveKey(secret, salt, ops, mem, alg))
+            }.getOrNull()
+        }
         check(reopened != null && reopened.contentEquals(sk)) {
             "e2e_selftest: o novo wrap não reabre — rotação abortada"
         }

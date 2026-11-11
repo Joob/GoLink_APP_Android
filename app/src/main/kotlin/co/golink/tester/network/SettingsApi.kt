@@ -7,7 +7,6 @@ import co.golink.tester.domain.settings.CreateTokenResponse
 import co.golink.tester.domain.settings.SecurityEventsResponse
 import co.golink.tester.domain.settings.SessionsResponse
 import co.golink.tester.domain.settings.StorageResponse
-import co.golink.tester.domain.settings.TransactionsResponse
 import co.golink.tester.domain.settings.UpdatePasswordRequest
 import co.golink.tester.domain.settings.UpdateProfileFieldRequest
 import retrofit2.Response
@@ -30,6 +29,10 @@ interface SettingsApi {
 
     @GET("api/user/sessions")
     suspend fun sessions(): Response<SessionsResponse>
+
+    /** Só a contagem (badge do menu): o servidor não decifra as sessões. */
+    @GET("api/user/sessions")
+    suspend fun sessionsCount(@Query("count") count: Int = 1): Response<co.golink.tester.domain.settings.SessionsCountResponse>
 
     @DELETE("api/user/sessions/all")
     suspend fun revokeAllSessions(): Response<ApiEnvelope<Unit>>
@@ -71,8 +74,6 @@ interface SettingsApi {
         @Body body: co.golink.tester.domain.settings.MobileBackupSettingRequest,
     ): Response<okhttp3.ResponseBody>
 
-    @GET("api/user/transactions")
-    suspend fun transactions(): Response<TransactionsResponse>
 
     @GET("api/user/tokens")
     suspend fun listTokens(): Response<List<AccessToken>>
@@ -82,4 +83,20 @@ interface SettingsApi {
 
     @DELETE("api/user/tokens/{id}")
     suspend fun deleteToken(@Path("id") id: Long): Response<ApiEnvelope<Unit>>
+
+    // 2FA (TOTP) — rotas próprias para token (as da Fortify só servem a web).
+    @POST("api/user/two-factor/enable")
+    suspend fun enableTwoFactor(@Body body: co.golink.tester.domain.settings.TwoFactorStepUp): Response<co.golink.tester.domain.settings.TwoFactorSetupResponse>
+
+    @POST("api/user/two-factor/confirm")
+    suspend fun confirmTwoFactor(@Body body: co.golink.tester.domain.settings.TwoFactorCode): Response<co.golink.tester.domain.settings.TwoFactorCodesResponse>
+
+    @retrofit2.http.HTTP(method = "DELETE", path = "api/user/two-factor", hasBody = true)
+    suspend fun disableTwoFactor(@Body body: co.golink.tester.domain.settings.TwoFactorStepUp): Response<okhttp3.ResponseBody>
+
+    @POST("api/user/two-factor/recovery-codes")
+    suspend fun recoveryCodes(@Body body: co.golink.tester.domain.settings.TwoFactorStepUp): Response<co.golink.tester.domain.settings.TwoFactorCodesResponse>
+
+    @POST("api/user/two-factor/recovery-codes/regenerate")
+    suspend fun regenerateRecoveryCodes(@Body body: co.golink.tester.domain.settings.TwoFactorStepUp): Response<co.golink.tester.domain.settings.TwoFactorCodesResponse>
 }

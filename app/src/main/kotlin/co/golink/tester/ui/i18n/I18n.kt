@@ -51,11 +51,18 @@ object I18n {
         onUserChange?.invoke(code)
     }
 
+    /** Idioma vindo da conta (definido na web): aplica sem o reenviar ao servidor. */
+    fun applyFromAccount(context: Context, code: String) {
+        if (code !in listOf(PT, EN, FR, ES)) return
+        prefs(context).edit().putString(KEY, code).apply()
+        lang = code
+    }
+
     fun t(pt: String): String = when (lang) {
         PT -> pt
-        EN -> en[pt] ?: I18nDict.en[pt] ?: I18nRedesign.en[pt] ?: I18nAdmin.en[pt] ?: I18nCalendar.en[pt] ?: I18nPasskeys.en[pt] ?: pt
-        FR -> fr[pt] ?: I18nDict.fr[pt] ?: I18nRedesign.fr[pt] ?: I18nAdmin.fr[pt] ?: I18nCalendar.fr[pt] ?: I18nPasskeys.fr[pt] ?: pt
-        ES -> es[pt] ?: I18nDict.es[pt] ?: I18nRedesign.es[pt] ?: I18nAdmin.es[pt] ?: I18nCalendar.es[pt] ?: I18nPasskeys.es[pt] ?: pt
+        EN -> en[pt] ?: I18nDict.en[pt] ?: I18nRedesign.en[pt] ?: I18nAdmin.en[pt] ?: I18nCalendar.en[pt] ?: I18nPasskeys.en[pt] ?: I18nPrefs.en[pt] ?: pt
+        FR -> fr[pt] ?: I18nDict.fr[pt] ?: I18nRedesign.fr[pt] ?: I18nAdmin.fr[pt] ?: I18nCalendar.fr[pt] ?: I18nPasskeys.fr[pt] ?: I18nPrefs.fr[pt] ?: pt
+        ES -> es[pt] ?: I18nDict.es[pt] ?: I18nRedesign.es[pt] ?: I18nAdmin.es[pt] ?: I18nCalendar.es[pt] ?: I18nPasskeys.es[pt] ?: I18nPrefs.es[pt] ?: pt
         else -> pt
     }
 

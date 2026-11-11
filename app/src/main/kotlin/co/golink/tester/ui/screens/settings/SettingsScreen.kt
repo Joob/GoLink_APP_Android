@@ -81,6 +81,7 @@ import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Email
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.SupportAgent
@@ -165,7 +166,6 @@ import co.golink.tester.ui.common.copySecretToClipboard
 import co.golink.tester.domain.settings.SecurityEventData
 import co.golink.tester.domain.settings.SessionItem
 import co.golink.tester.domain.settings.StorageUsage
-import co.golink.tester.domain.settings.TransactionItem
 import co.golink.tester.domain.user.User
 import coil.compose.AsyncImage
 
@@ -185,12 +185,18 @@ private sealed interface SettingsRoute {
     data object Billing : SettingsRoute
     data object AppSecurity : SettingsRoute
     data object DeleteAccount : SettingsRoute
+    data object Preferences : SettingsRoute
 }
+
+/** Painel "pai" para o voltar (o E-mail abre-se também a partir do Perfil). */
+private fun SettingsRoute.parent(cameFromProfile: Boolean): SettingsRoute =
+    if (this == SettingsRoute.Email && cameFromProfile) SettingsRoute.Profile else SettingsRoute.Menu
 
 private val ALL_SETTINGS_ROUTES: List<SettingsRoute> = listOf(
     SettingsRoute.Menu, SettingsRoute.Profile, SettingsRoute.Password, SettingsRoute.Email,
     SettingsRoute.ApiTokens, SettingsRoute.Encryption, SettingsRoute.Storage, SettingsRoute.SecurityActivity,
     SettingsRoute.Sessions, SettingsRoute.Billing, SettingsRoute.AppSecurity, SettingsRoute.DeleteAccount,
+    SettingsRoute.Preferences,
 )
 
 /** O painel aberto sobrevive à ida ao visualizador/Atividade e à morte do processo. */
@@ -233,33 +239,35 @@ fun SettingsScreen(
     var route by androidx.compose.runtime.saveable.rememberSaveable(stateSaver = SettingsRouteSaver) {
         mutableStateOf<SettingsRoute>(entryRoute)
     }
+    // E-mail aberto a partir do Perfil: o voltar regressa ao Perfil (antes ia ao menu).
+    var emailFromProfile by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    val goBack: () -> Unit = {
+        if (route == SettingsRoute.Menu || route == entryRoute) onBack()
+        else route = route.parent(emailFromProfile).also { if (route == SettingsRoute.Email) emailFromProfile = false }
+    }
 
     LaunchedEffect(state.toast) {
         state.toast?.let { snackbarHost.showSnackbar(it); viewModel.consumeToast() }
     }
 
+    // Cada painel carrega ao entrar e volta a carregar se a última carga tem mais de 1 min
+    // (antes: só com a lista vazia, por isso nunca refrescava).
     LaunchedEffect(route) {
-        if (route == SettingsRoute.Billing && state.billing == null && !state.isLoadingBilling) {
-            viewModel.loadBilling()
-        }
-        if (route == SettingsRoute.SecurityActivity && state.securityEvents.isEmpty() && !state.isLoadingSecurityEvents) {
-            viewModel.loadSecurityEvents()
-        }
-        // Menu (contagem de dispositivos) e Sessões; os tokens só no painel deles.
-        if ((route == SettingsRoute.Menu || route == SettingsRoute.Sessions) && state.sessions.isEmpty() && !state.isLoadingSessions) {
-            viewModel.loadSessions()
-        }
-        if (route == SettingsRoute.ApiTokens && state.tokens.isEmpty() && !state.isLoadingTokens) {
-            viewModel.loadTokens()
+        when (route) {
+            SettingsRoute.Billing -> viewModel.loadBilling(force = false)
+            SettingsRoute.SecurityActivity -> viewModel.loadSecurityEvents(force = false)
+            SettingsRoute.Sessions -> viewModel.loadSessions(force = false)
+            SettingsRoute.ApiTokens -> viewModel.loadTokens(force = false)
+            // Menu: só a contagem para o badge (sem pedir a lista toda).
+            SettingsRoute.Menu -> viewModel.loadSessionsCount()
+            else -> Unit
         }
     }
 
     // Sem compras na app (política de pagamentos da Play): o plano compra-se
     // no site; aqui só se mostra o plano atual e a utilização.
 
-    BackHandler(enabled = route != SettingsRoute.Menu && route != entryRoute) {
-        route = SettingsRoute.Menu
-    }
+    BackHandler(enabled = route != SettingsRoute.Menu && route != entryRoute) { goBack() }
 
     val title = when (route) {
         SettingsRoute.Menu -> "Definições".tr()
@@ -274,6 +282,7 @@ fun SettingsScreen(
         SettingsRoute.Billing -> "Plano e pagamentos".tr()
         SettingsRoute.AppSecurity -> "Bloqueio da app".tr()
         SettingsRoute.DeleteAccount -> "Apagar conta".tr()
+        SettingsRoute.Preferences -> "Preferências".tr()
     }
 
     Scaffold(
@@ -286,9 +295,7 @@ fun SettingsScreen(
                     scrolledContainerColor = settingsScreenBackground(),
                 ),
                 navigationIcon = {
-                    IconButton(onClick = {
-                        if (route == SettingsRoute.Menu || route == entryRoute) onBack() else route = SettingsRoute.Menu
-                    }) {
+                    IconButton(onClick = goBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar".tr())
                     }
                 },
@@ -316,7 +323,7 @@ fun SettingsScreen(
                 SettingsRoute.Menu -> MenuPane(
                     user = user,
                     storage = state.storage,
-                    activeSessions = state.sessions.size,
+                    activeSessions = state.sessionsCount ?: 0,
                     twoFactorEnabled = state.twoFactorEnabled,
                     backup = backupState,
                     onNavigate = { route = it },
@@ -332,7 +339,7 @@ fun SettingsScreen(
                     onUpdateFields = viewModel::updateProfileFields,
                     onUpdateAvatar = viewModel::updateAvatar,
                     onRetry = { viewModel.refreshUser() },
-                    onOpenEmail = { route = SettingsRoute.Email },
+                    onOpenEmail = { emailFromProfile = true; route = SettingsRoute.Email },
                 )
                 SettingsRoute.Password -> PasswordPane(
                     isLoading = state.isUpdatingPassword,
@@ -340,9 +347,26 @@ fun SettingsScreen(
                     onSubmit = viewModel::updatePassword,
                     hasPasskeys = user?.hasPasskeys == true,
                     socialiteAccount = user?.socialiteAccount == true,
-                    twoFactorEnabled = state.twoFactorEnabled,
-                    backendUrl = backendUrl,
-                    onRefreshUser = viewModel::refreshUser,
+                    twoFactor = {
+                        TwoFactorSection(
+                            enabled = state.twoFactorEnabled,
+                            hasPasskeys = user?.hasPasskeys == true,
+                            flow = state.twoFactor,
+                            busy = state.isTwoFactorBusy,
+                            error = state.twoFactorError,
+                            onStart = viewModel::startTwoFactor,
+                            onConfirm = viewModel::confirmTwoFactor,
+                            onDisable = viewModel::disableTwoFactor,
+                            onShowCodes = viewModel::showRecoveryCodes,
+                            onClose = viewModel::closeTwoFactor,
+                            onClearError = viewModel::clearTwoFactorError,
+                        )
+                    },
+                )
+                SettingsRoute.Preferences -> PreferencesPane(
+                    user = user,
+                    overrides = state.prefOverrides,
+                    onUpdate = viewModel::updatePref,
                 )
                 SettingsRoute.Email -> EmailChangeSection(
                     currentEmail = user?.email.orEmpty(),
@@ -366,7 +390,8 @@ fun SettingsScreen(
                 )
                 SettingsRoute.Encryption -> EncryptionPane(
                     e2eUnlocked = e2eUnlocked,
-                    e2eFingerprint = if (e2eUnlocked) viewModel.e2eFingerprint() else null,
+                    // SHA-256 + hex: uma vez por desbloqueio, não a cada recomposição.
+                    e2eFingerprint = remember(e2eUnlocked) { if (e2eUnlocked) viewModel.e2eFingerprint() else null },
                     isChanging = state.isChangingPassphrase,
                     onVerifyCurrent = viewModel::verifyCurrentPassphrase,
                     requestCode = viewModel::requestPassphraseCode,
@@ -377,7 +402,7 @@ fun SettingsScreen(
                     storage = state.storage,
                     insights = state.storageInsights,
                     isLoading = state.isLoadingStorage,
-                    onRefresh = { viewModel.loadStorage(); viewModel.loadStorageInsights() },
+                    onRefresh = { force -> viewModel.loadStorage(force); viewModel.loadStorageInsights(force) },
                     onFreeSpace = onOpenTrash,
                     onOpenBackups = onOpenAutoBackup,
                     onOpenFile = { f -> viewModel.prepareViewer(f); onOpenFile(f.id) },
@@ -386,6 +411,7 @@ fun SettingsScreen(
                     sessions = state.sessions,
                     isLoading = state.isLoadingSessions,
                     onRevoke = viewModel::revokeSession,
+                    busyIds = state.busyIds,
                     onRevokeAll = viewModel::revokeAllSessions,
                     onRefresh = viewModel::loadSessions,
                 )
@@ -406,7 +432,8 @@ fun SettingsScreen(
                     downloadingInvoice = state.downloadingInvoice,
                     onLoadMoreInvoices = { viewModel.loadInvoices() },
                     onDownload = viewModel::downloadInvoice,
-                    isSavingDetails = state.isUpdatingProfile,
+                    isSavingDetails = state.isUpdatingBilling,
+                    detailsSavedAt = state.billingSavedAt,
                     onSaveDetails = viewModel::saveBillingDetails,
                 )
                 SettingsRoute.DeleteAccount -> DeleteAccountPane(userEmail = user?.email, scheduledFor = user?.deletionScheduledFor)
@@ -643,7 +670,8 @@ private fun MenuPane(
 
         SettingsGroup(title = "Conta".tr()) {
             SettingsNavRow(Icons.Outlined.Person, SettingsColors.Blue, "Perfil".tr(), "Nome, fotografia e fuso horário".tr()) { onNavigate(SettingsRoute.Profile) }
-            SettingsNavRow(Icons.Outlined.Email, SettingsColors.Blue, "E-mail".tr(), user?.email ?: "Alterar o e-mail da conta".tr(), showDivider = false) { onNavigate(SettingsRoute.Email) }
+            SettingsNavRow(Icons.Outlined.Email, SettingsColors.Blue, "E-mail".tr(), user?.email ?: "Alterar o e-mail da conta".tr()) { onNavigate(SettingsRoute.Email) }
+            SettingsNavRow(Icons.Outlined.Tune, SettingsColors.Blue, "Preferências".tr(), "Tema, idioma, datas e emails".tr(), showDivider = false) { onNavigate(SettingsRoute.Preferences) }
         }
 
         Spacer(Modifier.height(20.dp))
@@ -875,8 +903,6 @@ private fun UserAvatar(u: User, textStyle: androidx.compose.ui.text.TextStyle) {
     }
 }
 
-@Composable
-private fun SectionLabel(text: String) = SettingsSectionTitle(text)
 
 /** "hoje, 14:36" / "ontem, 09:10" / "12 out, 18:02" (data ISO do servidor). */
 private fun friendlyWhen(iso: String): String {
@@ -1246,33 +1272,8 @@ private fun PasswordPane(
     onSubmit: (current: String, new: String, passkeyToken: String?) -> Unit,
     hasPasskeys: Boolean,
     socialiteAccount: Boolean,
-    twoFactorEnabled: Boolean,
-    backendUrl: String,
-    onRefreshUser: () -> Unit,
+    twoFactor: @Composable () -> Unit,
 ) {
-    val uriHandler = LocalUriHandler.current
-    var show2faInfo by remember { mutableStateOf(false) }
-    if (show2faInfo) {
-        SettingsDialog(
-            title = "Verificação em dois passos".tr(),
-            message = if (twoFactorEnabled)
-                "A verificação em dois passos está ativa nesta conta. Para a desativar ou ver os códigos de recuperação, abre as definições da conta no browser.".tr()
-            else
-                "Por segurança, a configuração (código QR e códigos de recuperação) é feita no browser. Depois de ativar, toca em \"Atualizar estado\".".tr(),
-            icon = Icons.Outlined.Security,
-            confirmText = "Abrir no browser".tr(),
-            onConfirm = {
-                uriHandler.openUri(backendUrl.trimEnd('/') + "/user/settings/password")
-                show2faInfo = false
-            },
-            dismissText = "Fechar".tr(),
-            onDismiss = { show2faInfo = false },
-        ) {
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                SettingsActionText("Atualizar estado".tr(), onClick = { onRefreshUser(); show2faInfo = false })
-            }
-        }
-    }
     var current by remember { mutableStateOf("") }
     var passkeyToken by remember { mutableStateOf<String?>(null) }
     var newPassword by remember { mutableStateOf("") }
@@ -1310,36 +1311,10 @@ private fun PasswordPane(
     ) {
         PasskeysSection(socialiteAccount = socialiteAccount, hasPasskeys = hasPasskeys)
 
-        PaneSection("Proteção da conta".tr())
-        PaneCard {
-            Row(verticalAlignment = Alignment.Top) {
-                Icon(
-                    Icons.Outlined.Security,
-                    contentDescription = null,
-                    tint = if (twoFactorEnabled) SettingsAccent else Color(0xFFB45309),
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Verificação em dois passos".tr(), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        if (twoFactorEnabled) "Ligada".tr() else "Desligada".tr(),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (twoFactorEnabled) SettingsAccent else Color(0xFFB45309),
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        "Pede um código além da password. Configura-se no browser.".tr(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            SettingsPrimaryButton(
-                text = if (twoFactorEnabled) "Gerir no browser".tr() else "Ativar no browser".tr(),
-                onClick = { show2faInfo = true },
-            )
+        // Como na web: contas de login social não têm 2FA (não têm password).
+        if (!socialiteAccount) {
+            PaneSection("Proteção da conta".tr())
+            twoFactor()
         }
 
         PaneSection("Mudar password".tr())
@@ -1567,7 +1542,10 @@ private fun EmailChangeSection(
 
     val formOpen = editing || inCodeStep
     val canSubmit = !state.isChangingEmail && if (inCodeStep) code.length == 6 && secondsLeft > 0
-        else android.util.Patterns.EMAIL_ADDRESS.matcher(newEmail.trim()).matches() && (password.isNotBlank() || passkeyToken != null)
+        else android.util.Patterns.EMAIL_ADDRESS.matcher(newEmail.trim()).matches() &&
+            // Igual ao atual: o servidor recusa; evita o pedido (e a confirmação gasta).
+            !newEmail.trim().equals(currentEmail.trim(), ignoreCase = true) &&
+            (password.isNotBlank() || passkeyToken != null)
     val cancel = { onCancel(); editing = false; newEmail = ""; password = ""; code = ""; passkeyToken = null }
 
     PaneFormColumn(
@@ -1654,12 +1632,14 @@ private fun StoragePane(
     storage: StorageUsage?,
     insights: co.golink.tester.domain.settings.StorageInsights?,
     isLoading: Boolean,
-    onRefresh: () -> Unit,
+    onRefresh: (force: Boolean) -> Unit,
     onFreeSpace: () -> Unit,
     onOpenBackups: () -> Unit,
     onOpenFile: (BrowseItem.File) -> Unit,
 ) {
-    LaunchedEffect(Unit) { onRefresh() }
+    // Entrar no painel só recarrega se os dados têm mais de 1 min (antes: sempre, e em
+    // duplicado com o pedido inicial do ViewModel).
+    LaunchedEffect(Unit) { onRefresh(false) }
     val rangeOptions = remember {
         listOf(7 to "Últimos 7 dias".tr(), 14 to "Últimos 14 dias".tr(), 30 to "Últimos 30 dias".tr(), 45 to "Últimos 45 dias".tr())
     }
@@ -1934,6 +1914,7 @@ private fun SessionsPane(
     sessions: List<SessionItem>,
     isLoading: Boolean,
     onRevoke: (String) -> Unit,
+    busyIds: Set<String>,
     onRevokeAll: () -> Unit,
     onRefresh: () -> Unit,
 ) {
@@ -1994,7 +1975,7 @@ private fun SessionsPane(
         if (ordered.isNotEmpty()) {
             PaneCard(padded = false) {
                 ordered.forEachIndexed { i, s ->
-                    SessionRow(s, onRevoke = { pendingRevoke = s })
+                    SessionRow(s, busy = s.id in busyIds, onRevoke = { pendingRevoke = s })
                     if (i < ordered.lastIndex) SettingsRowDivider(68.dp)
                 }
             }
@@ -2020,7 +2001,7 @@ private fun SessionsPane(
 
 /** Linha de uma sessão: mosaico do tipo, nome, chip na atual, meta e "Terminar". */
 @Composable
-private fun SessionRow(s: SessionItem, onRevoke: () -> Unit) {
+private fun SessionRow(s: SessionItem, busy: Boolean, onRevoke: () -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
@@ -2055,7 +2036,8 @@ private fun SessionRow(s: SessionItem, onRevoke: () -> Unit) {
         }
         if (!s.is_current) {
             Spacer(Modifier.width(10.dp))
-            SettingsPillButton("Terminar".tr(), onClick = onRevoke)
+            // A terminar: botão desativado (evita pedidos repetidos).
+            SettingsPillButton("Terminar".tr(), onClick = onRevoke, enabled = !busy)
         }
     }
 }
@@ -2105,8 +2087,11 @@ private fun SecurityActivityPane(
     onLoadMore: () -> Unit,
 ) {
     co.golink.tester.ui.screens.security.SecurityActivityContent(
-        items = events.map { e ->
-            co.golink.tester.ui.screens.security.SecurityItemUi(e.id, e.attributes.event, e.attributes.created_at, e.attributes.ip, e.attributes.user_agent)
+        // Só remapeia quando a lista muda (não a cada recomposição do ecrã).
+        items = remember(events) {
+            events.map { e ->
+                co.golink.tester.ui.screens.security.SecurityItemUi(e.id, e.attributes.event, e.attributes.created_at, e.attributes.ip, e.attributes.user_agent)
+            }
         },
         isLoading = isLoading,
         hasMore = hasMore,
@@ -2138,7 +2123,9 @@ private fun EncryptionPane(
     var confirmPass by remember { mutableStateOf("") }
     val minLen = 12
     val tooShort = newPass.isNotEmpty() && newPass.length < minLen
-    val sameAsCurrent = newPass.isNotEmpty() && currentHash != null && sha256Hex(newPass) == currentHash
+    val sameAsCurrent = remember(newPass, currentHash) {
+        newPass.isNotEmpty() && currentHash != null && sha256Hex(newPass) == currentHash
+    }
     val mismatch = confirmPass.isNotEmpty() && newPass != confirmPass
     val canSubmit = newPass.length >= minLen && !sameAsCurrent && newPass == confirmPass && !isChanging && changeToken != null
     fun resetFlow() {
@@ -2271,14 +2258,23 @@ private fun EncryptionPane(
                             onClick = {
                                 verifying = true
                                 scope.launch {
-                                    val ok = runCatching { onVerifyCurrent(currentPass) }.getOrDefault(false)
+                                    // Falha de rede/servidor ≠ frase-passe errada (antes dizia sempre "incorreta").
+                                    val result = try {
+                                        Result.success(onVerifyCurrent(currentPass))
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        Result.failure(e)
+                                    }
                                     verifying = false
+                                    val ok = result.getOrDefault(false)
                                     if (ok) {
                                         currentHash = sha256Hex(currentPass)
                                         currentPass = ""
                                         step = "code"
                                     } else {
-                                        currentError = "A frase-passe atual está incorreta.".tr()
+                                        currentError = if (result.isFailure) "Sem ligação ao servidor. Tenta novamente.".tr()
+                                        else "A frase-passe atual está incorreta.".tr()
                                     }
                                 }
                             },
@@ -2369,9 +2365,17 @@ private fun AppSecurityPane(
     onClearLog: () -> Unit,
 ) {
     val context = LocalContext.current
-    val biometricAvailable = remember {
-        BiometricManager.from(context)
-            .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
+    fun canUseBiometric() = BiometricManager.from(context)
+        .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
+    // Reavaliado ao voltar (ex.: registou uma impressão digital nas Definições do sistema).
+    var biometricAvailable by remember { mutableStateOf(canUseBiometric()) }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) biometricAvailable = canUseBiometric()
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
     }
 
     // PIN setup dialog state
@@ -2517,13 +2521,25 @@ private fun AppSecurityPane(
     }
 
     fun confirmBiometric(title: String, subtitle: String, onOk: () -> Unit) {
+        // O contexto pode vir embrulhado (ContextWrapper): procurar a atividade em vez de um cast direto.
+        val activity = generateSequence(context) { (it as? android.content.ContextWrapper)?.baseContext }
+            .filterIsInstance<FragmentActivity>().firstOrNull() ?: return
         val executor = ContextCompat.getMainExecutor(context)
         BiometricPrompt(
-            context as FragmentActivity,
+            activity,
             executor,
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     onOk()
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    // Cancelar não é erro; o resto (bloqueado, sem hardware…) mostra-se.
+                    if (errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON && errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
+                        errorCode != BiometricPrompt.ERROR_CANCELED
+                    ) {
+                        android.widget.Toast.makeText(context, errString, android.widget.Toast.LENGTH_SHORT).show()
+                    }
                 }
             },
         ).authenticate(
@@ -2622,43 +2638,25 @@ private fun AppSecurityPane(
                         onSelect = onSetLockDelay,
                     )
                 }
-                // Antes do Android 13 esconder a miniatura exige FLAG_SECURE (bloqueia capturas).
-                if (lockDelayMs <= 0L && android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
-                    Text(
-                        "Com «Agora», a app fica oculta nos recentes e as capturas de ecrã ficam bloqueadas".tr(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
-                    )
-                }
             }
 
             PaneSection("Privacidade".tr())
             PaneCard(padded = false) {
+                // Com «Agora» a app bloqueia ao sair e fica sempre oculta (MainActivity.applyPrivacyMode):
+                // o interruptor aparece ligado e fixo em vez de parecer que desliga.
+                val forced = lockDelayMs <= 0L
+                val modern = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU
                 SettingsToggleRow(
                     title = "Ocultar nas apps recentes".tr(),
                     // Android 13+: só a miniatura; antes disso o FLAG_SECURE também bloqueia capturas.
-                    subtitle = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU)
-                        "Pré-visualização em branco".tr()
-                    else "Pré-visualização em branco, bloqueia capturas de ecrã".tr(),
-                    checked = hideInRecents,
+                    subtitle = when {
+                        forced -> "Sempre ligado com «Agora»: a app bloqueia ao sair.".tr()
+                        modern -> "Pré-visualização em branco".tr()
+                        else -> "Pré-visualização em branco, bloqueia capturas de ecrã".tr()
+                    },
+                    checked = hideInRecents || forced,
+                    enabled = !forced,
                     onCheckedChange = onSetHideInRecents,
-                )
-            }
-        }
-
-        // O botão Lua/Sol da gaveta só alterna claro/escuro: aqui pode voltar-se a "Sistema".
-        PaneSection("Aparência".tr())
-        PaneCard(padded = false) {
-            Box(Modifier.padding(8.dp)) {
-                SettingsSegmented(
-                    options = listOf(
-                        co.golink.tester.ui.theme.AppThemeMode.Mode.SYSTEM to "Sistema".tr(),
-                        co.golink.tester.ui.theme.AppThemeMode.Mode.LIGHT to "Claro".tr(),
-                        co.golink.tester.ui.theme.AppThemeMode.Mode.DARK to "Escuro".tr(),
-                    ),
-                    selected = co.golink.tester.ui.theme.AppThemeMode.mode,
-                    onSelect = { co.golink.tester.ui.theme.AppThemeMode.set(context, it) },
                 )
             }
         }
@@ -2741,6 +2739,8 @@ private fun LogDialog(
                         )
                     }
                 } else {
+                    // Datas formatadas uma vez por lista (não a cada recomposição do diálogo).
+                    val dates = remember(entries) { entries.map { it.dateFormatted() } }
                     LazyColumn(
                         modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
                         contentPadding = PaddingValues(vertical = 4.dp),
@@ -2748,7 +2748,7 @@ private fun LogDialog(
                         var lastDate: String? = null
                         // Chaves pelo índice: entradas iguais no mesmo ms repetiam a chave (crash).
                         entries.forEachIndexed { i, entry ->
-                            val date = entry.dateFormatted()
+                            val date = dates[i]
                             if (date != lastDate) {
                                 lastDate = date
                                 item(key = "date_${i}_$date") { DateSeparator(date) }
@@ -2905,7 +2905,8 @@ private fun LogRow(entry: LogEntry) {
         Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                LogSanitizer.redact(entry.message),
+                // Regex de redação: uma vez por entrada.
+                remember(entry.message) { LogSanitizer.redact(entry.message) },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface,
             )

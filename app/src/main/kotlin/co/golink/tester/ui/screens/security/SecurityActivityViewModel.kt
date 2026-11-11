@@ -2,9 +2,7 @@ package co.golink.tester.ui.screens.security
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import co.golink.tester.domain.security.SecurityEvent
-import co.golink.tester.network.SecurityEventsApi
-import co.golink.tester.ui.i18n.tr
+import co.golink.tester.data.settings.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,13 +13,20 @@ import kotlinx.coroutines.launch
 
 data class SecurityActivityUiState(
     val isLoading: Boolean = false,
-    val events: List<SecurityEvent> = emptyList(),
+    val items: List<SecurityItemUi> = emptyList(),
+    val page: Int = 1,
+    val hasMore: Boolean = false,
     val toast: String? = null,
 )
 
+/**
+ * Ecrã próprio da Atividade de segurança (aberto do Bloqueio da app). Usa a mesma
+ * fonte paginada do painel das Definições — antes tinha API/DTO próprios e só
+ * mostrava a 1.ª página.
+ */
 @HiltViewModel
 class SecurityActivityViewModel @Inject constructor(
-    private val api: SecurityEventsApi,
+    private val repository: SettingsRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SecurityActivityUiState())
@@ -31,22 +36,34 @@ class SecurityActivityViewModel @Inject constructor(
         refresh()
     }
 
-    fun refresh() {
+    fun refresh() = load(page = 1)
+
+    fun loadMore() {
+        val s = _state.value
+        if (s.isLoading || !s.hasMore) return
+        load(page = s.page + 1)
+    }
+
+    private fun load(page: Int) {
         _state.update { it.copy(isLoading = true) }
         viewModelScope.launch {
-            runCatching {
-                val response = api.list()
-                if (!response.isSuccessful) error("HTTP ${response.code()}")
-                val body = response.body() ?: error("Resposta vazia")
-                body.data.map { SecurityEvent.fromEnvelope(it) }
-            }
-                .onSuccess { events -> _state.update { it.copy(isLoading = false, events = events) } }
+            repository.securityEvents(page)
+                .onSuccess { r ->
+                    val mapped = r.items.map { e ->
+                        SecurityItemUi(e.id, e.attributes.event, e.attributes.created_at, e.attributes.ip, e.attributes.user_agent)
+                    }
+                    _state.update {
+                        it.copy(
+                            isLoading = false,
+                            items = if (page == 1) mapped else it.items + mapped,
+                            page = page,
+                            hasMore = r.hasMore,
+                        )
+                    }
+                }
                 .onFailure { t ->
-                    // Detalhe (HTTP 500, IOException…) só para o log; o toast é traduzido.
-                    android.util.Log.w("SecurityActivity", "Falha a carregar: ${t.message}")
-                    val msg = if (t is java.io.IOException) "Sem ligação ao servidor. Tenta novamente.".tr()
-                    else "Não foi possível carregar a atividade de segurança.".tr()
-                    _state.update { it.copy(isLoading = false, toast = msg) }
+                    // netCatching já traduz falhas de rede; o resto também chega traduzido.
+                    _state.update { it.copy(isLoading = false, toast = t.message ?: "Não foi possível carregar a atividade de segurança.") }
                 }
         }
     }

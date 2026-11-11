@@ -16,13 +16,13 @@ class BillingRepository @Inject constructor(
     private val api: BillingApi,
     private val downloader: FileDownloader,
 ) {
-    suspend fun summary(): Result<BillingSummary> = runCatching {
+    suspend fun summary(): Result<BillingSummary> = co.golink.tester.data.net.netCatching {
         val response = api.summary()
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         response.body() ?: error("Resposta vazia")
     }
 
-    suspend fun listPlans(): Result<List<Plan>> = runCatching {
+    suspend fun listPlans(): Result<List<Plan>> = co.golink.tester.data.net.netCatching {
         val response = api.listPlans()
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val envelopes = response.body()?.data ?: error("Resposta vazia")
@@ -32,7 +32,7 @@ class BillingRepository @Inject constructor(
     }
 
     /** Uma página de faturas; devolve também se há mais. */
-    suspend fun invoices(page: Int): Result<Pair<List<Invoice>, Boolean>> = runCatching {
+    suspend fun invoices(page: Int): Result<Pair<List<Invoice>, Boolean>> = co.golink.tester.data.net.netCatching {
         val response = api.invoices(page)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val body = response.body() ?: error("Resposta vazia")
@@ -41,16 +41,20 @@ class BillingRepository @Inject constructor(
     }
 
     /** Guarda o PDF de uma fatura em Downloads. */
-    suspend fun downloadInvoice(invoice: Invoice): Result<Unit> = runCatching {
+    suspend fun downloadInvoice(invoice: Invoice): Result<Unit> = co.golink.tester.data.net.netCatching {
         val response = api.invoicePdf(invoice.id)
         check(response.isSuccessful) { "HTTP ${response.code()}" }
-        val bytes = response.body()?.use { it.bytes() } ?: error("Resposta vazia")
+        // @Streaming: o corpo lê-se da rede — no Main dava NetworkOnMainThreadException
+        // e a fatura falhava sempre.
+        val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            response.body()?.use { it.bytes() }
+        } ?: error("Resposta vazia")
         val name = fileName(response.headers()["Content-Disposition"]) ?: "Invoice-${invoice.id.take(8)}.pdf"
         downloader.saveBytesToDownloads(name, "application/pdf", bytes)
     }
 
     /** Guarda o ZIP com todas as faturas em Downloads. */
-    suspend fun downloadAllInvoices(): Result<Unit> = runCatching {
+    suspend fun downloadAllInvoices(): Result<Unit> = co.golink.tester.data.net.netCatching {
         val response = api.invoicesZip()
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val body = response.body() ?: error("Resposta vazia")

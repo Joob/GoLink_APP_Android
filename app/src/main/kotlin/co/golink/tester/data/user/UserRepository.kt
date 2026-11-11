@@ -40,7 +40,10 @@ class UserRepository @Inject constructor(
         User.fromResponse(body).also {
             _me.value = it
             if (token != null) {
-                runCatching { tokenStore.saveCachedUser(token, json.encodeToString(UserResponse.serializer(), body)) }
+                // JSON + AES-GCM das preferências cifradas: fora do thread de UI.
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    runCatching { tokenStore.saveCachedUser(token, json.encodeToString(UserResponse.serializer(), body)) }
+                }
             }
         }
     }

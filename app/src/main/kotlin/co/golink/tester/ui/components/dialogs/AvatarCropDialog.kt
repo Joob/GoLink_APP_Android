@@ -1,6 +1,7 @@
 package co.golink.tester.ui.components.dialogs
 
 import android.content.Context
+import kotlinx.coroutines.launch
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
@@ -221,12 +222,21 @@ fun AvatarCropDialog(
                 ) {
                     TextButton(onClick = onCancel) { Text("Cancelar".tr()) }
                     Spacer(Modifier.width(8.dp))
+                    // Recorte + escala + JPEG fora do thread de UI (fotos grandes davam jank).
+                    val cropScope = androidx.compose.runtime.rememberCoroutineScope()
+                    var cropping by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
                     Button(
-                        enabled = bitmap != null,
+                        enabled = bitmap != null && !cropping,
                         onClick = {
                             val bmp = bitmap ?: return@Button
-                            val jpeg = cropToJpeg(bmp, viewportPx, scale, offset)
-                            if (jpeg != null) onConfirm(jpeg) else onCancel()
+                            cropping = true
+                            cropScope.launch {
+                                val jpeg = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                                    cropToJpeg(bmp, viewportPx, scale, offset)
+                                }
+                                cropping = false
+                                if (jpeg != null) onConfirm(jpeg) else onCancel()
+                            }
                         },
                     ) { Text("Guardar".tr()) }
                 }

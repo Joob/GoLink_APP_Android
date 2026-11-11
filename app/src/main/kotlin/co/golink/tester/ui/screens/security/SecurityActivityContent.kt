@@ -163,6 +163,9 @@ fun SecurityActivityContent(
     modifier: Modifier = Modifier,
 ) {
     var filter by remember { mutableStateOf("all") }
+    val counts = remember(items) {
+        items.count { it.event.startsWith("auth.") } to items.count { it.event in ALERTS }
+    }
     val visible = remember(items, filter) {
         when (filter) {
             "logins" -> items.filter { it.event.startsWith("auth.") }
@@ -227,8 +230,8 @@ fun SecurityActivityContent(
                         "alerts" to "Alertas".tr(),
                     ).forEach { (key, label) ->
                         val count = when (key) {
-                            "logins" -> items.count { it.event.startsWith("auth.") }
-                            "alerts" -> items.count { it.event in ALERTS }
+                            "logins" -> counts.first
+                            "alerts" -> counts.second
                             else -> items.size
                         }
                         val active = key == filter
@@ -329,7 +332,8 @@ private fun EventRow(ev: SecurityItemUi) {
         ev.event.startsWith("share.") || ev.event.startsWith("team.") -> BLUE
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    val time = parseIsoLocal(ev.createdAt)?.format(DateTimeFormatter.ofPattern("HH:mm")) ?: ""
+    // Formatter partilhado (um por linha e por recomposição pesava no scroll).
+    val time = parseIsoLocal(ev.createdAt)?.format(co.golink.tester.ui.common.DateFormatters.HM) ?: ""
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 11.dp)) {
         Text(time, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(38.dp))
         Box(

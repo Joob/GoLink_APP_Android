@@ -19,13 +19,13 @@ import co.golink.tester.domain.settings.AccessToken
 import co.golink.tester.domain.settings.SecurityEventData
 import co.golink.tester.domain.settings.SessionItem
 import co.golink.tester.domain.settings.StorageUsage
-import co.golink.tester.domain.settings.TransactionItem
 import co.golink.tester.domain.user.User
 import coil.ImageLoader
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** Resultado de um PIN pedido nas Definições (mesmas esperas do ecrã de bloqueio). */
@@ -43,21 +44,30 @@ sealed interface PinCheck {
     data class LockedOut(val seconds: Int) : PinCheck
 }
 
+/** Passos do 2FA nativo (antes abria o browser). */
+sealed interface TwoFactorFlow {
+    data object Idle : TwoFactorFlow
+    /** Segredo gerado: mostrar QR/chave e pedir o 1.º código. */
+    data class Setup(val secret: String, val otpauthUrl: String) : TwoFactorFlow
+    /** Códigos de recuperação a mostrar uma vez (depois de ativar, ver ou gerar). */
+    data class RecoveryCodes(val codes: List<String>, val justEnabled: Boolean) : TwoFactorFlow
+}
+
 data class SettingsUiState(
     val storage: StorageUsage? = null,
     val storageInsights: co.golink.tester.domain.settings.StorageInsights? = null,
     /** Tamanho da cache local (miniaturas, temporários) — painel Bloqueio da app. */
     val cacheBytes: Long? = null,
     val sessions: List<SessionItem> = emptyList(),
+    /** Contagem para o badge do menu (sem pedir/decifrar a lista toda). */
+    val sessionsCount: Int? = null,
     val securityEvents: List<SecurityEventData> = emptyList(),
     val isLoadingSecurityEvents: Boolean = false,
     val hasMoreSecurityEvents: Boolean = false,
     val securityEventsPage: Int = 1,
-    val transactions: List<TransactionItem> = emptyList(),
     val tokens: List<AccessToken> = emptyList(),
     val isLoadingStorage: Boolean = false,
     val isLoadingSessions: Boolean = false,
-    val isLoadingTransactions: Boolean = false,
     val isLoadingTokens: Boolean = false,
     val isUpdatingPassword: Boolean = false,
     // Muda a cada password alterada com sucesso: o formulário só limpa os campos aí.
@@ -70,6 +80,16 @@ data class SettingsUiState(
     val emailChangeError: String? = null,
     val isChangingPassphrase: Boolean = false,
     val isUpdatingProfile: Boolean = false,
+    // Muda a cada gravação de perfil bem-sucedida (o formulário só sai do modo de edição aí).
+    val profileSavedAt: Long = 0L,
+    val isUpdatingBilling: Boolean = false,
+    val billingSavedAt: Long = 0L,
+    // Preferências (iguais à web): valor otimista por chave enquanto o PATCH corre.
+    val prefOverrides: Map<String, String> = emptyMap(),
+    // 2FA nativo: passo do fluxo de ativação/gestão.
+    val twoFactor: TwoFactorFlow = TwoFactorFlow.Idle,
+    val isTwoFactorBusy: Boolean = false,
+    val twoFactorError: String? = null,
     val biometricEnabled: Boolean = false,
     val pinEnabled: Boolean = false,
     val lockDelayMs: Long = 0L,
@@ -79,6 +99,10 @@ data class SettingsUiState(
     val isCreatingToken: Boolean = false,
     val createTokenError: String? = null,
     val toast: String? = null,
+    // Quando cada lista foi carregada (re-entrar num painel só recarrega se passou 1 min).
+    val loadedAt: Map<String, Long> = emptyMap(),
+    // id da sessão/token a terminar (bloqueia toques repetidos).
+    val busyIds: Set<String> = emptySet(),
     val logEntries: List<LogEntry> = emptyList(),
     // Billing (só leitura: pagamentos só na web).
     val billing: co.golink.tester.domain.billing.BillingSummary? = null,
@@ -154,6 +178,14 @@ class SettingsViewModel @Inject constructor(
 
     fun refreshUser() = viewModelScope.launch { sessionManager.refreshUser() }
 
+    /** Mensagem a mostrar de uma falha: nunca vazia (antes um null não mostrava nada). */
+    private fun Throwable.userMessage(): String = message?.takeIf { it.isNotBlank() } ?: bt("error_generic")
+
+    private fun stale(key: String): Boolean =
+        System.currentTimeMillis() - (_state.value.loadedAt[key] ?: 0L) > RELOAD_AFTER_MS
+
+    private fun markLoaded(key: String) = _state.update { it.copy(loadedAt = it.loadedAt + (key to System.currentTimeMillis())) }
+
     private val _isUpdatingAvatar = MutableStateFlow(false)
     val isUpdatingAvatar: StateFlow<Boolean> = _isUpdatingAvatar
 
@@ -166,22 +198,26 @@ class SettingsViewModel @Inject constructor(
                     sessionManager.refreshUser()
                     _state.update { it.copy(toast = "Imagem de perfil actualizada".tr()) }
                 }
-                .onFailure { t -> _state.update { it.copy(toast = t.message ?: "Falha ao atualizar a imagem".tr()) } }
+                .onFailure { t -> _state.update { it.copy(toast = t.message?.takeIf { m -> m.isNotBlank() } ?: "Falha ao atualizar a imagem".tr()) } }
             _isUpdatingAvatar.value = false
         }
     }
 
-    fun loadStorage() {
+    fun loadStorage(force: Boolean = true) {
+        // Em curso (ex.: init + abrir já no Armazenamento): não duplica o pedido.
+        if (_state.value.isLoadingStorage || (!force && !stale("storage"))) return
         _state.update { it.copy(isLoadingStorage = true) }
         viewModelScope.launch {
             repository.storage()
-                .onSuccess { s -> _state.update { it.copy(storage = s, isLoadingStorage = false) } }
-                .onFailure { t -> _state.update { it.copy(isLoadingStorage = false, toast = t.message) } }
+                .onSuccess { s -> _state.update { it.copy(storage = s, isLoadingStorage = false) }; markLoaded("storage") }
+                .onFailure { t -> _state.update { it.copy(isLoadingStorage = false, toast = t.userMessage()) } }
         }
     }
 
     /** Detalhe do painel Armazenamento (falha em silêncio: o painel funciona sem ele). */
-    fun loadStorageInsights() {
+    fun loadStorageInsights(force: Boolean = true) {
+        if (!force && !stale("insights")) return
+        markLoaded("insights")
         viewModelScope.launch {
             repository.storageInsights().onSuccess { i -> _state.update { it.copy(storageInsights = i) } }
         }
@@ -196,17 +232,33 @@ class SettingsViewModel @Inject constructor(
         fileViewerSession.notOwnedIds = emptySet()
     }
 
-    fun loadSessions() {
+    fun loadSessions(force: Boolean = true) {
+        if (_state.value.isLoadingSessions || (!force && !stale("sessions"))) return
         _state.update { it.copy(isLoadingSessions = true) }
         viewModelScope.launch {
             repository.sessions()
-                .onSuccess { l -> _state.update { it.copy(sessions = l, isLoadingSessions = false) } }
-                .onFailure { t -> _state.update { it.copy(isLoadingSessions = false, toast = t.message) } }
+                .onSuccess { l ->
+                    _state.update { it.copy(sessions = l, sessionsCount = l.size, isLoadingSessions = false) }
+                    markLoaded("sessions")
+                }
+                .onFailure { t -> _state.update { it.copy(isLoadingSessions = false, toast = t.userMessage()) } }
+        }
+    }
+
+    /** Badge do menu: só a contagem (o servidor não decifra as sessões). */
+    fun loadSessionsCount() {
+        if (!stale("sessionsCount")) return
+        markLoaded("sessionsCount")
+        viewModelScope.launch {
+            repository.sessionsCount().onSuccess { n -> _state.update { it.copy(sessionsCount = n) } }
         }
     }
 
     /** Recarrega o histórico de segurança desde o início. */
-    fun loadSecurityEvents() = fetchSecurityEvents(page = 1, append = false)
+    fun loadSecurityEvents(force: Boolean = true) {
+        if (!force && !stale("security")) return
+        fetchSecurityEvents(page = 1, append = false)
+    }
 
     fun loadMoreSecurityEvents() {
         val s = _state.value
@@ -228,20 +280,29 @@ class SettingsViewModel @Inject constructor(
                             isLoadingSecurityEvents = false,
                         )
                     }
+                    if (page == 1) markLoaded("security")
                 }
                 .onFailure { t ->
-                    _state.update { it.copy(isLoadingSecurityEvents = false, toast = t.message) }
+                    _state.update { it.copy(isLoadingSecurityEvents = false, toast = t.userMessage()) }
                 }
         }
     }
 
     // Só as outras sessões: a atual não tem "Terminar" (termina-se em Sair ou nos Tokens, com overlay + logout).
-    fun revokeSession(id: String) = viewModelScope.launch {
-        repository.revokeSession(id)
-            .onSuccess {
-                _state.update { it.copy(toast = "Sessão revogada".tr(), sessions = it.sessions.filterNot { s -> s.id == id }) }
-            }
-            .onFailure { t -> _state.update { it.copy(toast = t.message) } }
+    fun revokeSession(id: String) {
+        if (id in _state.value.busyIds) return
+        _state.update { it.copy(busyIds = it.busyIds + id) }
+        viewModelScope.launch {
+            repository.revokeSession(id)
+                .onSuccess {
+                    _state.update {
+                        val left = it.sessions.filterNot { s -> s.id == id }
+                        it.copy(toast = "Sessão revogada".tr(), sessions = left, sessionsCount = left.size)
+                    }
+                }
+                .onFailure { t -> _state.update { it.copy(toast = t.userMessage()) } }
+            _state.update { it.copy(busyIds = it.busyIds - id) }
+        }
     }
 
     fun revokeAllSessions() = viewModelScope.launch {
@@ -251,7 +312,7 @@ class SettingsViewModel @Inject constructor(
                 _state.update { it.copy(logoutOverlay = null, toast = "Todas as outras sessões revogadas".tr()) }
                 loadSessions()
             }
-            .onFailure { t -> _state.update { it.copy(logoutOverlay = null, toast = t.message) } }
+            .onFailure { t -> _state.update { it.copy(logoutOverlay = null, toast = t.userMessage()) } }
     }
 
     fun updatePassword(current: String, newPassword: String, passkeyToken: String? = null) {
@@ -263,7 +324,7 @@ class SettingsViewModel @Inject constructor(
                         it.copy(isUpdatingPassword = false, passwordChangedAt = System.currentTimeMillis(), toast = "Password actualizada".tr())
                     }
                 }
-                .onFailure { t -> _state.update { it.copy(isUpdatingPassword = false, toast = t.message) } }
+                .onFailure { t -> _state.update { it.copy(isUpdatingPassword = false, toast = t.userMessage()) } }
         }
     }
 
@@ -281,7 +342,7 @@ class SettingsViewModel @Inject constructor(
                         )
                     }
                 }
-                .onFailure { t -> _state.update { it.copy(isChangingEmail = false, emailChangeError = t.message) } }
+                .onFailure { t -> _state.update { it.copy(isChangingEmail = false, emailChangeError = t.userMessage()) } }
         }
     }
 
@@ -300,7 +361,7 @@ class SettingsViewModel @Inject constructor(
                         )
                     }
                 }
-                .onFailure { t -> _state.update { it.copy(isChangingEmail = false, emailChangeError = t.message) } }
+                .onFailure { t -> _state.update { it.copy(isChangingEmail = false, emailChangeError = t.userMessage()) } }
         }
     }
 
@@ -331,7 +392,14 @@ class SettingsViewModel @Inject constructor(
     fun changeEncryptionPassphrase(secret: String, changeToken: String, onDone: (Boolean, Boolean) -> Unit) {
         _state.update { it.copy(isChangingPassphrase = true) }
         viewModelScope.launch {
-            runCatching { e2eKeyManager.rotateSecret(secret, changeToken) }
+            val result = try {
+                Result.success(e2eKeyManager.rotateSecret(secret, changeToken))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+            result
                 .onSuccess {
                     _state.update { it.copy(isChangingPassphrase = false, toast = "Passphrase alterada".tr()) }
                     onDone(true, false)
@@ -341,8 +409,12 @@ class SettingsViewModel @Inject constructor(
                     _state.update {
                         it.copy(
                             isChangingPassphrase = false,
-                            toast = if (expired) "A confirmação expirou. Confirma de novo com um código.".tr()
-                            else t.message ?: "Falha ao alterar passphrase".tr(),
+                            // Mensagens internas (HTTP n, self-test, locked) não chegam ao utilizador.
+                            toast = when {
+                                expired -> "A confirmação expirou. Confirma de novo com um código.".tr()
+                                t is java.io.IOException -> "Sem ligação ao servidor. Tenta novamente.".tr()
+                                else -> "Falha ao alterar passphrase".tr()
+                            },
                         )
                     }
                     onDone(false, expired)
@@ -352,32 +424,110 @@ class SettingsViewModel @Inject constructor(
 
     fun updateProfileField(name: String, value: String) = updateProfileFields(mapOf(name to value))
 
-    // Um campo de cada vez; pára no primeiro erro e só refresca o utilizador uma vez.
+    // Um campo de cada vez; tenta todos (um que falhe não trava os outros) e só
+    // refresca o utilizador uma vez. O formulário fecha só com tudo gravado.
     fun updateProfileFields(changes: Map<String, String>) {
         if (changes.isEmpty() || _state.value.isUpdatingProfile) return
         _state.update { it.copy(isUpdatingProfile = true) }
         viewModelScope.launch {
-            var failure: Throwable? = null
-            for ((name, value) in changes) {
-                failure = repository.updateProfileField(name, value).exceptionOrNull()
-                if (failure != null) break
-            }
+            val failure = saveFields(changes)
             sessionManager.refreshUser()
             _state.update {
                 it.copy(
                     isUpdatingProfile = false,
-                    toast = failure?.let { t -> t.message ?: "Falha ao atualizar o perfil".tr() } ?: "Perfil actualizado".tr(),
+                    profileSavedAt = if (failure == null) System.currentTimeMillis() else it.profileSavedAt,
+                    toast = failure?.let { t -> t.message?.takeIf { m -> m.isNotBlank() } ?: "Falha ao atualizar o perfil".tr() } ?: "Perfil actualizado".tr(),
                 )
             }
         }
     }
 
-    fun loadTokens() {
+    /** Grava cada campo; devolve a 1.ª falha (ou null). */
+    private suspend fun saveFields(changes: Map<String, String>): Throwable? {
+        var first: Throwable? = null
+        for ((name, value) in changes) {
+            val f = repository.updateProfileField(name, value).exceptionOrNull()
+            if (first == null) first = f
+        }
+        return first
+    }
+
+    // ── Preferências (iguais à web) ─────────────────────────────────────
+    /**
+     * date_format / week_start / news_emails / tips_emails / weekly_summary.
+     * Otimista: a UI mostra já o novo valor; os pedidos da mesma chave seguem em
+     * fila e só a falha do último repõe o valor da conta.
+     */
+    private val prefMutex = mutableMapOf<String, kotlinx.coroutines.sync.Mutex>()
+    private val prefSeq = mutableMapOf<String, Int>()
+
+    fun updatePref(name: String, value: String) {
+        val seq = (prefSeq[name] ?: 0) + 1
+        prefSeq[name] = seq
+        _state.update { it.copy(prefOverrides = it.prefOverrides + (name to value)) }
+        val mutex = prefMutex.getOrPut(name) { kotlinx.coroutines.sync.Mutex() }
+        viewModelScope.launch {
+            val result = mutex.withLock { repository.updateProfileField(name, value) }
+            if (prefSeq[name] != seq) return@launch
+            result
+                .onSuccess {
+                    sessionManager.refreshUser()
+                    _state.update { it.copy(prefOverrides = it.prefOverrides - name) }
+                }
+                .onFailure { t -> _state.update { it.copy(prefOverrides = it.prefOverrides - name, toast = t.userMessage()) } }
+        }
+    }
+
+    // ── 2FA (TOTP) nativo ──────────────────────────────────────────────
+    fun startTwoFactor(password: String?, passkeyToken: String?) = twoFactorCall {
+        val r = repository.enableTwoFactor(password, passkeyToken).getOrThrow()
+        _state.update { it.copy(twoFactor = TwoFactorFlow.Setup(r.secret, r.otpauth_url)) }
+    }
+
+    fun confirmTwoFactor(code: String) = twoFactorCall {
+        val codes = repository.confirmTwoFactor(code).getOrThrow()
+        sessionManager.refreshUser()
+        _state.update { it.copy(twoFactor = TwoFactorFlow.RecoveryCodes(codes, justEnabled = true), toast = "Verificação em dois passos ativada".tr()) }
+    }
+
+    fun disableTwoFactor(password: String?, passkeyToken: String?) = twoFactorCall {
+        repository.disableTwoFactor(password, passkeyToken).getOrThrow()
+        sessionManager.refreshUser()
+        _state.update { it.copy(twoFactor = TwoFactorFlow.Idle, toast = "Verificação em dois passos desativada".tr()) }
+    }
+
+    fun showRecoveryCodes(password: String?, passkeyToken: String?, regenerate: Boolean) = twoFactorCall {
+        val codes = repository.recoveryCodes(password, passkeyToken, regenerate).getOrThrow()
+        _state.update { it.copy(twoFactor = TwoFactorFlow.RecoveryCodes(codes, justEnabled = false)) }
+    }
+
+    fun closeTwoFactor() = _state.update { it.copy(twoFactor = TwoFactorFlow.Idle, twoFactorError = null) }
+
+    fun clearTwoFactorError() = _state.update { it.copy(twoFactorError = null) }
+
+    private fun twoFactorCall(block: suspend () -> Unit) {
+        if (_state.value.isTwoFactorBusy) return
+        _state.update { it.copy(isTwoFactorBusy = true, twoFactorError = null) }
+        viewModelScope.launch {
+            try {
+                block()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(twoFactorError = e.userMessage()) }
+            } finally {
+                _state.update { it.copy(isTwoFactorBusy = false) }
+            }
+        }
+    }
+
+    fun loadTokens(force: Boolean = true) {
+        if (_state.value.isLoadingTokens || (!force && !stale("tokens"))) return
         _state.update { it.copy(isLoadingTokens = true) }
         viewModelScope.launch {
             repository.listTokens()
-                .onSuccess { l -> _state.update { it.copy(tokens = l, isLoadingTokens = false) } }
-                .onFailure { t -> _state.update { it.copy(isLoadingTokens = false, toast = t.message) } }
+                .onSuccess { l -> _state.update { it.copy(tokens = l, isLoadingTokens = false) }; markLoaded("tokens") }
+                .onFailure { t -> _state.update { it.copy(isLoadingTokens = false, toast = t.userMessage()) } }
         }
     }
 
@@ -401,34 +551,34 @@ class SettingsViewModel @Inject constructor(
     fun clearCreateTokenError() = _state.update { it.copy(createTokenError = null) }
 
     /** Revogar o token desta sessão termina-a: overlay + logout, como no painel Sessões. */
-    fun deleteToken(id: Long) = viewModelScope.launch {
-        val wasCurrent = _state.value.tokens.firstOrNull { it.id == id }?.is_current == true
-        if (wasCurrent) _state.update { it.copy(logoutOverlay = "A sair da conta…".tr()) }
-        repository.deleteToken(id)
-            .onSuccess {
-                if (wasCurrent) authRepository.logout()
-                else _state.update { it.copy(tokens = it.tokens.filterNot { t -> t.id == id }) }
-            }
-            .onFailure { t -> _state.update { it.copy(logoutOverlay = null, toast = t.message) } }
+    fun deleteToken(id: Long) {
+        val key = "token:$id"
+        if (key in _state.value.busyIds) return
+        _state.update { it.copy(busyIds = it.busyIds + key) }
+        viewModelScope.launch {
+            val wasCurrent = _state.value.tokens.firstOrNull { it.id == id }?.is_current == true
+            if (wasCurrent) _state.update { it.copy(logoutOverlay = "A sair da conta…".tr()) }
+            repository.deleteToken(id)
+                .onSuccess {
+                    if (wasCurrent) authRepository.logout()
+                    else _state.update { it.copy(tokens = it.tokens.filterNot { t -> t.id == id }) }
+                }
+                .onFailure { t -> _state.update { it.copy(logoutOverlay = null, toast = t.userMessage()) } }
+            _state.update { it.copy(busyIds = it.busyIds - key) }
+        }
     }
 
     fun consumeNewToken() = _state.update { it.copy(newTokenPlaintext = null) }
 
-    fun loadTransactions() {
-        _state.update { it.copy(isLoadingTransactions = true) }
-        viewModelScope.launch {
-            repository.transactions()
-                .onSuccess { l -> _state.update { it.copy(transactions = l, isLoadingTransactions = false) } }
-                .onFailure { t -> _state.update { it.copy(isLoadingTransactions = false, toast = t.message) } }
-        }
-    }
-
     fun setBiometricEnabled(enabled: Boolean) {
-        // Religar a biometria (após confirmação) começa com uma chave nova do Keystore.
-        if (enabled) appLockBioKey.reset()
-        securityPrefs.biometricEnabled = enabled
-        logger.log("Security", if (enabled) "Biometria activada" else "Biometria desactivada")
         _state.update { it.copy(biometricEnabled = enabled) }
+        viewModelScope.launch {
+            // Religar a biometria (após confirmação) começa com uma chave nova do
+            // Keystore — chamada por binder, fora do thread de UI.
+            if (enabled) withContext(Dispatchers.IO) { appLockBioKey.reset() }
+            securityPrefs.biometricEnabled = enabled
+            logger.log("Security", if (enabled) "Biometria activada" else "Biometria desactivada")
+        }
     }
 
     // PBKDF2 + EncryptedSharedPreferences: sempre fora da main thread.
@@ -567,12 +717,16 @@ class SettingsViewModel @Inject constructor(
     // de faturação, e se descarregam faturas já pagas.
 
     /** Resumo + planos + 1.ª página de faturas. */
-    fun loadBilling() {
-        if (_state.value.isLoadingBilling) return
+    fun loadBilling(force: Boolean = true) {
+        if (_state.value.isLoadingBilling || (!force && !stale("billing"))) return
         _state.update { it.copy(isLoadingBilling = true) }
+        markLoaded("billing")
         viewModelScope.launch {
-            val summary = billingRepository.summary()
-            val plans = billingRepository.listPlans()
+            // Os dois pedidos em paralelo (eram em série).
+            val summaryJob = async { billingRepository.summary() }
+            val plansJob = async { billingRepository.listPlans() }
+            val summary = summaryJob.await()
+            val plans = plansJob.await()
             _state.update {
                 it.copy(
                     isLoadingBilling = false,
@@ -621,23 +775,25 @@ class SettingsViewModel @Inject constructor(
 
     /** Dados de faturação (não é pagamento): grava e recarrega o resumo. */
     fun saveBillingDetails(changes: Map<String, String>) {
-        if (changes.isEmpty() || _state.value.isUpdatingProfile) return
-        _state.update { it.copy(isUpdatingProfile = true) }
+        if (changes.isEmpty() || _state.value.isUpdatingBilling) return
+        _state.update { it.copy(isUpdatingBilling = true) }
         viewModelScope.launch {
-            var failure: Throwable? = null
-            for ((name, value) in changes) {
-                failure = repository.updateProfileField(name, value).exceptionOrNull()
-                if (failure != null) break
-            }
+            val failure = saveFields(changes)
             val summary = billingRepository.summary().getOrNull()
             sessionManager.refreshUser()
             _state.update {
                 it.copy(
-                    isUpdatingProfile = false,
+                    isUpdatingBilling = false,
                     billing = summary ?: it.billing,
-                    toast = failure?.let { t -> t.message ?: bt("error_generic") } ?: bt("bd_saved"),
+                    // O formulário só fecha com tudo gravado (antes fechava antes do resultado).
+                    billingSavedAt = if (failure == null) System.currentTimeMillis() else it.billingSavedAt,
+                    toast = failure?.userMessage() ?: bt("bd_saved"),
                 )
             }
         }
+    }
+
+    private companion object {
+        const val RELOAD_AFTER_MS = 60_000L
     }
 }

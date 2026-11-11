@@ -45,7 +45,6 @@ import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Storage
@@ -909,11 +908,6 @@ private fun UserMenu(
                 text = { Text("Perfil".tr(), fontSize = 14.sp) },
                 leadingIcon = { Icon(Icons.Outlined.Person, contentDescription = null, modifier = Modifier.size(18.dp)) },
                 onClick = { menuOpen = false; onProfile() },
-            )
-            if (onAvatarClick != null) DropdownMenuItem(
-                text = { Text("Alterar imagem".tr(), fontSize = 14.sp) },
-                leadingIcon = { Icon(Icons.Outlined.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                onClick = { menuOpen = false; onAvatarClick() },
             )
             DropdownMenuItem(
                 text = { Text("Definições".tr(), fontSize = 14.sp) },

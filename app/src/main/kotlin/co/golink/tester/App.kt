@@ -8,6 +8,8 @@ import coil.ImageLoaderFactory
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 import javax.inject.Provider
+import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 
 @HiltAndroidApp
@@ -29,21 +31,18 @@ class App : Application(), Configuration.Provider, ImageLoaderFactory {
     // Preferências de datas: derivadas do utilizador, aplicadas ao estado Compose no Main.
     @Inject lateinit var userRepository: dagger.Lazy<co.golink.tester.data.user.UserRepository>
 
-    // Língua escolhida na app → servidor (emails, push e mensagens na mesma língua).
-    @Inject lateinit var settingsRepository: dagger.Lazy<co.golink.tester.data.settings.SettingsRepository>
+    // Língua e tema: escolha local → servidor, e da conta → app (iguais à web).
+    @Inject lateinit var accountPrefsSync: dagger.Lazy<co.golink.tester.data.settings.AccountPrefsSync>
 
     override fun onCreate() {
         super.onCreate()
         // Carrega o idioma guardado antes de qualquer UI compor.
         co.golink.tester.ui.i18n.I18n.init(this)
-        co.golink.tester.ui.i18n.I18n.onUserChange = { code ->
-            // Sem sessão o pedido falha (401) e é ignorado: fica só a escolha local.
-            kotlinx.coroutines.MainScope().launch(kotlinx.coroutines.Dispatchers.IO) {
-                settingsRepository.get().updateProfileField("language", code)
-            }
-        }
+        // Sem sessão o pedido falha e fica pendente: vai quando houver utilizador.
+        co.golink.tester.ui.i18n.I18n.onUserChange = { code -> accountPrefsSync.get().languageChanged(code) }
         // E o tema escolhido no botão Lua/Sol (por omissão segue o sistema).
         co.golink.tester.ui.theme.AppThemeMode.init(this)
+        co.golink.tester.ui.theme.AppThemeMode.onUserChange = { mode -> accountPrefsSync.get().themeChanged(mode) }
         co.golink.tester.ui.components.drawer.DrawerPanel.init(this)
         Thread {
             sessionTerminator.get()
@@ -53,6 +52,15 @@ class App : Application(), Configuration.Provider, ImageLoaderFactory {
         kotlinx.coroutines.MainScope().launch {
             val repo = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { userRepository.get() }
             repo.displayPrefs.collect { co.golink.tester.ui.common.UserDisplayPrefs.set(it) }
+        }
+        // Idioma/tema da conta: só reage quando muda o utilizador ou um destes valores.
+        kotlinx.coroutines.MainScope().launch(kotlinx.coroutines.Dispatchers.Default) {
+            val repo = userRepository.get()
+            val sync = accountPrefsSync.get()
+            repo.me
+                .filterNotNull()
+                .distinctUntilChangedBy { Triple(it.id, it.language, it.themeMode) }
+                .collect { sync.onUser(it) }
         }
         // Ficheiros desencriptados deixados por uma sessão que terminou mal.
         val startedAt = System.currentTimeMillis()

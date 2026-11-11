@@ -6,7 +6,6 @@ import co.golink.tester.domain.settings.CreateTokenRequest
 import co.golink.tester.domain.settings.SecurityEventData
 import co.golink.tester.domain.settings.SessionItem
 import co.golink.tester.domain.settings.StorageUsage
-import co.golink.tester.domain.settings.TransactionItem
 import co.golink.tester.domain.settings.UpdatePasswordRequest
 import co.golink.tester.domain.settings.UpdateProfileFieldRequest
 import co.golink.tester.network.SettingsApi
@@ -64,6 +63,12 @@ class SettingsRepository @Inject constructor(
         val response = api.sessions()
         check(response.isSuccessful) { validationMessage(response) }
         response.body()?.data.orEmpty()
+    }
+
+    suspend fun sessionsCount(): Result<Int> = netCatching {
+        val response = api.sessionsCount()
+        check(response.isSuccessful) { validationMessage(response) }
+        response.body()?.count ?: error("Resposta vazia")
     }
 
     /**
@@ -181,21 +186,34 @@ class SettingsRepository @Inject constructor(
         check(response.isSuccessful) { validationMessage(response) }
     }
 
-    suspend fun transactions(): Result<List<TransactionItem>> = netCatching {
-        val response = api.transactions()
+    // ── 2FA (TOTP) ─────────────────────────────────────────────────────
+    private fun stepUp(password: String?, passkeyToken: String?) =
+        co.golink.tester.domain.settings.TwoFactorStepUp(
+            password = password?.takeIf { passkeyToken == null && it.isNotEmpty() },
+            passkey_token = passkeyToken,
+        )
+
+    suspend fun enableTwoFactor(password: String?, passkeyToken: String?): Result<co.golink.tester.domain.settings.TwoFactorSetupResponse> = netCatching {
+        val response = api.enableTwoFactor(stepUp(password, passkeyToken))
         check(response.isSuccessful) { validationMessage(response) }
-        response.body()?.data.orEmpty().map { envelope ->
-            val a = envelope.data.attributes
-            TransactionItem(
-                id = envelope.data.id,
-                type = a.type,
-                status = a.status,
-                note = a.note,
-                price = a.price,
-                driver = a.driver,
-                createdAt = a.created_at,
-                isRefunded = a.is_refunded,
-            )
-        }
+        response.body() ?: error("Resposta vazia")
+    }
+
+    suspend fun confirmTwoFactor(code: String): Result<List<String>> = netCatching {
+        val response = api.confirmTwoFactor(co.golink.tester.domain.settings.TwoFactorCode(code))
+        check(response.isSuccessful) { validationMessage(response) }
+        response.body()?.recovery_codes.orEmpty()
+    }
+
+    suspend fun disableTwoFactor(password: String?, passkeyToken: String?): Result<Unit> = netCatching {
+        val response = api.disableTwoFactor(stepUp(password, passkeyToken))
+        check(response.isSuccessful) { validationMessage(response) }
+    }
+
+    suspend fun recoveryCodes(password: String?, passkeyToken: String?, regenerate: Boolean): Result<List<String>> = netCatching {
+        val body = stepUp(password, passkeyToken)
+        val response = if (regenerate) api.regenerateRecoveryCodes(body) else api.recoveryCodes(body)
+        check(response.isSuccessful) { validationMessage(response) }
+        response.body()?.recovery_codes.orEmpty()
     }
 }

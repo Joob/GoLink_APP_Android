@@ -9,7 +9,6 @@ import co.golink.tester.network.FavouritesApi
 import co.golink.tester.network.FilesApi
 import co.golink.tester.network.NewsApi
 import co.golink.tester.network.NotificationsApi
-import co.golink.tester.network.SecurityEventsApi
 import co.golink.tester.network.SettingsApi
 import co.golink.tester.network.ShareApi
 import co.golink.tester.network.TeamsApi
@@ -84,11 +83,6 @@ object ApiModule {
     @Singleton
     fun provideNotificationsApi(retrofit: Retrofit): NotificationsApi =
         retrofit.create(NotificationsApi::class.java)
-
-    @Provides
-    @Singleton
-    fun provideSecurityEventsApi(retrofit: Retrofit): SecurityEventsApi =
-        retrofit.create(SecurityEventsApi::class.java)
 
     @Provides
     @Singleton

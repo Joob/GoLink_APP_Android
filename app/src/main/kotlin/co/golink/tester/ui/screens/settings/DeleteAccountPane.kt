@@ -96,13 +96,19 @@ class DeleteAccountViewModel @Inject constructor(
 
     private var pollJob: Job? = null
     private var cooldownJob: Job? = null
+    // Email do último envio: o campo do ecrã perde-se ao sair e voltar ao painel
+    // (o passo "Código" fica no ViewModel), e o "Reenviar" mandava "".
+    private var lastEmail = ""
 
     fun sendCode(emailConfirmation: String) {
         if (_state.value.isLoading) return
+        val email = emailConfirmation.trim().ifBlank { lastEmail }
+        if (email.isBlank()) return
+        lastEmail = email
         _state.update { it.copy(isLoading = true, error = null) }
 
         viewModelScope.launch {
-            repository.sendCode(emailConfirmation.trim())
+            repository.sendCode(email)
                 .onSuccess {
                     _state.update { it.copy(isLoading = false, step = DeleteAccountStep.Code) }
                     startCooldown()

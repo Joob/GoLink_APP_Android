@@ -67,7 +67,7 @@ class PasskeyRepository @Inject constructor(
     private val json: Json,
 ) {
     /** Entrar com passkey: sem OTP (a passkey já é posse + biometria/PIN). */
-    suspend fun signIn(activity: Context): Result<Unit> = runCatching {
+    suspend fun signIn(activity: Context): Result<Unit> = co.golink.tester.data.net.netCatching {
         val options = publicKey(api.loginOptions())
         val credential = getAssertion(activity, options)
 
@@ -83,7 +83,7 @@ class PasskeyRepository @Inject constructor(
         tokenStore.setToken(token, otpValidated = true)
     }.recoverCatching { throw map(it) }
 
-    suspend fun list(): Result<List<PasskeyInfo>> = runCatching {
+    suspend fun list(): Result<List<PasskeyInfo>> = co.golink.tester.data.net.netCatching {
         val response = api.list()
         if (!response.isSuccessful) throw errorParser.parse(response)
         response.body()?.get("data")?.jsonArray.orEmpty().map { el ->
@@ -108,7 +108,7 @@ class PasskeyRepository @Inject constructor(
         password: String?,
         passkeyToken: String?,
         deviceName: String?,
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = co.golink.tester.data.net.netCatching {
         // O servidor valida a confirmação no options e gasta-a no store:
         // cancelar o diálogo do sistema não obriga a confirmar outra vez.
         val confirmation = confirmationBody(password, passkeyToken)
@@ -153,7 +153,7 @@ class PasskeyRepository @Inject constructor(
         }
     }.recoverCatching { throw map(it) }
 
-    suspend fun rename(id: String, name: String): Result<Unit> = runCatching {
+    suspend fun rename(id: String, name: String): Result<Unit> = co.golink.tester.data.net.netCatching {
         val response = api.rename(id, buildJsonObject { put("name", name.trim().take(80)) })
         if (!response.isSuccessful) throw errorParser.parse(response)
     }.recoverCatching { throw map(it) }
@@ -162,7 +162,7 @@ class PasskeyRepository @Inject constructor(
      * Remove uma passkey. Como juntar, exige [password] ou [passkeyToken]
      * (finalidade remove_passkey); contas sociais passam com login recente.
      */
-    suspend fun delete(id: String, password: String? = null, passkeyToken: String? = null): Result<Unit> = runCatching {
+    suspend fun delete(id: String, password: String? = null, passkeyToken: String? = null): Result<Unit> = co.golink.tester.data.net.netCatching {
         val response = api.delete(id, confirmationBody(password, passkeyToken))
         if (response.code() == 423) {
             throw if (response.peekFlag("reauth_required")) PasskeyError.ReauthRequired()
@@ -180,7 +180,7 @@ class PasskeyRepository @Inject constructor(
      * Confirma a identidade com uma passkey da conta e devolve o
      * passkey_token (5 min) que substitui a password no pedido sensível.
      */
-    suspend fun confirm(activity: Context, purpose: String): Result<String> = runCatching {
+    suspend fun confirm(activity: Context, purpose: String): Result<String> = co.golink.tester.data.net.netCatching {
         val options = publicKey(api.confirmOptions())
         val credential = getAssertion(activity, options)
 

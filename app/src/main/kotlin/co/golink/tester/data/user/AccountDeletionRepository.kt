@@ -21,37 +21,37 @@ class AccountDeletionRepository @Inject constructor(
 ) {
     class HttpException(val statusCode: Int, message: String) : Exception(message)
 
-    suspend fun sendCode(emailConfirmation: String): Result<String?> = runCatching {
+    suspend fun sendCode(emailConfirmation: String): Result<String?> = co.golink.tester.data.net.netCatching {
         val response = api.sendDeletionCode(SendDeletionCodeRequest(emailConfirmation))
         if (!response.isSuccessful) throw httpError(response)
         response.body()?.message
     }
 
     /** Devolve a data (ISO) em que a conta será eliminada; null = eliminação imediata (servidor antigo). */
-    suspend fun confirm(code: String): Result<String?> = runCatching {
+    suspend fun confirm(code: String): Result<String?> = co.golink.tester.data.net.netCatching {
         val response = api.deleteAccount(DeleteAccountRequest(code))
         if (!response.isSuccessful) throw httpError(response)
         response.body()?.takeIf { it.scheduled }?.scheduled_for
     }
 
-    suspend fun cancelDeletion(): Result<Unit> = runCatching {
+    suspend fun cancelDeletion(): Result<Unit> = co.golink.tester.data.net.netCatching {
         val response = api.cancelDeletion()
         if (!response.isSuccessful) throw httpError(response)
     }
 
-    suspend fun progress(): Result<DeletionProgressResponse> = runCatching {
+    suspend fun progress(): Result<DeletionProgressResponse> = co.golink.tester.data.net.netCatching {
         val response = api.deletionProgress()
-        if (!response.isSuccessful) throw HttpException(response.code(), "HTTP ${response.code()}")
+        if (!response.isSuccessful) throw HttpException(response.code(), co.golink.tester.data.net.genericHttpMessage())
         response.body() ?: DeletionProgressResponse()
     }
 
     /** Extrai o "message" do JSON de erro do Laravel; cai no código HTTP. */
     private fun httpError(response: Response<*>): HttpException {
-        val message = runCatching {
+        val message = co.golink.tester.data.net.netCatching {
             val raw = response.errorBody()?.string().orEmpty()
             Json.parseToJsonElement(raw).jsonObject["message"]?.jsonPrimitive?.content
         }.getOrNull()
 
-        return HttpException(response.code(), message ?: "HTTP ${response.code()}")
+        return HttpException(response.code(), message ?: co.golink.tester.data.net.genericHttpMessage())
     }
 }
