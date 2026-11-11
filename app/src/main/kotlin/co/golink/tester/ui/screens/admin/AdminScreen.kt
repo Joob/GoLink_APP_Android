@@ -91,7 +91,7 @@ private fun adminTitle(pane: String): String = when (pane) {
 @Composable
 fun AdminScreen(
     pane: String,
-    onBack: () -> Unit,
+    onBack: (area: String) -> Unit,
     onOpenUser: (String) -> Unit,
     accessViewModel: AdminAccessViewModel = hiltViewModel(),
 ) {
@@ -100,24 +100,41 @@ fun AdminScreen(
     // Definições: avisa antes de sair com alterações por guardar (mesma instância que o painel usa).
     val settingsVm: SystemSettingsViewModel? = if (pane == "settings") hiltViewModel() else null
     var confirmLeave by remember { mutableStateOf(false) }
-    val leave = { if ((settingsVm?.pending ?: 0) > 0) confirmLeave = true else onBack() }
-    androidx.activity.compose.BackHandler(enabled = settingsVm != null) { leave() }
+    // Ao voltar, reabre a gaveta na área de onde a página foi aberta.
+    val backArea = if (access?.isAdmin == false) "Support" else "Admin"
+    val exit = { onBack(backArea) }
+    // Definições: com uma página aberta, voltar regressa à lista das definições.
+    val settingsPage = settingsVm?.page?.collectAsStateWithLifecycle()?.value
+    val leave: () -> Unit = {
+        when {
+            settingsPage != null -> settingsVm?.closePage()
+            (settingsVm?.pending ?: 0) > 0 -> confirmLeave = true
+            else -> exit()
+        }
+    }
+    androidx.activity.compose.BackHandler { leave() }
     if (confirmLeave) {
         co.golink.tester.ui.screens.settings.SettingsDialog(
             title = "Descartar alterações?".tr(),
             message = "Tens %d alterações por guardar.".tr().format(settingsVm?.pending ?: 0),
             confirmText = "Descartar".tr(),
             destructive = true,
-            onConfirm = { confirmLeave = false; settingsVm?.discard(); onBack() },
+            onConfirm = { confirmLeave = false; settingsVm?.discard(); exit() },
             onDismiss = { confirmLeave = false },
         )
     }
+    // Fundo cinza e cartões brancos, como as Definições redesenhadas.
+    val screenBg = co.golink.tester.ui.screens.settings.settingsScreenBackground()
     Scaffold(
+        containerColor = screenBg,
         topBar = {
             TopAppBar(
-                title = { Text(adminTitle(pane)) },
+                colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(containerColor = screenBg, scrolledContainerColor = screenBg),
+                title = { Text(settingsPage?.let { settingsPageTitle(it) } ?: adminTitle(pane), fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) },
                 navigationIcon = {
-                    IconButton(onClick = leave) {
+                    // Mesmo caminho que o gesto: um editor aberto (Línguas, Páginas) fecha primeiro.
+                    val dispatcher = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+                    IconButton(onClick = { dispatcher?.onBackPressed() ?: leave() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar".tr())
                     }
                 },

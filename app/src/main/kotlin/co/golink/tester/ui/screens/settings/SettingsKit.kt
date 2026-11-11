@@ -787,12 +787,18 @@ fun SettingsCard(
     description: String? = null,
     modifier: Modifier = Modifier,
     trailing: @Composable (RowScope.() -> Unit)? = null,
+    /** Mosaico de ícone no título (secções do admin, como a ui-section da web). */
+    icon: ImageVector? = null,
+    iconTint: Color = SettingsColors.Green,
+    /** Zona de perigo: contorno e título a vermelho. */
+    danger: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val dangerColor = SettingsColors.Red
     Surface(
         shape = RoundedCornerShape(18.dp),
         color = settingsCardColor(),
-        border = settingsCardBorder(),
+        border = if (danger) BorderStroke(1.dp, dangerColor.copy(alpha = 0.35f)) else settingsCardBorder(),
         modifier = modifier.fillMaxWidth(),
     ) {
         Column(
@@ -801,9 +807,13 @@ fun SettingsCard(
         ) {
             if (title != null || trailing != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (icon != null) {
+                        SettingsIconTile(icon, if (danger) dangerColor else iconTint, size = 30)
+                        Spacer(Modifier.width(10.dp))
+                    }
                     Column(modifier = Modifier.weight(1f)) {
                         if (title != null) {
-                            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = if (danger) dangerColor else Color.Unspecified)
                         }
                         if (!description.isNullOrBlank()) {
                             Spacer(Modifier.height(2.dp))

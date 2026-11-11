@@ -66,6 +66,7 @@ class PassRepository @Inject constructor(
         private val SERVER_FIELDS = setOf("id", "revision", "deleted_at", "created_at", "updated_at", "locked")
         private const val MAX_PW_HISTORY = 5
         private const val MAX_EVENTS = 30
+        private const val AUTOFILL_TOUCH_MS = 24 * 60 * 60_000L
         const val MAX_ITEMS = 5000
         const val REPROMPT_GRACE_MS = 5 * 60 * 1000L
     }
@@ -388,6 +389,21 @@ class PassRepository @Inject constructor(
         if (!changed) return
         _state.update { it.copy(items = merged.values.toList(), trashDays = data.int("trash_days") ?: 30) }
         scheduleHealth()
+    }
+
+    @Volatile private var autofillTouchedAt = 0L
+
+    /**
+     * Preenchimento com o cofre aberto: no máximo 1 sync por dia. Qualquer
+     * pedido autenticado conta como atividade no servidor (contas inativas);
+     * sem isto, quem só usa o autofill e nunca abre a app ficava "inativo".
+     * Corre no scope do repositório: o sistema desliga o serviço logo a seguir.
+     */
+    fun touchFromAutofill() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (autofillTouchedAt != 0L && now - autofillTouchedAt < AUTOFILL_TOUCH_MS) return
+        autofillTouchedAt = now
+        scope.launch { sync() }
     }
 
     /** Sync de 5 s: recarrega só a parte do carimbo que mudou (vi = itens, vv = cofre). */

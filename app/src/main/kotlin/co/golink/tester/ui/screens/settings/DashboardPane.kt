@@ -44,6 +44,20 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import co.golink.tester.domain.admin.DashboardResponse
 import co.golink.tester.ui.i18n.tr
+import co.golink.tester.ui.screens.admin.AdminPageHeader
+import co.golink.tester.ui.screens.admin.AdminSection
+import co.golink.tester.ui.screens.admin.AdminStat
+import co.golink.tester.ui.screens.admin.AdminStatGrid
+import co.golink.tester.ui.screens.admin.AdminStatusPill
+import co.golink.tester.ui.screens.admin.AdminTone
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.Group
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Payments
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.SwapVert
+import androidx.compose.material.icons.outlined.Wifi
 import kotlin.math.roundToInt
 
 private val OnlineColor = Color(0xFF12B76A)
@@ -84,14 +98,36 @@ private fun DashboardContent(
 ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
-        SettingsPaneHeader(androidx.compose.material.icons.Icons.Outlined.Dashboard, SettingsColors.Blue, "Painel".tr(), "Visão geral da plataforma.".tr())
-        Spacer(Modifier.height(12.dp))
+        AdminPageHeader("Visão geral da plataforma.".tr())
+        Spacer(Modifier.height(10.dp))
         co.golink.tester.ui.screens.admin.AdminSegmented(
             options = listOf(7, 30, 45, 90).map { it to "%d dias".tr().format(it) },
             selected = state.days,
             onSelect = viewModel::setDays,
+        )
+        Spacer(Modifier.height(16.dp))
+        // Zona de perigo da web: alerta só quando há um problema.
+        if (!d.app.cron.isRunning) {
+            AdminSection(
+                "O cron não está a correr".tr(),
+                icon = Icons.Outlined.Schedule,
+                description = "As tarefas agendadas estão paradas. Confirma o cron no servidor.".tr(),
+                danger = true,
+                padded = false,
+            ) {}
+            Spacer(Modifier.height(16.dp))
+        }
+        AdminStatGrid(
+            listOf(
+                AdminStat("Online".tr(), d.users.online.toString(), Icons.Outlined.Wifi, OnlineColor,
+                    hint = "%d convidados online".tr().format(d.users.guests)),
+                AdminStat("Utilizadores".tr(), d.users.total.toString(), Icons.Outlined.Group, SettingsColors.Blue,
+                    hint = "%d premium".tr().format(d.users.usersPremiumTotal)),
+                AdminStat("Em uso".tr(), d.disk.used ?: "—", Icons.Outlined.Cloud, SettingsColors.Purple),
+                AdminStat("Ganhos".tr(), d.app.earnings ?: "—", Icons.Outlined.Payments, SettingsColors.Amber),
+            ),
         )
         Spacer(Modifier.height(16.dp))
         UsersCard(d)
@@ -120,13 +156,7 @@ private fun UsersCard(d: DashboardResponse) {
     )
     val track = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
 
-    AnalyticsCard {
-        Text(
-            "Utilizadores".tr(),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Spacer(Modifier.height(16.dp))
+    AdminSection("Utilizadores".tr(), icon = Icons.Outlined.Group, tint = SettingsColors.Blue) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(modifier = Modifier.size(118.dp), contentAlignment = Alignment.Center) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
@@ -193,18 +223,8 @@ private fun TrafficCard(d: DashboardResponse) {
     val download = d.disk.download.total
     val top = maxOf(sizeToBytes(upload), sizeToBytes(download), 1.0)
 
-    AnalyticsCard {
-        Text(
-            "Armazenamento e tráfego".tr(),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Spacer(Modifier.height(16.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            BigValue("Em uso".tr(), d.disk.used ?: "—", VisitorsColor, Modifier.weight(1f))
-            BigValue("Ganhos".tr(), d.app.earnings ?: "—", OnlineColor, Modifier.weight(1f))
-        }
-        Spacer(Modifier.height(18.dp))
+    // "Em uso" e "Ganhos" estão nos KPIs do topo.
+    AdminSection("Armazenamento e tráfego".tr(), icon = Icons.Outlined.SwapVert, tint = SettingsColors.Purple) {
         TrafficBar("Upload total".tr(), upload, (sizeToBytes(upload) / top).toFloat(), VisitorsColor)
         Spacer(Modifier.height(10.dp))
         TrafficBar("Download total".tr(), download, (sizeToBytes(download) / top).toFloat(), VisitsColor)
@@ -319,13 +339,7 @@ private fun TrafficBar(label: String, value: String?, fraction: Float, color: Co
 
 @Composable
 private fun AppCard(d: DashboardResponse) {
-    AnalyticsCard {
-        Text(
-            "Aplicação".tr(),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Spacer(Modifier.height(12.dp))
+    AdminSection("Aplicação".tr(), icon = Icons.Outlined.Info, tint = SettingsColors.Slate) {
         AppRow("Versão".tr(), d.app.version ?: "—")
         AppRow("Licença".tr(), d.app.license ?: "—")
         AppRow("Ganhos".tr(), d.app.earnings ?: "—")
@@ -339,9 +353,9 @@ private fun AppCard(d: DashboardResponse) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            StatusPill(
-                text = if (d.app.cron.isRunning) "A correr".tr() else "Parado".tr(),
-                color = if (d.app.cron.isRunning) OnlineColor else VisitsColor,
+            AdminStatusPill(
+                if (d.app.cron.isRunning) "A correr".tr() else "Parado".tr(),
+                if (d.app.cron.isRunning) AdminTone.Success else AdminTone.Danger,
             )
         }
     }

@@ -1,5 +1,7 @@
 package co.golink.tester.ui.screens.settings
 
+import androidx.compose.material.icons.outlined.Insights
+import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -75,8 +77,8 @@ internal fun EventsTab(data: EventsResponse?, loading: Boolean, onRetry: () -> U
                 EmptyHint("Sem dados neste período".tr())
             }
         }
-        RankedCard("Por evento".tr(), data.byName, "Evento".tr(), barColor = VisitsColor)
-        RankedCard("Por categoria".tr(), data.byCategory, "Categoria".tr())
+        RankedCard("Por evento".tr(), data.byName, "Evento".tr(), barColor = VisitsColor, icon = androidx.compose.material.icons.Icons.Outlined.Insights)
+        RankedCard("Por categoria".tr(), data.byCategory, "Categoria".tr(), icon = androidx.compose.material.icons.Icons.Outlined.Tag)
         if (data.recent.isNotEmpty()) {
             Spacer(Modifier.height(16.dp))
             AnalyticsCard {

@@ -120,6 +120,10 @@ class AdminRepository @Inject constructor(
         body { api.planSubscribers(id, page) }.map { r -> r.data.map { it.data } to r.meta.hasMore(page) }
     suspend fun subscriptions(page: Int = 1) =
         body { api.subscriptions(page) }.map { r -> r.data.map { it.data } to r.meta.hasMore(page) }
+    /** Lista do admin filtrada no servidor ([state]/[search]) + contagens globais (como a web). */
+    suspend fun subscriptionsPage(page: Int, state: String?, search: String?) =
+        body { api.subscriptions(page, perPage = 50, state = state, search = search?.trim()?.ifBlank { null }, stats = if (page == 1) 1 else null) }
+            .map { r -> SubscriptionsPage(r.data.map { it.data }, r.meta.hasMore(page), r.meta?.stats) }
     suspend fun deleteSubscription(id: String): Result<Unit> = unit { api.deleteSubscription(id) }
     suspend fun discounts() = body { api.discounts() }.map { it.data }
     suspend fun generateDiscountCode() = body { api.generateDiscountCode() }.map { it.code }
@@ -282,6 +286,7 @@ class AdminRepository @Inject constructor(
             suspendedUntil = a.suspended_until,
             suspendedReason = a.suspended_reason,
             storage = a.storage?.let { s -> listOfNotNull(s.used_formatted, s.capacity_formatted).joinToString(" / ") },
+            storagePercent = a.storage?.takeIf { it.capacity != null && it.capacity !is kotlinx.serialization.json.JsonNull }?.used?.toFloat(),
             plan = a.plan,
             lastLoginAt = a.last_login_at,
             deletionScheduledFor = a.deletion_scheduled_for,
@@ -358,6 +363,12 @@ data class UsersPage(
     val items: List<AdminUserItem>,
     val hasMore: Boolean,
     val counts: AdminUserCounts?,
+)
+
+data class SubscriptionsPage(
+    val items: List<co.golink.tester.domain.admin.AdminSubscription>,
+    val hasMore: Boolean,
+    val stats: co.golink.tester.domain.admin.InvoiceStats?,
 )
 
 data class InvoicesPage(

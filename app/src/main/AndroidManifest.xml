@@ -171,6 +171,9 @@
                 <data android:pathPrefix="/user/settings/billing/" />
                 <data android:path="/legacy" />
                 <data android:pathPrefix="/legacy/" />
+                <!-- Pass: o email de conta inativa leva a /pass/settings (exportar). -->
+                <data android:path="/pass" />
+                <data android:pathPrefix="/pass/" />
             </intent-filter>
         </activity>
 

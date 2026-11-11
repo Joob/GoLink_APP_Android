@@ -307,6 +307,7 @@ fun AppNavHost(
             AppLinkRouter.Target.Billing -> onTopOfHome(Routes.settings("billing"))
             is AppLinkRouter.Target.Legacy -> onTopOfHome(Routes.legacy(target.pane))
             is AppLinkRouter.Target.Notes -> onTopOfHome(Routes.notes(target.path))
+            is AppLinkRouter.Target.Pass -> onTopOfHome(Routes.pass(target.pane))
         } }
     }
 
@@ -531,7 +532,13 @@ fun AppNavHost(
         ) { entry ->
             co.golink.tester.ui.screens.admin.AdminScreen(
                 pane = entry.arguments?.getString("pane").orEmpty(),
-                onBack = { navController.popBackStack() },
+                // Volta ao ecrã principal com a gaveta aberta no menu de onde veio (Admin/Suporte).
+                onBack = { area ->
+                    runCatching { navController.getBackStackEntry(Routes.HOME).savedStateHandle["drawer_area"] = area }
+                    if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
+                        navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
+                    }
+                },
                 onOpenUser = { id -> navController.navigate(Routes.adminUser(id)) },
             )
         }

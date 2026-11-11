@@ -1,5 +1,15 @@
 package co.golink.tester.ui.screens.admin
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.GppBad
+import androidx.compose.material.icons.outlined.HourglassEmpty
+import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material.icons.outlined.VerifiedUser
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -166,91 +176,90 @@ fun AntivirusPane(
     }
 
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 4.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = AdminListPadding) {
             when {
                 state.isLoading -> item { AdminLoading(Modifier.fillMaxWidth().height(160.dp)) }
                 state.error != null -> item { AdminError(state.error!!, { viewModel.load() }, Modifier.fillMaxWidth()) }
                 else -> {
                     val o = state.overview!!
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                "Os ficheiros não cifrados são analisados em segundo plano. Os ficheiros cifrados ponta a ponta não podem ser lidos e não são analisados.".tr(),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            if (o.configured) {
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Column(Modifier.weight(1f)) {
-                                        Text("Antivírus ligado".tr(), style = MaterialTheme.typography.titleSmall)
-                                        Text(
-                                            "Desligado, os uploads não são analisados nem entram novas análises na fila.".tr(),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                    Switch(
+                    adminBlock("header") {
+                        AdminPageHeader("Os ficheiros não cifrados são analisados em segundo plano. Os ficheiros cifrados ponta a ponta não podem ser lidos e não são analisados.".tr())
+                    }
+                    adminBlock("engine", bottom = 16) {
+                        AdminSection(
+                            "Antivírus ligado".tr(),
+                            icon = Icons.Outlined.Shield,
+                            tint = if (o.configured && o.enabled && o.version != null) AdminAccent else AdminTone.Danger.solid,
+                            description = "Desligado, os uploads não são analisados nem entram novas análises na fila.".tr(),
+                            actions = if (o.configured) {
+                                {
+                                    co.golink.tester.ui.screens.settings.SettingsSwitch(
                                         checked = o.enabled,
                                         onCheckedChange = { on -> if (on) viewModel.toggle(true) else confirmDisable = true },
                                         enabled = state.busy == null,
                                     )
                                 }
-                            }
+                            } else null,
+                        ) {
                             when {
-                                !o.configured -> AdminBadge("CLAMAV_ENABLED=false", AdminColors.Danger)
-                                !o.enabled -> {}
-                                o.version == null -> AdminBadge("clamd inacessível em %s".tr().format(o.socket.orEmpty()), AdminColors.Danger)
-                                else -> AdminBadge("✓ " + o.version, AdminColors.Info)
+                                !o.configured -> AdminStatusPill("CLAMAV_ENABLED=false", AdminTone.Danger)
+                                !o.enabled -> AdminStatusPill("Desligado".tr(), AdminTone.Neutral)
+                                o.version == null -> AdminStatusPill("clamd inacessível em %s".tr().format(o.socket.orEmpty()), AdminTone.Danger)
+                                else -> AdminStatusPill(o.version, AdminTone.Success)
                             }
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                listOf(
-                                    "clean" to "Limpos".tr(),
-                                    "pending" to "Pendentes".tr(),
-                                    "infected" to "Em quarentena".tr(),
-                                    "error" to "Erros".tr(),
-                                    "skipped" to "Demasiado grandes".tr(),
-                                ).forEach { (k, label) -> AdminBadge("$label ${o.count(k)}", if (k == "infected") AdminColors.Danger else AdminColors.Neutral) }
-                            }
-                            Text("Desligar no servidor".tr(), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
-                            Text(
-                                "Depois de desligares acima, para os workers e, se quiseres, o próprio ClamAV para libertar 1,5–3 GB de RAM.".tr(),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            SERVER_STEPS.forEach { (label, cmd) ->
-                                Text(label.tr(), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 4.dp))
+                        }
+                    }
+                    adminBlock("kpis", bottom = 16) {
+                        AdminStatGrid(
+                            listOf(
+                                AdminStat("Limpos".tr(), o.count("clean").toString(), Icons.Outlined.VerifiedUser),
+                                AdminStat("Em quarentena".tr(), o.count("infected").toString(), Icons.Outlined.GppBad,
+                                    if (o.count("infected") > 0) AdminTone.Danger.solid else AdminTone.Neutral.solid),
+                                AdminStat("Pendentes".tr(), o.count("pending").toString(), Icons.Outlined.HourglassEmpty, AdminTone.Warning.solid),
+                                AdminStat("Erros".tr(), o.count("error").toString(), Icons.Outlined.ErrorOutline, AdminTone.Danger.solid,
+                                    hint = "%s: %d".format("Demasiado grandes".tr(), o.count("skipped"))),
+                            ),
+                        )
+                    }
+                    adminBlock("server", bottom = 16) {
+                        AdminSection(
+                            "Desligar no servidor".tr(),
+                            icon = Icons.Outlined.Terminal,
+                            tint = AdminTone.Neutral.solid,
+                            description = "Depois de desligares acima, para os workers e, se quiseres, o próprio ClamAV para libertar 1,5–3 GB de RAM.".tr(),
+                        ) {
+                            SERVER_STEPS.forEachIndexed { i, (label, cmd) ->
+                                Text(label.tr(), fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = if (i == 0) 0.dp else 10.dp, bottom = 4.dp))
                                 SelectionContainer {
                                     Text(
                                         cmd,
                                         style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                                         modifier = Modifier.fillMaxWidth()
-                                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                                            .background(co.golink.tester.ui.screens.settings.settingsInsetColor(), RoundedCornerShape(10.dp))
                                             .horizontalScroll(rememberScrollState())
                                             .padding(10.dp),
                                         softWrap = false,
                                     )
                                 }
                             }
-                            Text("Ficheiros em quarentena".tr(), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
                         }
                     }
+                    item(key = "q-title") { co.golink.tester.ui.screens.settings.SettingsSectionTitle("Ficheiros em quarentena".tr()) }
                     if (state.files.isEmpty()) {
-                        item { AdminEmpty("Nenhum ficheiro em quarentena.".tr()) }
+                        item { AdminEmptyState("Nenhum ficheiro em quarentena.".tr(), icon = Icons.Outlined.VerifiedUser) }
                     } else {
-                        items(state.files, key = { it.id }) { f ->
-                            AdminListRow(
+                        adminListGroup(state.files, key = { it.id }) { f ->
+                            AdminListItem(
                                 title = f.name ?: "—",
-                                subtitle = listOfNotNull(f.signature, f.owner?.email, formatAdminDate(f.scanned_at)).joinToString(" · "),
+                                subtitle = listOfNotNull(f.owner?.email, formatAdminDate(f.scanned_at)).joinToString(" · "),
+                                leading = { co.golink.tester.ui.screens.settings.SettingsIconTile(Icons.Outlined.GppBad, AdminTone.Danger.solid, size = 36) },
                                 footer = {
+                                    f.signature?.let { Row(Modifier.padding(top = 5.dp)) { AdminCodeChip(it) } }
                                     FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                                         f.owner?.let { o -> TextButton(onClick = { onOpenUser(o.id) }) { Text("Ver dono".tr()) } }
                                         TextButton(onClick = { viewModel.rescan(f) }, enabled = state.busy == null) { Text("Analisar de novo".tr()) }
                                         TextButton(onClick = { confirmDelete = f }, enabled = state.busy == null) {
-                                            Text("Apagar".tr(), color = AdminColors.Danger)
+                                            Text("Apagar".tr(), color = AdminTone.Danger.solid)
                                         }
                                     }
                                 },

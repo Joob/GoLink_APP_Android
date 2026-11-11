@@ -127,10 +127,11 @@ data class AdminPageMeta(
     val current_page: Int = 1,
     val last_page: Int = 1,
     val total: Int = 0,
-    /** Só na lista de faturas com ?stats=1: contagens globais por estado. */
+    /** Só nas listas de faturas/subscrições com ?stats=1: contagens globais por estado. */
     val stats: InvoiceStats? = null,
 )
 
+/** meta.stats das faturas (all/paid/…/received_30) e das subscrições (active/pending/…). */
 @Serializable
 data class InvoiceStats(
     val all: Int = 0,
@@ -138,6 +139,16 @@ data class InvoiceStats(
     val failed: Int = 0,
     val cancelled: Int = 0,
     val refunded: Int = 0,
+    /** Cobranças pagas (sem os reembolsos); falta em servidores antigos. */
+    val paid_charges: Int? = null,
+    /** Recebido nos últimos 30 dias, na moeda mais usada. */
+    val received_30: Double? = null,
+    val received_30_cur: String? = null,
+    // Subscrições
+    val active: Int = 0,
+    val pending: Int = 0,
+    val completed: Int = 0,
+    val closed: Int = 0,
 )
 
 // ---------------------------------------------------------------------------
@@ -227,6 +238,8 @@ data class AdminUserItem(
     val suspendedUntil: String? = null,
     val suspendedReason: String? = null,
     val storage: String? = null,
+    /** 0–100 quando há limite de espaço (barra na lista); null sem limite. */
+    val storagePercent: Float? = null,
     val plan: String? = null,
     val lastLoginAt: String? = null,
     val deletionScheduledFor: String? = null,
@@ -291,6 +304,9 @@ data class AdminUserListAttributes(
 
 @Serializable
 data class AdminStorageSummary(
+    /** Com limite de espaço é a percentagem usada; sem limite são bytes. */
+    val used: Double? = null,
+    val capacity: JsonElement? = null,
     val used_formatted: String? = null,
     val capacity_formatted: String? = null,
 )
@@ -479,7 +495,18 @@ data class TransactionUserEnvelope(val data: TransactionUser? = null)
 data class TransactionUser(val attributes: TransactionUserAttributes = TransactionUserAttributes())
 
 @Serializable
-data class TransactionUserAttributes(val name: String? = null, val email: String? = null)
+data class TransactionUserAttributes(
+    val name: String? = null,
+    val email: String? = null,
+    /** Texto (faturas) ou objeto {sm, md, …} (subscrições). */
+    val avatar: JsonElement? = null,
+) {
+    val avatarUrl: String? get() = when (val a = avatar) {
+        is kotlinx.serialization.json.JsonPrimitive -> a.contentOrNull
+        is kotlinx.serialization.json.JsonObject -> (a["sm"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+        else -> null
+    }?.takeIf { it.isNotBlank() }
+}
 
 @Serializable
 data class EncryptionMigrationResponse(

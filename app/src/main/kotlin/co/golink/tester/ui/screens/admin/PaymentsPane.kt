@@ -1,6 +1,19 @@
 package co.golink.tester.ui.screens.admin
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Business
+import androidx.compose.material.icons.outlined.CardGiftcard
+import androidx.compose.material.icons.outlined.CreditCard
+import androidx.compose.material.icons.outlined.CurrencyBitcoin
+import androidx.compose.material.icons.outlined.Payments
+import androidx.compose.material.icons.outlined.Speed
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,7 +45,7 @@ import co.golink.tester.data.config.ConfigRepository
 import co.golink.tester.domain.admin.PaymentServiceRequest
 import co.golink.tester.domain.config.GatewayConfig
 import co.golink.tester.ui.i18n.tr
-import co.golink.tester.ui.screens.settings.SettingsAccent
+import co.golink.tester.ui.screens.settings.SettingsColors
 import co.golink.tester.ui.screens.settings.SettingsCard
 import co.golink.tester.ui.screens.settings.SettingsField
 import co.golink.tester.ui.screens.settings.SettingsNotice
@@ -152,6 +165,23 @@ fun PaymentsPane(viewModel: PaymentsViewModel = hiltViewModel()) {
                 Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(top = 4.dp, bottom = 32.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                AdminPageHeader("Dados das faturas, gateways de pagamento e regras de consumo.".tr())
+                val paymentsOn = state.values["allowed_payments"].isOn()
+                val gateways = listOf(state.stripe?.public_key != null, (state.nowpayments?.is_configured ?: 0) == 1).count { it }
+                AdminStatGrid(
+                    listOf(
+                        AdminStat(
+                            "Pagamentos".tr(), if (paymentsOn) "Ativos".tr() else "Desligados".tr(), Icons.Outlined.Payments,
+                            if (paymentsOn) SettingsColors.Green else SettingsColors.Slate,
+                            onClick = { tab = "gateways" },
+                        ),
+                        AdminStat(
+                            "Gateways configurados".tr(), "%d/2".format(gateways), Icons.Outlined.CreditCard,
+                            if (gateways > 0) SettingsColors.Indigo else SettingsColors.Amber,
+                            onClick = { tab = "gateways" },
+                        ),
+                    ),
+                )
                 val tabs = buildList {
                     add("billing" to "Dados de faturação".tr())
                     add("gateways" to "Gateways".tr())
@@ -182,7 +212,13 @@ private fun BillingInfoTab(state: PaymentsViewModel.UiState, vm: PaymentsViewMod
         "billing_phone_number" to "Telefone".tr(),
     )
     var draft by remember(state.values) { mutableStateOf(BILLING_KEYS.associateWith { state.values[it].orEmpty() }) }
-    SettingsCard(title = "Dados de faturação".tr(), description = "Aparecem nas faturas enviadas aos clientes.".tr()) {
+    val changed = draft.any { (k, v) -> state.values[k].orEmpty() != v }
+    SettingsCard(
+        title = "Dados de faturação".tr(),
+        description = "Aparecem nas faturas enviadas aos clientes.".tr(),
+        icon = Icons.Outlined.Business,
+        iconTint = SettingsColors.Blue,
+    ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             BILLING_KEYS.forEach { k ->
                 SettingsField(
@@ -190,15 +226,35 @@ private fun BillingInfoTab(state: PaymentsViewModel.UiState, vm: PaymentsViewMod
                     keyboardType = if (k == "billing_phone_number") KeyboardType.Phone else KeyboardType.Text,
                 )
             }
-            SettingsPrimaryButton("Guardar".tr(), onClick = { vm.save("billing", draft.mapValues { it.value.trim() }) }, loading = state.saving == "billing")
+            FormActions(
+                onDiscard = if (changed) { { draft = BILLING_KEYS.associateWith { state.values[it].orEmpty() } } } else null,
+                onSave = { vm.save("billing", draft.mapValues { it.value.trim() }) },
+                enabled = changed,
+                loading = state.saving == "billing",
+            )
         }
+    }
+}
+
+/** Rodapé Descartar/Guardar das secções (como o ui-section-footer da web). */
+@Composable
+private fun FormActions(onDiscard: (() -> Unit)?, onSave: () -> Unit, enabled: Boolean = true, loading: Boolean = false, saveText: String = "Guardar".tr()) {
+    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Spacer(Modifier.weight(1f))
+        if (onDiscard != null) TextButton(onClick = onDiscard, enabled = !loading) { Text("Descartar".tr()) }
+        Spacer(Modifier.width(4.dp))
+        SettingsPrimaryButton(saveText, onClick = onSave, enabled = enabled, loading = loading)
     }
 }
 
 @Composable
 private fun GatewaysTab(state: PaymentsViewModel.UiState, vm: PaymentsViewModel) {
-    SettingsCard(title = "Pagamentos".tr()) {
-        SwitchRow("Permitir pagamentos".tr(), state.values["allowed_payments"].isOn()) { vm.toggle("allowed_payments", it) }
+    SettingsCard(title = "Pagamentos".tr(), icon = Icons.Outlined.Payments, iconTint = SettingsColors.Green) {
+        SwitchRow(
+            "Permitir pagamentos".tr(),
+            state.values["allowed_payments"].isOn(),
+            description = "Desligado, ninguém consegue subscrever nem carregar saldo.".tr(),
+        ) { vm.toggle("allowed_payments", it) }
     }
     GatewayCard("stripe", "Stripe", state.stripe, state, vm)
     GatewayCard("nowpayments", "NOWPayments (cripto)", state.nowpayments, state, vm)
@@ -207,40 +263,62 @@ private fun GatewaysTab(state: PaymentsViewModel.UiState, vm: PaymentsViewModel)
 @Composable
 private fun GatewayCard(service: String, title: String, config: GatewayConfig?, state: PaymentsViewModel.UiState, vm: PaymentsViewModel) {
     val configured = if (service == "stripe") config?.public_key != null else (config?.is_configured ?: 0) == 1
+    val active = state.values["allowed_$service"].isOn()
     var key by remember { mutableStateOf("") }
     var secret by remember { mutableStateOf("") }
     var webhook by remember { mutableStateOf("") }
-    var description by remember(state.values) { mutableStateOf(state.values["${service}_payment_description"].orEmpty()) }
+    val savedDescription = state.values["${service}_payment_description"].orEmpty()
+    var description by remember(state.values) { mutableStateOf(savedDescription) }
     SettingsCard(
         title = title,
-        trailing = { if (configured) AdminBadge("Configurado".tr(), SettingsAccent) else AdminBadge("Por configurar".tr(), AdminColors.Warning) },
+        icon = if (service == "stripe") Icons.Outlined.CreditCard else Icons.Outlined.CurrencyBitcoin,
+        iconTint = if (service == "stripe") SettingsColors.Indigo else SettingsColors.Orange,
+        trailing = {
+            if (!configured) AdminStatusPill("Por configurar".tr(), AdminTone.Warning)
+            else if (active) AdminStatusPill("Ativo".tr(), AdminTone.Success)
+            else AdminStatusPill("Desligado".tr(), AdminTone.Neutral)
+        },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SwitchRow("Ativo".tr(), state.values["allowed_$service"].isOn()) { vm.toggle("allowed_$service", it) }
+            SwitchRow("Ativo".tr(), active) { vm.toggle("allowed_$service", it) }
             SettingsField("Descrição do pagamento".tr(), description, { description = it })
-            SettingsOutlinedButton("Guardar descrição".tr(), onClick = { vm.save(service, mapOf("${service}_payment_description" to description.trim())) })
+            if (description.trim() != savedDescription) {
+                FormActions(
+                    onDiscard = { description = savedDescription },
+                    onSave = { vm.save(service, mapOf("${service}_payment_description" to description.trim())) },
+                    loading = state.saving == service,
+                    saveText = "Guardar descrição".tr(),
+                )
+            }
+            HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            Text("Credenciais".tr(), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             Text(
                 "As credenciais nunca são mostradas. Preenche para substituir as atuais.".tr(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (service == "stripe" && config?.public_key != null) {
-                AdminInfoRow("Chave pública".tr(), config.public_key.take(12) + "…")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Chave pública".tr(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    AdminCodeChip(config.public_key.take(12) + "…")
+                }
             }
             SettingsField(if (service == "stripe") "Chave pública".tr() else "Chave de API".tr(), key, { key = it.trim() })
             SettingsField(if (service == "stripe") "Chave secreta".tr() else "Segredo IPN".tr(), secret, { secret = it.trim() }, isPassword = true)
             if (service == "stripe") SettingsField("Segredo do webhook".tr(), webhook, { webhook = it.trim() }, isPassword = true)
             val request = PaymentServiceRequest(service, key, secret, webhook.ifBlank { null })
             val ready = key.isNotBlank() && secret.isNotBlank()
-            SettingsPrimaryButton(
-                "Guardar credenciais".tr(),
-                // Num erro os campos ficam preenchidos para corrigir e repetir.
-                onClick = { vm.storeCredentials(request, test = false) { key = ""; secret = ""; webhook = "" } },
-                enabled = ready,
-                loading = state.saving == service,
-            )
-            if (service == "stripe") {
-                SettingsOutlinedButton("Testar ligação".tr(), onClick = { vm.storeCredentials(request, test = true) }, enabled = ready && state.saving == null)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
+                if (service == "stripe") {
+                    SettingsOutlinedButton("Testar ligação".tr(), onClick = { vm.storeCredentials(request, test = true) }, enabled = ready && state.saving == null)
+                }
+                SettingsPrimaryButton(
+                    "Guardar credenciais".tr(),
+                    // Num erro os campos ficam preenchidos para corrigir e repetir.
+                    onClick = { vm.storeCredentials(request, test = false) { key = ""; secret = ""; webhook = "" } },
+                    enabled = ready,
+                    loading = state.saving == service,
+                )
             }
         }
     }
@@ -248,29 +326,30 @@ private fun GatewayCard(service: String, title: String, config: GatewayConfig?, 
 
 @Composable
 private fun MeteredTab(state: PaymentsViewModel.UiState, vm: PaymentsViewModel) {
-    var bonus by remember(state.values) { mutableStateOf(state.values["registration_bonus_amount"].orEmpty()) }
-    var limit by remember(state.values) { mutableStateOf(state.values["limit_usage_in_new_accounts_amount"].orEmpty()) }
-    SettingsCard(title = "Bónus de registo".tr()) {
+    val savedBonus = state.values["registration_bonus_amount"].orEmpty()
+    val savedLimit = state.values["limit_usage_in_new_accounts_amount"].orEmpty()
+    var bonus by remember(state.values) { mutableStateOf(savedBonus) }
+    var limit by remember(state.values) { mutableStateOf(savedLimit) }
+    val valid = (bonus.isBlank() || bonus.toDoubleOrNull() != null) && (limit.isBlank() || limit.toDoubleOrNull() != null)
+    val changed = bonus != savedBonus || limit != savedLimit
+    SettingsCard(title = "Bónus de registo".tr(), icon = Icons.Outlined.CardGiftcard, iconTint = SettingsColors.Pink) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             SwitchRow("Dar crédito a contas novas".tr(), state.values["allowed_registration_bonus"].isOn()) { vm.toggle("allowed_registration_bonus", it) }
-            SettingsField("Valor do bónus".tr(), bonus, { bonus = it.replace(',', '.') }, keyboardType = KeyboardType.Decimal)
+            SettingsField("Valor do bónus".tr(), bonus, { bonus = it.replace(',', '.') }, keyboardType = KeyboardType.Decimal, isError = bonus.isNotBlank() && bonus.toDoubleOrNull() == null)
         }
     }
-    SettingsCard(title = "Limites de consumo".tr()) {
+    SettingsCard(title = "Limites de consumo".tr(), icon = Icons.Outlined.Speed, iconTint = SettingsColors.Amber) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             SwitchRow("Limitar consumo em contas novas".tr(), state.values["limit_usage_in_new_accounts"].isOn()) { vm.toggle("limit_usage_in_new_accounts", it) }
-            SettingsField("Limite".tr(), limit, { limit = it.replace(',', '.') }, keyboardType = KeyboardType.Decimal)
+            SettingsField("Limite".tr(), limit, { limit = it.replace(',', '.') }, keyboardType = KeyboardType.Decimal, isError = limit.isNotBlank() && limit.toDoubleOrNull() == null)
             SwitchRow("Bloquear quando o consumo excede o saldo".tr(), state.values["usage_bigger_than_balance"].isOn()) { vm.toggle("usage_bigger_than_balance", it) }
         }
     }
-    if (bonus.isNotBlank() && bonus.toDoubleOrNull() == null || limit.isNotBlank() && limit.toDoubleOrNull() == null) {
-        SettingsNotice("Valor inválido".tr(), MaterialTheme.colorScheme.error)
-    }
-    SettingsPrimaryButton(
-        "Guardar".tr(),
-        onClick = { vm.save("metered", mapOf("registration_bonus_amount" to bonus, "limit_usage_in_new_accounts_amount" to limit)) },
-        enabled = (bonus.isBlank() || bonus.toDoubleOrNull() != null) && (limit.isBlank() || limit.toDoubleOrNull() != null),
+    if (!valid) SettingsNotice("Valor inválido".tr(), MaterialTheme.colorScheme.error)
+    FormActions(
+        onDiscard = if (changed) { { bonus = savedBonus; limit = savedLimit } } else null,
+        onSave = { vm.save("metered", mapOf("registration_bonus_amount" to bonus, "limit_usage_in_new_accounts_amount" to limit)) },
+        enabled = valid && changed,
         loading = state.saving == "metered",
-        modifier = Modifier.fillMaxWidth(),
     )
 }

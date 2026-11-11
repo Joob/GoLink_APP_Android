@@ -27,6 +27,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.ui.unit.sp
+import co.golink.tester.ui.screens.settings.SettingsIconTile
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -109,10 +116,10 @@ class AuditLogViewModel @Inject constructor(
     }
 }
 
-private fun statusColor(status: Int?) = when {
-    status == null -> AdminColors.Neutral
-    status >= 400 -> AdminColors.Danger
-    else -> co.golink.tester.ui.screens.settings.SettingsAccent
+private fun statusTone(status: Int) = when {
+    status >= 400 -> AdminTone.Danger
+    status >= 300 -> AdminTone.Info
+    else -> AdminTone.Success
 }
 
 @Composable
@@ -120,43 +127,58 @@ fun AuditLogPane(viewModel: AuditLogViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var open by remember { mutableStateOf<AuditLogData?>(null) }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        item {
-            Text(
-                "Ações feitas na administração: quem, o quê e quando.".tr(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            AdminSearchField(state.action, viewModel::setAction, "Filtrar por ação".tr())
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = state.onlyFailed, onClick = viewModel::toggleFailed, label = { Text("Só falhas".tr()) })
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = AdminListPadding) {
+        adminBlock("header") {
+            AdminPageHeader("Ações feitas na administração: quem, o quê e quando.".tr()) {
                 if (state.onlyFailed || state.action.isNotEmpty()) {
-                    androidx.compose.material3.TextButton(onClick = viewModel::clearFilters) { Text("Limpar filtros".tr()) }
+                    AdminButton("Limpar filtros".tr(), onClick = viewModel::clearFilters, primary = false)
                 }
+            }
+        }
+        adminBlock("toolbar") {
+            AdminToolbar(state.action, viewModel::setAction, "Filtrar por ação".tr()) {
+                AdminSegmented(
+                    listOf(false to "Todas".tr(), true to "Só falhas".tr()),
+                    state.onlyFailed,
+                    { if (it != state.onlyFailed) viewModel.toggleFailed() },
+                )
             }
         }
         when {
             state.isLoading -> item { AdminLoading(Modifier.fillMaxWidth().height(160.dp)) }
             state.error != null -> item { AdminError(state.error!!, viewModel::load, Modifier.fillMaxWidth()) }
-            state.logs.isEmpty() -> item { AdminEmpty("Sem registos.".tr()) }
-            else -> items(state.logs, key = { it.idString }) { log ->
+            state.logs.isEmpty() -> item { AdminEmptyState("Sem registos.".tr(), icon = Icons.Outlined.History) }
+            else -> adminListGroup(state.logs, key = { it.idString }) { log ->
                 val a = log.attributes
-                AdminListRow(
-                    title = a.action ?: a.path ?: "—",
-                    subtitle = listOfNotNull(a.actor_name, a.target_name, formatAdminDate(a.created_at)).joinToString(" · "),
-                    onClick = { open = log },
-                    trailing = {
-                        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            a.method?.let { AdminBadge(it, AdminColors.Neutral) }
-                            a.status?.let { AdminBadge(it.toString(), statusColor(it)) }
-                        }
-                    },
-                )
+                val failed = (a.status ?: 0) >= 400
+                // Linhas falhadas tingidas, como na tabela da web.
+                Box(if (failed) Modifier.background(AdminTone.Danger.background().copy(alpha = 0.45f)) else Modifier) {
+                    AdminListItem(
+                        title = a.action ?: a.path ?: "—",
+                        subtitle = listOfNotNull(a.actor_name, a.target_name).joinToString(" → ").ifBlank { null },
+                        onClick = { open = log },
+                        leading = {
+                            SettingsIconTile(
+                                if (failed) Icons.Outlined.ErrorOutline else Icons.Outlined.History,
+                                if (failed) AdminTone.Danger.solid else AdminAccent,
+                                size = 32,
+                            )
+                        },
+                        trailing = { a.status?.let { AdminStatusPill(it.toString(), statusTone(it)) } },
+                        footer = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.padding(top = 5.dp),
+                            ) {
+                                a.method?.let { AdminCodeChip(it) }
+                                formatAdminDate(a.created_at)?.let {
+                                    Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                                }
+                            }
+                        },
+                    )
+                }
             }
         }
         if (!state.isLoading && state.hasMore) item { AdminLoadMore(state.isLoadingMore, viewModel::loadMore) }
@@ -180,7 +202,10 @@ private fun AuditLogSheet(log: AuditLogData, onDismiss: () -> Unit) {
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(a.action ?: "—", style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(a.action ?: "—", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                a.status?.let { AdminStatusPill(it.toString(), statusTone(it)) }
+            }
             SettingsCard {
                 AdminInfoRow("Autor".tr(), a.actor_name)
                 AdminInfoRow("Alvo".tr(), a.target_name)

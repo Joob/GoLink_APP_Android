@@ -110,6 +110,9 @@ val LocalPassGuard = staticCompositionLocalOf<(() -> Unit) -> Unit> { { it() } }
 
 private val ROOT_PANES = setOf("vault", "totp", "generator", "health")
 
+/** Páginas que se podem abrir diretamente por `pass?pane=` (App Link /pass/settings, /pass/trash). */
+private val LINK_PAGES = setOf("settings", "trash")
+
 fun FragmentActivity.passBiometricPrompt(cipher: Cipher, title: String, onOk: (Cipher) -> Unit, onFail: () -> Unit = {}) {
     BiometricPrompt(
         this,
@@ -177,7 +180,7 @@ fun PassScreen(
     var pane by rememberSaveable { mutableStateOf(initialPane.takeIf { it in ROOT_PANES } ?: "vault") }
     var filter by rememberSaveable { mutableStateOf("all") }
     // Páginas por cima do separador: "item:<id>", "edit:<id>", "new", "settings", "trash".
-    var stackText by rememberSaveable { mutableStateOf("") }
+    var stackText by rememberSaveable { mutableStateOf(initialPane.takeIf { it in LINK_PAGES }.orEmpty()) }
     val stack = stackText.split('|').filter { it.isNotEmpty() }
     fun push(page: String) { stackText = (stack + page).joinToString("|") }
     fun pop() { stackText = stack.dropLast(1).joinToString("|") }

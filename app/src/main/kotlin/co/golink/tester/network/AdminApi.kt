@@ -249,7 +249,15 @@ interface AdminApi {
     suspend fun planSubscribers(@Path("id") id: String, @Query("page") page: Int = 1): Response<co.golink.tester.domain.admin.SubscriptionsResponse>
 
     @GET("api/subscriptions/admin")
-    suspend fun subscriptions(@Query("page") page: Int = 1): Response<co.golink.tester.domain.admin.SubscriptionsResponse>
+    suspend fun subscriptions(
+        @Query("page") page: Int = 1,
+        @Query("per_page") perPage: Int? = null,
+        /** active | failed | pending | completed | closed (null = todas). */
+        @Query("state") state: String? = null,
+        @Query("search") search: String? = null,
+        /** 1 = meta.stats com as contagens globais. */
+        @Query("stats") stats: Int? = null,
+    ): Response<co.golink.tester.domain.admin.SubscriptionsResponse>
 
     @DELETE("api/subscriptions/admin/subscriptions/{id}")
     suspend fun deleteSubscription(@Path("id") id: String): Response<ResponseBody>

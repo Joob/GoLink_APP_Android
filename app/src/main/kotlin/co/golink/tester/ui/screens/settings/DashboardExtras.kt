@@ -25,6 +25,19 @@ import co.golink.tester.ui.screens.admin.AdminAvatar
 import co.golink.tester.ui.screens.admin.AdminBadge
 import co.golink.tester.ui.screens.admin.AdminColors
 import co.golink.tester.ui.screens.admin.AdminLoadMore
+import co.golink.tester.ui.screens.admin.AdminTone
+import co.golink.tester.ui.screens.admin.AdminSection
+import co.golink.tester.ui.screens.admin.AdminListItem
+import co.golink.tester.ui.screens.admin.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.PersonAdd
+import androidx.compose.material.icons.outlined.Receipt
+import co.golink.tester.ui.screens.admin.AdminStatusPill
+import co.golink.tester.ui.screens.admin.formatAdminDate
+import androidx.compose.ui.unit.sp
 
 // Blocos do fundo do Dashboard da web: novos registos, últimas transações e
 // estado da migração E2E dos primeiros utilizadores.
@@ -37,45 +50,37 @@ internal fun DashboardExtras(
 ) {
     if (state.newbies.isNotEmpty()) {
         Spacer(Modifier.height(16.dp))
-        AnalyticsCard {
-            CardTitle("Novos registos".tr())
-            state.newbies.forEach { u ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                        .clickable { onOpenUser(u.id) }
-                        .padding(vertical = 6.dp),
-                ) {
-                    AdminAvatar(u.avatar, size = 32)
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(u.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(u.email, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    u.storage?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                }
+        AdminSection("Novos registos".tr(), icon = Icons.Outlined.PersonAdd, tint = SettingsColors.Blue, padded = false) {
+            state.newbies.forEachIndexed { i, u ->
+                if (i > 0) SettingsRowDivider()
+                AdminListItem(
+                    title = u.name,
+                    subtitle = u.email,
+                    leading = { AdminAvatar(u.avatar, size = 32, name = u.name) },
+                    trailing = if (u.storage != null) { { Text(u.storage.orEmpty(), fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } } else null,
+                    onClick = { onOpenUser(u.id) },
+                )
             }
         }
     }
 
     if (state.transactions.isNotEmpty()) {
         Spacer(Modifier.height(16.dp))
-        AnalyticsCard {
-            CardTitle("Últimas transações".tr())
-            state.transactions.forEach { TransactionLine(it) }
+        AdminSection("Últimas transações".tr(), icon = Icons.Outlined.Receipt, tint = SettingsColors.Amber, padded = false) {
+            state.transactions.forEachIndexed { i, t ->
+                if (i > 0) SettingsRowDivider()
+                TransactionLine(t, inset = true)
+            }
         }
     }
 
     if (state.migration.isNotEmpty()) {
         Spacer(Modifier.height(16.dp))
-        AnalyticsCard {
-            CardTitle("Migração da encriptação".tr())
-            Text(
-                "Primeiros utilizadores: chave E2E configurada e ficheiros já cifrados.".tr(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(8.dp))
+        AdminSection(
+            "Migração da encriptação".tr(),
+            icon = Icons.Outlined.Lock,
+            description = "Primeiros utilizadores: chave E2E configurada e ficheiros já cifrados.".tr(),
+        ) {
             state.migration.forEach { MigrationLine(it) }
             if (state.migrationHasMore) {
                 Spacer(Modifier.height(8.dp))
@@ -91,28 +96,45 @@ private fun CardTitle(text: String) {
     Spacer(Modifier.height(10.dp))
 }
 
+/** Estado de uma fatura como pill da web. */
+internal fun transactionTone(a: co.golink.tester.domain.admin.TransactionAttributes): Pair<String, AdminTone> = when {
+    a.is_refunded -> "Reembolsada".tr() to AdminTone.Info
+    a.status == "completed" -> "Paga".tr() to AdminTone.Success
+    a.status == "cancelled" -> "Cancelada".tr() to AdminTone.Neutral
+    else -> "Falhada".tr() to AdminTone.Danger
+}
+
+/**
+ * Linha de fatura: avatar, nome, data · gateway, valor e pill de estado.
+ * [inset] = dentro de uma lista agrupada/secção sem padding (margens próprias).
+ */
 @Composable
-internal fun TransactionLine(t: TransactionData) {
+internal fun TransactionLine(t: TransactionData, onClick: (() -> Unit)? = null, inset: Boolean = false) {
     val a = t.attributes
     val user = t.relationships?.user?.data?.attributes
-    val (label, color) = when {
-        a.is_refunded -> "Reembolsada".tr() to AdminColors.Info
-        a.status == "completed" -> "Paga".tr() to SettingsAccent
-        a.status == "cancelled" -> "Cancelada".tr() to AdminColors.Neutral
-        else -> "Falhada".tr() to AdminColors.Danger
-    }
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+    val (label, tone) = transactionTone(a)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = if (inset) 16.dp else 0.dp, vertical = if (inset) 12.dp else 7.dp),
+    ) {
+        AdminAvatar(user?.avatarUrl, size = 32, name = user?.name ?: user?.email, tone = tone)
+        Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(user?.name ?: a.note ?: "—", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(user?.name ?: a.note ?: "—", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                listOfNotNull(a.created_at, a.driver).joinToString(" · "),
-                style = MaterialTheme.typography.labelSmall,
+                listOfNotNull(formatAdminDate(a.created_at) ?: a.created_at, a.driver?.replaceFirstChar { it.uppercase() }).joinToString(" · "),
+                fontSize = 11.5.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
-        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(a.price ?: "—", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-            AdminBadge(label, color)
+        Spacer(Modifier.width(8.dp))
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(a.price ?: "—", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            AdminStatusPill(label, tone)
         }
     }
 }
@@ -120,11 +142,11 @@ internal fun TransactionLine(t: TransactionData) {
 @Composable
 private fun MigrationLine(r: EncryptionMigrationRow) {
     val m = r.migration
-    val (label, color) = when (m.status) {
-        "done" -> "Concluída".tr() to SettingsAccent
-        "partial" -> "${m.percent ?: 0}%" to AdminColors.Warning
-        "none" -> "Por cifrar".tr() to AdminColors.Danger
-        else -> "Sem ficheiros".tr() to AdminColors.Neutral
+    val (label, tone) = when (m.status) {
+        "done" -> "Concluída".tr() to AdminTone.Success
+        "partial" -> "${m.percent ?: 0}%" to AdminTone.Warning
+        "none" -> "Por cifrar".tr() to AdminTone.Danger
+        else -> "Sem ficheiros".tr() to AdminTone.Neutral
     }
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -140,11 +162,16 @@ private fun MigrationLine(r: EncryptionMigrationRow) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            AdminBadge(label, color)
+            AdminStatusPill(label, tone)
         }
         if (m.status == "partial") {
-            Spacer(Modifier.height(4.dp))
-            LinearProgressIndicator(progress = { (m.percent ?: 0) / 100f }, color = color, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(6.dp))
+            LinearProgressIndicator(
+                progress = { (m.percent ?: 0) / 100f },
+                color = AdminTone.Warning.solid,
+                trackColor = AdminTone.Warning.background(),
+                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50)),
+            )
         }
     }
 }

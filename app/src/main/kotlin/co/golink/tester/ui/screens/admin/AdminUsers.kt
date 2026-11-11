@@ -14,6 +14,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.PersonAdd
+import androidx.compose.material.icons.outlined.PersonOff
+import androidx.compose.material.icons.outlined.PersonSearch
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
@@ -198,79 +203,93 @@ fun AdminUsersPane(
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = AdminListPadding,
         ) {
-            item {
-                Text(
-                    "Contas registadas, suspensas e eliminadas.".tr(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(12.dp))
+            adminBlock("header") {
+                AdminPageHeader("Contas registadas, suspensas e eliminadas.".tr()) {
+                    AdminButton("Criar".tr(), onClick = { viewModel.openCreate(true) }, icon = Icons.Outlined.PersonAdd)
+                }
+            }
+            adminBlock("toolbar") {
                 val c = state.counts
-                AdminSegmented(
-                    options = listOf(
-                        UsersTab.All to "Todos".tr(),
-                        UsersTab.Active to "Ativos".tr(),
-                        UsersTab.Suspended to "Suspensos".tr(),
-                        UsersTab.Deleted to "Eliminados".tr(),
-                    ),
-                    selected = state.tab,
-                    onSelect = viewModel::setTab,
-                    counts = if (c == null) emptyMap() else mapOf(
-                        UsersTab.All to c.all, UsersTab.Active to c.active,
-                        UsersTab.Suspended to c.suspended, UsersTab.Deleted to c.deleted,
-                    ),
-                )
-                Spacer(Modifier.height(10.dp))
-                AdminSearchField(state.search, viewModel::setSearch, "Pesquisar por nome ou email".tr())
-                Spacer(Modifier.height(4.dp))
+                AdminToolbar(state.search, viewModel::setSearch, "Pesquisar por nome ou email".tr()) {
+                    AdminSegmented(
+                        options = listOf(
+                            UsersTab.All to "Todos".tr(),
+                            UsersTab.Active to "Ativos".tr(),
+                            UsersTab.Suspended to "Suspensos".tr(),
+                            UsersTab.Deleted to "Eliminados".tr(),
+                        ),
+                        selected = state.tab,
+                        onSelect = viewModel::setTab,
+                        counts = if (c == null) emptyMap() else mapOf(
+                            UsersTab.All to c.all, UsersTab.Active to c.active,
+                            UsersTab.Suspended to c.suspended, UsersTab.Deleted to c.deleted,
+                        ),
+                    )
+                }
             }
             when {
                 state.isLoading -> item { AdminLoading(Modifier.fillMaxWidth().height(160.dp)) }
                 state.error != null -> item { AdminError(state.error!!, viewModel::load, Modifier.fillMaxWidth()) }
                 state.tab == UsersTab.Deleted -> {
-                    if (state.deleted.isEmpty()) item { AdminEmpty("Sem resultados.".tr()) }
-                    items(state.deleted, key = { "d" + it.id.toString() }) { row ->
+                    if (state.deleted.isEmpty()) item { AdminEmptyState("Sem resultados.".tr(), icon = Icons.Outlined.PersonOff) }
+                    adminListGroup(state.deleted, key = { "d" + it.id.toString() }) { row ->
                         DeletedUserRowItem(row, onOpen = row.userIdString?.takeIf { row.state == "scheduled" }?.let { id -> { onOpenUser(id) } }, onCancel = { row.userIdString?.let(viewModel::cancelDeletion) })
                     }
                 }
                 else -> {
-                    if (state.users.isEmpty()) item { AdminEmpty("Sem resultados.".tr()) }
-                    items(state.users, key = { it.id }) { u -> UserRowItem(u) { onOpenUser(u.id) } }
+                    if (state.users.isEmpty()) item { AdminEmptyState("Sem resultados.".tr(), icon = Icons.Outlined.PersonSearch) }
+                    adminListGroup(state.users, key = { it.id }) { u -> UserRowItem(u) { onOpenUser(u.id) } }
                 }
             }
             if (!state.isLoading && state.hasMore) item { AdminLoadMore(state.isLoadingMore, viewModel::loadMore) }
         }
-        ExtendedFloatingActionButton(
-            onClick = { viewModel.openCreate(true) },
-            icon = { Icon(Icons.Outlined.PersonAdd, contentDescription = null) },
-            text = { Text("Criar utilizador".tr()) },
-            containerColor = SettingsAccent,
-            contentColor = androidx.compose.ui.graphics.Color.White,
-            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-        )
         androidx.compose.material3.SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
     }
 }
 
 @Composable
 private fun UserRowItem(u: AdminUserItem, onClick: () -> Unit) {
-    AdminListRow(
+    val tone = when {
+        u.deletionScheduledFor != null -> AdminTone.Danger
+        u.isSuspended -> AdminTone.Warning
+        else -> AdminTone.Success
+    }
+    AdminListItem(
         title = u.name,
-        subtitle = listOfNotNull(u.email, u.storage, u.plan).joinToString(" · "),
-        leading = { AdminAvatar(u.avatar) },
+        subtitle = u.email,
+        leading = { AdminAvatar(u.avatar, size = 36, name = u.name, tone = tone) },
         onClick = onClick,
+        trailing = {
+            // Estado à direita, como a coluna "Estado" da tabela da web.
+            when {
+                u.deletionScheduledFor != null -> AdminStatusPill("Eliminação agendada".tr(), AdminTone.Danger)
+                u.isSuspended -> AdminStatusPill("Suspenso".tr(), AdminTone.Warning)
+                else -> AdminStatusPill("Ativo".tr(), AdminTone.Success)
+            }
+        },
         footer = {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 6.dp)) {
-                AdminBadge(if (u.role == "admin") "Admin" else "Utilizador".tr(), if (u.role == "admin") AdminColors.Info else AdminColors.Neutral)
-                if (u.isSuspended) AdminBadge("Suspenso".tr(), AdminColors.Danger)
-                if (u.deletionScheduledFor != null) AdminBadge("Eliminação agendada".tr(), AdminColors.Warning)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(top = 6.dp),
+            ) {
+                if (u.role == "admin") AdminStatusPill("Admin", AdminTone.Info)
+                u.plan?.let { Text(it, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1) }
+            }
+            if (u.storagePercent != null) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                    AdminProgressBar(u.storagePercent, Modifier.weight(1f))
+                    Spacer(Modifier.width(8.dp))
+                    Text(u.storage.orEmpty(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                }
+            } else if (!u.storage.isNullOrBlank()) {
+                Text(u.storage, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
             }
             u.lastLoginAt?.let {
-                Text("${"Último acesso".tr()}: ${formatAdminDate(it) ?: it}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                Text("${"Último acesso".tr()}: ${formatAdminDate(it) ?: it}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
             }
         },
     )
@@ -279,10 +298,10 @@ private fun UserRowItem(u: AdminUserItem, onClick: () -> Unit) {
 @Composable
 private fun DeletedUserRowItem(row: DeletedUserRow, onOpen: (() -> Unit)?, onCancel: () -> Unit) {
     var confirm by remember { mutableStateOf(false) }
-    val (label, color) = when (row.state) {
-        "scheduled" -> "Agendada".tr() to AdminColors.Warning
-        "deleting" -> "Em curso".tr() to AdminColors.Info
-        else -> "Eliminada".tr() to AdminColors.Danger
+    val (label, tone) = when (row.state) {
+        "scheduled" -> "Agendada".tr() to AdminTone.Warning
+        "deleting" -> "Em curso".tr() to AdminTone.Info
+        else -> "Eliminada".tr() to AdminTone.Danger
     }
     val by = when (row.requested_by) {
         "admin" -> "Pedido do admin".tr()
@@ -290,22 +309,22 @@ private fun DeletedUserRowItem(row: DeletedUserRow, onOpen: (() -> Unit)?, onCan
         "inactivity" -> "Por inatividade".tr()
         else -> "Pedido do utilizador".tr()
     }
-    AdminListRow(
+    AdminListItem(
         title = row.name ?: "—",
         subtitle = listOfNotNull(row.email, row.plan).joinToString(" · "),
-        leading = { AdminAvatar(row.avatar) },
+        leading = { AdminAvatar(row.avatar, size = 36, name = row.name, tone = tone) },
         onClick = onOpen,
         footer = {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 6.dp)) {
-                AdminBadge(label, color)
-                AdminBadge(by, AdminColors.Neutral)
+                AdminStatusPill(label, tone)
+                AdminCount(by)
             }
             val date = if (row.state == "scheduled") row.scheduled_for else row.deleted_at
             formatAdminDate(date)?.let {
-                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
             }
         },
-        trailing = if (row.state == "scheduled") { { TextButton(onClick = { confirm = true }) { Text("Cancelar".tr()) } } } else null,
+        trailing = if (row.state == "scheduled") { { TextButton(onClick = { confirm = true }) { Text("Cancelar".tr(), color = AdminTone.Danger.solid) } } } else null,
     )
     if (confirm) {
         co.golink.tester.ui.screens.settings.SettingsDialog(

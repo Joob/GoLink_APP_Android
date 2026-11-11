@@ -5,6 +5,13 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Place
+import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.Laptop
+import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.Devices
+import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -99,24 +106,8 @@ fun AnalyticsPane(viewModel: AnalyticsViewModel = hiltViewModel()) {
         }
 
         when {
-            state.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(strokeWidth = 2.dp)
-            }
-            state.error != null -> Column(
-                modifier = Modifier.fillMaxSize().padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    state.error!!,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(12.dp))
-                OutlinedButton(onClick = viewModel::load, shape = RoundedCornerShape(14.dp)) {
-                    Text("Tentar de novo".tr())
-                }
-            }
+            state.isLoading -> co.golink.tester.ui.screens.admin.AdminLoading()
+            state.error != null -> co.golink.tester.ui.screens.admin.AdminError(state.error!!, viewModel::load)
             else -> state.data?.let { AnalyticsContent(it, state.tab) }
         }
     }
@@ -132,26 +123,26 @@ private fun AnalyticsContent(d: AnalyticsResponse, tab: String) {
         when (tab) {
             "overview" -> {
                 OverviewCard(d)
-                RankedCard("Top países".tr(), d.countries, "País".tr(), flags = true, max = 5)
-                RankedCard("Referências".tr(), d.referrers, "Website", max = 5)
-                RankedCard("Eventos".tr(), d.events, "Evento".tr(), barColor = VisitsColor, max = 5)
+                RankedCard("Top países".tr(), d.countries, "País".tr(), flags = true, max = 5, icon = Icons.Outlined.Public)
+                RankedCard("Referências".tr(), d.referrers, "Website", max = 5, icon = Icons.Outlined.Link)
+                RankedCard("Eventos".tr(), d.events, "Evento".tr(), barColor = VisitsColor, max = 5, icon = Icons.Outlined.Insights)
             }
             "acquisitions" -> {
                 if (d.referrers.isEmpty()) EmptyHint("Sem referências neste período".tr())
-                RankedCard("Referências".tr(), d.referrers, "Website", max = 20)
+                RankedCard("Referências".tr(), d.referrers, "Website", max = 20, icon = Icons.Outlined.Link)
             }
             "behavior" -> {
                 Spacer(Modifier.height(4.dp))
                 BehaviorCard(newVisitors = d.behavior.new, returning = d.behavior.returning)
             }
             "geographic" -> {
-                RankedCard("Países".tr(), d.countries, "País".tr(), flags = true, max = 15)
-                RankedCard("Cidades".tr(), d.cities, "Cidade".tr(), max = 15)
+                RankedCard("Países".tr(), d.countries, "País".tr(), flags = true, max = 15, icon = Icons.Outlined.Public)
+                RankedCard("Cidades".tr(), d.cities, "Cidade".tr(), max = 15, icon = Icons.Outlined.Place)
             }
             "technology" -> {
-                RankedCard("Dispositivos".tr(), d.devices, "Dispositivo".tr())
-                RankedCard("Browsers", d.browsers, "Browser")
-                RankedCard("Sistemas".tr(), d.os, "Sistema".tr())
+                RankedCard("Dispositivos".tr(), d.devices, "Dispositivo".tr(), icon = Icons.Outlined.Devices)
+                RankedCard("Browsers", d.browsers, "Browser", icon = Icons.Outlined.Language)
+                RankedCard("Sistemas".tr(), d.os, "Sistema".tr(), icon = Icons.Outlined.Laptop)
             }
         }
 
@@ -566,6 +557,7 @@ internal fun RankedCard(
     flags: Boolean = false,
     barColor: Color = VisitorsColor,
     max: Int = 8,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
 ) {
     if (items.isEmpty()) return
     var expanded by remember { mutableStateOf(false) }
@@ -579,7 +571,13 @@ internal fun RankedCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                if (icon != null) {
+                    SettingsIconTile(icon, barColor, size = 28)
+                    Spacer(Modifier.width(10.dp))
+                }
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            }
             Text(
                 columnLabel.uppercase(),
                 style = MaterialTheme.typography.labelSmall,
@@ -599,7 +597,7 @@ internal fun RankedCard(
                     .pointerInput(Unit) { detectTapGestures { expanded = !expanded } }
                     .padding(vertical = 6.dp),
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
+                color = co.golink.tester.ui.screens.admin.AdminAccent,
                 fontWeight = FontWeight.SemiBold,
             )
         }
@@ -660,30 +658,12 @@ private fun RankedRow(item: RankedItem, top: Int, flags: Boolean, barColor: Colo
 
 @Composable
 private fun RangeSelector(selected: String, onSelect: (String) -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        RANGES.forEach { range ->
-            val active = range == selected
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                modifier = Modifier.pointerInput(range) { detectTapGestures { onSelect(range) } },
-            ) {
-                Text(
-                    range,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = if (active) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
+    co.golink.tester.ui.screens.admin.AdminSegmented(
+        options = RANGES.map { it to it },
+        selected = selected,
+        onSelect = onSelect,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+    )
 }
 
 @Composable
@@ -691,7 +671,8 @@ internal fun AnalyticsCard(content: @Composable () -> Unit) {
     Surface(
         shape = RoundedCornerShape(18.dp),
         color = settingsCardColor(),
-        border = settingsCardBorderStroke(),
+        // Fundo cinza do admin: sem contorno no claro (como os cartões das Definições).
+        border = settingsCardBorder(),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(16.dp)) { content() }

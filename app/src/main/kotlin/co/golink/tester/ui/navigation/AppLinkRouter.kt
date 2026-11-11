@@ -27,6 +27,8 @@ object AppLinkRouter {
         data class Legacy(val pane: String) : Target
         /** /notes/... → caminho dentro das Notes ("<id>", "all/<id>", "checklists"). */
         data class Notes(val path: String) : Target
+        /** /pass/... → painel ou página do Pass ("vault", "totp", "health", "generator", "settings", "trash"). */
+        data class Pass(val pane: String) : Target
         data class Nav(val uri: Uri) : Target
     }
 
@@ -88,7 +90,15 @@ object AppLinkRouter {
             at(0) == "user" && at(1) == "settings" && at(2) == "billing" -> Target.Billing
             at(0) == "legacy" -> Target.Legacy(at(1) ?: "overview")
             at(0) == "notes" -> Target.Notes(uri.pathSegments.drop(1).joinToString("/"))
+            at(0) == "pass" -> Target.Pass(passPane(at(1)))
             else -> null
         }
+    }
+
+    /** Rotas da web (routesPass.js) → painel da app; o resto (all, logins, edit/…) abre o cofre. */
+    private fun passPane(segment: String?): String = when (segment) {
+        "settings", "trash", "health", "generator" -> segment
+        "2fa" -> "totp"
+        else -> "vault"
     }
 }

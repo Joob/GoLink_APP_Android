@@ -1,5 +1,15 @@
 package co.golink.tester.ui.screens.admin
 
+import androidx.compose.material.icons.outlined.AdminPanelSettings
+import androidx.compose.material.icons.outlined.AlternateEmail
+import androidx.compose.material.icons.outlined.Block
+import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.DeleteForever
+import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.ui.unit.sp
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -163,10 +173,13 @@ fun AdminUserScreen(
     LaunchedEffect(state.toast) { state.toast?.let { snackbar.showSnackbar(it); viewModel.consumeToast() } }
     LaunchedEffect(state.deleted) { if (state.deleted) onBack() }
 
+    val screenBg = co.golink.tester.ui.screens.settings.settingsScreenBackground()
     Scaffold(
+        containerColor = screenBg,
         topBar = {
             TopAppBar(
-                title = { Text(state.user?.name ?: "Utilizador".tr()) },
+                colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(containerColor = screenBg, scrolledContainerColor = screenBg),
+                title = { Text(state.user?.name ?: "Utilizador".tr(), fontWeight = FontWeight.SemiBold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar".tr()) }
                 },
@@ -214,17 +227,32 @@ fun AdminUserScreen(
 }
 
 @Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 private fun UserHeader(user: User, isSelf: Boolean) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        AdminAvatar(user.avatar, size = 52)
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(user.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(user.email, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 4.dp)) {
-                AdminBadge(if (user.role == "admin") "Admin" else "Utilizador".tr(), if (user.role == "admin") AdminColors.Info else AdminColors.Neutral)
-                if (user.isSuspended) AdminBadge("Suspenso".tr(), AdminColors.Danger)
-                if (isSelf) AdminBadge("Tu".tr(), SettingsAccent)
+    // Cartão de topo (subtítulo da web: email + pills de estado).
+    androidx.compose.material3.Surface(
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(18.dp),
+        color = co.golink.tester.ui.screens.settings.settingsCardColor(),
+        border = co.golink.tester.ui.screens.settings.settingsCardBorder(),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(16.dp)) {
+            AdminAvatar(user.avatar, size = 56, name = user.name, tone = if (user.isSuspended) AdminTone.Warning else AdminTone.Success)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(user.name, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                Text(user.email, fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(top = 6.dp),
+                ) {
+                    if (user.isSuspended) AdminStatusPill("Suspenso".tr(), AdminTone.Warning) else AdminStatusPill("Ativo".tr(), AdminTone.Success)
+                    if (user.role == "admin") AdminStatusPill("Admin", AdminTone.Info) else AdminCount("Utilizador".tr())
+                    if (user.emailVerified) AdminCount("Email verificado".tr(), AdminTone.Success) else AdminStatusPill("Email por verificar".tr(), AdminTone.Warning)
+                    if (user.twoFactorEnabled) AdminCount("2FA", AdminTone.Success)
+                    if (isSelf) AdminCount("Tu".tr(), AdminTone.Info)
+                }
             }
         }
     }
@@ -237,7 +265,7 @@ private fun ErrorNotice(state: AdminUserViewModel.UiState) {
 
 @Composable
 private fun DetailsTab(user: User, state: AdminUserViewModel.UiState, vm: AdminUserViewModel, isSelf: Boolean) {
-    SettingsCard(title = "Informação da conta".tr()) {
+    SettingsCard(title = "Informação da conta".tr(), icon = Icons.Outlined.Person) {
         AdminInfoRow("Nome".tr(), user.name)
         AdminInfoRow("Email".tr(), user.email)
         AdminInfoRow("Email verificado".tr(), if (user.emailVerified) "Sim".tr() else "Não".tr())
@@ -250,7 +278,7 @@ private fun DetailsTab(user: User, state: AdminUserViewModel.UiState, vm: AdminU
     if (isSelf) return
     var role by remember(user.role) { mutableStateOf(user.role) }
     var confirming by remember { mutableStateOf(false) }
-    SettingsCard(title = "Função".tr(), description = "Os administradores têm acesso a toda a administração.".tr()) {
+    SettingsCard(title = "Função".tr(), icon = Icons.Outlined.AdminPanelSettings, iconTint = AdminTone.Info.solid, description = "Os administradores têm acesso a toda a administração.".tr()) {
         AdminSegmented(listOf("user" to "Utilizador".tr(), "admin" to "Admin"), role, { role = it })
         ErrorNotice(state)
         SettingsPrimaryButton(
@@ -297,13 +325,9 @@ private fun DetailsTab(user: User, state: AdminUserViewModel.UiState, vm: AdminU
 private fun StorageTab(state: AdminUserViewModel.UiState, vm: AdminUserViewModel) {
     val s = state.storage ?: return AdminLoading(Modifier.fillMaxWidth().height(120.dp))
     val a = s.attributes
-    SettingsCard(title = "Utilização".tr()) {
+    SettingsCard(title = "Utilização".tr(), icon = Icons.Outlined.Cloud, iconTint = AdminTone.Info.solid) {
         Text("${a.used ?: "—"} / ${a.capacity ?: "—"}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        LinearProgressIndicator(
-            progress = { (a.percentage / 100.0).toFloat().coerceIn(0f, 1f) },
-            color = if (a.percentage >= 90) AdminColors.Danger else SettingsAccent,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        AdminProgressBar(a.percentage.toFloat(), Modifier.fillMaxWidth())
         s.meta?.let { m ->
             listOf(
                 "Imagens".tr() to m.images, "Vídeos".tr() to m.videos, "Áudio".tr() to m.audios,
@@ -317,7 +341,7 @@ private fun StorageTab(state: AdminUserViewModel.UiState, vm: AdminUserViewModel
     }
     if (a.has_limit) {
         var gb by remember { mutableStateOf("") }
-        SettingsCard(title = "Quota de armazenamento".tr(), description = "Novo limite em GB.".tr()) {
+        SettingsCard(title = "Quota de armazenamento".tr(), icon = Icons.Outlined.Tune, description = "Novo limite em GB.".tr()) {
             SettingsField("GB", gb, { v -> gb = v.filter(Char::isDigit).take(9) }, keyboardType = KeyboardType.Number, placeholder = a.capacity)
             ErrorNotice(state)
             SettingsPrimaryButton(
@@ -330,11 +354,12 @@ private fun StorageTab(state: AdminUserViewModel.UiState, vm: AdminUserViewModel
 
 @Composable
 private fun SecurityTab(user: User, state: AdminUserViewModel.UiState, vm: AdminUserViewModel) {
-    SettingsCard(title = "Repor password".tr(), description = "Envia ao utilizador um email com o link para definir uma nova password.".tr()) {
+    SettingsCard(title = "Repor password".tr(), icon = Icons.Outlined.Key, description = "Envia ao utilizador um email com o link para definir uma nova password.".tr()) {
         SettingsOutlinedButton("Enviar link de reposição".tr(), onClick = vm::resetPassword, enabled = state.busy == null)
     }
     SettingsCard(
         title = "Alterar email".tr(),
+        icon = Icons.Outlined.AlternateEmail,
         description = "Confirma com a tua password; o código de 6 dígitos vai para o TEU email. As sessões do utilizador são terminadas.".tr(),
     ) {
         if (user.role == "admin") {
@@ -372,7 +397,7 @@ private val SUSPEND_UNITS = listOf(
 
 @Composable
 private fun SuspendTab(user: User, state: AdminUserViewModel.UiState, vm: AdminUserViewModel) {
-    SettingsCard(title = "Suspensão".tr(), description = "Uma conta suspensa não consegue entrar nem usar a API.".tr()) {
+    SettingsCard(title = "Suspensão".tr(), icon = Icons.Outlined.Block, iconTint = AdminTone.Warning.solid, description = "Uma conta suspensa não consegue entrar nem usar a API.".tr()) {
         when {
             user.role == "admin" -> SettingsNotice("Os administradores não podem ser suspensos".tr(), AdminColors.Warning)
             user.isSuspended -> {
@@ -438,6 +463,8 @@ private fun SuspendTab(user: User, state: AdminUserViewModel.UiState, vm: AdminU
 private fun DeleteTab(user: User, state: AdminUserViewModel.UiState, vm: AdminUserViewModel, blockedBySubscription: Boolean) {
     SettingsCard(
         title = "Eliminar conta".tr(),
+        icon = Icons.Outlined.DeleteForever,
+        danger = true,
         description = "A conta é bloqueada de imediato e todos os ficheiros são apagados. Não pode ser desfeito.".tr(),
     ) {
         if (user.role == "admin") {

@@ -16,7 +16,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Autorenew
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.ConfirmationNumber
+import androidx.compose.material.icons.outlined.CreditCard
+import androidx.compose.material.icons.outlined.LocalOffer
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.HourglassEmpty
+import androidx.compose.material.icons.outlined.Payments
+import androidx.compose.material.icons.outlined.Receipt
 import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.ui.unit.sp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
@@ -71,6 +81,13 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+
+/** Valor na moeda indicada (ISO 4217), no formato da língua do aparelho. */
+internal fun formatMoney(amount: Double, currency: String?): String = runCatching {
+    java.text.NumberFormat.getCurrencyInstance(java.util.Locale.getDefault()).apply {
+        this.currency = java.util.Currency.getInstance(currency.orEmpty().uppercase())
+    }.format(amount)
+}.getOrElse { "%.2f %s".format(amount, currency.orEmpty()).trim() }
 
 /** Valores das features de um plano fixo (o PHP manda `[]` quando não há). */
 internal fun AdminPlan.fixedFeatures(): Map<String, String> =
@@ -205,44 +222,74 @@ fun PlansPane(isFixed: Boolean, viewModel: PlansViewModel = hiltViewModel()) {
     state.selected?.let { PlanSheet(it, state, viewModel) }
     if (state.creating) CreatePlanSheet(state, viewModel)
 
+    // Filtro e pesquisa locais (os planos são poucos), com contagens como na web.
+    var filter by remember { mutableStateOf("all") }
+    var query by remember { mutableStateOf("") }
+    fun stateOf(p: AdminPlan) = when {
+        p.attributes.status == "archived" -> "archived"
+        p.attributes.isVisible -> "visible"
+        else -> "hidden"
+    }
+    val counts = remember(state.plans) {
+        val by = state.plans.groupingBy(::stateOf).eachCount()
+        mapOf("all" to state.plans.size, "visible" to (by["visible"] ?: 0), "hidden" to (by["hidden"] ?: 0), "archived" to (by["archived"] ?: 0))
+    }
+    val visible = state.plans.filter { p ->
+        (filter == "all" || stateOf(p) == filter) &&
+            (query.isBlank() || p.attributes.name.orEmpty().contains(query.trim(), ignoreCase = true))
+    }
+
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (isFixed) "Planos de preço fixo que os utilizadores podem subscrever.".tr()
-                        else "Planos por consumo. Para criar planos com medidores usa o site.".tr(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
+        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = AdminListPadding) {
+            adminBlock("header") {
+                AdminPageHeader(
+                    if (isFixed) "Planos de preço fixo que os utilizadores podem subscrever.".tr()
+                    else "Planos por consumo. Para criar planos com medidores usa o site.".tr(),
+                ) {
+                    AdminButton(
+                        if (state.syncing) "…" else "Sincronizar".tr(), onClick = viewModel::synchronize,
+                        icon = Icons.Outlined.Sync, primary = false, enabled = !state.syncing,
                     )
-                    IconButton(onClick = viewModel::synchronize, enabled = !state.syncing) {
-                        Icon(Icons.Outlined.Sync, contentDescription = "Sincronizar planos".tr())
-                    }
+                    if (isFixed) AdminButton("Criar".tr(), onClick = { viewModel.showCreate(true) }, icon = Icons.Outlined.Add)
+                }
+            }
+            adminBlock("toolbar") {
+                AdminToolbar(query, { query = it }, "Pesquisar planos".tr()) {
+                    AdminSegmented(
+                        listOf("all" to "Todos".tr(), "visible" to "Visíveis".tr(), "hidden" to "Ocultos".tr(), "archived" to "Arquivados".tr()),
+                        filter, { filter = it }, counts = counts,
+                    )
                 }
             }
             when {
                 state.isLoading -> item { AdminLoading(Modifier.fillMaxWidth().height(160.dp)) }
                 state.error != null -> item { AdminError(state.error!!, { viewModel.load() }, Modifier.fillMaxWidth()) }
-                state.plans.isEmpty() -> item { AdminEmpty("Ainda não há planos.".tr()) }
+                visible.isEmpty() -> item {
+                    AdminEmptyState(if (state.plans.isEmpty()) "Ainda não há planos.".tr() else "Sem resultados.".tr(), icon = Icons.Outlined.CreditCard)
+                }
                 else -> {
-                    items(state.plans, key = { it.idString }) { p ->
+                    adminListGroup(visible, key = { it.idString }) { p ->
                         val a = p.attributes
-                        AdminListRow(
+                        AdminListItem(
                             title = a.name ?: "—",
                             subtitle = listOfNotNull(a.price, a.interval?.let { if (it == "year") "anual".tr() else "mensal".tr() }).joinToString(" · "),
                             onClick = { viewModel.open(p) },
-                            trailing = { Text("%d subscritores".tr().format(a.subscribers), style = MaterialTheme.typography.labelSmall) },
+                            leading = { co.golink.tester.ui.screens.settings.SettingsIconTile(Icons.Outlined.CreditCard, if (a.status == "archived") AdminTone.Neutral.solid else AdminAccent, size = 36) },
+                            trailing = {
+                                when (stateOf(p)) {
+                                    "archived" -> AdminStatusPill("Arquivado".tr(), AdminTone.Neutral)
+                                    "visible" -> AdminStatusPill("Visível".tr(), AdminTone.Success)
+                                    else -> AdminStatusPill("Oculto".tr(), AdminTone.Warning)
+                                }
+                            },
                             footer = {
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 6.dp)) {
-                                    if (a.status == "archived") AdminBadge("Arquivado".tr(), AdminColors.Neutral)
-                                    else if (a.isVisible) AdminBadge("Visível".tr(), SettingsAccent)
-                                    else AdminBadge("Oculto".tr(), AdminColors.Warning)
-                                    a.discount?.label?.let { AdminBadge(it, AdminColors.Info) }
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(top = 6.dp),
+                                ) {
+                                    AdminCount("%d subscritores".tr().format(a.subscribers))
+                                    a.discount?.label?.let { AdminStatusPill(it, AdminTone.Info) }
                                 }
                             },
                         )
@@ -250,16 +297,6 @@ fun PlansPane(isFixed: Boolean, viewModel: PlansViewModel = hiltViewModel()) {
                     if (state.hasMore) item { AdminLoadMore(state.loadingMore) { viewModel.load(state.page + 1) } }
                 }
             }
-        }
-        if (isFixed) {
-            ExtendedFloatingActionButton(
-                onClick = { viewModel.showCreate(true) },
-                icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
-                text = { Text("Criar plano".tr()) },
-                containerColor = SettingsAccent,
-                contentColor = Color.White,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-            )
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
     }
@@ -393,15 +430,31 @@ private fun SubscriptionLine(s: AdminSubscription, onDelete: (() -> Unit)? = nul
     val a = s.attributes
     val user = s.relationships?.user?.data?.attributes
     val (label, color) = subscriptionBadge(a)
-    AdminListRow(
+    val plan = s.relationships?.plan?.data?.attributes?.name ?: a.name
+    AdminListItem(
         title = user?.name ?: user?.email ?: "—",
-        subtitle = listOfNotNull(
-            s.relationships?.plan?.data?.attributes?.name ?: a.name,
-            a.driver,
-            (a.renews_at ?: a.ends_at)?.let { "%s: %s".format(if (a.is_cancelled) "Termina".tr() else "Renova".tr(), formatAdminDate(it) ?: it) },
-        ).joinToString(" · "),
+        subtitle = listOfNotNull(plan, a.driver?.replaceFirstChar { it.uppercase() }).joinToString(" · "),
+        leading = { AdminAvatar(user?.avatarUrl, size = 36, name = user?.name ?: user?.email) },
         trailing = { AdminBadge(label, color) },
-        footer = onDelete?.let { { TextButton(onClick = it) { Text("Apagar registo".tr(), color = MaterialTheme.colorScheme.error) } } },
+        footer = {
+            (a.renews_at ?: a.ends_at)?.let {
+                Text(
+                    "%s: %s".format(if (a.is_cancelled) "Termina".tr() else "Renova".tr(), formatAdminDate(it) ?: it),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+            }
+            if (onDelete != null) {
+                Text(
+                    "Apagar registo".tr(),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AdminTone.Danger.solid,
+                    modifier = Modifier.padding(top = 6.dp).clickable(onClick = onDelete),
+                )
+            }
+        },
     )
 }
 
@@ -417,21 +470,56 @@ class SubscriptionsViewModel @Inject constructor(private val repository: AdminRe
         val loadingMore: Boolean = false,
         val error: String? = null,
         val toast: String? = null,
+        /** all | active | failed | pending | completed | closed (estados do servidor). */
+        val filter: String = "all",
+        val query: String = "",
+        val stats: co.golink.tester.domain.admin.InvoiceStats? = null,
     )
 
     private val _state = MutableStateFlow(UiState())
     val state = _state.asStateFlow()
+    private var loadJob: kotlinx.coroutines.Job? = null
+    private var searchJob: kotlinx.coroutines.Job? = null
 
     init { load() }
 
     fun load(page: Int = 1) {
-        _state.update { if (page == 1) it.copy(isLoading = it.items.isEmpty(), error = null) else it.copy(loadingMore = true) }
-        viewModelScope.launch {
-            repository.subscriptions(page)
-                .onSuccess { (list, more) ->
-                    _state.update { s -> s.copy(items = if (page == 1) list else (s.items + list).distinctBy { x -> x.idString }, page = page, hasMore = more, isLoading = false, loadingMore = false) }
+        if (page == 1) loadJob?.cancel() else if (loadJob?.isActive == true) return
+        val filter = _state.value.filter
+        val query = _state.value.query
+        _state.update { if (page == 1) it.copy(isLoading = it.items.isEmpty(), loadingMore = false, error = null) else it.copy(loadingMore = true) }
+        loadJob = viewModelScope.launch {
+            val result = repository.subscriptionsPage(page, filter.takeIf { it != "all" }, query)
+            // Cancelado ou filtro/pesquisa mudou entretanto: descarta.
+            if (!kotlinx.coroutines.currentCoroutineContext().isActive || _state.value.filter != filter || _state.value.query != query) return@launch
+            result
+                .onSuccess { p ->
+                    _state.update { s ->
+                        s.copy(
+                            items = if (page == 1) p.items else (s.items + p.items).distinctBy { x -> x.idString },
+                            page = page, hasMore = p.hasMore, isLoading = false, loadingMore = false,
+                            stats = p.stats ?: s.stats,
+                        )
+                    }
                 }
                 .onFailure { t -> _state.update { it.copy(isLoading = false, loadingMore = false, error = "Não foi possível carregar (%s)".tr().format(t.message.orEmpty())) } }
+        }
+    }
+
+    fun setFilter(f: String) {
+        if (f == _state.value.filter) return
+        _state.update { it.copy(filter = f, items = emptyList()) }
+        load()
+    }
+
+    /** Pesquisa no servidor com atraso de 350 ms. */
+    fun setQuery(q: String) {
+        _state.update { it.copy(query = q) }
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(350)
+            _state.update { it.copy(items = emptyList()) }
+            load()
         }
     }
 
@@ -451,18 +539,40 @@ fun SubscriptionsPane(viewModel: SubscriptionsViewModel = hiltViewModel()) {
     var confirm by remember { mutableStateOf<AdminSubscription?>(null) }
     LaunchedEffect(state.toast) { state.toast?.let { snackbar.showSnackbar(it); viewModel.consumeToast() } }
 
+    val st = state.stats
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 4.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = AdminListPadding) {
+            adminBlock("header") { AdminPageHeader("Subscrições dos utilizadores e o estado de cada pagamento.".tr()) }
+            adminBlock("kpis", bottom = 16) {
+                AdminStatGrid(
+                    listOf(
+                        AdminStat("Ativas".tr(), st?.active?.toString(), Icons.Outlined.CheckCircle, AdminTone.Success.solid,
+                            onClick = { viewModel.setFilter("active") }),
+                        AdminStat("Pagamento falhado".tr(), st?.failed?.toString(), Icons.Outlined.ErrorOutline, AdminTone.Danger.solid,
+                            hint = "Ativas, com um pagamento em atraso".tr(), onClick = { viewModel.setFilter("failed") }),
+                        AdminStat("Pendente".tr(), st?.pending?.toString(), Icons.Outlined.HourglassEmpty, AdminTone.Warning.solid,
+                            hint = "Checkout iniciado mas não pago".tr(), onClick = { viewModel.setFilter("pending") }),
+                    ),
+                )
+            }
+            adminBlock("toolbar") {
+                AdminToolbar(state.query, viewModel::setQuery, "Pesquisar por utilizador ou plano".tr()) {
+                    AdminSegmented(
+                        listOf(
+                            "all" to "Todas".tr(), "active" to "Ativas".tr(), "failed" to "Pagamento falhado".tr(),
+                            "pending" to "Pendentes".tr(), "completed" to "Concluídas".tr(), "closed" to "Canceladas / falhadas".tr(),
+                        ),
+                        state.filter, viewModel::setFilter,
+                        counts = st?.let { mapOf("all" to it.all, "active" to it.active, "failed" to it.failed, "pending" to it.pending, "completed" to it.completed, "closed" to it.closed) } ?: emptyMap(),
+                    )
+                }
+            }
             when {
                 state.isLoading -> item { AdminLoading(Modifier.fillMaxWidth().height(160.dp)) }
                 state.error != null -> item { AdminError(state.error!!, { viewModel.load() }, Modifier.fillMaxWidth()) }
-                state.items.isEmpty() -> item { AdminEmpty("Ainda não há subscrições.".tr()) }
+                state.items.isEmpty() -> item { AdminEmptyState("Ainda não há subscrições.".tr(), icon = Icons.Outlined.Autorenew) }
                 else -> {
-                    items(state.items, key = { it.idString }) { s -> SubscriptionLine(s) { confirm = s } }
+                    adminListGroup(state.items, key = { it.idString }) { s -> SubscriptionLine(s) { confirm = s } }
                     if (state.hasMore) item { AdminLoadMore(state.loadingMore) { viewModel.load(state.page + 1) } }
                 }
             }
@@ -548,39 +658,59 @@ fun DiscountsPane(viewModel: DiscountsViewModel = hiltViewModel()) {
     state.editing?.let { DiscountSheet(it, state, viewModel) }
 
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            item {
-                Text(
-                    "Descontos diretos num plano ou códigos promocionais.".tr(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 4.dp),
-                )
+        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = AdminListPadding) {
+            adminBlock("header") {
+                AdminPageHeader("Descontos diretos num plano ou códigos promocionais.".tr()) {
+                    AdminButton("Criar".tr(), onClick = { viewModel.edit(AdminDiscount()) }, icon = Icons.Outlined.Add)
+                }
+            }
+            if (!state.isLoading && state.error == null && state.items.isNotEmpty()) {
+                adminBlock("kpis", bottom = 16) {
+                    AdminStatGrid(
+                        listOf(
+                            AdminStat("A decorrer".tr(), state.items.count { it.active && it.running }.toString(), Icons.Outlined.LocalOffer),
+                            AdminStat("Códigos".tr(), state.items.count { it.kind == "code" }.toString(), Icons.Outlined.ConfirmationNumber, AdminTone.Info.solid,
+                                hint = "%d usos".tr().format(state.items.sumOf { it.redeemed })),
+                        ),
+                    )
+                }
             }
             when {
                 state.isLoading -> item { AdminLoading(Modifier.fillMaxWidth().height(160.dp)) }
                 state.error != null -> item { AdminError(state.error!!, viewModel::load, Modifier.fillMaxWidth()) }
-                state.items.isEmpty() -> item { AdminEmpty("Ainda não há descontos.".tr()) }
-                else -> items(state.items, key = { it.idString }) { d ->
-                    AdminListRow(
+                state.items.isEmpty() -> item { AdminEmptyState("Ainda não há descontos.".tr(), icon = Icons.Outlined.LocalOffer) }
+                else -> adminListGroup(state.items, key = { it.idString }) { d ->
+                    val code = d.kind == "code"
+                    AdminListItem(
                         title = d.name,
                         subtitle = listOfNotNull(
                             d.label ?: if (d.type == "percent") "-${d.value}%" else "-${d.value}",
-                            if (d.kind == "code") d.code else d.plan_name,
-                            d.max_redemptions?.let { "${d.redeemed}/$it" },
+                            if (code) null else d.plan_name,
                         ).joinToString(" · "),
                         onClick = { viewModel.edit(d) },
+                        leading = {
+                            co.golink.tester.ui.screens.settings.SettingsIconTile(
+                                if (code) Icons.Outlined.ConfirmationNumber else Icons.Outlined.LocalOffer,
+                                if (code) AdminTone.Info.solid else AdminAccent,
+                                size = 36,
+                            )
+                        },
+                        trailing = {
+                            when {
+                                !d.active -> AdminStatusPill("Inativo".tr(), AdminTone.Neutral)
+                                d.running -> AdminStatusPill("A decorrer".tr(), AdminTone.Success)
+                                else -> AdminStatusPill("Agendado/terminado".tr(), AdminTone.Warning)
+                            }
+                        },
                         footer = {
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 6.dp)) {
-                                AdminBadge(if (d.kind == "code") "Código".tr() else "Direto".tr(), AdminColors.Info)
-                                when {
-                                    !d.active -> AdminBadge("Inativo".tr(), AdminColors.Neutral)
-                                    d.running -> AdminBadge("A decorrer".tr(), SettingsAccent)
-                                    else -> AdminBadge("Agendado/terminado".tr(), AdminColors.Warning)
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(top = 6.dp),
+                            ) {
+                                if (code) d.code?.let { AdminCodeChip(it) } else AdminCount("Direto".tr())
+                                d.max_redemptions?.let { max ->
+                                    Text("${d.redeemed}/$max", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         },
@@ -588,14 +718,6 @@ fun DiscountsPane(viewModel: DiscountsViewModel = hiltViewModel()) {
                 }
             }
         }
-        ExtendedFloatingActionButton(
-            onClick = { viewModel.edit(AdminDiscount()) },
-            icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
-            text = { Text("Criar desconto".tr()) },
-            containerColor = SettingsAccent,
-            contentColor = Color.White,
-            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-        )
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
     }
 }
@@ -779,31 +901,44 @@ fun InvoicesPane(viewModel: InvoicesViewModel = hiltViewModel()) {
     val snackbar = remember { SnackbarHostState() }
     var confirm by remember { mutableStateOf<Pair<String, TransactionData>?>(null) }
     LaunchedEffect(state.toast) { state.toast?.let { snackbar.showSnackbar(it); viewModel.consumeToast() } }
-    val counts = remember(state.stats) {
-        state.stats?.let { mapOf("all" to it.all, "paid" to it.paid, "refunded" to it.refunded, "failed" to it.failed) } ?: emptyMap()
+    val st = state.stats
+    val counts = remember(st) {
+        st?.let { mapOf("all" to it.all, "paid" to it.paid, "cancelled" to it.cancelled, "failed" to it.failed, "refunded" to it.refunded) } ?: emptyMap()
     }
 
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 4.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            item {
-                AdminSegmented(
-                    listOf("all" to "Todas".tr(), "paid" to "Pagas".tr(), "refunded" to "Reembolsadas".tr(), "failed" to "Falhadas".tr()),
-                    state.filter, viewModel::setFilter, counts = counts,
+        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = AdminListPadding) {
+            adminBlock("header") { AdminPageHeader("Pagamentos recebidos pelos donativos.".tr()) }
+            adminBlock("kpis", bottom = 16) {
+                val failed = st?.let { it.failed + it.cancelled }
+                AdminStatGrid(
+                    listOf(
+                        AdminStat("Recebido · últimos 30 dias".tr(), st?.let { formatMoney(it.received_30 ?: 0.0, it.received_30_cur) }, Icons.Outlined.Payments, AdminTone.Success.solid),
+                        AdminStat("Pagamentos recebidos".tr(), st?.let { (it.paid_charges ?: it.paid).toString() }, Icons.Outlined.Receipt, AdminTone.Info.solid,
+                            onClick = { viewModel.setFilter("paid") }),
+                        AdminStat(
+                            "Falhadas ou por rever".tr(), failed?.toString(), Icons.Outlined.ErrorOutline, AdminTone.Danger.solid,
+                            hint = if ((failed ?: 0) > 0) "Revê os pagamentos falhados e cancelados".tr() else null,
+                            hintTone = AdminTone.Danger,
+                            onClick = { viewModel.setFilter("failed") },
+                        ),
+                    ),
                 )
             }
-            item { AdminSearchField(state.query, viewModel::setQuery, "Pesquisar por nome, email ou referência".tr()) }
+            adminBlock("toolbar") {
+                AdminToolbar(state.query, viewModel::setQuery, "Pesquisar por nome, email ou referência".tr()) {
+                    AdminSegmented(
+                        listOf("all" to "Todas".tr(), "paid" to "Pagas".tr(), "cancelled" to "Canceladas".tr(), "failed" to "Falhadas".tr(), "refunded" to "Reembolsadas".tr()),
+                        state.filter, viewModel::setFilter, counts = counts,
+                    )
+                }
+            }
             when {
                 state.isLoading -> item { AdminLoading(Modifier.fillMaxWidth().height(160.dp)) }
                 state.error != null -> item { AdminError(state.error!!, { viewModel.load() }, Modifier.fillMaxWidth()) }
-                state.visible.isEmpty() -> item { AdminEmpty("Sem faturas.".tr()) }
+                state.visible.isEmpty() -> item { AdminEmptyState("Sem faturas.".tr(), icon = Icons.Outlined.Receipt) }
                 else -> {
-                    items(state.visible, key = { it.idString }) { t ->
-                        SettingsCard(modifier = Modifier.fillMaxWidth().clickable { viewModel.open(t) }) { TransactionLine(t) }
-                    }
+                    adminListGroup(state.visible, key = { it.idString }) { t -> TransactionLine(t, onClick = { viewModel.open(t) }, inset = true) }
                     if (state.hasMore) item { AdminLoadMore(state.loadingMore) { viewModel.load(state.page + 1) } }
                 }
             }
@@ -816,9 +951,12 @@ fun InvoicesPane(viewModel: InvoicesViewModel = hiltViewModel()) {
         val u = t.relationships?.user?.data?.attributes
         ModalBottomSheet(onDismissRequest = { viewModel.open(null) }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(a.price ?: "—", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(a.price ?: "—", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    val (label, tone) = co.golink.tester.ui.screens.settings.transactionTone(a)
+                    AdminStatusPill(label, tone)
+                }
                 AdminInfoRow("Utilizador".tr(), listOfNotNull(u?.name, u?.email).joinToString(" · ").ifBlank { null })
-                AdminInfoRow("Estado".tr(), a.status)
                 AdminInfoRow("Gateway".tr(), a.driver)
                 AdminInfoRow("Referência".tr(), a.reference)
                 AdminInfoRow("Nota".tr(), a.note)

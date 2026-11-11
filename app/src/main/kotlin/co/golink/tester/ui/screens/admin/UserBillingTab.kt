@@ -1,5 +1,9 @@
 package co.golink.tester.ui.screens.admin
 
+import androidx.compose.material.icons.outlined.AddCard
+import androidx.compose.material.icons.outlined.Autorenew
+import androidx.compose.material.icons.outlined.Receipt
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -106,7 +110,7 @@ internal fun UserBillingTab(subscriptionType: String, viewModel: UserBillingView
     if (state.isLoading) return AdminLoading(Modifier.fillMaxWidth().height(160.dp))
     state.error?.let { return AdminError(it, { viewModel.load() }, Modifier.fillMaxWidth()) }
 
-    SettingsCard(title = "Subscrição".tr()) {
+    SettingsCard(title = "Subscrição".tr(), icon = androidx.compose.material.icons.Icons.Outlined.Autorenew) {
         val s = state.subscription
         if (s == null) {
             AdminInfoRow("Plano".tr(), "Sem subscrição".tr())
@@ -131,7 +135,7 @@ internal fun UserBillingTab(subscriptionType: String, viewModel: UserBillingView
         var confirming by remember { mutableStateOf(false) }
         // O campo só é limpo quando o crédito é aceite (num erro fica para corrigir).
         LaunchedEffect(state.credited) { if (state.credited > 0) amount = "" }
-        SettingsCard(title = "Adicionar crédito".tr()) {
+        SettingsCard(title = "Adicionar crédito".tr(), icon = androidx.compose.material.icons.Icons.Outlined.AddCard, iconTint = AdminTone.Info.solid) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SettingsField("Valor".tr(), amount, { amount = it.replace(',', '.') }, keyboardType = KeyboardType.Decimal)
                 state.message?.let { SettingsNotice(it, if (state.messageIsError) MaterialTheme.colorScheme.error else SettingsAccent) }
@@ -155,7 +159,7 @@ internal fun UserBillingTab(subscriptionType: String, viewModel: UserBillingView
         }
     }
 
-    SettingsCard(title = "Transações".tr()) {
+    SettingsCard(title = "Transações".tr(), icon = androidx.compose.material.icons.Icons.Outlined.Receipt, iconTint = co.golink.tester.ui.screens.settings.SettingsColors.Amber) {
         if (state.transactions.isEmpty()) {
             AdminInfoRow("—", "Sem transações.".tr())
         } else {

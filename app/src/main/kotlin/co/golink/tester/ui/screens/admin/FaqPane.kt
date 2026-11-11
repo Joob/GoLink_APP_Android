@@ -1,5 +1,7 @@
 package co.golink.tester.ui.screens.admin
 
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -169,24 +171,31 @@ fun FaqPane(viewModel: FaqViewModel = hiltViewModel()) {
 
     val visible = state.entries.filter { state.category == null || it.category == state.category }
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            item {
-                Text(
-                    "Perguntas do centro de ajuda, em todas as línguas.".tr(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (state.ai) {
-                    TextButton(onClick = viewModel::generate, enabled = state.busy == null) {
-                        Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
-                        Text("  " + "Gerar sugestões com IA".tr())
-                    }
+        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = AdminListPadding) {
+            adminBlock("header") {
+                AdminPageHeader("Perguntas do centro de ajuda, em todas as línguas.".tr()) {
+                    AdminButton("Nova".tr(), onClick = { viewModel.edit(FaqEntry(category = state.categories.firstOrNull() ?: "other")) }, icon = Icons.Outlined.Add)
                 }
-                if (state.categories.isNotEmpty()) {
+            }
+            if (state.ai) {
+                adminBlock("ai") {
+                    AdminSection(
+                        "Sugestões com IA".tr(),
+                        icon = Icons.Outlined.AutoAwesome,
+                        tint = AdminTone.Info.solid,
+                        description = "Gera perguntas a partir das páginas legais e dos tickets fechados.".tr(),
+                        padded = false,
+                        actions = {
+                            AdminButton(
+                                if (state.busy != null) "…" else "Gerar".tr(), onClick = viewModel::generate,
+                                primary = false, enabled = state.busy == null,
+                            )
+                        },
+                    ) {}
+                }
+            }
+            if (state.categories.isNotEmpty()) {
+                adminBlock("toolbar") {
                     AdminSegmented(
                         options = listOf<Pair<String?, String>>(null to "Todas".tr()) + state.categories.map { it to faqCategoryLabel(it) },
                         selected = state.category,
@@ -198,30 +207,26 @@ fun FaqPane(viewModel: FaqViewModel = hiltViewModel()) {
             when {
                 state.isLoading -> item { AdminLoading(Modifier.fillMaxWidth().height(160.dp)) }
                 state.error != null -> item { AdminError(state.error!!, viewModel::load, Modifier.fillMaxWidth()) }
-                visible.isEmpty() -> item { AdminEmpty("Sem perguntas.".tr()) }
-                else -> items(visible, key = { it.idString }) { e ->
-                    AdminListRow(
+                visible.isEmpty() -> item { AdminEmptyState("Sem perguntas.".tr(), icon = Icons.AutoMirrored.Outlined.HelpOutline) }
+                else -> adminListGroup(visible, key = { it.idString }) { e ->
+                    AdminListItem(
                         title = e.questionFor(I18n.lang),
                         subtitle = faqCategoryLabel(e.category),
                         onClick = { viewModel.edit(e) },
+                        leading = {
+                            co.golink.tester.ui.screens.settings.SettingsIconTile(
+                                if (e.source == "ai") Icons.Outlined.AutoAwesome else Icons.AutoMirrored.Outlined.HelpOutline,
+                                if (e.source == "ai") AdminTone.Info.solid else AdminAccent,
+                                size = 32,
+                            )
+                        },
                         trailing = {
-                            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                if (e.is_published) AdminBadge("Publicada".tr(), SettingsAccent) else AdminBadge("Rascunho".tr(), AdminColors.Neutral)
-                                if (e.source == "ai") AdminBadge("IA", AdminColors.Info)
-                            }
+                            if (e.is_published) AdminStatusPill("Publicada".tr(), AdminTone.Success) else AdminStatusPill("Rascunho".tr(), AdminTone.Neutral)
                         },
                     )
                 }
             }
         }
-        ExtendedFloatingActionButton(
-            onClick = { viewModel.edit(FaqEntry(category = state.categories.firstOrNull() ?: "other")) },
-            icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
-            text = { Text("Nova pergunta".tr()) },
-            containerColor = SettingsAccent,
-            contentColor = Color.White,
-            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-        )
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
     }
 }

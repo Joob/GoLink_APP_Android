@@ -1,5 +1,8 @@
 package co.golink.tester.ui.screens.admin
 
+import androidx.compose.material.icons.outlined.ConfirmationNumber
+import androidx.compose.material.icons.outlined.SupportAgent
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -141,48 +144,47 @@ fun SupportTeamPane(viewModel: SupportTeamViewModel = hiltViewModel()) {
     }
 
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            item {
-                Text(
-                    "Agentes que respondem aos tickets, com o nome público, âmbito e permissões de cada um.".tr(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 4.dp),
-                )
+        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = AdminListPadding) {
+            adminBlock("header") {
+                AdminPageHeader("Agentes que respondem aos tickets, com o nome público, âmbito e permissões de cada um.".tr()) {
+                    AdminButton("Adicionar".tr(), onClick = { viewModel.edit(SupportTeamAgent()) }, icon = Icons.Outlined.PersonAdd)
+                }
+            }
+            if (!state.isLoading && state.error == null && state.agents.isNotEmpty()) {
+                adminBlock("kpis", bottom = 16) {
+                    AdminStatGrid(
+                        listOf(
+                            AdminStat("Ativos".tr(), state.agents.count { it.is_active }.toString(), Icons.Outlined.SupportAgent,
+                                hint = "%d no total".tr().format(state.agents.size)),
+                            AdminStat("Tickets abertos".tr(), state.agents.sumOf { it.open_assigned }.toString(), Icons.Outlined.ConfirmationNumber, AdminTone.Warning.solid),
+                        ),
+                    )
+                }
             }
             when {
                 state.isLoading -> item { AdminLoading(Modifier.fillMaxWidth().height(160.dp)) }
                 state.error != null -> item { AdminError(state.error!!, viewModel::load, Modifier.fillMaxWidth()) }
-                state.agents.isEmpty() -> item { AdminEmpty("Ainda não há membros na equipa.".tr()) }
-                else -> items(state.agents, key = { it.idString }) { a ->
-                    AdminListRow(
-                        title = a.display_name ?: a.account_name ?: "—",
+                state.agents.isEmpty() -> item { AdminEmptyState("Ainda não há membros na equipa.".tr(), icon = Icons.Outlined.SupportAgent) }
+                else -> adminListGroup(state.agents, key = { it.idString }) { a ->
+                    val name = a.display_name ?: a.account_name ?: "—"
+                    AdminListItem(
+                        title = name,
                         subtitle = listOfNotNull(a.title, a.email).joinToString(" · "),
-                        leading = { AdminAvatar(a.avatar) },
+                        leading = { AdminAvatar(a.avatar, size = 36, name = name, tone = if (a.is_active) AdminTone.Success else AdminTone.Neutral) },
                         onClick = { viewModel.edit(a) },
+                        trailing = {
+                            if (a.is_active) AdminStatusPill("Ativo".tr(), AdminTone.Success) else AdminStatusPill("Inativo".tr(), AdminTone.Neutral)
+                        },
                         footer = {
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 6.dp)) {
-                                if (a.is_active) AdminBadge("Ativo".tr(), SettingsAccent) else AdminBadge("Inativo".tr(), AdminColors.Neutral)
-                                AdminBadge(if (a.scope == "assigned") "Só atribuídos".tr() else "Todos os tickets".tr(), AdminColors.Info)
-                                if (a.open_assigned > 0) AdminBadge("%d abertos".tr().format(a.open_assigned), AdminColors.Warning)
+                                AdminCount(if (a.scope == "assigned") "Só atribuídos".tr() else "Todos os tickets".tr(), AdminTone.Info)
+                                if (a.open_assigned > 0) AdminStatusPill("%d abertos".tr().format(a.open_assigned), AdminTone.Warning)
                             }
                         },
                     )
                 }
             }
         }
-        ExtendedFloatingActionButton(
-            onClick = { viewModel.edit(SupportTeamAgent()) },
-            icon = { Icon(Icons.Outlined.PersonAdd, contentDescription = null) },
-            text = { Text("Adicionar membro".tr()) },
-            containerColor = SettingsAccent,
-            contentColor = Color.White,
-            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-        )
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
     }
 }
@@ -291,9 +293,15 @@ private fun AgentSheet(agent: SupportTeamAgent, state: SupportTeamViewModel.UiSt
 }
 
 @Composable
-internal fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SwitchRow(label: String, checked: Boolean, description: String? = null, onChange: (Boolean) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onChange)
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            if (description != null) {
+                Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        androidx.compose.foundation.layout.Spacer(Modifier.padding(start = 12.dp))
+        co.golink.tester.ui.screens.settings.SettingsSwitch(checked, onChange)
     }
 }

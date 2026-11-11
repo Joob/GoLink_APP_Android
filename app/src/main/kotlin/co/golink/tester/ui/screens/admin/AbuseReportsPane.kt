@@ -1,5 +1,8 @@
 package co.golink.tester.ui.screens.admin
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Flag
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -180,16 +183,26 @@ fun AbuseReportsPane(
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 4.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = AdminListPadding,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            item {
-                Text(
-                    "Denúncias de links públicos. Bloquear apaga o link, impede voltar a partilhar o item e avisa o dono.".tr(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            item(key = "header") {
+                AdminPageHeader("Denúncias de links públicos. Bloquear apaga o link, impede voltar a partilhar o item e avisa o dono.".tr())
+            }
+            item(key = "kpi") {
+                AdminStatGrid(
+                    listOf(
+                        AdminStat(
+                            "Por rever".tr(), state.openCount.toString(), Icons.Outlined.Flag,
+                            if (state.openCount > 0) AdminTone.Danger.solid else AdminAccent,
+                            hint = if (state.openCount > 0) "Denúncias abertas à espera de decisão".tr() else "Nada pendente".tr(),
+                            onClick = { viewModel.setStatus("open") },
+                        ),
+                    ),
                 )
+            }
+            item(key = "toolbar") {
                 AdminSegmented(
                     options = listOf("open", "blocked", "dismissed", "lifted", "all").map { it to abuseStatusLabel(it) },
                     selected = state.status,
@@ -200,7 +213,7 @@ fun AbuseReportsPane(
             when {
                 state.isLoading -> item { AdminLoading(Modifier.fillMaxWidth().height(160.dp)) }
                 state.error != null -> item { AdminError(state.error!!, { viewModel.load() }, Modifier.fillMaxWidth()) }
-                state.reports.isEmpty() -> item { AdminEmpty("Sem denúncias aqui.".tr()) }
+                state.reports.isEmpty() -> item { AdminEmptyState("Sem denúncias aqui.".tr(), icon = Icons.Outlined.Flag) }
                 else -> {
                     items(state.reports, key = { it.id }) { r ->
                         AbuseReportRow(r, state.busy, onOpenUser, onAction = { action -> confirm = r to action })
@@ -246,18 +259,38 @@ private fun AbuseReportRow(
             formatAdminDate(r.created_at),
             if (r.reports_count > 1) "%d denúncias neste link".tr().format(r.reports_count) else null,
         ).joinToString(" · "),
+        leading = {
+            co.golink.tester.ui.screens.settings.SettingsIconTile(
+                Icons.Outlined.Flag,
+                when (r.status) {
+                    "open" -> AdminTone.Danger.solid
+                    "blocked" -> AdminTone.Warning.solid
+                    else -> AdminTone.Neutral.solid
+                },
+                size = 36,
+            )
+        },
         trailing = {
             r.ai_priority?.let { p ->
-                val color = when (p) {
-                    "high" -> AdminColors.Danger
-                    "normal" -> AdminColors.Warning
-                    else -> AdminColors.Neutral
+                val tone = when (p) {
+                    "high" -> AdminTone.Danger
+                    "normal" -> AdminTone.Warning
+                    else -> AdminTone.Neutral
                 }
-                AdminBadge("IA · " + priorityLabel(p), color)
+                AdminStatusPill("IA · " + priorityLabel(p), tone)
             }
         },
         footer = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 6.dp)) {
+                AdminStatusPill(
+                    abuseStatusLabel(r.status),
+                    when (r.status) {
+                        "open" -> AdminTone.Danger
+                        "blocked" -> AdminTone.Warning
+                        "lifted" -> AdminTone.Info
+                        else -> AdminTone.Neutral
+                    },
+                )
                 r.ai_summary?.let {
                     val extra = r.ai_category?.takeIf { c -> c != r.reason }?.let { c -> " (" + "A IA sugere: %s".tr().format(abuseReasonLabel(c)) + ")" }.orEmpty()
                     Text("IA: $it$extra", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -281,16 +314,11 @@ private fun AbuseReportRow(
                         "open" -> {
                             TextButton(onClick = { onAction("dismiss") }, enabled = enabled) { Text("Rejeitar".tr()) }
                             TextButton(onClick = { onAction("block") }, enabled = enabled) {
-                                Text("Bloquear".tr(), color = AdminColors.Danger)
+                                Text("Bloquear".tr(), color = AdminTone.Danger.solid)
                             }
                         }
                         "blocked" -> TextButton(onClick = { onAction("lift") }, enabled = enabled) { Text("Levantar bloqueio".tr()) }
-                        else -> Text(
-                            abuseStatusLabel(r.status),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(12.dp),
-                        )
+                        else -> Unit
                     }
                 }
             }

@@ -17,6 +17,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import co.golink.tester.ui.screens.settings.SettingsSectionTitle
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
@@ -161,53 +169,63 @@ fun PagesPane(viewModel: PagesViewModel = hiltViewModel()) {
         } else {
             // Agrupadas por slug_group (a mesma página nas várias línguas), como na web.
             val groups = state.pages.groupBy { it.slug_group ?: it.slug }.toSortedMap()
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                item {
-                    Text(
-                        "Páginas do site (termos, privacidade, …), uma por língua.".tr(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+            LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = AdminListPadding) {
+                adminBlock("header") {
+                    AdminPageHeader("Páginas do site (termos, privacidade, …), uma por língua.".tr()) {
+                        AdminButton("Nova".tr(), onClick = { viewModel.showCreate(true) }, icon = Icons.Outlined.Add)
+                    }
+                }
+                if (!state.isLoading && state.error == null && groups.isNotEmpty()) {
+                    val all = state.pages
+                    adminBlock("kpis", bottom = 8) {
+                        AdminStatGrid(
+                            listOf(
+                                AdminStat("Páginas".tr(), groups.size.toString(), Icons.Outlined.Description),
+                                AdminStat("Ativas".tr(), all.count { it.isVisible }.toString(), Icons.Outlined.Visibility, AdminTone.Info.solid,
+                                    hint = "%d inativas".tr().format(all.count { !it.isVisible })),
+                            ),
+                        )
+                    }
                 }
                 when {
                     state.isLoading -> item { AdminLoading(Modifier.fillMaxWidth().height(160.dp)) }
                     state.error != null -> item { AdminError(state.error!!, viewModel::load, Modifier.fillMaxWidth()) }
-                    groups.isEmpty() -> item { AdminEmpty("Sem páginas.".tr()) }
+                    groups.isEmpty() -> item { AdminEmptyState("Sem páginas.".tr(), icon = Icons.Outlined.Description) }
                     else -> groups.forEach { (group, pages) ->
                         item(key = "g-$group") {
-                            Text(group, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+                            SettingsSectionTitle(group, Modifier.padding(top = 10.dp))
                         }
-                        items(pages.sortedBy { it.lang }, key = { it.slug }) { p ->
-                            AdminListRow(
+                        adminListGroup(pages.sortedBy { it.lang }, key = { it.slug }) { p ->
+                            AdminListItem(
                                 title = p.title ?: p.slug,
                                 subtitle = "/page/${p.slug}",
                                 onClick = { viewModel.open(p.slug) },
+                                leading = { LangTile(p.lang) },
                                 trailing = {
-                                    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        p.lang?.let { AdminBadge(it.uppercase(), AdminColors.Info) }
-                                        if (p.isVisible) AdminBadge("Ativa".tr(), SettingsAccent) else AdminBadge("Inativa".tr(), AdminColors.Neutral)
-                                    }
+                                    if (p.isVisible) AdminStatusPill("Ativa".tr(), AdminTone.Success) else AdminStatusPill("Inativa".tr(), AdminTone.Neutral)
                                 },
                             )
                         }
                     }
                 }
             }
-            ExtendedFloatingActionButton(
-                onClick = { viewModel.showCreate(true) },
-                icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
-                text = { Text("Nova página".tr()) },
-                containerColor = SettingsAccent,
-                contentColor = Color.White,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-            )
         }
         if (state.busy == "open") AdminLoading()
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+    }
+}
+
+/** Código da língua num mosaico (EN, PT, …), como a coluna "Língua" da web. */
+@Composable
+internal fun LangTile(lang: String?, size: Int = 36) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(size.dp)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape((size * 0.3f).dp))
+            .background(AdminTone.Info.background()),
+    ) {
+        Text((lang ?: "?").uppercase().take(5), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = AdminTone.Info.text())
     }
 }
 

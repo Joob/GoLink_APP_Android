@@ -5,20 +5,22 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.Translate
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -34,7 +36,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -46,7 +47,7 @@ import co.golink.tester.data.admin.AdminRepository
 import co.golink.tester.domain.admin.LanguageData
 import co.golink.tester.domain.admin.stringMap
 import co.golink.tester.ui.i18n.tr
-import co.golink.tester.ui.screens.settings.SettingsAccent
+import co.golink.tester.ui.screens.settings.SettingsColors
 import co.golink.tester.ui.screens.settings.SettingsCard
 import co.golink.tester.ui.screens.settings.SettingsDialog
 import co.golink.tester.ui.screens.settings.SettingsField
@@ -250,50 +251,56 @@ fun LanguagesPane(viewModel: LanguagesViewModel = hiltViewModel()) {
             BackHandler(onBack = viewModel::close)
             LanguageEditor(selected, state, viewModel)
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                contentPadding = PaddingValues(top = 4.dp, bottom = 96.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                item {
-                    Text(
-                        "Línguas da interface e os textos de cada uma. O inglês é a referência.".tr(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+            LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = AdminListPadding) {
+                adminBlock("header") {
+                    AdminPageHeader("Línguas da interface e os textos de cada uma. O inglês é a referência.".tr()) {
+                        AdminButton("Nova".tr(), onClick = { viewModel.showCreate(true) }, icon = Icons.Outlined.Add)
+                    }
                 }
                 when {
                     state.isLoading -> item { AdminLoading(Modifier.fillMaxWidth().height(160.dp)) }
                     state.error != null -> item { AdminError(state.error!!, viewModel::load, Modifier.fillMaxWidth()) }
-                    else -> items(state.languages, key = { it.idString }) { l ->
-                        val pct = state.progress[l.attributes.locale] ?: 0
-                        AdminListRow(
-                            title = l.attributes.name,
-                            subtitle = l.attributes.locale,
-                            onClick = { viewModel.open(l) },
-                            trailing = { if (l.attributes.locale == state.defaultLocale) AdminBadge("Por omissão".tr(), SettingsAccent) },
-                            footer = {
-                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-                                    LinearProgressIndicator(
-                                        progress = { pct / 100f },
-                                        color = if (pct >= 100) SettingsAccent else AdminColors.Warning,
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    Text("  $pct%", style = MaterialTheme.typography.labelSmall)
-                                }
-                            },
-                        )
+                    state.languages.isEmpty() -> item { AdminEmptyState("Sem línguas".tr(), icon = Icons.Outlined.Translate) }
+                    else -> {
+                        val complete = state.languages.count { (state.progress[it.attributes.locale] ?: 0) >= 100 }
+                        val default = state.languages.firstOrNull { it.attributes.locale == state.defaultLocale }
+                        adminBlock("stats") {
+                            AdminStatGrid(
+                                listOf(
+                                    AdminStat("Línguas".tr(), state.languages.size.toString(), Icons.Outlined.Translate, SettingsColors.Blue),
+                                    AdminStat("Completas".tr(), "%d/%d".format(complete, state.languages.size), Icons.Outlined.CheckCircle, SettingsColors.Green),
+                                    AdminStat("Por omissão".tr(), default?.attributes?.name ?: state.defaultLocale.uppercase(), Icons.Outlined.Star, SettingsColors.Amber),
+                                    AdminStat("Tradução com IA".tr(), if (state.ai) "Disponível".tr() else "Indisponível".tr(), Icons.Outlined.AutoAwesome, if (state.ai) SettingsColors.Orange else SettingsColors.Slate),
+                                ),
+                            )
+                        }
+                        adminListGroup(state.languages, key = { it.idString }) { l ->
+                            val pct = state.progress[l.attributes.locale] ?: 0
+                            AdminListItem(
+                                title = l.attributes.name,
+                                subtitle = if (l.attributes.locale == "en") "%s · referência".tr().format(l.attributes.locale) else l.attributes.locale,
+                                leading = { LangTile(l.attributes.locale, 40) },
+                                onClick = { viewModel.open(l) },
+                                trailing = {
+                                    if (l.attributes.locale == state.defaultLocale) AdminStatusPill("Padrão".tr(), AdminTone.Success)
+                                    else AdminCount("$pct%", if (pct >= 100) AdminTone.Success else AdminTone.Warning)
+                                },
+                                footer = {
+                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                                        AdminProgressBar(pct.toFloat(), Modifier.weight(1f), tint = if (pct >= 100) AdminAccent else AdminColors.Warning)
+                                        Text(
+                                            "$pct%",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(start = 8.dp),
+                                        )
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
             }
-            ExtendedFloatingActionButton(
-                onClick = { viewModel.showCreate(true) },
-                icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
-                text = { Text("Nova língua".tr()) },
-                containerColor = SettingsAccent,
-                contentColor = Color.White,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-            )
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
     }
@@ -305,64 +312,106 @@ private fun LanguageEditor(lang: LanguageData, state: LanguagesViewModel.UiState
     var showSettings by remember { mutableStateOf(false) }
     val keys = state.visibleKeys
     val pending = state.pendingKeys.size
+    val total = state.translations.size
+    val pct = if (total == 0) 0 else ((total - pending) * 100 / total)
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(top = 4.dp, bottom = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(lang.attributes.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text("%d textos · %d por traduzir".tr().format(state.translations.size, pending), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = AdminListPadding) {
+        adminBlock("lang") {
+            SettingsCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    LangTile(lang.attributes.locale, 44)
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(lang.attributes.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            if (lang.attributes.locale == state.defaultLocale) {
+                                Box(Modifier.padding(start = 8.dp)) { AdminStatusPill("Padrão".tr(), AdminTone.Success) }
+                            }
+                        }
+                        Text(
+                            "%d textos · %d por traduzir".tr().format(total, pending),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    AdminButton(
+                        if (showSettings) "Fechar".tr() else "Definições".tr(),
+                        onClick = { showSettings = !showSettings },
+                        icon = Icons.Outlined.Tune,
+                        primary = false,
+                    )
                 }
-                androidx.compose.material3.TextButton(onClick = { showSettings = !showSettings }) { Text("Definições".tr()) }
+                if (!state.isReference && total > 0) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                        AdminProgressBar(pct.toFloat(), Modifier.weight(1f), tint = if (pct >= 100) AdminAccent else AdminColors.Warning)
+                        Text("$pct%", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 8.dp))
+                    }
+                }
             }
         }
-        if (showSettings) item { LanguageSettings(lang, state, vm) }
-        if (state.ai && !state.isReference && pending > 0) item {
-            SettingsCard {
+        if (showSettings) adminBlock("settings") { LanguageSettings(lang, state, vm) }
+        if (state.ai && !state.isReference && pending > 0) adminBlock("auto") {
+            SettingsCard(
+                title = "Tradução automática".tr(),
+                description = "Traduz os textos que ainda estão iguais ao inglês, em lotes.".tr(),
+                icon = Icons.Outlined.AutoAwesome,
+                iconTint = SettingsColors.Orange,
+            ) {
                 if (state.busy == "auto") {
                     Text("A traduzir %d de %d…".tr().format(state.autoDone, state.autoTotal), style = MaterialTheme.typography.bodySmall)
-                    LinearProgressIndicator(
-                        progress = { if (state.autoTotal == 0) 0f else state.autoDone / state.autoTotal.toFloat() },
-                        color = SettingsAccent, modifier = Modifier.fillMaxWidth(),
+                    AdminProgressBar(
+                        if (state.autoTotal == 0) 0f else state.autoDone * 100f / state.autoTotal,
+                        Modifier.fillMaxWidth(),
+                        tint = AdminAccent,
                     )
                     SettingsOutlinedButton("Parar".tr(), onClick = vm::cancelAuto)
                 } else {
-                    SettingsPrimaryButton("Traduzir %d textos com IA".tr().format(pending), onClick = vm::autoTranslate, enabled = state.busy == null)
+                    SettingsPrimaryButton("Traduzir %d textos com IA".tr().format(pending), onClick = vm::autoTranslate, enabled = state.busy == null, icon = Icons.Outlined.AutoAwesome)
                 }
             }
         }
-        item {
-            AdminSearchField(state.query, vm::setQuery, "Pesquisar chave ou texto".tr())
-            AdminSegmented(
-                options = listOf(
-                    StringFilter.All to "Todos".tr(),
-                    StringFilter.Pending to "Por traduzir".tr(),
-                    StringFilter.MissingVars to "Variáveis em falta".tr(),
-                ),
-                selected = state.filter,
-                onSelect = vm::setFilter,
-                counts = mapOf(
-                    StringFilter.All to state.translations.size,
-                    StringFilter.Pending to pending,
-                    StringFilter.MissingVars to state.missingVarKeys.size,
-                ),
-                modifier = Modifier.padding(top = 8.dp),
-            )
+        adminBlock("toolbar") {
+            AdminToolbar(state.query, vm::setQuery, "Pesquisar chave ou texto".tr()) {
+                AdminSegmented(
+                    options = listOf(
+                        StringFilter.All to "Todos".tr(),
+                        StringFilter.Pending to "Por traduzir".tr(),
+                        StringFilter.MissingVars to "Variáveis em falta".tr(),
+                    ),
+                    selected = state.filter,
+                    onSelect = vm::setFilter,
+                    counts = mapOf(
+                        StringFilter.All to total,
+                        StringFilter.Pending to pending,
+                        StringFilter.MissingVars to state.missingVarKeys.size,
+                    ),
+                )
+            }
         }
-        if (state.busy == "open") item { AdminLoading(Modifier.fillMaxWidth().height(160.dp)) }
-        else if (keys.isEmpty()) item { AdminEmpty("Sem resultados.".tr()) }
-        // Listas com milhares de chaves: o LazyColumn só compõe o que está visível.
-        items(keys, key = { it }) { k ->
-            val value = state.translations[k].orEmpty()
-            Column(Modifier.fillMaxWidth().clickable { editingKey = k }.padding(vertical = 6.dp)) {
-                Text(k, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(value, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (!state.isReference) state.reference[k]?.takeIf { it != value }?.let {
-                    Text("EN: $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        when {
+            state.busy == "open" -> item { AdminLoading(Modifier.fillMaxWidth().height(160.dp)) }
+            keys.isEmpty() -> item { AdminEmptyState("Sem resultados.".tr(), icon = Icons.Outlined.Search) }
+            // Listas com milhares de chaves: o LazyColumn só compõe o que está visível.
+            else -> adminListGroup(keys, key = { "str:$it" }) { k ->
+                val value = state.translations[k].orEmpty()
+                val isPending = k in state.pendingKeys
+                val missingVars = k in state.missingVarKeys
+                Column(Modifier.fillMaxWidth().clickable { editingKey = k }.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            k,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (missingVars) AdminStatusPill("Variáveis".tr(), AdminTone.Danger)
+                        else if (isPending) AdminStatusPill("Por traduzir".tr(), AdminTone.Warning)
+                    }
+                    Text(value, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+                    if (!state.isReference) state.reference[k]?.takeIf { it != value }?.let {
+                        Text("EN: $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
         }
@@ -376,18 +425,28 @@ private fun LanguageSettings(lang: LanguageData, state: LanguagesViewModel.UiSta
     var name by remember(lang) { mutableStateOf(lang.attributes.name) }
     var confirmDelete by remember { mutableStateOf(false) }
     val isDefault = lang.attributes.locale == state.defaultLocale
-    SettingsCard {
-        SettingsField("Nome".tr(), name, { name = it })
-        SettingsOutlinedButton("Guardar nome".tr(), onClick = { vm.rename(name) }, enabled = name.isNotBlank() && name != lang.attributes.name && state.busy == null)
-        if (isDefault) {
-            SettingsNotice("Esta é a língua por omissão do site.".tr(), SettingsAccent)
-        } else {
-            SettingsOutlinedButton("Tornar língua por omissão".tr(), onClick = vm::makeDefault, enabled = state.busy == null)
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SettingsCard(title = "Definições da língua".tr(), icon = Icons.Outlined.Tune, iconTint = SettingsColors.Indigo) {
+            SettingsField("Nome".tr(), name, { name = it })
+            SettingsOutlinedButton("Guardar nome".tr(), onClick = { vm.rename(name) }, enabled = name.isNotBlank() && name != lang.attributes.name && state.busy == null)
+            if (isDefault) {
+                SettingsNotice("Esta é a língua por omissão do site.".tr(), AdminAccent)
+            } else {
+                SettingsOutlinedButton("Tornar língua por omissão".tr(), onClick = vm::makeDefault, enabled = state.busy == null)
+            }
+            state.formError?.let { SettingsNotice(it, MaterialTheme.colorScheme.error) }
         }
         if (!state.isReference) {
-            SettingsOutlinedButton("Apagar língua".tr(), onClick = { confirmDelete = true }, destructive = true, enabled = state.busy == null)
+            SettingsCard(
+                title = "Apagar língua".tr(),
+                description = "Os textos desta língua são apagados. Se for a língua por omissão, o site passa a usar o inglês.".tr(),
+                icon = Icons.Outlined.DeleteOutline,
+                iconTint = SettingsColors.Red,
+                danger = true,
+            ) {
+                SettingsOutlinedButton("Apagar língua".tr(), onClick = { confirmDelete = true }, destructive = true, enabled = state.busy == null)
+            }
         }
-        state.formError?.let { SettingsNotice(it, MaterialTheme.colorScheme.error) }
     }
     if (confirmDelete) {
         SettingsDialog(

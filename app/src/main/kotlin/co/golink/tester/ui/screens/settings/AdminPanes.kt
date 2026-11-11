@@ -4,6 +4,22 @@ import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.MailOutline
 import co.golink.tester.ui.i18n.tr
+import co.golink.tester.ui.screens.admin.AdminAccent
+import co.golink.tester.ui.screens.admin.AdminAvatar
+import co.golink.tester.ui.screens.admin.AdminEmptyState
+import co.golink.tester.ui.screens.admin.AdminError
+import co.golink.tester.ui.screens.admin.AdminListPadding
+import co.golink.tester.ui.screens.admin.AdminLoading
+import co.golink.tester.ui.screens.admin.AdminPageHeader
+import co.golink.tester.ui.screens.admin.AdminSection
+import co.golink.tester.ui.screens.admin.AdminSegmented
+import co.golink.tester.ui.screens.admin.AdminStatusPill
+import co.golink.tester.ui.screens.admin.AdminTone
+import co.golink.tester.ui.screens.admin.adminBlock
+import co.golink.tester.ui.screens.admin.adminListGroup
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -76,25 +92,7 @@ import kotlinx.coroutines.launch
 // Shared building blocks
 // ===========================================================================
 
-@Composable
-private fun AdminLoading() {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(strokeWidth = 2.dp)
-    }
-}
-
-@Composable
-private fun AdminError(message: String, onRetry: () -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(12.dp))
-        OutlinedButton(onClick = onRetry, shape = RoundedCornerShape(14.dp)) { Text("Tentar de novo".tr()) }
-    }
-}
+// Estados e listas: AdminKit (co.golink.tester.ui.screens.admin).
 
 // ===========================================================================
 // Dashboard
@@ -292,54 +290,64 @@ fun InviteRegistersPane(viewModel: InviteRegistersViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var pendingDelete by remember { mutableStateOf<InviteItem?>(null) }
 
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
-        SettingsPaneHeader(androidx.compose.material.icons.Icons.Outlined.MailOutline, SettingsColors.Orange, "Registos de Convite".tr(), "Convida pessoas e acompanha os registos.".tr())
-        Spacer(Modifier.height(16.dp))
-        SettingsCard(title = "Novo convite".tr(), description = "A pessoa recebe um email para criar conta.".tr()) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(
-                value = state.newEmail,
-                onValueChange = viewModel::setEmail,
-                label = { Text("Email a convidar".tr()) },
-                singleLine = true,
-                enabled = !state.isSubmitting,
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.width(8.dp))
-            Button(
-                onClick = viewModel::createInvite,
-                enabled = !state.isSubmitting && state.newEmail.isNotBlank(),
-                shape = RoundedCornerShape(14.dp),
+    var filter by remember { mutableStateOf("all") }
+    val counts = remember(state.invites) {
+        val by = state.invites.groupingBy { it.status }.eachCount()
+        mapOf("all" to state.invites.size, "pending" to (by["pending"] ?: 0), "completed" to (by["completed"] ?: 0), "expired" to (by["expired"] ?: 0))
+    }
+    val visible = state.invites.filter { filter == "all" || it.status == filter }
+
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = AdminListPadding) {
+        adminBlock("header") { AdminPageHeader("Convida pessoas e acompanha os registos.".tr()) }
+        adminBlock("new", bottom = 16) {
+            AdminSection(
+                "Novo convite".tr(),
+                icon = androidx.compose.material.icons.Icons.Outlined.MailOutline,
+                tint = SettingsColors.Orange,
+                description = "A pessoa recebe um email para criar conta.".tr(),
             ) {
-                if (state.isSubmitting) {
-                    CircularProgressIndicator(strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(18.dp))
-                } else {
-                    Text("Convidar".tr())
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = state.newEmail,
+                        onValueChange = viewModel::setEmail,
+                        label = { Text("Email a convidar".tr()) },
+                        singleLine = true,
+                        enabled = !state.isSubmitting,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = viewModel::createInvite,
+                        enabled = !state.isSubmitting && state.newEmail.isNotBlank(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = AdminAccent, contentColor = Color.White),
+                    ) {
+                        if (state.isSubmitting) {
+                            CircularProgressIndicator(strokeWidth = 2.dp, color = Color.White, modifier = Modifier.size(18.dp))
+                        } else {
+                            Text("Convidar".tr())
+                        }
+                    }
+                }
+                state.feedback?.let { msg ->
+                    Text(msg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
                 }
             }
         }
-
-        state.feedback?.let { msg ->
-            Text(msg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        }
-
-        Spacer(Modifier.height(16.dp))
-        SettingsSectionTitle("Convites enviados".tr())
-
-        when {
-            state.isLoading -> AdminLoading()
-            state.error != null -> AdminError(state.error!!, viewModel::load)
-            state.invites.isEmpty() -> Text(
-                "Sem convites.".tr(),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 12.dp),
+        item(key = "sent-title") { SettingsSectionTitle("Convites enviados".tr()) }
+        adminBlock("toolbar") {
+            AdminSegmented(
+                listOf("all" to "Todos".tr(), "pending" to "Pendentes".tr(), "completed" to "Registados".tr(), "expired" to "Expirados".tr()),
+                filter, { filter = it }, counts = counts,
             )
-            else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(state.invites, key = { it.id }) { invite ->
-                    InviteRow(invite, onResend = { viewModel.resendInvite(invite.id) }, onDelete = { pendingDelete = invite })
-                }
+        }
+        when {
+            state.isLoading -> item { AdminLoading(Modifier.fillMaxWidth().height(160.dp)) }
+            state.error != null -> item { AdminError(state.error!!, viewModel::load, Modifier.fillMaxWidth()) }
+            visible.isEmpty() -> item { AdminEmptyState("Sem convites.".tr(), icon = androidx.compose.material.icons.Icons.Outlined.MailOutline) }
+            else -> adminListGroup(visible, key = { it.id }) { invite ->
+                InviteRow(invite, onResend = { viewModel.resendInvite(invite.id) }, onDelete = { pendingDelete = invite })
             }
         }
     }
@@ -361,33 +369,36 @@ fun InviteRegistersPane(viewModel: InviteRegistersViewModel = hiltViewModel()) {
 
 @Composable
 private fun InviteRow(invite: InviteItem, onResend: () -> Unit, onDelete: () -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = settingsCardColor(),
-        border = settingsCardBorderStroke(),
-        modifier = Modifier.fillMaxWidth(),
+    val (label, tone) = when (invite.status) {
+        "completed" -> "Registado".tr() to AdminTone.Success
+        "expired" -> "Expirado".tr() to AdminTone.Neutral
+        "pending" -> "Pendente".tr() to AdminTone.Warning
+        else -> invite.status.ifBlank { "—" } to AdminTone.Neutral
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(start = 14.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(invite.email, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val sub = buildString {
-                    append(invite.status.ifBlank { "—" })
-                    invite.inviterName?.let { append(" · "); append(it) }
-                }
-                Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            // Convites já usados não se reenviam (o servidor recusa com 422).
-            if (invite.status != "completed") {
-                IconButton(onClick = onResend) {
-                    Icon(androidx.compose.material.icons.Icons.Outlined.Refresh, contentDescription = "Reenviar".tr())
+        AdminAvatar(null, size = 36, name = invite.email, tone = tone)
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(invite.email, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                AdminStatusPill(label, tone)
+                listOfNotNull(invite.inviterName, co.golink.tester.ui.screens.admin.formatAdminDate(invite.createdAt)).joinToString(" · ").takeIf { it.isNotBlank() }?.let {
+                    Spacer(Modifier.width(6.dp))
+                    Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Filled.Delete, contentDescription = "Remover".tr(), tint = MaterialTheme.colorScheme.error)
+        }
+        // Convites já usados não se reenviam (o servidor recusa com 422).
+        if (invite.status != "completed") {
+            IconButton(onClick = onResend) {
+                Icon(androidx.compose.material.icons.Icons.Outlined.Refresh, contentDescription = "Reenviar".tr(), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+        }
+        IconButton(onClick = onDelete) {
+            Icon(androidx.compose.material.icons.Icons.Outlined.DeleteOutline, contentDescription = "Remover".tr(), tint = AdminTone.Danger.solid)
         }
     }
 }

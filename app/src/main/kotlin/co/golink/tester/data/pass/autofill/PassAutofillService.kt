@@ -16,6 +16,7 @@ import javax.inject.Inject
 /**
  * Preenchimento do Pass noutras apps e no browser.
  * Nada sai do aparelho: os logins vêm do cofre já decifrado em memória (o mesmo processo da app);
+ * com o cofre aberto, 1 sync por dia ([PassRepository.touchFromAutofill]) conta como atividade no servidor;
  * trancado → só um "Desbloquear o Pass" que abre o ecrã de desbloqueio.
  */
 @AndroidEntryPoint
@@ -29,6 +30,7 @@ class PassAutofillService : AutofillService() {
             if (target.isEmpty || target.packageName == packageName) return callback.onSuccess(null)
             val inline = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) request.inlineSuggestionsRequest else null
             val response = if (repo.isOpen) {
+                repo.touchFromAutofill()
                 PassAutofillResponses.fill(this, target, repo.state.value, repo.state.value.settings.reprompt && !repo.repromptValid(), inline)
             } else {
                 PassAutofillResponses.locked(this, target, inline)

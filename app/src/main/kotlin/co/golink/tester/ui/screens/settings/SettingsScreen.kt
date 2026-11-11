@@ -1770,40 +1770,6 @@ private fun StoragePane(
                     onClick = onOpenBackups,
                 ) { SettingsChevron() }
             }
-
-            if (insights.largest.isNotEmpty()) {
-                PaneSection("Maiores ficheiros".tr())
-                PaneCard(padded = false) {
-                    insights.largest.forEachIndexed { i, f ->
-                        Column {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onOpenFile(f) }
-                                    .padding(horizontal = 16.dp, vertical = 11.dp),
-                            ) {
-                                Box(Modifier.width(20.dp), contentAlignment = Alignment.Center) {
-                                    co.golink.tester.ui.components.FileTypeIcon(f, Modifier.height(24.dp))
-                                }
-                                Spacer(Modifier.width(16.dp))
-                                Text(
-                                    f.name,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                Spacer(Modifier.width(10.dp))
-                                Text(f.filesize.orEmpty(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                            }
-                            if (i < insights.largest.lastIndex) {
-                                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f), modifier = Modifier.padding(start = 52.dp, end = 16.dp))
-                            }
-                        }
-                    }
-                }
-            }
         }
 
         PaneCard(padded = false) {
