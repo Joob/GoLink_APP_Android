@@ -125,6 +125,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.asExecutor
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -340,7 +341,8 @@ fun ReceiptScanPage(
                 phase = "form"
             } finally {
                 bmp.recycle()
-                ocrJob = null
+                // Um job cancelado acaba mais tarde: não pode limpar o de uma foto nova.
+                if (ocrJob === this.coroutineContext[Job]) ocrJob = null
             }
         }
     }
@@ -873,20 +875,29 @@ private fun RcCameraView(torch: Boolean, liveQr: Boolean, shutter: Boolean, onQr
     val liveNow by rememberUpdatedState(liveQr)
     val previewView = remember { PreviewView(context).apply { scaleType = PreviewView.ScaleType.FILL_CENTER } }
     var camera by remember { mutableStateOf<Camera?>(null) }
-    val capture = remember { ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build() }
+    // ~5 MP chega (o OCR reduz a 2400 px e a foto guardada a 1600): a resolução máxima
+    // do sensor (12–50 MP) eram centenas de MB em bitmaps.
+    val capture = remember {
+        ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setResolutionSelector(
+                ResolutionSelector.Builder().setResolutionStrategy(ResolutionStrategy(Size(2560, 1920), ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)).build(),
+            )
+            .build()
+    }
     val busy = remember { AtomicBoolean(false) }
     val main = remember { Handler(Looper.getMainLooper()) }
 
     fun grab(done: (Bitmap?) -> Unit) {
-        val exec = ContextCompat.getMainExecutor(context)
-        capture.takePicture(exec, object : ImageCapture.OnImageCapturedCallback() {
+        // Descodificar e rodar a foto fora da main; o resultado volta à main.
+        capture.takePicture(Dispatchers.Default.asExecutor(), object : ImageCapture.OnImageCapturedCallback() {
             override fun onCaptureSuccess(image: ImageProxy) {
                 val rot = image.imageInfo.rotationDegrees
-                val bmp = runCatching { image.toBitmap() }.getOrNull()
+                val bmp = runCatching { ReceiptsImages.rotate(image.toBitmap(), rot) }.getOrNull()
                 image.close()
-                done(bmp?.let { ReceiptsImages.rotate(it, rot) } ?: previewView.bitmap)
+                main.post { done(bmp ?: previewView.bitmap) }
             }
-            override fun onError(exception: ImageCaptureException) { done(previewView.bitmap) }
+            override fun onError(exception: ImageCaptureException) { main.post { done(previewView.bitmap) } }
         })
     }
 

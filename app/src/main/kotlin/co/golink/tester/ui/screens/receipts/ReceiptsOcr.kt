@@ -27,7 +27,8 @@ object ReceiptsOcr {
     /** Muda quando o modelo em assets/tessdata muda (obriga a copiar outra vez). */
     private const val MODEL = "por-best-711de9db"
     private const val MAX_SIDE = 2400
-    private const val TIMEOUT_MS = 20_000L
+    /** Modelo "best" num telemóvel fraco pode passar dos 20 s; há progresso e Cancelar. */
+    private const val TIMEOUT_MS = 45_000L
 
     /** Um OCR de cada vez (cada instância do Tesseract ocupa dezenas de MB). Liberta-se no fim da thread. */
     private val gate = Semaphore(1)
@@ -88,7 +89,7 @@ object ReceiptsOcr {
     }
 
     /**
-     * Texto do talão. Cancelável (pára o Tesseract) e com limite de 20 s.
+     * Texto do talão. Cancelável (pára o Tesseract) e com limite de 45 s.
      * [onProgress] recebe 0–100 numa thread de fundo.
      */
     suspend fun read(context: Context, bitmap: Bitmap, onProgress: (Int) -> Unit = {}): String {
@@ -96,29 +97,33 @@ object ReceiptsOcr {
         var handedOff = false
         try {
             val (root, img) = withContext(Dispatchers.Default) { dataDir(context) to prepare(bitmap) }
-            val api = TessBaseAPI { values -> onProgress(values.percent) }
-            if (!api.init(root.absolutePath, "por")) {
-                api.recycle()
-                img.recycle()
-                throw IllegalStateException("tesseract init")
-            }
-            api.pageSegMode = TessBaseAPI.PageSegMode.PSM_AUTO
-            api.setImage(img)
-            // O Tesseract é bloqueante e nativo: corre numa thread própria, que é dona
-            // da API e da imagem (recycle + gate no fim, mesmo depois de cancelado).
+            // O Tesseract é bloqueante e nativo: init (carrega o modelo), setImage e o
+            // reconhecimento correm numa thread própria, que é dona da API e da imagem
+            // (recycle + gate no fim, mesmo depois de cancelado). Nada disto na main.
             val result = CompletableDeferred<String>()
             val lock = Any()
-            var finished = false
+            var running: TessBaseAPI? = null
+            var stopped = false
             thread(name = "rc-ocr", isDaemon = true) {
+                var api: TessBaseAPI? = null
                 try {
+                    api = TessBaseAPI { values -> onProgress(values.percent) }
+                    check(api.init(root.absolutePath, "por")) { "tesseract init" }
+                    api.pageSegMode = TessBaseAPI.PageSegMode.PSM_AUTO
+                    api.setImage(img) // copia para um Pix: a imagem já não é precisa
+                    img.recycle()
+                    synchronized(lock) {
+                        if (stopped) throw CancellationException("ocr")
+                        running = api
+                    }
                     api.getHOCRText(0) // reconhece, com progresso
                     result.complete(api.utF8Text.orEmpty())
                 } catch (e: Throwable) {
                     result.completeExceptionally(e)
                 } finally {
                     synchronized(lock) {
-                        finished = true
-                        runCatching { api.recycle() }
+                        running = null
+                        api?.let { runCatching { it.recycle() } }
                     }
                     img.recycle()
                     gate.release()
@@ -128,8 +133,11 @@ object ReceiptsOcr {
             return try {
                 withTimeout(TIMEOUT_MS) { result.await() }
             } catch (e: CancellationException) {
-                // Cancelado ou 20 s: o Tesseract pára e a thread acaba (nunca depois do recycle).
-                synchronized(lock) { if (!finished) runCatching { api.stop() } }
+                // Cancelado ou tempo esgotado: o Tesseract pára e a thread acaba (nunca depois do recycle).
+                synchronized(lock) {
+                    stopped = true
+                    running?.let { runCatching { it.stop() } }
+                }
                 throw e
             }
         } finally {
