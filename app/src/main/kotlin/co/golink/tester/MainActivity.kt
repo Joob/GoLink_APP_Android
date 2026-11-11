@@ -61,6 +61,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         externalStart = savedInstanceState == null && !fromHistory && !isLauncherIntent(intent)
         if (savedInstanceState == null && !fromHistory) {
             co.golink.tester.ui.navigation.CalendarDeepLink.from(intent)
+            co.golink.tester.data.receipts.ReceiptsDeepLink.from(intent)
             co.golink.tester.ui.navigation.InboxDeepLink.from(intent)
             // Link de um email (App Link): abre o ecrã certo na app.
             co.golink.tester.ui.navigation.AppLinkRouter.from(intent, fromNewIntent = false)
@@ -183,6 +184,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         // Chega antes do ON_START quando a app volta do fundo.
         externalStart = !isLauncherIntent(intent)
         co.golink.tester.ui.navigation.CalendarDeepLink.from(intent)
+        co.golink.tester.data.receipts.ReceiptsDeepLink.from(intent)
         co.golink.tester.ui.navigation.InboxDeepLink.from(intent)
         co.golink.tester.ui.navigation.AppLinkRouter.from(intent, fromNewIntent = true)
     }

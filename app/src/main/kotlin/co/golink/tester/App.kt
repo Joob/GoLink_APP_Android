@@ -27,6 +27,7 @@ class App : Application(), Configuration.Provider, ImageLoaderFactory {
 
     // Lembretes do calendário (AlarmManager): agenda ao desbloquear, limpa no logout.
     @Inject lateinit var calendarAlarms: dagger.Lazy<co.golink.tester.data.calendar.CalendarAlarmScheduler>
+    @Inject lateinit var receiptsNotifier: dagger.Lazy<co.golink.tester.data.receipts.ReceiptsNotifier>
 
     // Preferências de datas: derivadas do utilizador, aplicadas ao estado Compose no Main.
     @Inject lateinit var userRepository: dagger.Lazy<co.golink.tester.data.user.UserRepository>
@@ -48,6 +49,7 @@ class App : Application(), Configuration.Provider, ImageLoaderFactory {
             sessionTerminator.get()
             autoBackupSessionGuard.get()
             calendarAlarms.get().start()
+            receiptsNotifier.get().start()
         }.start()
         kotlinx.coroutines.MainScope().launch {
             val repo = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { userRepository.get() }

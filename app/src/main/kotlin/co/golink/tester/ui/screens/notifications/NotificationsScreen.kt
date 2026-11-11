@@ -166,6 +166,7 @@ fun NotificationsScreen(
     onOpenCalendar: (event: String?, date: String?) -> Unit = { _, _ -> },
     onOpenLegacy: (pane: String) -> Unit = {},
     onOpenNotes: (path: String) -> Unit = {},
+    onOpenReceipts: (pane: String) -> Unit = {},
     onOpenSettings: () -> Unit = {},
     viewModel: NotificationsViewModel = hiltViewModel(),
 ) {
@@ -213,6 +214,7 @@ fun NotificationsScreen(
     val openCalendar by rememberUpdatedState(onOpenCalendar)
     val openLegacy by rememberUpdatedState(onOpenLegacy)
     val openNotes by rememberUpdatedState(onOpenNotes)
+    val openReceipts by rememberUpdatedState(onOpenReceipts)
     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     val actionOf = remember(uriHandler) {
         { n: Notification ->
@@ -223,6 +225,7 @@ fun NotificationsScreen(
                 { e, d -> openCalendar(e, d) },
                 { pane -> openLegacy(pane) },
                 { path -> openNotes(path) },
+                { pane -> openReceipts(pane) },
                 // Só https no nosso domínio (os App Links voltam à app); o resto é ignorado.
                 { url ->
                     if (co.golink.tester.ui.navigation.AppLinkRouter.isOwnHttpsLink(android.net.Uri.parse(url))) {
@@ -611,6 +614,7 @@ private fun actionFor(
     openCalendar: (String?, String?) -> Unit,
     openLegacy: (String) -> Unit,
     openNotes: (String) -> Unit,
+    openReceipts: (String) -> Unit,
     openUrl: (String) -> Unit,
 ): (() -> Unit)? {
     if (n.category == "security-alert") return openSecurity
@@ -631,6 +635,11 @@ private fun actionFor(
         val url = n.actionUrl ?: return { openNotes("") }
         val segments = android.net.Uri.parse(url).pathSegments
         return { openNotes(if (segments.firstOrNull() == "notes") segments.drop(1).joinToString("/") else "") }
+    }
+    // Recibos: /receipts/budgets ou /receipts/spending?period=week&date=… (sem valores).
+    if (n.category == "receipts") {
+        val url = n.actionUrl ?: return { openReceipts("spending") }
+        return { openReceipts(co.golink.tester.ui.navigation.AppLinkRouter.receiptsPane(android.net.Uri.parse(url))) }
     }
     // Calendário: o action traz /calendar?event=…&date=… (o título é genérico, o
     // verdadeiro está cifrado e só se vê ao abrir o evento). Cancelamentos não têm action.

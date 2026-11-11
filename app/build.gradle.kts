@@ -24,8 +24,8 @@ android {
         applicationId = "co.golink.tester"
         minSdk = 26
         targetSdk = 36
-        versionCode = 173
-        versionName = "3.90.0"
+        versionCode = 174
+        versionName = "3.91.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -129,6 +129,10 @@ dependencies {
     implementation(libs.media3.datasource.okhttp)
 
     implementation(libs.zxing.core)
+    // Recibos: câmara em direto a ler o QR das faturas (análise por frame com ZXing).
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
 
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.biometric)

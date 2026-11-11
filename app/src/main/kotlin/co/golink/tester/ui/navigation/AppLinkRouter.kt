@@ -29,6 +29,8 @@ object AppLinkRouter {
         data class Notes(val path: String) : Target
         /** /pass/... → painel ou página do Pass ("vault", "totp", "health", "generator", "settings", "trash"). */
         data class Pass(val pane: String) : Target
+        /** /receipts/... → painel dos Recibos ("spending[/period/date]", "all[/id]", "budgets", "irs", "efatura", "scan", "trash"). */
+        data class Receipts(val pane: String) : Target
         data class Nav(val uri: Uri) : Target
     }
 
@@ -91,7 +93,24 @@ object AppLinkRouter {
             at(0) == "legacy" -> Target.Legacy(at(1) ?: "overview")
             at(0) == "notes" -> Target.Notes(uri.pathSegments.drop(1).joinToString("/"))
             at(0) == "pass" -> Target.Pass(passPane(at(1)))
+            at(0) == "receipts" -> Target.Receipts(receiptsPane(uri))
             else -> null
+        }
+    }
+
+    private val YMD = Regex("\\d{4}-\\d{2}-\\d{2}")
+
+    /** Rotas da web (routesReceipts.js) → painel da app; valores do link validados. */
+    fun receiptsPane(uri: Uri): String {
+        val s = uri.pathSegments
+        return when (val seg = s.getOrNull(1)) {
+            "all" -> s.getOrNull(2)?.takeIf { SAFE_ID.matches(it) }?.let { "all/$it" } ?: "all"
+            "budgets", "irs", "efatura", "scan", "trash" -> seg
+            else -> {
+                val period = uri.getQueryParameter("period")?.takeIf { it in setOf("day", "week", "month", "year") }
+                val date = uri.getQueryParameter("date")?.takeIf { YMD.matches(it) }
+                if (period != null && date != null) "spending/$period/$date" else "spending"
+            }
         }
     }
 

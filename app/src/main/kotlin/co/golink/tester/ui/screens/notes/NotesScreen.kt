@@ -375,7 +375,7 @@ fun NotesScreen(
                         else -> go { onOpenArea(area) }()
                     }
                 },
-                areas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Notes, DrawerArea.Pass, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea),
+                areas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Notes, DrawerArea.Pass, DrawerArea.Receipts, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea),
                 sections = if (e2eUnlocked) notesSections(nativeSidebar, open) { closeDrawer(); dialog = it } else emptyList(),
                 unreadNotifications = unread,
                 onOpenNotifications = go(onOpenNotifications),

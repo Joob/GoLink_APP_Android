@@ -103,6 +103,9 @@ object Routes {
     const val NOTES = "notes?path={path}"
     const val PASS = "pass?pane={pane}"
     fun pass(pane: String = "vault") = "pass?pane=$pane"
+    const val RECEIPTS = "receipts?pane={pane}"
+    /** "spending[/period/date]", "all[/id]", "budgets", "budget/<cat>", "irs", "efatura", "scan", "trash". */
+    fun receipts(pane: String = "spending") = "receipts?pane=${android.net.Uri.encode(pane)}"
     /** Caminho dentro das Notes: "all/<id>", "checklists", "<id>" (link de notificação)… */
     fun notes(path: String = "") = "notes?path=${android.net.Uri.encode(path)}"
     fun legacy(pane: String = "overview") = "legacy?pane=${android.net.Uri.encode(pane)}"
@@ -291,6 +294,7 @@ fun AppNavHost(
         }
         val inApp = route == Routes.HOME || route == Routes.NOTIFICATIONS || route.startsWith("settings") ||
             route.startsWith("calendar") || route.startsWith("support") || route.startsWith("legacy") || route.startsWith("notes?") ||
+            route.startsWith("receipts?") || route.startsWith("pass?") ||
             route.startsWith("viewer/") || route.startsWith("team_invitation") || route.startsWith("verify_email")
         if (needsAuth && (!authed || !inApp)) return@LaunchedEffect
         val target = AppLinkRouter.consume() ?: return@LaunchedEffect
@@ -308,7 +312,19 @@ fun AppNavHost(
             is AppLinkRouter.Target.Legacy -> onTopOfHome(Routes.legacy(target.pane))
             is AppLinkRouter.Target.Notes -> onTopOfHome(Routes.notes(target.path))
             is AppLinkRouter.Target.Pass -> onTopOfHome(Routes.pass(target.pane))
+            is AppLinkRouter.Target.Receipts -> onTopOfHome(Routes.receipts(target.pane))
         } }
+    }
+
+    // Notificação local dos Recibos (alerta de orçamento / resumo semanal) tocada.
+    val receiptsLink by co.golink.tester.data.receipts.ReceiptsDeepLink.pending.collectAsState()
+    LaunchedEffect(receiptsLink, top, currentRoute) {
+        val pane = receiptsLink ?: return@LaunchedEffect
+        if (top != TopState.Authenticated) return@LaunchedEffect
+        val route = currentRoute ?: return@LaunchedEffect
+        if (route == Routes.SPLASH) return@LaunchedEffect
+        co.golink.tester.data.receipts.ReceiptsDeepLink.consume()
+        runCatching { navController.navigate(Routes.receipts(pane)) { popUpTo(Routes.HOME) } }
     }
 
     // Convite de guardião aberto antes do login: Guarding assim que houver sessão.
@@ -509,6 +525,7 @@ fun AppNavHost(
                     onOpenLegacy = { navController.navigate(Routes.legacy()) { launchSingleTop = true } },
                     onOpenNotes = { navController.navigate(Routes.notes()) { launchSingleTop = true } },
                     onOpenPass = { navController.navigate(Routes.pass()) { launchSingleTop = true } },
+                    onOpenReceipts = { navController.navigate(Routes.receipts()) { launchSingleTop = true } },
                     areaRequest = areaRequest?.let { name -> runCatching { co.golink.tester.ui.components.drawer.DrawerArea.valueOf(name) }.getOrNull() },
                     onAreaRequestHandled = { entry.savedStateHandle["drawer_area"] = null },
                     openDrawerRequest = drawerRequest,
@@ -574,6 +591,8 @@ fun AppNavHost(
                             navController.navigate(Routes.notes()) { popUpTo(Routes.HOME) }
                         } else if (area == co.golink.tester.ui.components.drawer.DrawerArea.Pass) {
                             navController.navigate(Routes.pass()) { popUpTo(Routes.HOME) }
+                        } else if (area == co.golink.tester.ui.components.drawer.DrawerArea.Receipts) {
+                            navController.navigate(Routes.receipts()) { popUpTo(Routes.HOME) }
                         } else {
                             backToHome(area.name)
                         }
@@ -612,6 +631,8 @@ fun AppNavHost(
                             navController.navigate(Routes.notes()) { popUpTo(Routes.HOME) }
                         } else if (area == co.golink.tester.ui.components.drawer.DrawerArea.Pass) {
                             navController.navigate(Routes.pass()) { popUpTo(Routes.HOME) }
+                        } else if (area == co.golink.tester.ui.components.drawer.DrawerArea.Receipts) {
+                            navController.navigate(Routes.receipts()) { popUpTo(Routes.HOME) }
                         } else {
                             backToHome(area.name)
                         }
@@ -647,6 +668,8 @@ fun AppNavHost(
                             navController.navigate(Routes.legacy()) { popUpTo(Routes.HOME) }
                         } else if (area == co.golink.tester.ui.components.drawer.DrawerArea.Pass) {
                             navController.navigate(Routes.pass()) { popUpTo(Routes.HOME) }
+                        } else if (area == co.golink.tester.ui.components.drawer.DrawerArea.Receipts) {
+                            navController.navigate(Routes.receipts()) { popUpTo(Routes.HOME) }
                         } else {
                             backToHome(area.name)
                         }
@@ -686,6 +709,42 @@ fun AppNavHost(
                         when (area) {
                             co.golink.tester.ui.components.drawer.DrawerArea.Notes -> navController.navigate(Routes.notes()) { popUpTo(Routes.HOME) }
                             co.golink.tester.ui.components.drawer.DrawerArea.Legacy -> navController.navigate(Routes.legacy()) { popUpTo(Routes.HOME) }
+                            co.golink.tester.ui.components.drawer.DrawerArea.Receipts -> navController.navigate(Routes.receipts()) { popUpTo(Routes.HOME) }
+                            else -> backToHome(area.name)
+                        }
+                    },
+                    onOpenNotifications = { navController.navigate(Routes.NOTIFICATIONS) },
+                    onOpenSettings = { navController.navigate(Routes.settings()) },
+                    onOpenProfile = { navController.navigate(Routes.settings("profile")) },
+                    onOpenBilling = { navController.navigate(Routes.settings("billing")) },
+                    onOpenHelp = { staff -> navController.navigate(if (staff) Routes.SUPPORT_DASHBOARD else Routes.support(false)) },
+                    openDrawerRequest = drawerRequest,
+                    onDrawerRequestHandled = { entry.savedStateHandle["open_drawer"] = false },
+                ) }
+                co.golink.tester.ui.screens.encryption.E2EGate()
+            }
+        }
+        composable(
+            route = Routes.RECEIPTS,
+            arguments = listOf(navArgument("pane") { type = NavType.StringType; defaultValue = "spending" }),
+        ) { entry ->
+            val backToHome: (String?) -> Unit = { area ->
+                if (area != null) runCatching { navController.getBackStackEntry(Routes.HOME).savedStateHandle["drawer_area"] = area }
+                if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
+                    navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
+                }
+            }
+            val drawerRequest by entry.savedStateHandle.getStateFlow("open_drawer", false).collectAsState()
+            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+                co.golink.tester.ui.components.drawer.AreaTheme(co.golink.tester.ui.components.drawer.DrawerArea.Receipts) { co.golink.tester.ui.screens.receipts.ReceiptsScreen(
+                    initialPane = entry.arguments?.getString("pane").orEmpty(),
+                    onOpenDrive = { backToHome(null) },
+                    onOpenCalendar = { navController.navigate(Routes.calendar()) { popUpTo(Routes.HOME) } },
+                    onOpenArea = { area ->
+                        when (area) {
+                            co.golink.tester.ui.components.drawer.DrawerArea.Notes -> navController.navigate(Routes.notes()) { popUpTo(Routes.HOME) }
+                            co.golink.tester.ui.components.drawer.DrawerArea.Pass -> navController.navigate(Routes.pass()) { popUpTo(Routes.HOME) }
+                            co.golink.tester.ui.components.drawer.DrawerArea.Legacy -> navController.navigate(Routes.legacy()) { popUpTo(Routes.HOME) }
                             else -> backToHome(area.name)
                         }
                     },
@@ -707,7 +766,7 @@ fun AppNavHost(
                 // ao que estava por baixo; vindo das Definições, abre a do Drive.
                 onOpenMenu = {
                     val previous = navController.previousBackStackEntry
-                    val hasDrawer = previous?.destination?.route.let { it == Routes.HOME || it == Routes.CALENDAR || it == Routes.LEGACY || it == Routes.NOTES || it == Routes.PASS }
+                    val hasDrawer = previous?.destination?.route.let { it == Routes.HOME || it == Routes.CALENDAR || it == Routes.LEGACY || it == Routes.NOTES || it == Routes.PASS || it == Routes.RECEIPTS }
                     val target = if (hasDrawer) previous else runCatching { navController.getBackStackEntry(Routes.HOME) }.getOrNull()
                     if (target != null) {
                         target.savedStateHandle["open_drawer"] = true
@@ -721,6 +780,7 @@ fun AppNavHost(
                 onOpenCalendar = { event, date -> navController.navigate(Routes.calendar(event, date)) },
                 onOpenLegacy = { pane -> navController.navigate(Routes.legacy(pane)) { popUpTo(Routes.HOME) } },
                 onOpenNotes = { path -> navController.navigate(Routes.notes(path)) { popUpTo(Routes.HOME) } },
+                onOpenReceipts = { pane -> navController.navigate(Routes.receipts(pane)) { popUpTo(Routes.HOME) } },
                 onOpenSettings = { navController.navigate(Routes.settings()) },
             )
         }

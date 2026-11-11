@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.CalendarToday
@@ -99,13 +100,14 @@ private val PanelWidth = 248.dp
 private val DrawerFullWidth = RailWidth + 1.dp + PanelWidth
 
 /** Áreas da barra de ícones (igual à sidebar da web). */
-enum class DrawerArea { Drive, Calendar, Notes, Pass, Legacy, Admin, Support }
+enum class DrawerArea { Drive, Calendar, Notes, Pass, Receipts, Legacy, Admin, Support }
 
 fun DrawerArea.label(): String = when (this) {
     DrawerArea.Drive -> "Drive"
     DrawerArea.Calendar -> "Calendário".tr()
     DrawerArea.Notes -> co.golink.tester.ui.i18n.nt("title")
     DrawerArea.Pass -> "Pass"
+    DrawerArea.Receipts -> co.golink.tester.ui.i18n.rt("title")
     DrawerArea.Legacy -> "Legacy"
     DrawerArea.Admin -> "Admin"
     DrawerArea.Support -> "Suporte".tr()
@@ -119,6 +121,8 @@ private fun DrawerArea.colors(dark: Boolean): AreaColors? = when (this) {
     DrawerArea.Notes -> if (dark) AreaColors(Color(0xFFF59E0B), Color(0xFF78350F), Color.White) else AreaColors(Color(0xFFD97706), Color(0xFFFEF3C7), Color(0xFF92400E))
     DrawerArea.Pass -> if (dark) AreaColors(Color(0xFF6B8CFF), Color(0xFF1D2A4D), Color.White) else AreaColors(Color(0xFF2F5BE7), Color(0xFFE8EEFD), Color(0xFF1E3A8A))
     DrawerArea.Legacy -> if (dark) AreaColors(Color(0xFFA78BFA), Color(0xFF4C1D95), Color.White) else AreaColors(Color(0xFF7C3AED), Color(0xFFEDE9FE), Color(0xFF5B21B6))
+    // .receipts-scope da web: #0d9488 / #2dd4bf.
+    DrawerArea.Receipts -> if (dark) AreaColors(Color(0xFF2DD4BF), Color(0xFF134E4A), Color.White) else AreaColors(Color(0xFF0D9488), Color(0xFFCCFBF1), Color(0xFF115E59))
     else -> null
 }
 
@@ -266,6 +270,8 @@ fun ColumnScope.AppDrawerContent(
     onNewNote: (() -> Unit)? = null,
     /** Pass: "Novo item" no topo do painel. */
     onNewPassItem: (() -> Unit)? = null,
+    /** Receipts: "Scan receipt" no topo do painel. */
+    onScanReceipt: (() -> Unit)? = null,
     /** Fundo do painel (ex.: o cartão de estado do Legacy). */
     footerContent: (@Composable () -> Unit)? = null,
 ) {
@@ -312,6 +318,9 @@ fun ColumnScope.AppDrawerContent(
 
                 if (area == DrawerArea.Pass && onNewPassItem != null && lockedContent == null) {
                     Column(Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) { NewUploadButton(onNewPassItem, label = co.golink.tester.ui.i18n.pt("new_item")) }
+                }
+                if (area == DrawerArea.Receipts && onScanReceipt != null && lockedContent == null) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) { NewUploadButton(onScanReceipt, label = co.golink.tester.ui.i18n.rt("scan_receipt")) }
                 }
 
                 if (area == DrawerArea.Legacy && onAddToVault != null && lockedContent == null) {
@@ -668,6 +677,16 @@ private fun DrawerRail(
                 accent = DrawerArea.Pass.accent(dark),
             ) {
                 onAreaChange(DrawerArea.Pass)
+            }
+        }
+        if (DrawerArea.Receipts in areas) {
+            RailItem(
+                Icons.Outlined.ReceiptLong,
+                DrawerArea.Receipts.label(),
+                area == DrawerArea.Receipts,
+                accent = DrawerArea.Receipts.accent(dark),
+            ) {
+                onAreaChange(DrawerArea.Receipts)
             }
         }
         if (DrawerArea.Legacy in areas) {

@@ -193,7 +193,7 @@ fun CalendarScreen(
                         else -> go { onOpenArea(area) }()
                     }
                 },
-                areas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Notes, DrawerArea.Pass, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea),
+                areas = listOfNotNull(DrawerArea.Drive, DrawerArea.Calendar, DrawerArea.Notes, DrawerArea.Pass, DrawerArea.Receipts, DrawerArea.Legacy.takeIf { legacyEnabled }, secondaryArea),
                 sections = emptyList(),
                 unreadNotifications = unread,
                 onOpenNotifications = go(onOpenNotifications),

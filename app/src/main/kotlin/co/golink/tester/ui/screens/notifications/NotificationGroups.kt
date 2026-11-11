@@ -17,6 +17,7 @@ import androidx.compose.material.icons.outlined.SupportAgent
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.material.icons.outlined.ReceiptLong
 import androidx.compose.ui.graphics.vector.ImageVector
 import co.golink.tester.ui.i18n.tr
 import co.golink.tester.ui.theme.LocalDarkTheme
@@ -28,6 +29,7 @@ val NOTIFICATION_GROUPS: List<Pair<String, Set<String>>> = listOf(
     "calendar" to setOf("calendar"),
     "notes" to setOf("notes"),
     "legacy" to setOf("legacy"),
+    "receipts" to setOf("receipts"),
     "files" to setOf("file-request", "remote-upload-done"),
     "billing" to setOf("billing-alert", "payment-alert", "insufficient-balance", "storage-full", "subscription-created", "gift"),
     "support" to setOf("support-ticket"),
@@ -42,6 +44,7 @@ fun groupLabel(group: String?): String = when (group) {
     "calendar" -> "Calendário".tr()
     "notes" -> co.golink.tester.ui.i18n.nt("title")
     "legacy" -> "Legacy".tr()
+    "receipts" -> co.golink.tester.ui.i18n.rt("title")
     "files" -> "Ficheiros".tr()
     "billing" -> "Faturação".tr()
     "support" -> "Suporte".tr()
@@ -79,6 +82,7 @@ fun notificationIcon(category: String?): NotificationIcon {
         "send-new-notifications" -> sky(Icons.Outlined.Campaign)
         "subscription-created" -> tone(Icons.AutoMirrored.Outlined.TrendingUp, 0xFF059669, 0xFFD1FAE5, 0xFF34D399, 0xFF064E3B)
         "gift" -> tone(Icons.Outlined.CardGiftcard, 0xFFDB2777, 0xFFFCE7F3, 0xFFF472B6, 0xFF831843)
+        "receipts" -> tone(Icons.Outlined.ReceiptLong, 0xFF0D9488, 0xFFCCFBF1, 0xFF2DD4BF, 0xFF134E4A)
         "support-ticket" -> tone(Icons.Outlined.SupportAgent, 0xFF0D9488, 0xFFCCFBF1, 0xFF2DD4BF, 0xFF134E4A)
         else -> tone(Icons.Outlined.Notifications, 0xFF6B7280, 0xFFF3F4F6, 0xFF9CA3AF, 0xFF1F2937)
     }
