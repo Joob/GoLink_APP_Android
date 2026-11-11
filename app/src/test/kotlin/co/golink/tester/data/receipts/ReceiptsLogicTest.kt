@@ -98,6 +98,27 @@ class ReceiptsLogicTest {
     }
 
     @Test
+    fun ocr() {
+        for (c in fx["ocr"]!!.jsonArray) {
+            val text = c.jsonArray[0].jsonPrimitive.content
+            val exp = c.jsonArray[1].jsonObject
+            val got = OcrParse.parse(text, today)
+            val nl = { k: String -> (exp[k] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.long }
+            assertEquals(text, exp.s("merchant"), got.merchant)
+            assertEquals(text, exp.s("merchant_nif"), got.merchantNif)
+            assertEquals(text, exp.s("buyer_nif"), got.buyerNif)
+            assertEquals(text, exp.s("date"), got.date)
+            assertEquals(text, exp.s("time"), got.time)
+            assertEquals(text, nl("total"), got.total)
+            assertEquals(text, nl("vat"), got.vat)
+            assertEquals(text, exp.s("atcud"), got.atcud)
+            assertEquals(text, exp.s("doc_no"), got.docNo)
+            assertEquals(text, exp.s("doc_type"), got.docType)
+            assertEquals(text, exp["filled"]!!.jsonArray.map { it.jsonPrimitive.content }, got.filled)
+        }
+    }
+
+    @Test
     fun money() {
         for (c in fx["money"]!!.jsonArray) {
             val a = c.jsonArray

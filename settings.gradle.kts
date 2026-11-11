@@ -17,6 +17,10 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Só o Tesseract4Android (OCR dos talões) vem do JitPack.
+        maven("https://jitpack.io") {
+            content { includeGroup("com.github.adaptech-cz.Tesseract4Android") }
+        }
     }
 }
 

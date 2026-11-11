@@ -24,6 +24,7 @@ browser = "1.8.0"
 webkit = "1.12.1"
 zxing = "3.5.3"
 camerax = "1.4.2"
+tesseract4android = "4.8.0"
 splashscreen = "1.0.1"
 work = "2.10.0"
 credentials = "1.3.0"
@@ -85,6 +86,7 @@ media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", versi
 media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
 media3-datasource-okhttp = { group = "androidx.media3", name = "media3-datasource-okhttp", version.ref = "media3" }
 
+tesseract4android = { group = "com.github.adaptech-cz.Tesseract4Android", name = "tesseract4android", version.ref = "tesseract4android" }
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
 androidx-camera-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }

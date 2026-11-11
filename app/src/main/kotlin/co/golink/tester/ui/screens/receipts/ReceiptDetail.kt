@@ -154,7 +154,11 @@ fun ReceiptDetailPage(
                         else "${rt("vat_short")}${AtQr.mainVatRate(r.vatLines, r.vat)?.let { " $it%" } ?: ""} · ${RcFormat.money(r.vat)}"
                         Text(vatLabel, fontSize = 13.sp, color = p.muted)
                         Spacer(Modifier.height(8.dp))
-                        RcPill(if (r.source == "qr") rt("detail.read_qr") else rt("detail.typed"), if (r.source == "qr") "good" else "muted")
+                        when (r.source) {
+                            "qr" -> RcPill(rt("detail.read_qr"), "good")
+                            "ocr" -> RcPill(rt("ocr.read_title"), "warn")
+                            else -> RcPill(rt("detail.typed"), "muted")
+                        }
                     }
                 }
             }

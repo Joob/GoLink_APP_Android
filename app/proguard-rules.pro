@@ -70,3 +70,8 @@
 -keep class androidx.credentials.playservices.** {
   *;
 }
+
+# Tesseract4Android (OCR dos talões): o código nativo acede por JNI a campos e
+# callbacks (mNativeData, onProgressValues) — a AAR não traz regras próprias.
+-keep class com.googlecode.tesseract.android.** { *; }
+-keep class com.googlecode.leptonica.android.** { *; }

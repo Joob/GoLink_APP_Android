@@ -76,6 +76,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -107,6 +108,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import co.golink.tester.data.receipts.AtQr
+import co.golink.tester.data.receipts.OcrFields
+import co.golink.tester.data.receipts.OcrParse
 import co.golink.tester.data.receipts.RcCategories
 import co.golink.tester.data.receipts.RcFormat
 import co.golink.tester.data.receipts.Receipt
@@ -119,7 +122,10 @@ import java.time.LocalTime
 import java.time.ZoneOffset
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
@@ -182,6 +188,12 @@ fun ReceiptScanPage(
     var editing by remember { mutableStateOf<Receipt?>(null) }
     var torch by remember { mutableStateOf(false) }
     var hint by remember { mutableStateOf<String?>(null) }
+    // Câmara: "qr" (leitura em direto) | "photo" (disparo → OCR se não houver QR).
+    var camMode by remember { mutableStateOf("qr") }
+    // OCR: -1 = não correu; senão nº de campos lidos.
+    var ocrCount by remember { mutableIntStateOf(-1) }
+    var ocrPct by remember { mutableIntStateOf(0) }
+    var ocrJob by remember { mutableStateOf<Job?>(null) }
     var hasCamera by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
     var asked by remember { mutableStateOf(false) }
     var pickDate by remember { mutableStateOf(false) }
@@ -191,7 +203,7 @@ fun ReceiptScanPage(
         form = RcForm()
         from.clear(); errors.clear()
         extra = QrExtra(); qrFound = false; qrRead = false; catTouched = false; showCats = false
-        photo = null; preview = null; hint = null; mode = "qr"
+        photo = null; preview = null; hint = null; mode = "qr"; ocrCount = -1; ocrPct = 0
         val me = state.meta.household.firstOrNull { it.id == "me" }
         if (me != null && me.nif.isNotEmpty() && !isEdit) {
             form = form.copy(buyerNif = me.nif)
@@ -204,7 +216,7 @@ fun ReceiptScanPage(
         reset()
         val it = editId?.let { id -> state.item(id) }?.takeIf { !it.locked } ?: return@LaunchedEffect
         editing = it
-        mode = if (it.source == "qr") "qr" else "manual"
+        mode = when (it.source) { "qr" -> "qr"; "ocr" -> "photo"; else -> "manual" }
         form = RcForm(
             merchant = it.merchant, merchantNif = it.merchantNif, buyerNif = it.buyerNif, date = it.date, time = it.time,
             total = RcFormat.moneyInput(it.total), vat = RcFormat.moneyInput(it.vat), atcud = it.atcud, docNo = it.docNo,
@@ -257,14 +269,103 @@ fun ReceiptScanPage(
     }
 
     fun touched(key: String) {
-        if (from[key] == "qr" || from[key] == "history") from[key] = "edited"
+        if (from[key] == "qr" || from[key] == "history" || from[key] == "ocr") from[key] = "edited"
         if (from[key] == null) from[key] = "manual"
         errors.remove(key)
+    }
+
+    /** Campos lidos do texto (talão sem QR): marcados "Foto · confirma"; o histórico manda no nome. */
+    fun applyOcr(f: OcrFields) {
+        mode = "photo"
+        ocrCount = f.filled.size
+        val known = f.merchantNif.takeIf { it.isNotEmpty() }?.let { RcCategories.merchantFor(it, history) }
+        form = form.copy(
+            merchant = known ?: f.merchant.ifEmpty { form.merchant },
+            merchantNif = f.merchantNif.ifEmpty { form.merchantNif },
+            buyerNif = f.buyerNif.ifEmpty { form.buyerNif },
+            date = f.date.ifEmpty { form.date },
+            time = f.time.ifEmpty { form.time },
+            total = f.total?.let { RcFormat.moneyInput(it) } ?: form.total,
+            vat = f.vat?.let { RcFormat.moneyInput(it) } ?: form.vat,
+            atcud = f.atcud.ifEmpty { form.atcud },
+            docNo = f.docNo.ifEmpty { form.docNo },
+        )
+        extra = QrExtra(docType = f.docType)
+        f.filled.forEach { from[it] = "ocr" }
+        if (known != null) from["merchant"] = "history"
+    }
+
+    /**
+     * Foto (câmara no modo Foto ou ficheiro escolhido): QR primeiro; sem QR → OCR no
+     * aparelho. [bmp] fica nosso (recycle no fim).
+     */
+    fun processStill(bmp: Bitmap) {
+        phase = "reading"
+        ocrPct = 0
+        ocrJob = scope.launch {
+            try {
+                val prep = withContext(Dispatchers.Default) {
+                    runCatching {
+                        val qr = ReceiptsImages.decodeBitmap(bmp)?.takeIf { AtQr.parse(it) != null }
+                        val jpeg = ReceiptsImages.toJpeg(bmp)
+                        Triple(qr, jpeg, ReceiptsImages.decodeSampled(jpeg, 900))
+                    }.getOrNull()
+                }
+                if (prep == null) {
+                    vm.toast(rt("scan.read_failed"))
+                    phase = "camera"
+                    return@launch
+                }
+                photo = prep.second
+                preview = prep.third
+                if (prep.first != null) {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    vm.toast(rt("ocr.qr_instead"))
+                    mode = "qr"
+                    applyQr(prep.first)
+                    phase = "form"
+                    return@launch
+                }
+                val fields = try {
+                    OcrParse.parse(ReceiptsOcr.read(context, bmp) { ocrPct = it })
+                } catch (e: TimeoutCancellationException) {
+                    null
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null
+                }
+                applyOcr(fields ?: OcrFields())
+                fillFromHistory()
+                phase = "form"
+            } finally {
+                bmp.recycle()
+                ocrJob = null
+            }
+        }
+    }
+
+    /** Cancelar a leitura: fica a foto (se já houver) e o formulário à mão. */
+    fun cancelOcr() {
+        ocrJob?.cancel()
+        ocrJob = null
+        applyOcr(OcrFields())
+        phase = "form"
     }
 
     /** Imagem/PDF escolhido: lê o QR, reduz e passa ao formulário. */
     fun loadPicked(uri: Uri) {
         phase = "reading"
+        if (!isEdit && mode != "manual") {
+            scope.launch {
+                val bmp = withContext(Dispatchers.Default) { runCatching { ReceiptsImages.load(context, uri) } }
+                bmp.onSuccess { processStill(it) }.onFailure { e ->
+                    vm.toast(if (e is ReceiptsImages.TooLargeException || e is ReceiptsImages.BadFileException) rt("scan.bad_file") else rt("scan.read_failed"))
+                    phase = if (photo != null) "form" else "camera"
+                }
+            }
+            return
+        }
         scope.launch {
             val result = withContext(Dispatchers.Default) {
                 runCatching {
@@ -353,7 +454,7 @@ fun ReceiptScanPage(
             "irs_cat" to JsonPrimitive(f.irsCat),
             "multi_activity" to JsonPrimitive(f.multi),
             "validated" to JsonPrimitive(if (ed != null) ed.validated && f.multi else false),
-            "source" to JsonPrimitive(if (fromQr) "qr" else "manual"),
+            "source" to JsonPrimitive(if (fromQr) "qr" else if (mode == "photo" && (ocrCount > 0 || ed?.source == "ocr")) "ocr" else "manual"),
             "note" to JsonPrimitive(f.note.trim().take(500)),
         )
         // Na edição mantém campos que esta versão não conhece (vindos da web).
@@ -374,6 +475,8 @@ fun ReceiptScanPage(
             if (hasCamera) {
                 RcCameraView(
                     torch = torch,
+                    liveQr = camMode == "qr",
+                    shutter = camMode == "photo",
                     onQr = { text, bmp ->
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         hint = rt("app.scan_found")
@@ -390,23 +493,9 @@ fun ReceiptScanPage(
                         }
                     },
                     onInvalid = { hint = rt("app.not_at_qr") },
-                    onShot = { bmp ->
-                        scope.launch {
-                            // JPEG + miniatura fora da main (descodificar 1600 px na main dá solavanco).
-                            val prepared = withContext(Dispatchers.Default) {
-                                runCatching { ReceiptsImages.toJpeg(bmp).let { it to ReceiptsImages.decodeSampled(it, 900) } }.getOrNull()
-                            }
-                            bmp.recycle()
-                            if (prepared == null) { vm.toast(rt("scan.read_failed")); return@launch }
-                            photo = prepared.first
-                            preview = prepared.second
-                            mode = "manual"
-                            qrRead = true
-                            phase = "form"
-                        }
-                    },
+                    onShot = { bmp -> processStill(bmp) },
                 )
-                ScanFrame(found = hint == rt("app.scan_found"))
+                ScanFrame(found = hint == rt("app.scan_found"), tall = camMode == "photo")
             } else {
                 Column(Modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(Icons.Outlined.QrCodeScanner, null, tint = Color.White, modifier = Modifier.size(48.dp))
@@ -432,27 +521,43 @@ fun ReceiptScanPage(
             }
             Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    hint ?: rt("app.point_qr"),
+                    if (camMode == "photo") rt("ocr.point_photo") else hint ?: rt("app.point_qr"),
                     color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(Color.Black.copy(alpha = 0.55f)).padding(horizontal = 16.dp, vertical = 8.dp),
                 )
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Icon(Icons.Outlined.Lock, null, tint = Color(0xFF5EEAD4), modifier = Modifier.size(14.dp))
-                    Text(rt("app.read_on_phone"), color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
+                    Text(if (camMode == "photo") rt("ocr.on_device") else rt("app.read_on_phone"), color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp)
                 }
                 Spacer(Modifier.height(14.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    DarkButton(rt("app.from_gallery"), Icons.Outlined.Image, Modifier.weight(1f)) { openPicker() }
-                    DarkButton(rt("app.type_it"), Icons.Outlined.EditNote, Modifier.weight(1f)) { reset(); mode = "manual"; phase = "form" }
-                }
+                CamModeBar(camMode, onMode = { camMode = it; hint = null }, onFile = { openPicker() })
+                Text(
+                    rt("app.type_it"), color = Color.White, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 6.dp).clip(RoundedCornerShape(999.dp)).clickable { reset(); mode = "manual"; phase = "form" }.padding(horizontal = 14.dp, vertical = 8.dp),
+                )
             }
         }
         "reading" -> Box(Modifier.fillMaxSize().background(Color(0xFF1F2933)), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                val b = preview
+                if (b != null) {
+                    Image(b.asImageBitmap(), null, Modifier.size(150.dp, 200.dp).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.Crop)
+                    Spacer(Modifier.height(16.dp))
+                }
                 CircularProgressIndicator(color = Color(0xFF5EEAD4), strokeWidth = 2.dp)
                 Spacer(Modifier.height(12.dp))
-                Text(rt("scan.reading"), color = Color.White)
+                Text(if (ocrJob != null && photo != null) rt("ocr.reading", "pct" to ocrPct) else rt("scan.reading"), color = Color.White)
+                if (ocrJob != null && photo != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(rt("ocr.on_device"), color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        rt("cancel"), color = Color.White, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clip(RoundedCornerShape(999.dp)).border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(999.dp))
+                            .clickable { cancelOcr() }.padding(horizontal = 18.dp, vertical = 8.dp),
+                    )
+                }
             }
         }
         else -> Column(Modifier.fillMaxSize().imePadding()) {
@@ -475,6 +580,8 @@ fun ReceiptScanPage(
                             val (title, sub, tone) = when {
                                 mode == "qr" && qrFound -> Triple(rt("app.qr_read"), rt("app.qr_read_sub"), "good")
                                 mode == "qr" && qrRead -> Triple(rt("scan.not_found"), rt("scan.qr_missing"), "warn")
+                                mode == "photo" && ocrCount > 0 -> Triple(rt("ocr.read_title"), rt("ocr.read_sub", "n" to ocrCount), "warn")
+                                mode == "photo" && ocrCount == 0 -> Triple(rt("ocr.empty_title"), rt("ocr.empty_sub"), "muted")
                                 else -> Triple(rt("scan.step_typed"), rt("scan.manual_banner"), "muted")
                             }
                             Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = when (tone) { "good" -> p.good; "warn" -> p.warn; else -> p.text })
@@ -654,15 +761,23 @@ private fun Warn(text: String, color: Color) {
     }
 }
 
+/** Modos da câmara: QR (em direto) · Foto (disparo + OCR) · PDF/Imagem (abre o seletor). */
 @Composable
-private fun DarkButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier, onClick: () -> Unit) {
+private fun CamModeBar(mode: String, onMode: (String) -> Unit, onFile: () -> Unit) {
     Row(
-        modifier.clip(RoundedCornerShape(14.dp)).background(Color.White.copy(alpha = 0.14f)).clickable(onClick = onClick).padding(vertical = 13.dp, horizontal = 12.dp),
-        horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+        Modifier.clip(RoundedCornerShape(999.dp)).background(Color.Black.copy(alpha = 0.55f)).padding(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, null, tint = Color.White, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(8.dp))
-        Text(text, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        listOf("qr" to rt("ocr.mode_qr"), "photo" to rt("ocr.mode_photo"), "file" to rt("ocr.mode_file")).forEach { (k, label) ->
+            val on = mode == k
+            Text(
+                label,
+                color = if (on) Color(0xFF042F2E) else Color.White,
+                fontSize = 13.5.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(if (on) Color(0xFF5EEAD4) else Color.Transparent)
+                    .clickable { if (k == "file") onFile() else onMode(k) }.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
     }
 }
 
@@ -690,6 +805,7 @@ private fun FormField(
             if (origin != null) {
                 val (txt, tone) = when (origin) {
                     "qr" -> rt("scan.from_qr") to "good"
+                    "ocr" -> rt("ocr.badge") to "warn"
                     "history" -> rt("scan.from_history") to "muted"
                     "edited" -> rt("scan.from_edited") to "warn"
                     else -> rt("scan.from_manual") to "muted"
@@ -721,23 +837,24 @@ private fun FormField(
 
 /** Moldura do leitor (cantos teal; verde-água cheio quando encontra o QR). */
 @Composable
-private fun ScanFrame(found: Boolean) {
+private fun ScanFrame(found: Boolean, tall: Boolean = false) {
     Canvas(Modifier.fillMaxSize()) {
-        val side = size.minDimension * 0.68f
+        val side = size.minDimension * (if (tall) 0.8f else 0.68f)
+        val sideH = if (tall) (size.height * 0.56f).coerceAtLeast(side) else side
         val left = (size.width - side) / 2
-        val top = (size.height - side) / 2.4f
+        val top = (size.height - sideH) / (if (tall) 3.2f else 2.4f)
         val c = if (found) Color(0xFF2DD4BF) else Color.White
         val len = side * 0.16f
         val w = 4.dp.toPx()
         listOf(
             Offset(left, top) to Offset(1f, 1f), Offset(left + side, top) to Offset(-1f, 1f),
-            Offset(left, top + side) to Offset(1f, -1f), Offset(left + side, top + side) to Offset(-1f, -1f),
+            Offset(left, top + sideH) to Offset(1f, -1f), Offset(left + side, top + sideH) to Offset(-1f, -1f),
         ).forEach { (o, d) ->
             drawLine(c, o, Offset(o.x + len * d.x, o.y), w)
             drawLine(c, o, Offset(o.x, o.y + len * d.y), w)
         }
-        if (found) drawRoundRect(c.copy(alpha = 0.18f), Offset(left, top), androidx.compose.ui.geometry.Size(side, side), CornerRadius(18.dp.toPx()))
-        else drawRoundRect(Color.White.copy(alpha = 0.25f), Offset(left, top), androidx.compose.ui.geometry.Size(side, side), CornerRadius(18.dp.toPx()), style = Stroke(1.dp.toPx()))
+        if (found) drawRoundRect(c.copy(alpha = 0.18f), Offset(left, top), androidx.compose.ui.geometry.Size(side, sideH), CornerRadius(18.dp.toPx()))
+        else drawRoundRect(Color.White.copy(alpha = 0.25f), Offset(left, top), androidx.compose.ui.geometry.Size(side, sideH), CornerRadius(18.dp.toPx()), style = Stroke(1.dp.toPx()))
     }
 }
 
@@ -746,12 +863,14 @@ private fun ScanFrame(found: Boolean) {
  * QR da AT → tira a foto em resolução de captura e chama [onQr] uma vez.
  */
 @Composable
-private fun RcCameraView(torch: Boolean, onQr: (String, Bitmap?) -> Unit, onInvalid: () -> Unit, onShot: (Bitmap) -> Unit) {
+private fun RcCameraView(torch: Boolean, liveQr: Boolean, shutter: Boolean, onQr: (String, Bitmap?) -> Unit, onInvalid: () -> Unit, onShot: (Bitmap) -> Unit) {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val onQrNow by rememberUpdatedState(onQr)
     val onInvalidNow by rememberUpdatedState(onInvalid)
     val onShotNow by rememberUpdatedState(onShot)
+    // Lido na thread da análise: no modo Foto os frames são largados logo (câmara livre para o disparo).
+    val liveNow by rememberUpdatedState(liveQr)
     val previewView = remember { PreviewView(context).apply { scaleType = PreviewView.ScaleType.FILL_CENTER } }
     var camera by remember { mutableStateOf<Camera?>(null) }
     val capture = remember { ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build() }
@@ -794,7 +913,7 @@ private fun RcCameraView(torch: Boolean, onQr: (String, Bitmap?) -> Unit, onInva
             val reader = ReceiptsImages.newReader()
             analysis.setAnalyzer(executor) { img ->
                 try {
-                    if (!busy.get()) {
+                    if (!busy.get() && liveNow) {
                         val plane = img.planes[0]
                         val buf = plane.buffer
                         // Um buffer por tamanho de frame (não 1 MB novo a cada frame).
@@ -832,8 +951,8 @@ private fun RcCameraView(torch: Boolean, onQr: (String, Bitmap?) -> Unit, onInva
 
     Box(Modifier.fillMaxSize()) {
         AndroidView({ previewView }, Modifier.fillMaxSize())
-        // Disparo manual (talão sem QR): foto → formulário à mão.
-        Box(
+        // Disparo (modo Foto): foto → QR, senão leitura do texto.
+        if (shutter) Box(
             Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 190.dp).size(68.dp).clip(CircleShape)
                 .border(4.dp, Color.White, CircleShape).padding(6.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.9f))
                 .clickable { if (busy.compareAndSet(false, true)) grab { bmp -> if (bmp != null) onShotNow(bmp) else busy.set(false) } },

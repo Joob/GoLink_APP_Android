@@ -24,8 +24,8 @@ android {
         applicationId = "co.golink.tester"
         minSdk = 26
         targetSdk = 36
-        versionCode = 174
-        versionName = "3.91.0"
+        versionCode = 175
+        versionName = "3.92.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -75,6 +75,10 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+        // O Tesseract (OCR dos talões) traz ~7 MB de .so por ABI: comprimidos na APK.
+        jniLibs {
+            useLegacyPackaging = true
         }
     }
 
@@ -129,6 +133,7 @@ dependencies {
     implementation(libs.media3.datasource.okhttp)
 
     implementation(libs.zxing.core)
+    implementation(libs.tesseract4android)
     // Recibos: câmara em direto a ler o QR das faturas (análise por frame com ZXing).
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
