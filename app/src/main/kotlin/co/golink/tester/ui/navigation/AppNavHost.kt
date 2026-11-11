@@ -341,10 +341,11 @@ fun AppNavHost(
     NavHost(
         navController = navController,
         startDestination = Routes.SPLASH,
-        enterTransition = { fadeIn(tween(160)) },
-        exitTransition = { fadeOut(tween(110)) },
-        popEnterTransition = { fadeIn(tween(160)) },
-        popExitTransition = { fadeOut(tween(110)) },
+        // Troca suave entre áreas/ecrãs: fade com um leve zoom (não um corte seco).
+        enterTransition = { fadeIn(tween(240, easing = androidx.compose.animation.core.LinearOutSlowInEasing)) + androidx.compose.animation.scaleIn(tween(240, easing = androidx.compose.animation.core.LinearOutSlowInEasing), initialScale = 0.985f) },
+        exitTransition = { fadeOut(tween(160, easing = androidx.compose.animation.core.FastOutLinearInEasing)) },
+        popEnterTransition = { fadeIn(tween(240, easing = androidx.compose.animation.core.LinearOutSlowInEasing)) + androidx.compose.animation.scaleIn(tween(240, easing = androidx.compose.animation.core.LinearOutSlowInEasing), initialScale = 0.985f) },
+        popExitTransition = { fadeOut(tween(160, easing = androidx.compose.animation.core.FastOutLinearInEasing)) },
     ) {
         composable(Routes.SPLASH) { SplashScreen() }
         composable(Routes.LANDING) {
@@ -847,6 +848,18 @@ fun AppNavHost(
     // Painel de transferências (em qualquer ecrã, com a sessão aberta e a app desbloqueada).
     if (top == TopState.Authenticated && !locked) {
         co.golink.tester.ui.components.DownloadPanel(Modifier.align(androidx.compose.ui.Alignment.BottomCenter))
+        // Envio em curso noutras áreas: só a pílula; tocar volta aos Ficheiros.
+        val route = currentEntry?.destination?.route.orEmpty().substringBefore('?')
+        if (route in setOf("calendar", "pass", "notes", "legacy")) {
+            co.golink.tester.ui.components.UploadMiniPill(
+                onOpen = {
+                    if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
+                        navController.navigate(Routes.HOME) { popUpTo(0) { inclusive = true } }
+                    }
+                },
+                modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter),
+            )
+        }
     }
     // Também a sair da app (ON_PAUSE → ON_RESUME): a captura da tarefa (recentes e
     // janela de arranque ao voltar) fica com esta camada, não com o conteúdo.

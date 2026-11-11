@@ -128,7 +128,9 @@ fun CalendarScreen(
     val e2eLocked = e2eConfigured && !e2eUnlocked
     val legacyEnabled by shell.legacyEnabled.collectAsStateWithLifecycle()
 
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    // Sem rememberSaveable: ao sair por navegação a gaveta ainda está "aberta" (o fecho é cancelado)
+    // e voltava aberta por cima do conteúdo. Abrir de propósito vai por openDrawerRequest.
+    val drawerState = androidx.compose.runtime.remember { androidx.compose.material3.DrawerState(DrawerValue.Closed) }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var searchOpen by rememberSaveable { mutableStateOf(false) }

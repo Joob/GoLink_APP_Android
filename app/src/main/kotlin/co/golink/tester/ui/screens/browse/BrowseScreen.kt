@@ -363,7 +363,9 @@ fun BrowseScreen(
     val legacyEnabled by shell.legacyEnabled.collectAsStateWithLifecycle()
     val favourites by viewModel.favouriteFolders.collectAsStateWithLifecycle()
     val subscriptionType by viewModel.subscriptionType.collectAsStateWithLifecycle()
-    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    // Sem rememberSaveable: ao sair por navegação a gaveta ainda está "aberta" (o fecho é cancelado)
+    // e voltava aberta por cima do conteúdo. Abrir de propósito vai por openDrawerRequest.
+    val drawerState = androidx.compose.runtime.remember { androidx.compose.material3.DrawerState(DrawerValue.Closed) }
     val scope = rememberCoroutineScope()
 
     // Gate E2E (mesma instância do E2EGate() sobreposto no AppNavHost). Enquanto

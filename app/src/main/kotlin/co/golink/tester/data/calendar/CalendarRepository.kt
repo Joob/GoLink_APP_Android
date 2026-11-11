@@ -431,14 +431,18 @@ class CalendarRepository @Inject constructor(
 
     /** Feriados que tocam [from, to); ano anterior incluído (feriados de vários dias). Falha → vazio, tenta de novo depois. */
     suspend fun holidays(country: String, from: LocalDate, to: LocalDate, lang: String): List<Holidays.Holiday> =
+        holidaysResult(country, from, to, lang).getOrDefault(emptyList())
+
+    /** Como [holidays], mas uma falha de rede/servidor chega ao chamador (para voltar a tentar). */
+    suspend fun holidaysResult(country: String, from: LocalDate, to: LocalDate, lang: String): Result<List<Holidays.Holiday>> =
         withContext(Dispatchers.IO) {
-            val list = (from.year - 1..to.year).flatMap { y ->
-                val key = "$country|$lang|$y"
-                holidayCache[key] ?: runCatching {
-                    Holidays.parse(api.holidays(country, y, y, lang).ok().data).also { holidayCache[key] = it }
-                }.getOrDefault(emptyList())
-            }
-            Holidays.overlapping(list, from, to)
+            runCatching {
+                val list = (from.year - 1..to.year).flatMap { y ->
+                    val key = "$country|$lang|$y"
+                    holidayCache[key] ?: Holidays.parse(api.holidays(country, y, y, lang).ok().data).also { holidayCache[key] = it }
+                }
+                Holidays.overlapping(list, from, to)
+            }.onFailure { android.util.Log.w("Holidays", "GET api/calendar/holidays $country falhou", it) }
         }
 
     suspend fun holidayCountries(): Result<List<String>> = runCatching {

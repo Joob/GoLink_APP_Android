@@ -26,9 +26,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -169,13 +171,14 @@ fun UploadProgressBanner(
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                Column(
+                // ~4,5 linhas visíveis (a meia linha indica scroll). Lazy: com
+                // dezenas de milhares de tarefas só compõe as que estão no ecrã.
+                LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 260.dp)
-                        .verticalScroll(rememberScrollState()),
+                        .heightIn(max = 270.dp),
                 ) {
-                    tasks.forEach { task ->
+                    items(tasks, key = { it.id }) { task ->
                         UploadRow(
                             task = task,
                             onCancel = { onCancelTask(task.id) },
@@ -652,3 +655,63 @@ private fun UploadRing(progress: Float, encrypting: Boolean) {
         }
     }
 }
+
+@dagger.hilt.android.lifecycle.HiltViewModel
+class UploadPillViewModel @javax.inject.Inject constructor(
+    val uploadManager: co.golink.tester.data.upload.UploadManager,
+) : androidx.lifecycle.ViewModel()
+
+/**
+ * Pílula global (Calendar, Pass, Notes, Legacy…): o envio continua em fundo e
+ * aqui só se vê o progresso em pequeno; tocar leva aos Ficheiros, onde está o
+ * painel completo com as ações. Só aparece com envios do browser em curso.
+ */
+@Composable
+fun UploadMiniPill(
+    onOpen: () -> Unit,
+    modifier: Modifier = Modifier,
+    viewModel: UploadPillViewModel = androidx.hilt.navigation.compose.hiltViewModel(),
+) {
+    val all by viewModel.uploadManager.tasks.collectAsStateWithLifecycle()
+    val tasks = all.filterNot { it.mobileBackup }
+    val active = tasks.count { it.state == UploadTask.State.Uploading || it.state == UploadTask.State.Queued }
+    if (active == 0) return
+    val done = tasks.count { it.state == UploadTask.State.Completed }
+    val counted = tasks.filter {
+        it.state == UploadTask.State.Completed || it.state == UploadTask.State.Uploading || it.state == UploadTask.State.Queued
+    }
+    val totalBytes = counted.sumOf { it.sizeBytes }
+    val uploadedBytes = counted.sumOf {
+        if (it.state == UploadTask.State.Completed) it.sizeBytes else (it.progress.toDouble() * it.sizeBytes).roundToLong()
+    }
+    val progress = if (totalBytes > 0) uploadedBytes.toFloat() / totalBytes.toFloat() else 0f
+    Row(
+        modifier = modifier
+            .navigationBarsPadding()
+            .padding(12.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(999.dp))
+            .clickable(onClick = onOpen)
+            .padding(start = 6.dp, end = 14.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        UploadRing(progress = progress, encrypting = tasks.any { it.encrypted && it.state == UploadTask.State.Uploading })
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "A carregar %d de %d".tr().format((done + 1).coerceAtMost(tasks.size), tasks.size),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "${(progress * 100).toInt().coerceIn(0, 100)}%",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+}
+

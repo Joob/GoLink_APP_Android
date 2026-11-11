@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -145,7 +146,20 @@ class CalendarViewModel @Inject constructor(
         holidayCountry,
         androidx.compose.runtime.snapshotFlow { co.golink.tester.ui.i18n.I18n.lang },
     ) { r, show, country, lang -> HolidayKey(r.first, r.second, show, country, lang) }
-        .mapLatest { k -> if (k.show) repo.holidays(k.country, k.from, k.to, k.lang) else emptyList() }
+        // Falha (arranque sem rede, sessão ainda a restaurar, 5xx) → volta a tentar com espera
+        // crescente; antes ficava vazio até mudar o intervalo.
+        .flatMapLatest { k ->
+            kotlinx.coroutines.flow.flow {
+                if (!k.show) { emit(emptyList()); return@flow }
+                var wait = 5_000L
+                while (true) {
+                    val r = repo.holidaysResult(k.country, k.from, k.to, k.lang)
+                    if (r.isSuccess) { emit(r.getOrThrow()); return@flow }
+                    kotlinx.coroutines.delay(wait)
+                    wait = (wait * 2).coerceAtMost(60_000L)
+                }
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** Feriados do ano corrente (contagem no menu); null se escondidos. */
@@ -166,9 +180,10 @@ class CalendarViewModel @Inject constructor(
         repo.calendars,
         _holidaysVisible,
         holidayCountry,
-        combine(holidays, _noteTasks) { h, n -> h to n },
+        // keys.unlocked no combine: desbloquear depois de os feriados chegarem recalcula já.
+        combine(holidays, _noteTasks, keys.unlocked) { h, n, u -> Triple(h, n, u) },
     ) { key, cals, showHolidays, country, overlay ->
-        val (holidayList, noteTasks) = overlay
+        val (holidayList, noteTasks, _) = overlay
         val visible = cals.filter { it.visible }.map { it.id }.toSet()
         val events = key.events.filter { e ->
             if (e.isGuest) e.raw.me?.status != "declined" else e.calendarId in visible

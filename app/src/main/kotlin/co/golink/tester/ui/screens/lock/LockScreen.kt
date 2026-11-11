@@ -517,6 +517,8 @@ private fun pressScale(interaction: MutableInteractionSource): Float {
 private fun DigitKey(digit: String, size: Dp, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
+    // Toque ligeiro a cada tecla (segue a definição de vibração ao toque do sistema).
+    val view = androidx.compose.ui.platform.LocalView.current
     val base = MaterialTheme.colorScheme.surfaceVariant
     val bg by animateColorAsState(
         if (pressed) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f).compositeOver(base) else base,
@@ -531,7 +533,7 @@ private fun DigitKey(digit: String, size: Dp, onClick: () -> Unit) {
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(CircleShape)
             .background(bg)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+            .clickable(interactionSource = interaction, indication = null) { view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP); onClick() },
     ) {
         Text(digit, fontSize = if (size < 64.dp) 24.sp else 28.sp, fontWeight = FontWeight.Light, color = MaterialTheme.colorScheme.onSurface)
     }
@@ -542,6 +544,8 @@ private fun DigitKey(digit: String, size: Dp, onClick: () -> Unit) {
 private fun GhostKey(size: Dp, onClick: () -> Unit, content: @Composable () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
+    // Toque ligeiro a cada tecla (segue a definição de vibração ao toque do sistema).
+    val view = androidx.compose.ui.platform.LocalView.current
     val bg by animateColorAsState(
         if (pressed) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
         tween(if (pressed) 90 else 360),
@@ -555,7 +559,7 @@ private fun GhostKey(size: Dp, onClick: () -> Unit, content: @Composable () -> U
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(CircleShape)
             .background(bg)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+            .clickable(interactionSource = interaction, indication = null) { view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP); onClick() },
     ) {
         androidx.compose.runtime.CompositionLocalProvider(
             androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface,

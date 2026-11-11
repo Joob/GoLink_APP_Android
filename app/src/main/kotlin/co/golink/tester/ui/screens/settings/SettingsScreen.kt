@@ -239,8 +239,8 @@ fun SettingsScreen(
     }
 
     LaunchedEffect(route) {
-        if (route == SettingsRoute.Billing && state.transactions.isEmpty() && !state.isLoadingTransactions) {
-            viewModel.loadTransactions()
+        if (route == SettingsRoute.Billing && state.billing == null && !state.isLoadingBilling) {
+            viewModel.loadBilling()
         }
         if (route == SettingsRoute.SecurityActivity && state.securityEvents.isEmpty() && !state.isLoadingSecurityEvents) {
             viewModel.loadSecurityEvents()
@@ -397,12 +397,17 @@ fun SettingsScreen(
                 )
                 SettingsRoute.Billing -> BillingPane(
                     user = user,
-                    transactions = state.transactions,
-                    isLoading = state.isLoadingTransactions,
-                    storage = state.storage,
-                    onRefresh = viewModel::loadTransactions,
-                    isUpdatingProfile = state.isUpdatingProfile,
-                    onUpdateFields = viewModel::updateProfileFields,
+                    summary = state.billing,
+                    plans = state.plans,
+                    isLoading = state.isLoadingBilling,
+                    invoices = state.invoices,
+                    hasMoreInvoices = state.hasMoreInvoices,
+                    isLoadingInvoices = state.isLoadingInvoices,
+                    downloadingInvoice = state.downloadingInvoice,
+                    onLoadMoreInvoices = { viewModel.loadInvoices() },
+                    onDownload = viewModel::downloadInvoice,
+                    isSavingDetails = state.isUpdatingProfile,
+                    onSaveDetails = viewModel::saveBillingDetails,
                 )
                 SettingsRoute.DeleteAccount -> DeleteAccountPane(userEmail = user?.email, scheduledFor = user?.deletionScheduledFor)
                 SettingsRoute.AppSecurity -> AppSecurityPane(
@@ -647,7 +652,11 @@ private fun MenuPane(
             val sec = SettingsColors.Amber
             SettingsNavRow(
                 Icons.Outlined.Lock, sec, "Password e 2FA".tr(), "Password e verificação em dois passos".tr(),
-                badge = if (twoFactorEnabled) { { SettingsBadge("2FA ativa".tr(), SettingsAccent) } } else null,
+                badge = if (twoFactorEnabled) {
+                    { SettingsBadge("2FA ativa".tr(), SettingsAccent) }
+                } else {
+                    { SettingsBadge("2FA desligada".tr(), SettingsColors.Amber) }
+                },
             ) { onNavigate(SettingsRoute.Password) }
             SettingsNavRow(Icons.Outlined.VpnKey, sec, "Encriptação".tr(), "Frase-passe e impressão digital da chave".tr()) { onNavigate(SettingsRoute.Encryption) }
             SettingsNavRow(
@@ -663,8 +672,19 @@ private fun MenuPane(
 
         SettingsGroup(title = "Plano".tr()) {
             val hasSupport = user?.role != "admin"
-            SettingsNavRow(Icons.Outlined.CloudQueue, SettingsColors.Teal, "Armazenamento".tr(), "Espaço utilizado e disponível".tr()) { onNavigate(SettingsRoute.Storage) }
-            SettingsNavRow(Icons.Outlined.CreditCard, SettingsColors.Purple, "Plano e pagamentos".tr(), "Plano atual, utilização e histórico".tr(), showDivider = hasSupport) { onNavigate(SettingsRoute.Billing) }
+            // Badges iguais à web: espaço ≥ 80 % (âmbar; vermelho ≥ 95) e pagamento em atraso.
+            val pct = storage?.percentage?.toInt() ?: 0
+            SettingsNavRow(
+                Icons.Outlined.CloudQueue, SettingsColors.Teal, "Armazenamento".tr(), "Espaço usado e o que ocupa mais".tr(),
+                badge = if (pct >= 80) { { SettingsBadge("$pct%", if (pct >= 95) SettingsColors.Red else SettingsColors.Amber) } } else null,
+            ) { onNavigate(SettingsRoute.Storage) }
+            val overdue = user?.isPastDue == true || user?.isPaymentSuspended == true
+            SettingsNavRow(
+                Icons.Outlined.CreditCard, SettingsColors.Purple, "Plano e pagamentos".tr(), "Plano, cartões e faturas".tr(),
+                trailing = user?.planName?.takeIf { it.isNotBlank() && !overdue },
+                badge = if (overdue) { { SettingsBadge("Em atraso".tr(), SettingsColors.Red) } } else null,
+                showDivider = hasSupport,
+            ) { onNavigate(SettingsRoute.Billing) }
             // Como na web: o admin não abre tickets. A Administração e o Support Desk
             // vivem agora na gaveta (toggle Drive | Admin / Support).
             if (hasSupport) {
@@ -932,7 +952,7 @@ private fun PaneFormColumn(
 }
 
 @Composable
-private fun PaneColumn(content: @Composable ColumnScope.() -> Unit) {
+internal fun PaneColumn(content: @Composable ColumnScope.() -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1199,7 +1219,7 @@ private fun TimezoneDropdown(value: String, onValueChange: (String) -> Unit) {
 }
 
 @Composable
-private fun CountryDropdown(value: String, onValueChange: (String) -> Unit) {
+internal fun CountryDropdown(value: String, onValueChange: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     val selectedLabel = COUNTRIES.firstOrNull { it.first.equals(value, ignoreCase = true) }?.let { countryName(it.first, it.second) } ?: value
     Box(modifier = Modifier.fillMaxWidth()) {
@@ -2095,180 +2115,6 @@ private fun SecurityActivityPane(
 }
 
 @Composable
-private fun BillingPane(
-    user: User?,
-    transactions: List<TransactionItem>,
-    isLoading: Boolean,
-    storage: co.golink.tester.domain.settings.StorageUsage?,
-    onRefresh: () -> Unit,
-    isUpdatingProfile: Boolean,
-    onUpdateFields: (Map<String, String>) -> Unit,
-) {
-    var showHistory by remember { mutableStateOf(false) }
-
-    PaneColumn {
-        if (user?.isPastDue == true || user?.isPaymentSuspended == true) {
-            PaymentOverdueBanner(isSuspended = user.isPaymentSuspended, daysLeft = user.daysLeftToPay)
-        }
-        // Plano atual + atalho para o histórico de pagamentos.
-        PaneCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Plano atual".tr(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(user?.planName ?: "Gratuito".tr(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                }
-                Text(
-                    if (showHistory) "Fechar".tr() else "Histórico".tr(),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = SettingsAccent,
-                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { showHistory = !showHistory; if (showHistory && transactions.isEmpty()) onRefresh() }.padding(6.dp),
-                )
-            }
-            AnimatedVisibility(visible = showHistory) {
-                Column {
-                    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                    when {
-                        isLoading && transactions.isEmpty() -> Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                        transactions.isEmpty() -> Text("Sem transações".tr(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp))
-                        else -> transactions.forEachIndexed { k, t ->
-                            TransactionRow(t)
-                            if (k < transactions.lastIndex) HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
-                        }
-                    }
-                }
-            }
-        }
-
-        // Utilização do plano atual.
-        storage?.let { st ->
-            PaneCard {
-                Text("Utilização".tr(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(
-                    "%1${'$'}s de %2${'$'}s utilizados".tr().format(st.used, st.capacity),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.height(8.dp))
-                LinearProgressIndicator(
-                    progress = { (st.percentage / 100f).coerceIn(0f, 1f) },
-                    color = SettingsAccent,
-                    trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f),
-                    drawStopIndicator = {},
-                    modifier = Modifier.fillMaxWidth().height(6.dp),
-                )
-            }
-        }
-
-        // Só informativo: sem link, URL nem botão (anti-steering da Play).
-        PaneCard {
-            Text(
-                "A compra de planos tem de ser feita através do site.".tr(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        // Dados de faturação (saíram do Perfil): opcionais, só para recibos.
-        user?.let { BillingAddressSection(it, isUpdatingProfile, onUpdateFields) }
-    }
-}
-
-@Composable
-private fun BillingAddressSection(
-    user: User,
-    isUpdating: Boolean,
-    onUpdateFields: (Map<String, String>) -> Unit,
-) {
-    var address by remember(user.id) { mutableStateOf(user.address.orEmpty()) }
-    var city by remember(user.id) { mutableStateOf(user.city.orEmpty()) }
-    var postalCode by remember(user.id) { mutableStateOf(user.postalCode.orEmpty()) }
-    var country by remember(user.id) { mutableStateOf(user.country.orEmpty()) }
-    var state by remember(user.id) { mutableStateOf(user.state.orEmpty()) }
-
-    val changes = listOf(
-        "address" to (address to user.address.orEmpty()),
-        "city" to (city to user.city.orEmpty()),
-        "postal_code" to (postalCode to user.postalCode.orEmpty()),
-        "state" to (state to user.state.orEmpty()),
-        "country" to (country to user.country.orEmpty()),
-    ).filter { (_, v) -> v.first.trim() != v.second.trim() } // vazio = limpar (o servidor aceita null)
-    val dirty = changes.isNotEmpty()
-
-    PaneSection("Dados de faturação".tr())
-    PaneCard {
-        Text(
-            "Opcional · só para recibos de donativos".tr(),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        SettingsField("Morada".tr(), address, { address = it })
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            SettingsField("Cidade".tr(), city, { city = it }, modifier = Modifier.weight(1f))
-            SettingsField("Código postal".tr(), postalCode, { postalCode = it }, modifier = Modifier.weight(1f))
-        }
-        Column {
-            Text("País".tr(), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(6.dp))
-            CountryDropdown(value = country, onValueChange = { country = it })
-        }
-        SettingsField("Estado/Região".tr(), state, { state = it }, placeholder = "Se aplicável, ex.: Lisboa".tr(), imeAction = ImeAction.Done)
-        SettingsPrimaryButton(
-            text = if (dirty) "Guardar alterações".tr() else "Sem alterações".tr(),
-            // Um único pedido ao VM: chamadas seguidas eram descartadas pela guarda isUpdatingProfile.
-            onClick = { onUpdateFields(changes.associate { (field, v) -> field to v.first.trim() }) },
-            enabled = dirty,
-            loading = isUpdating,
-        )
-    }
-}
-
-@Composable
-private fun TransactionRow(t: TransactionItem) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                t.note ?: t.type ?: "Transação".tr(),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            t.createdAt?.takeIf { it.isNotBlank() }?.let { date ->
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    date,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        t.price?.let { price ->
-            Spacer(Modifier.width(12.dp))
-            Column(horizontalAlignment = Alignment.End) {
-                Text(price, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                // Reembolsado (Stripe): o status mantém-se; vem em is_refunded.
-                (if (t.isRefunded) "refunded" else t.status)?.let { status ->
-                    val (statusLabel, statusColor) = when (status) {
-                        "refunded" -> "reembolsado".tr() to MaterialTheme.colorScheme.tertiary
-                        "completed" -> "concluído".tr() to MaterialTheme.colorScheme.primary
-                        "cancelled" -> "cancelado" to MaterialTheme.colorScheme.error
-                        "error" -> "erro" to MaterialTheme.colorScheme.error
-                        "pending" -> "pendente" to MaterialTheme.colorScheme.onSurfaceVariant
-                        else -> status to MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-                    Spacer(Modifier.height(2.dp))
-                    Text(statusLabel, style = MaterialTheme.typography.labelSmall, color = statusColor)
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun EncryptionPane(
     e2eUnlocked: Boolean,
     e2eFingerprint: String?,
@@ -3076,7 +2922,7 @@ private fun LogRow(entry: LogEntry) {
 // Avisa do pagamento em atraso. Antes do fim do prazo mostra os dias que
 // faltam; depois, que a conta está limitada. Ver ScanPastDueSubscriptionsSchedule.
 @Composable
-private fun PaymentOverdueBanner(
+internal fun PaymentOverdueBanner(
     isSuspended: Boolean,
     daysLeft: Int,
 ) {

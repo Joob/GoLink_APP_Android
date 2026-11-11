@@ -1,6 +1,7 @@
 package co.golink.tester.ui.screens.settings
 
 import co.golink.tester.ui.i18n.tr
+import co.golink.tester.ui.i18n.bt
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -79,12 +80,16 @@ data class SettingsUiState(
     val createTokenError: String? = null,
     val toast: String? = null,
     val logEntries: List<LogEntry> = emptyList(),
+    // Billing (só leitura: pagamentos só na web).
+    val billing: co.golink.tester.domain.billing.BillingSummary? = null,
     val plans: List<Plan> = emptyList(),
-    val isLoadingPlans: Boolean = false,
-    val isStartingCheckout: Boolean = false,
-    val checkoutUrl: String? = null,
-    // Plano escolhido à espera que o utilizador escolha cartão ou crypto. null = sem diálogo.
-    val pendingCheckoutPlan: Plan? = null,
+    val isLoadingBilling: Boolean = false,
+    val invoices: List<co.golink.tester.domain.billing.Invoice> = emptyList(),
+    val invoicesPage: Int = 0,
+    val hasMoreInvoices: Boolean = false,
+    val isLoadingInvoices: Boolean = false,
+    // id da fatura a descarregar ("all" = ZIP). null = nenhuma.
+    val downloadingInvoice: String? = null,
     // Overlay de saída (revoke da sessão atual / de todas as outras). null = escondido.
     val logoutOverlay: String? = null,
 )
@@ -556,46 +561,83 @@ class SettingsViewModel @Inject constructor(
 
     fun consumeToast() = _state.update { it.copy(toast = null) }
 
-    fun loadPlans() {
-        if (_state.value.isLoadingPlans || _state.value.plans.isNotEmpty()) return
-        _state.update { it.copy(isLoadingPlans = true) }
+    // ── Billing (só leitura) ────────────────────────────────────────────
+    // Sem checkout, troca de plano, cartões nem cancelamento: tudo isso só na
+    // web (política de pagamentos da Play). Aqui só se lê e se editam os dados
+    // de faturação, e se descarregam faturas já pagas.
+
+    /** Resumo + planos + 1.ª página de faturas. */
+    fun loadBilling() {
+        if (_state.value.isLoadingBilling) return
+        _state.update { it.copy(isLoadingBilling = true) }
         viewModelScope.launch {
-            billingRepository.listPlans()
-                .onSuccess { l -> _state.update { it.copy(plans = l, isLoadingPlans = false) } }
-                .onFailure { t -> _state.update { it.copy(isLoadingPlans = false, toast = "Erro a carregar planos: %s".tr().format(t.message.orEmpty())) } }
+            val summary = billingRepository.summary()
+            val plans = billingRepository.listPlans()
+            _state.update {
+                it.copy(
+                    isLoadingBilling = false,
+                    billing = summary.getOrNull() ?: it.billing,
+                    plans = plans.getOrNull() ?: it.plans,
+                    toast = summary.exceptionOrNull()?.let { bt("error_generic") },
+                )
+            }
         }
+        loadInvoices(reset = true)
     }
 
-    /** Abre o seletor de método de pagamento para o plano escolhido. */
-    fun selectPlan(plan: Plan) = _state.update { it.copy(pendingCheckoutPlan = plan) }
-
-    fun dismissPaymentMethods() = _state.update { it.copy(pendingCheckoutPlan = null) }
-
-    fun startStripeCheckout(plan: Plan) {
-        val priceId = plan.stripePriceId
-        if (priceId.isNullOrBlank()) {
-            _state.update { it.copy(toast = "Este plano não tem Stripe configurado".tr()) }
-            return
-        }
-        startCheckout { billingRepository.createStripeCheckout(priceId) }
-    }
-
-    /**
-     * O checkout crypto usa o id do plano local, por isso está sempre
-     * disponível: não depende de um plano espelhado no gateway.
-     */
-    fun startCryptoCheckout(plan: Plan) {
-        startCheckout { billingRepository.createCryptoCheckout(plan.id) }
-    }
-
-    private fun startCheckout(request: suspend () -> Result<String>) {
-        _state.update { it.copy(isStartingCheckout = true, pendingCheckoutPlan = null) }
+    fun loadInvoices(reset: Boolean = false) {
+        if (_state.value.isLoadingInvoices) return
+        val page = if (reset) 1 else _state.value.invoicesPage + 1
+        _state.update { it.copy(isLoadingInvoices = true) }
         viewModelScope.launch {
-            request()
-                .onSuccess { url -> _state.update { it.copy(isStartingCheckout = false, checkoutUrl = url) } }
-                .onFailure { t -> _state.update { it.copy(isStartingCheckout = false, toast = "Erro a iniciar checkout: %s".tr().format(t.message.orEmpty())) } }
+            billingRepository.invoices(page)
+                .onSuccess { (list, more) ->
+                    _state.update {
+                        it.copy(
+                            invoices = if (reset) list else it.invoices + list,
+                            invoicesPage = page,
+                            hasMoreInvoices = more,
+                            isLoadingInvoices = false,
+                        )
+                    }
+                }
+                .onFailure { _state.update { it.copy(isLoadingInvoices = false) } }
         }
     }
 
-    fun consumeCheckoutUrl() = _state.update { it.copy(checkoutUrl = null) }
+    fun downloadInvoice(invoice: co.golink.tester.domain.billing.Invoice?) {
+        if (_state.value.downloadingInvoice != null) return
+        _state.update { it.copy(downloadingInvoice = invoice?.id ?: "all") }
+        viewModelScope.launch {
+            val result = if (invoice == null) billingRepository.downloadAllInvoices() else billingRepository.downloadInvoice(invoice)
+            _state.update {
+                it.copy(
+                    downloadingInvoice = null,
+                    toast = if (result.isSuccess) bt("saved_downloads") else bt("download_failed"),
+                )
+            }
+        }
+    }
+
+    /** Dados de faturação (não é pagamento): grava e recarrega o resumo. */
+    fun saveBillingDetails(changes: Map<String, String>) {
+        if (changes.isEmpty() || _state.value.isUpdatingProfile) return
+        _state.update { it.copy(isUpdatingProfile = true) }
+        viewModelScope.launch {
+            var failure: Throwable? = null
+            for ((name, value) in changes) {
+                failure = repository.updateProfileField(name, value).exceptionOrNull()
+                if (failure != null) break
+            }
+            val summary = billingRepository.summary().getOrNull()
+            sessionManager.refreshUser()
+            _state.update {
+                it.copy(
+                    isUpdatingProfile = false,
+                    billing = summary ?: it.billing,
+                    toast = failure?.let { t -> t.message ?: bt("error_generic") } ?: bt("bd_saved"),
+                )
+            }
+        }
+    }
 }

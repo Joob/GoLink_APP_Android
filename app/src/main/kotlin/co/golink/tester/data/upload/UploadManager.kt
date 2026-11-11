@@ -649,7 +649,7 @@ class UploadManager @Inject constructor(
             watch.touch()
             try {
                 api.upload(
-                    name = textPart(metadata.baseName),
+                    name = textPart(metadata.displayName),
                     extension = textPart(metadata.extension),
                     parentId = parentId?.let { textPart(it) },
                     overwriteExisting = if (overwrite) textPart("1") else null,
@@ -696,7 +696,7 @@ class UploadManager @Inject constructor(
         // E2E Fase 2: cifra o nome só no espaço privado (ficheiro do próprio, sem
         // dono de team folder). Em team folders/partilhas mantém-se em claro.
         val nameEncrypted = if (ownerPublicKey.isNullOrBlank() && memberKeys?.team != true && e2eKeyManager.canSealUploadNames)
-            e2eKeyManager.sealName(metadata.baseName) else null
+            e2eKeyManager.sealName(metadata.displayName) else null
 
         // Thumbnail E2E (imagem/vídeo): gerado no cliente e cifrado com a MESMA
         // data key. Best-effort — se falhar, o ficheiro fica com ícone.
@@ -726,7 +726,7 @@ class UploadManager @Inject constructor(
             watch.active.incrementAndGet()
             watch.touch()
             try { if (mobileBackup) api.uploadMobileBackup(
-                name = textPart(if (nameEncrypted != null) "•" else metadata.baseName),
+                name = textPart(if (nameEncrypted != null) "•" else metadata.displayName),
                 extension = textPart(metadata.extension),
                 overwriteExisting = if (overwrite) textPart("1") else null,
                 folder = backupFolder?.takeIf { it.isNotBlank() }?.let { textPart(it) },
@@ -739,7 +739,7 @@ class UploadManager @Inject constructor(
                 uploadKey = textPart(backupUploadKey(uri, metadata)),
             ) else api.upload(
                 overwriteFileId = replacesId?.takeIf { overwrite }?.let { textPart(it) },
-                name = textPart(if (nameEncrypted != null) "•" else metadata.baseName),
+                name = textPart(if (nameEncrypted != null) "•" else metadata.displayName),
                 extension = textPart(metadata.extension),
                 parentId = parentId?.let { textPart(it) },
                 overwriteExisting = if (overwrite) textPart("1") else null,
@@ -793,7 +793,7 @@ class UploadManager @Inject constructor(
             // Upload do DONO para uma pasta já partilhada: regista o nome nas
             // partilhas ancestrais (o visitante do link passa a ver o nome).
             if (fileId != null && nameEncrypted != null) {
-                e2eShareService.registerItemNameForOwnerShares(fileId, metadata.baseName)
+                e2eShareService.registerItemNameForOwnerShares(fileId, metadata.displayName)
             }
             // ...e a data key: sem ela o nome aparecia no link mas o ficheiro não abria.
             if (fileId != null && ownerPublicKey.isNullOrBlank()) {
@@ -951,7 +951,7 @@ class UploadManager @Inject constructor(
 
             // E2E Fase 2: nome cifrado só no espaço privado (ficheiro do próprio).
             nameEncrypted = if (ownerSelf && memberKeys?.team != true && e2eKeyManager.canSealUploadNames)
-                e2eKeyManager.sealName(metadata.baseName) else null
+                e2eKeyManager.sealName(metadata.displayName) else null
 
             encryptedThumb = try {
                 generateThumbnailJpeg(uri, metadata.mimeType)?.let { EncryptedFileCodec.encrypt(it, dataKey) }
@@ -1012,7 +1012,7 @@ class UploadManager @Inject constructor(
                     onChunkDone = { i -> if (tracked) resumeStore.markChunk(resumeId, i) },
                 ) { chunkIndex, chunkBody, isLast ->
                     api.uploadChunk(
-                        name = textPart(if (nameEncrypted != null) "•" else metadata.baseName),
+                        name = textPart(if (nameEncrypted != null) "•" else metadata.displayName),
                         extension = textPart(metadata.extension),
                         parentId = parentId?.let { textPart(it) },
                         isLastChunk = textPart(if (isLast) "1" else "0"),
@@ -1071,7 +1071,7 @@ class UploadManager @Inject constructor(
             // Upload do DONO para uma pasta já partilhada: regista o nome nas
             // partilhas ancestrais (o visitante do link passa a ver o nome).
             if (fileId != null && nameEncrypted != null) {
-                e2eShareService.registerItemNameForOwnerShares(fileId, metadata.baseName)
+                e2eShareService.registerItemNameForOwnerShares(fileId, metadata.displayName)
             }
             // ...e a data key: sem ela o nome aparecia no link mas o ficheiro não abria.
             if (fileId != null && ownerSelf) {
@@ -1158,7 +1158,7 @@ class UploadManager @Inject constructor(
                     onChunkDone = { i -> if (tracked) resumeStore.markChunk(taskId, i) },
                 ) { chunkIndex, chunkBody, isLast ->
                     api.uploadChunk(
-                        name = textPart(metadata.baseName),
+                        name = textPart(metadata.displayName),
                         extension = textPart(metadata.extension),
                         parentId = parentId?.let { textPart(it) },
                         isLastChunk = textPart(if (isLast) "1" else "0"),
@@ -1208,7 +1208,7 @@ class UploadManager @Inject constructor(
                 // memória e repete-se aqui (rede/429/5xx) em vez de recomeçar do 0.
                 val response = sendSequentialChunk(taskId) { watch ->
                     api.uploadChunk(
-                        name = textPart(metadata.baseName),
+                        name = textPart(metadata.displayName),
                         extension = textPart(metadata.extension),
                         parentId = parentId?.let { textPart(it) },
                         isLastChunk = textPart(if (isLast) "1" else "0"),
