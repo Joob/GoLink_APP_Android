@@ -5,7 +5,13 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -147,6 +153,7 @@ fun FragmentActivity.passBiometricConfirm(bio: PassBiometricStore, title: String
     }, onFail = onFail)
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun PassScreen(
     initialPane: String,
@@ -342,6 +349,8 @@ fun PassScreen(
                         .fillMaxSize()
                         .background(palette.bg)
                         .padding(padding)
+                        // A barra inferior já está no padding: o imePadding de dentro não a conta 2×.
+                        .consumeWindowInsets(padding)
                         // Qualquer toque conta como atividade (auto-lock).
                         .pointerInput(Unit) {
                             awaitPointerEventScope {
@@ -531,7 +540,13 @@ private fun PassLockView(vm: PassViewModel, bioEnabled: Boolean, e2eUnlocked: Bo
 
     Column(Modifier.fillMaxSize()) {
         PassTopBar(pt("title"), openMenu)
-        Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+        // Centrado na área acima do teclado; em ecrãs baixos desliza (o Unlock nunca fica tapado).
+        BoxWithConstraints(Modifier.fillMaxSize().imePadding()) {
+            Column(
+                Modifier.fillMaxWidth().heightIn(min = maxHeight).verticalScroll(rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
             PassCard(Modifier.widthIn(max = 460.dp), padding = 24.dp) {
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(Modifier.size(56.dp).background(p.accentSoft, RoundedCornerShape(16.dp)), contentAlignment = Alignment.Center) {
@@ -579,6 +594,7 @@ private fun PassLockView(vm: PassViewModel, bioEnabled: Boolean, e2eUnlocked: Bo
                         TextButton(onClick = onOpenGate) { Text(pt("e2e_locked_title"), color = PassBlue) }
                     }
                 }
+            }
             }
         }
     }

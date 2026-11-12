@@ -27,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -49,14 +50,16 @@ import co.golink.tester.ui.i18n.pt
 /**
  * "Inserir chave" do 2FA como o "Add account" dos autenticadores: Emissor, Conta,
  * Chave secreta e Avançado (algoritmo/dígitos/período). Espelho do modo totp do
- * PassItemForm.vue. [onDone] recebe a chave pronta a guardar (base32 ou otpauth://).
+ * PassItemForm.vue. [onDone] recebe a chave pronta a guardar (base32 ou otpauth://) e o
+ * Emissor/Conta escritos (com tudo por defeito a chave é só a base32 e não os leva).
  */
 @Composable
-fun TotpAddSheet(onDismiss: () -> Unit, onScan: () -> Unit, onDone: (String) -> Unit) {
+fun TotpAddSheet(onDismiss: () -> Unit, onScan: () -> Unit, onDone: (raw: String, issuer: String, account: String) -> Unit) {
     val p = LocalPassPalette.current
     var issuer by rememberSaveable { mutableStateOf("") }
     var account by rememberSaveable { mutableStateOf("") }
-    var secret by rememberSaveable { mutableStateOf("") }
+    // Segredo fora do SavedState (Bundle); a rotação não recria a Activity (configChanges).
+    var secret by remember { mutableStateOf("") }
     var algorithm by rememberSaveable { mutableStateOf("SHA1") }
     var digits by rememberSaveable { mutableStateOf(6) }
     var period by rememberSaveable { mutableStateOf("30") }
@@ -83,13 +86,16 @@ fun TotpAddSheet(onDismiss: () -> Unit, onScan: () -> Unit, onDone: (String) -> 
         secret = v
     }
 
-    val raw = if (secret.isBlank()) "" else Totp.build(secret, issuer.trim(), account.trim(), algorithm, digits, period.toIntOrNull() ?: -1)
+    // Período validado à parte: o erro vai para o campo dele (e abre o Avançado), não para a chave.
+    val periodError = period.toIntOrNull().let { if (it == null || it !in 10..120) pt("totp_form.err_period") else null }
+    val raw = if (secret.isBlank() || periodError != null) "" else Totp.build(secret, issuer.trim(), account.trim(), algorithm, digits, period.toInt())
     val cfg = Totp.parse(raw)
     val secretError = when {
         secret.isBlank() -> if (tried) pt("totp_form.err_secret") else null
-        cfg == null -> pt("totp_invalid")
+        Totp.parse(secret) == null -> pt("totp_invalid")
         else -> null
     }
+    val showAdvanced = advanced || periodError != null
     val nameError = if (tried && issuer.isBlank() && account.isBlank()) pt("totp_form.err_name") else null
 
     CreateSheetScaffold(
@@ -98,7 +104,7 @@ fun TotpAddSheet(onDismiss: () -> Unit, onScan: () -> Unit, onDone: (String) -> 
         confirmText = pt("confirm"),
         onConfirm = {
             tried = true
-            if (cfg != null && (issuer.isNotBlank() || account.isNotBlank())) onDone(raw)
+            if (cfg != null && (issuer.isNotBlank() || account.isNotBlank())) onDone(raw, issuer.trim(), account.trim())
         },
         icon = { Icon(Icons.Outlined.Key, null, tint = PassBlue) },
         iconBackground = p.accentSoft,
@@ -142,13 +148,13 @@ fun TotpAddSheet(onDismiss: () -> Unit, onScan: () -> Unit, onDone: (String) -> 
         }
 
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { advanced = !advanced }.padding(vertical = 8.dp),
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { advanced = !showAdvanced }.padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(pt("totp_form.advanced"), fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = p.muted, modifier = Modifier.weight(1f))
-            Icon(if (advanced) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null, tint = p.muted)
+            Icon(if (showAdvanced) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null, tint = p.muted)
         }
-        if (advanced) {
+        if (showAdvanced) {
             SheetLabel(pt("totp_form.algorithm"))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("SHA1", "SHA256", "SHA512").forEach { a -> PassChip(a, null, algorithm == a) { algorithm = a } }
@@ -157,7 +163,7 @@ fun TotpAddSheet(onDismiss: () -> Unit, onScan: () -> Unit, onDone: (String) -> 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(6, 7, 8).forEach { d -> PassChip(d.toString(), null, digits == d) { digits = d } }
             }
-            SheetField(pt("totp_form.period"), period, { v -> period = v.filter(Char::isDigit).take(3) }, null, keyboard = KeyboardType.Number)
+            SheetField(pt("totp_form.period"), period, { v -> period = v.filter(Char::isDigit).take(3) }, null, keyboard = KeyboardType.Number, error = periodError)
         }
 
         Column(

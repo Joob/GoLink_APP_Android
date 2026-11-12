@@ -86,6 +86,7 @@ import co.golink.tester.ui.screens.pass.PassRose
 import co.golink.tester.ui.screens.pass.hostLabel
 import co.golink.tester.ui.screens.pass.passBiometricConfirm
 import co.golink.tester.ui.screens.pass.passBiometricPrompt
+import co.golink.tester.ui.screens.pass.passQuotaMessage
 import co.golink.tester.ui.screens.pass.passPalette
 import co.golink.tester.ui.theme.VueFileManagerTheme
 import dagger.hilt.android.AndroidEntryPoint
@@ -438,7 +439,7 @@ class PassAutofillActivity : FragmentActivity() {
             if (!busy) {
                 busy = true
                 scope.launch {
-                    val ok = runCatching {
+                    val err = runCatching {
                         repo.saveFromAutofill(
                             existingId = if (update) existing?.id else null,
                             name = name.trim().ifEmpty { targetName },
@@ -447,9 +448,10 @@ class PassAutofillActivity : FragmentActivity() {
                             password = password,
                             packageName = target.packageName.takeIf { target.webDomain == null && !PassAutofillParser.isTrustedBrowser(it) },
                         )
-                    }.isSuccess
+                    }.exceptionOrNull()
+                    val ok = err == null
                     busy = false
-                    Toast.makeText(this@PassAutofillActivity, if (ok) pt("saved") else pt("error"), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@PassAutofillActivity, if (ok) pt("saved") else passQuotaMessage(err) ?: pt("error"), Toast.LENGTH_SHORT).show()
                     if (ok) finish()
                 }
             }

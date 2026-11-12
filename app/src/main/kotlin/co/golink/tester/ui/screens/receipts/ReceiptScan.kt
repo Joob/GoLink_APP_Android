@@ -333,12 +333,19 @@ fun ReceiptScanPage(
                     null
                 } catch (e: CancellationException) {
                     throw e
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
+                    // Inclui Error (lib nativa do Tesseract que não carrega, OOM): nunca fecha a app.
                     null
                 }
                 applyOcr(fields ?: OcrFields())
                 fillFromHistory()
                 phase = "form"
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                android.util.Log.w("rc-scan", "processStill", e)
+                vm.toast(rt("scan.read_failed"))
+                phase = if (photo != null) "form" else "camera"
             } finally {
                 bmp.recycle()
                 // Um job cancelado acaba mais tarde: não pode limpar o de uma foto nova.

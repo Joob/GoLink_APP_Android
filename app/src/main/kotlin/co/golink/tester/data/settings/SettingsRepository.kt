@@ -59,10 +59,30 @@ class SettingsRepository @Inject constructor(
         StorageUsage.fromResponse(response.body() ?: error("Resposta vazia"))
     }
 
-    suspend fun sessions(): Result<List<SessionItem>> = netCatching {
+    suspend fun sessions(): Result<co.golink.tester.domain.settings.SessionsResponse> = netCatching {
         val response = api.sessions()
         check(response.isSuccessful) { validationMessage(response) }
-        response.body()?.data.orEmpty()
+        response.body() ?: error("Resposta vazia")
+    }
+
+    suspend fun confirmSession(id: String): Result<Unit> = netCatching {
+        val response = api.confirmSession(id)
+        check(response.isSuccessful) { validationMessage(response) }
+    }
+
+    suspend fun revokeInactiveSessions(): Result<Unit> = netCatching {
+        val response = api.revokeInactiveSessions()
+        check(response.isSuccessful) { validationMessage(response) }
+    }
+
+    suspend fun setSessionAutoSignout(days: Int?): Result<Unit> = netCatching {
+        val response = api.updateSessionSettings(co.golink.tester.domain.settings.SessionAutoSignoutRequest(days))
+        check(response.isSuccessful) { validationMessage(response) }
+    }
+
+    suspend fun revokeConnection(id: Long): Result<Unit> = netCatching {
+        val response = api.revokeConnection(id)
+        check(response.isSuccessful) { validationMessage(response) }
     }
 
     suspend fun sessionsCount(): Result<Int> = netCatching {

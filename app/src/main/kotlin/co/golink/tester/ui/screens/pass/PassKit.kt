@@ -1,6 +1,6 @@
 package co.golink.tester.ui.screens.pass
 
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -36,7 +36,8 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -263,14 +264,19 @@ fun TotpRing(remaining: Int, period: Int, size: Dp = 40.dp, showNumber: Boolean 
     val p = LocalPassPalette.current
     val ending = remaining <= 7
     val color = if (ending) PassRose else PassBlue
-    val fraction by animateFloatAsState(remaining / period.toFloat(), tween(900), label = "totp")
+    // Desce animado; ao virar o período (o valor sobe) salta logo, sem andar para trás.
+    val target = remaining / period.toFloat()
+    val fraction = remember { Animatable(target) }
+    LaunchedEffect(target) {
+        if (target > fraction.value) fraction.snapTo(target) else fraction.animateTo(target, tween(900))
+    }
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         Canvas(Modifier.size(size)) {
             val stroke = this.size.minDimension * 0.1f
             val inset = stroke / 2
             val arcSize = Size(this.size.width - stroke, this.size.height - stroke)
             drawArc(p.line, 0f, 360f, false, Offset(inset, inset), arcSize, style = Stroke(stroke))
-            drawArc(color, -90f, 360f * fraction, false, Offset(inset, inset), arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
+            drawArc(color, -90f, 360f * fraction.value, false, Offset(inset, inset), arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
         }
         if (showNumber) Text(remaining.toString(), fontSize = (size.value * 0.3f).sp, fontWeight = FontWeight.Bold, color = color)
     }

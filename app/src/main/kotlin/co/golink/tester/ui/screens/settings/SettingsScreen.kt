@@ -409,11 +409,19 @@ fun SettingsScreen(
                 )
                 SettingsRoute.Sessions -> SessionsPane(
                     sessions = state.sessions,
+                    connections = state.sessionConnections,
+                    autoSignoutDays = state.sessionAutoSignoutDays,
                     isLoading = state.isLoadingSessions,
-                    onRevoke = viewModel::revokeSession,
                     busyIds = state.busyIds,
-                    onRevokeAll = viewModel::revokeAllSessions,
-                    onRefresh = viewModel::loadSessions,
+                    onRefresh = { viewModel.loadSessions() },
+                    onRevoke = viewModel::revokeSession,
+                    onRevokeConnection = viewModel::revokeConnection,
+                    onConfirm = viewModel::confirmSession,
+                    onRevokeAll = { viewModel.revokeAllSessions() },
+                    onRevokeInactive = { viewModel.revokeInactiveSessions() },
+                    onAutoSignout = viewModel::setSessionAutoSignout,
+                    onLogout = { viewModel.logout() },
+                    onChangePassword = { route = SettingsRoute.Password },
                 )
                 SettingsRoute.SecurityActivity -> SecurityActivityPane(
                     events = state.securityEvents,
@@ -426,9 +434,13 @@ fun SettingsScreen(
                     summary = state.billing,
                     plans = state.plans,
                     isLoading = state.isLoadingBilling,
+                    loadFailed = state.billingFailed,
+                    onRetry = { viewModel.loadBilling(force = true) },
                     invoices = state.invoices,
                     hasMoreInvoices = state.hasMoreInvoices,
                     isLoadingInvoices = state.isLoadingInvoices,
+                    invoicesFailed = state.invoicesFailed,
+                    onRetryInvoices = viewModel::retryInvoices,
                     downloadingInvoice = state.downloadingInvoice,
                     onLoadMoreInvoices = { viewModel.loadInvoices() },
                     onDownload = viewModel::downloadInvoice,
@@ -1874,176 +1886,6 @@ private fun Sparkline(data: List<Float>, color: Color, modifier: Modifier = Modi
         )
     }
 }
-
-@Composable
-private fun SessionsPane(
-    sessions: List<SessionItem>,
-    isLoading: Boolean,
-    onRevoke: (String) -> Unit,
-    busyIds: Set<String>,
-    onRevokeAll: () -> Unit,
-    onRefresh: () -> Unit,
-) {
-    var pendingRevoke by remember { mutableStateOf<SessionItem?>(null) }
-    var showRevokeAll by remember { mutableStateOf(false) }
-
-    pendingRevoke?.let { s ->
-        SettingsDialog(
-            title = if (s.is_current) "Terminar sessão neste telemóvel?".tr() else "Revogar esta sessão?".tr(),
-            message = if (s.is_current)
-                "Vais ser desconectado deste dispositivo imediatamente.".tr()
-            else "A sessão será terminada e o dispositivo terá de iniciar sessão novamente.".tr(),
-            icon = if (s.isMobileSession()) Icons.Filled.Smartphone else Icons.Outlined.Devices,
-            destructive = true,
-            confirmText = "Revogar".tr(),
-            onConfirm = { onRevoke(s.id); pendingRevoke = null },
-            onDismiss = { pendingRevoke = null },
-        )
-    }
-    if (showRevokeAll) {
-        SettingsDialog(
-            title = "Terminar outras sessões?".tr(),
-            message = "Todas as outras sessões serão revogadas. Continuarás autenticado neste dispositivo.".tr(),
-            icon = Icons.Filled.Logout,
-            destructive = true,
-            confirmText = "Terminar todas".tr(),
-            onConfirm = { onRevokeAll(); showRevokeAll = false },
-            onDismiss = { showRevokeAll = false },
-        )
-    }
-
-    val current = sessions.firstOrNull { it.is_current }
-    val others = sessions.filter { !it.is_current }
-        .sortedByDescending { it.last_activity_at ?: it.login_at ?: "" }
-    val ordered = listOfNotNull(current) + others
-
-    PaneColumn {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-            Text(
-                if (sessions.size == 1) "1 dispositivo com sessão iniciada na tua conta.".tr()
-                else trPlural("%d dispositivo com sessão iniciada na tua conta.", "%d dispositivos com sessão iniciada na tua conta.", sessions.size),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
-            )
-            if (isLoading) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = SettingsAccent)
-            } else {
-                IconButton(onClick = onRefresh) {
-                    Icon(Icons.Filled.Refresh, contentDescription = "Atualizar".tr(), tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
-                }
-            }
-        }
-        if (isLoading && sessions.isEmpty()) {
-            PaneCard { Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = SettingsAccent) } }
-        }
-
-        if (ordered.isNotEmpty()) {
-            PaneCard(padded = false) {
-                ordered.forEachIndexed { i, s ->
-                    SessionRow(s, busy = s.id in busyIds, onRevoke = { pendingRevoke = s })
-                    if (i < ordered.lastIndex) SettingsRowDivider(68.dp)
-                }
-            }
-        }
-
-        Text(
-            "Não reconheces um dispositivo? Termina-lhe a sessão e muda a password.".tr(),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
-
-        if (others.isNotEmpty()) {
-            SettingsOutlinedButton(
-                text = "Terminar sessão nos outros dispositivos".tr(),
-                onClick = { showRevokeAll = true },
-                destructive = true,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-        }
-    }
-}
-
-/** Linha de uma sessão: mosaico do tipo, nome, chip na atual, meta e "Terminar". */
-@Composable
-private fun SessionRow(s: SessionItem, busy: Boolean, onRevoke: () -> Unit) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-    ) {
-        Box(
-            Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(settingsInsetColor()),
-            contentAlignment = Alignment.Center,
-        ) { Icon(sessionIcon(s), contentDescription = null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f), modifier = Modifier.size(20.dp)) }
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    sessionTitle(s),
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                if (s.is_current) {
-                    Spacer(Modifier.width(6.dp))
-                    SettingsBadge("Este telemóvel".tr(), SettingsAccent)
-                }
-            }
-            Text(
-                sessionMeta(s),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (!s.is_current) {
-            Spacer(Modifier.width(10.dp))
-            // A terminar: botão desativado (evita pedidos repetidos).
-            SettingsPillButton("Terminar".tr(), onClick = onRevoke, enabled = !busy)
-        }
-    }
-}
-
-/** Telemóvel / portátil / browser genérico (globo). */
-private fun sessionIcon(s: SessionItem): ImageVector {
-    if (s.isMobileSession()) return Icons.Filled.Smartphone
-    val text = listOfNotNull(s.device, s.browser).joinToString(" ").lowercase()
-    return when {
-        listOf("windows", "mac", "linux", "chrome os", "chromeos").any { it in text } -> Icons.Outlined.Laptop
-        else -> Icons.Outlined.Language
-    }
-}
-
-/** "Chrome em Windows" / "Pixel 8" — nome curto do dispositivo. */
-private fun sessionTitle(s: SessionItem): String {
-    val device = s.device?.takeIf { it.isNotBlank() }
-    val browser = s.browser?.takeIf { it.isNotBlank() && it != device }
-    return when {
-        device != null && browser != null && !s.isMobileSession() -> "%s · %s".format(browser, device)
-        device != null -> device
-        browser != null -> browser
-        else -> "Dispositivo desconhecido".tr()
-    }
-}
-
-/** "Lisboa, PT · há 2 h" (sem localização, o IP). */
-private fun sessionMeta(s: SessionItem): String = listOfNotNull(
-    s.location?.takeIf { it.isNotBlank() } ?: s.ip_address?.takeIf { it.isNotBlank() },
-    if (s.is_current) "ativa agora".tr()
-    else (s.last_activity_at ?: s.login_at)?.let { co.golink.tester.ui.common.relativeAgo(it) }?.takeIf { it.isNotBlank() },
-).joinToString(" · ")
-
-/**
- * A session is shown as mobile when the backend labels it non-"web", OR when
- * it is the current session — because this list is being viewed from the
- * Android app, so the active session is necessarily this phone.
- */
-private fun SessionItem.isMobileSession(): Boolean =
-    is_current || (platform ?: "").lowercase() != "web"
 
 @Composable
 private fun SecurityActivityPane(

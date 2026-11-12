@@ -1,8 +1,14 @@
 package co.golink.tester.domain.billing
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonTransformingSerializer
 import kotlinx.serialization.json.doubleOrNull
 
 /*
@@ -10,6 +16,18 @@ import kotlinx.serialization.json.doubleOrNull
  * Não há checkout, mudança de plano, cartões nem cancelamento na app
  * (política de pagamentos da Play) — isso faz-se na versão web.
  */
+
+/**
+ * `features` tolerante: o PHP serializa um array associativo vazio como `[]` (não `{}`)
+ * e isso rebentava a desserialização do plano/resumo inteiro. Array (vazio ou não) ou
+ * null → mapa vazio.
+ */
+internal object FeaturesSerializer : JsonTransformingSerializer<Map<String, JsonElement>>(
+    MapSerializer(String.serializer(), JsonElement.serializer()),
+) {
+    override fun transformDeserialize(element: JsonElement): JsonElement =
+        if (element is JsonArray || element is JsonNull) JsonObject(emptyMap()) else element
+}
 
 @Serializable
 data class PlansResponse(
@@ -38,6 +56,7 @@ data class PlanAttributes(
     val price: String? = null,
     val amount: Double? = null,
     val interval: String? = null,
+    @Serializable(with = FeaturesSerializer::class)
     val features: Map<String, JsonElement> = emptyMap(),
 )
 
@@ -90,6 +109,7 @@ data class CurrentPlan(
     val interval: String? = null,
     val amount: Double? = null,
     val price: String? = null,
+    @Serializable(with = FeaturesSerializer::class)
     val features: Map<String, JsonElement> = emptyMap(),
     val status: String? = null,
     val driver: String? = null,
@@ -98,6 +118,10 @@ data class CurrentPlan(
     val ends_at: String? = null,
     val is_past_due: Boolean = false,
     val days_left_to_pay: Int = 0,
+    // false em pagamentos sem renovação automática (cripto/NOWPayments): "Expira a …".
+    val auto_renews: Boolean = true,
+    // Cancelado mas ainda retomável (só na web; a app é só leitura).
+    val can_resume: Boolean = false,
 ) {
     private fun feature(key: String, default: Double) =
         (features[key] as? JsonPrimitive)?.doubleOrNull ?: default

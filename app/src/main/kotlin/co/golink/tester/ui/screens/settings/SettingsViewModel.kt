@@ -59,6 +59,10 @@ data class SettingsUiState(
     /** Tamanho da cache local (miniaturas, temporários) — painel Bloqueio da app. */
     val cacheBytes: Long? = null,
     val sessions: List<SessionItem> = emptyList(),
+    /** Ligações: tokens pessoais sem sessão (separador "Ligações" das Sessões). */
+    val sessionConnections: List<co.golink.tester.domain.settings.SessionConnection> = emptyList(),
+    /** Saída automática das inativas: 30/90/180 ou null = nunca. */
+    val sessionAutoSignoutDays: Int? = null,
     /** Contagem para o badge do menu (sem pedir/decifrar a lista toda). */
     val sessionsCount: Int? = null,
     val securityEvents: List<SecurityEventData> = emptyList(),
@@ -108,10 +112,14 @@ data class SettingsUiState(
     val billing: co.golink.tester.domain.billing.BillingSummary? = null,
     val plans: List<Plan> = emptyList(),
     val isLoadingBilling: Boolean = false,
+    // O resumo falhou e não há nenhum em memória: o painel mostra erro + "Tentar novamente".
+    val billingFailed: Boolean = false,
     val invoices: List<co.golink.tester.domain.billing.Invoice> = emptyList(),
     val invoicesPage: Int = 0,
     val hasMoreInvoices: Boolean = false,
     val isLoadingInvoices: Boolean = false,
+    // A última página de faturas falhou (mostra erro + repetir em vez de "sem faturas").
+    val invoicesFailed: Boolean = false,
     // id da fatura a descarregar ("all" = ZIP). null = nenhuma.
     val downloadingInvoice: String? = null,
     // Overlay de saída (revoke da sessão atual / de todas as outras). null = escondido.
@@ -237,8 +245,16 @@ class SettingsViewModel @Inject constructor(
         _state.update { it.copy(isLoadingSessions = true) }
         viewModelScope.launch {
             repository.sessions()
-                .onSuccess { l ->
-                    _state.update { it.copy(sessions = l, sessionsCount = l.size, isLoadingSessions = false) }
+                .onSuccess { r ->
+                    _state.update {
+                        it.copy(
+                            sessions = r.data,
+                            sessionConnections = r.connections,
+                            sessionAutoSignoutDays = r.settings.autosignout_days,
+                            sessionsCount = r.data.size,
+                            isLoadingSessions = false,
+                        )
+                    }
                     markLoaded("sessions")
                 }
                 .onFailure { t -> _state.update { it.copy(isLoadingSessions = false, toast = t.userMessage()) } }
@@ -302,6 +318,60 @@ class SettingsViewModel @Inject constructor(
                 }
                 .onFailure { t -> _state.update { it.copy(toast = t.userMessage()) } }
             _state.update { it.copy(busyIds = it.busyIds - id) }
+        }
+    }
+
+    /** "Fui eu": o local novo passa a conhecido e deixa de pedir revisão. */
+    fun confirmSession(id: String) {
+        if (id in _state.value.busyIds) return
+        _state.update { it.copy(busyIds = it.busyIds + id) }
+        viewModelScope.launch {
+            repository.confirmSession(id)
+                .onSuccess {
+                    _state.update {
+                        it.copy(
+                            sessions = it.sessions.map { s -> if (s.id == id) s.copy(needs_review = false, is_new_location = false) else s },
+                            toast = "Obrigado — este local passa a ser de confiança.".tr(),
+                        )
+                    }
+                }
+                .onFailure { t -> _state.update { it.copy(toast = t.userMessage()) } }
+            _state.update { it.copy(busyIds = it.busyIds - id) }
+        }
+    }
+
+    fun revokeInactiveSessions() = viewModelScope.launch {
+        repository.revokeInactiveSessions()
+            .onSuccess {
+                _state.update { it.copy(toast = "Sessões inativas terminadas".tr()) }
+                loadSessions()
+            }
+            .onFailure { t -> _state.update { it.copy(toast = t.userMessage()) } }
+    }
+
+    /** Otimista: volta ao valor anterior se o servidor recusar. */
+    fun setSessionAutoSignout(days: Int?) {
+        val previous = _state.value.sessionAutoSignoutDays
+        if (previous == days) return
+        _state.update { it.copy(sessionAutoSignoutDays = days) }
+        viewModelScope.launch {
+            repository.setSessionAutoSignout(days)
+                .onSuccess { _state.update { it.copy(toast = "Guardado".tr()) } }
+                .onFailure { t -> _state.update { it.copy(sessionAutoSignoutDays = previous, toast = t.userMessage()) } }
+        }
+    }
+
+    fun revokeConnection(id: Long) {
+        val key = "c:$id"
+        if (key in _state.value.busyIds) return
+        _state.update { it.copy(busyIds = it.busyIds + key) }
+        viewModelScope.launch {
+            repository.revokeConnection(id)
+                .onSuccess {
+                    _state.update { it.copy(sessionConnections = it.sessionConnections.filterNot { c -> c.id == id }, toast = "Token revogado".tr()) }
+                }
+                .onFailure { t -> _state.update { it.copy(toast = t.userMessage()) } }
+            _state.update { it.copy(busyIds = it.busyIds - key) }
         }
     }
 
@@ -720,29 +790,39 @@ class SettingsViewModel @Inject constructor(
     fun loadBilling(force: Boolean = true) {
         if (_state.value.isLoadingBilling || (!force && !stale("billing"))) return
         _state.update { it.copy(isLoadingBilling = true) }
-        markLoaded("billing")
         viewModelScope.launch {
             // Os dois pedidos em paralelo (eram em série).
             val summaryJob = async { billingRepository.summary() }
             val plansJob = async { billingRepository.listPlans() }
             val summary = summaryJob.await()
             val plans = plansJob.await()
+            // Só conta como carregado com o resumo: numa falha, re-entrar no painel volta a tentar.
+            if (summary.isSuccess) markLoaded("billing")
             _state.update {
+                val billing = summary.getOrNull() ?: it.billing
                 it.copy(
                     isLoadingBilling = false,
-                    billing = summary.getOrNull() ?: it.billing,
+                    billing = billing,
+                    billingFailed = summary.isFailure && billing == null,
                     plans = plans.getOrNull() ?: it.plans,
-                    toast = summary.exceptionOrNull()?.let { bt("error_generic") },
+                    // Em sucesso não apaga um toast de outra ação.
+                    toast = summary.exceptionOrNull()?.let { bt("error_generic") } ?: it.toast,
                 )
             }
         }
         loadInvoices(reset = true)
     }
 
+    // Que pedido de faturas falhou por último: o "Tentar de novo" repete esse.
+    private var invoicesFailedOnReset = true
+
+    /** Repete o último pedido falhado: lista do início (reset) ou página seguinte. */
+    fun retryInvoices() = loadInvoices(reset = invoicesFailedOnReset)
+
     fun loadInvoices(reset: Boolean = false) {
         if (_state.value.isLoadingInvoices) return
         val page = if (reset) 1 else _state.value.invoicesPage + 1
-        _state.update { it.copy(isLoadingInvoices = true) }
+        _state.update { it.copy(isLoadingInvoices = true, invoicesFailed = false) }
         viewModelScope.launch {
             billingRepository.invoices(page)
                 .onSuccess { (list, more) ->
@@ -752,10 +832,14 @@ class SettingsViewModel @Inject constructor(
                             invoicesPage = page,
                             hasMoreInvoices = more,
                             isLoadingInvoices = false,
+                            invoicesFailed = false,
                         )
                     }
                 }
-                .onFailure { _state.update { it.copy(isLoadingInvoices = false) } }
+                .onFailure {
+                    invoicesFailedOnReset = reset
+                    _state.update { it.copy(isLoadingInvoices = false, invoicesFailed = true) }
+                }
         }
     }
 

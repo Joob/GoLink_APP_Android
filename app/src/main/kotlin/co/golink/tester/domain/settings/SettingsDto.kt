@@ -65,6 +65,9 @@ data class StorageAttributes(
 @Serializable
 data class SessionsResponse(
     val data: List<SessionItem> = emptyList(),
+    /** Tokens pessoais sem sessão de login (Definições › API tokens). */
+    val connections: List<SessionConnection> = emptyList(),
+    val settings: SessionSettings = SessionSettings(),
     val table_exists: Boolean = true,
 )
 
@@ -75,10 +78,42 @@ data class SessionItem(
     val browser: String? = null,
     val device: String? = null,
     val platform: String? = null,
+    /** "Frankfurt, Germany" (GeoIP local do servidor), null se desconhecido. */
     val location: String? = null,
+    val country_code: String? = null,
+    /** "password", "password+email", "password+app", "passkey", "social:google+email"… */
+    val auth_method: String? = null,
+    val is_new_location: Boolean = false,
+    /** Local novo ainda sem "Fui eu" (últimos 14 dias). */
+    val needs_review: Boolean = false,
     val is_current: Boolean = false,
     val login_at: String? = null,
     val last_activity_at: String? = null,
+    /** "browser" | "app" */
+    val type: String? = null,
+    val browser_name: String? = null,
+    val browser_version: String? = null,
+    val app_version: String? = null,
+)
+
+@Serializable
+data class SessionConnection(
+    val id: Long,
+    val name: String = "",
+    val abilities: List<String> = emptyList(),
+    val last_used_at: String? = null,
+    val created_at: String? = null,
+)
+
+@Serializable
+data class SessionSettings(
+    /** 30 / 90 / 180, ou null = nunca. */
+    val autosignout_days: Int? = null,
+)
+
+@Serializable
+data class SessionAutoSignoutRequest(
+    val autosignout_days: Int? = null,
 )
 
 /**

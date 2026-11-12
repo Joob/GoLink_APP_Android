@@ -87,6 +87,9 @@ class PassRepository @Inject constructor(
     private val touchedAt = HashMap<String, Int>()
     private val loadLock = Mutex()
     private var healthJob: Job? = null
+    private val healthMutex = Mutex()
+    private val healthRun = java.util.concurrent.atomic.AtomicInteger()
+    @Volatile private var healthFresh = false
     private var idleJob: Job? = null
     @Volatile private var lastActivity = System.currentTimeMillis()
     @Volatile private var repromptAt = 0L
@@ -671,7 +674,8 @@ class PassRepository @Inject constructor(
                 onProgress(done)
             }
         } catch (e: PassHttpException) {
-            if (e.status == 422) throw PassLimitException(done)
+            // 422 sem `code` = limite de itens; com `code` (quota do cofre) segue no PassImportException.
+            if (e.status == 422 && e.code == null) throw PassLimitException(done)
             throw PassImportException(done, e)
         } finally {
             if (done > 0) scheduleHealth()
@@ -702,17 +706,32 @@ class PassRepository @Inject constructor(
         }
     }
 
-    suspend fun runHealth() {
+    /**
+     * Análises em série (scheduleHealth corre em Default e o Recheck no viewModelScope:
+     * em paralelo partilhavam o itemMemo sem lock). Só a mais recente grava o resultado
+     * e desliga o healthRunning. `fresh` (Recheck) volta a perguntar ao HIBP.
+     */
+    suspend fun runHealth(fresh: Boolean = false) {
         if (k == null) return
         val g = gen
+        // Pedido de Recheck fica pendente até alguma análise correr (uma mais recente do sync não o perde).
+        if (fresh) healthFresh = true
+        val run = healthRun.incrementAndGet()
         _state.update { it.copy(healthRunning = true) }
         try {
-            val result = health.analyse(_state.value.active)
-            if (g == gen && k != null) _state.update { it.copy(health = result) }
+            healthMutex.withLock {
+                if (run != healthRun.get()) return // já há outra mais recente na fila
+                if (healthFresh) {
+                    healthFresh = false
+                    health.clearBreach()
+                }
+                val result = health.analyse(_state.value.active)
+                if (g == gen && k != null && run == healthRun.get()) _state.update { it.copy(health = result) }
+            }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
         } finally {
-            if (g == gen) _state.update { it.copy(healthRunning = false) }
+            if (g == gen && run == healthRun.get()) _state.update { it.copy(healthRunning = false) }
         }
     }
 }

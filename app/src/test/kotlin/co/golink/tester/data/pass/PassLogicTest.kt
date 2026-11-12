@@ -44,6 +44,32 @@ class PassLogicTest {
     }
 
     @Test
+    fun totpParseLenient() {
+        // Espaço e '|' em bruto no rótulo (java.net.URI rejeitava).
+        val sp = Totp.parse("otpauth://totp/My Bank|PT:joao silva?secret=JBSWY3DPEHPK3PXP")!!
+        assertEquals("My Bank|PT", sp.issuer)
+        assertEquals("joao silva", sp.account)
+        // '%' solto: o rótulo fica em bruto; na query fica como está.
+        val pct = Totp.parse("otpauth://totp/ACME:100%25%?secret=JBSWY3DPEHPK3PXP&issuer=A%B+C")!!
+        assertEquals("100%25%", pct.account)
+        assertEquals("A%B C", pct.issuer)
+        // Parâmetros repetidos: fica o 1.º (URLSearchParams.get).
+        val dup = Totp.parse("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&digits=8&digits=6&issuer=First&issuer=Second")!!
+        assertEquals(8, dup.digits)
+        assertEquals("First", dup.issuer)
+        // Algoritmo com hífen e segredo com hífens/espaços.
+        val alg = Totp.parse("otpauth://TOTP/x?secret=jbsw-y3dp%20ehpk-3pxp&algorithm=sha-256")!!
+        assertEquals("SHA256", alg.algorithm)
+        assertEquals("JBSWY3DPEHPK3PXP", alg.secret)
+        // parseInt do JS: "6abc" → 6, "30.5" → 30; sem número → inválido.
+        val pi = Totp.parse("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&digits=6abc&period=30.5")!!
+        assertEquals(6, pi.digits)
+        assertEquals(30, pi.period)
+        assertNull(Totp.parse("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&digits=abc"))
+        assertNull(Totp.parse("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&period=5"))
+    }
+
+    @Test
     fun totpBuildRoundTrip() {
         // Por defeito: só a base32 (igual ao buildOtpauth da web).
         assertEquals("JBSWY3DPEHPK3PXP", Totp.build("jbsw y3dp ehpk 3pxp", "GitHub", "a@b.c"))
@@ -127,5 +153,33 @@ class PassLogicTest {
         assertEquals(3, items.size)
         assertEquals("Finance", items[0].folderName)
         assertEquals("03/29", (items[1].payload["card"] as JsonObject).str("expiry"))
+    }
+
+    // ---- Health: "password" vazada; Recheck (clearBreach) volta a pedir um prefixo que falhou ----
+    @Test
+    fun breachRecheckRetriesFailedPrefix() = kotlinx.coroutines.runBlocking {
+        var calls = 0
+        val health = PassHealth(
+            fetchRange = { prefix ->
+                assertEquals("5BAA6", prefix)
+                if (++calls == 1) throw java.io.IOException("offline")
+                "0018A45C4D1DEF81644B54AB7F969B88D65:2\n1E4C9B93F3F0682250B6CF8331B7EE68FD8:52372427"
+            },
+            loadTwofa = { emptySet() },
+        )
+        val item = PassItem("1", 1, null, null, null, "", Json.parseToJsonElement("""{"type":"login","login":{"password":"password"}}""") as JsonObject)
+
+        val first = health.analyse(listOf(item))
+        assertEquals(1, first.unchecked)
+        assertTrue(first.lists["breach"].orEmpty().isEmpty())
+
+        assertEquals(1, health.analyse(listOf(item)).unchecked) // prefixo em pausa, sem novo pedido
+        assertEquals(1, calls)
+
+        health.clearBreach()
+        val fresh = health.analyse(listOf(item))
+        assertEquals(0, fresh.unchecked)
+        assertEquals(listOf("1"), fresh.lists["breach"])
+        assertEquals(2, calls)
     }
 }

@@ -44,6 +44,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import co.golink.tester.data.pass.PassState
 import co.golink.tester.data.pass.PassStrength
 import co.golink.tester.data.pass.Totp
@@ -54,13 +57,16 @@ import co.golink.tester.ui.components.dialogs.ConfirmDialog
 import co.golink.tester.ui.i18n.pt
 import kotlinx.coroutines.delay
 
-/** Relógio partilhado de 1 s (alinhado ao segundo) para os códigos TOTP. */
+/** Relógio partilhado de 1 s (alinhado ao segundo) para os códigos TOTP; pára com a app em fundo (abaixo de STARTED). */
 @Composable
 fun rememberNowMs(): Long {
-    val now by produceState(System.currentTimeMillis()) {
-        while (true) {
-            value = System.currentTimeMillis()
-            delay(1000 - (value % 1000))
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val now by produceState(System.currentTimeMillis(), lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                value = System.currentTimeMillis()
+                delay(1000 - (value % 1000))
+            }
         }
     }
     return now
@@ -279,6 +285,8 @@ private fun SecretRow(
 @Composable
 private fun TotpRow(cfg: TotpConfig?, vm: PassViewModel) {
     val p = LocalPassPalette.current
+    // Um só relógio/código para a linha toda (texto e anel).
+    val now = rememberTotp(cfg, rememberNowMs())
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(pt("f.totp"), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = p.muted)
@@ -286,7 +294,6 @@ private fun TotpRow(cfg: TotpConfig?, vm: PassViewModel) {
                 Text(pt("totp_invalid"), fontSize = 12.5.sp, color = PassRose, modifier = Modifier.padding(top = 2.dp))
                 return@Column
             }
-            val now = rememberTotp(cfg, rememberNowMs())
             Text(
                 now?.let { Totp.format(it.code) }.orEmpty(),
                 fontSize = 28.sp,
@@ -296,13 +303,10 @@ private fun TotpRow(cfg: TotpConfig?, vm: PassViewModel) {
                 letterSpacing = 1.sp,
             )
         }
-        if (cfg != null) {
-            val now = rememberTotp(cfg, rememberNowMs())
-            if (now != null) {
-                TotpRing(now.remaining, now.period, 36.dp, showNumber = false)
-                Spacer(Modifier.width(10.dp))
-                PassIconButton(Icons.Outlined.ContentCopy, pt("copy")) { vm.copy(pt("f.totp"), now.code) }
-            }
+        if (now != null) {
+            TotpRing(now.remaining, now.period, 36.dp, showNumber = false)
+            Spacer(Modifier.width(10.dp))
+            PassIconButton(Icons.Outlined.ContentCopy, pt("copy")) { vm.copy(pt("f.totp"), now.code) }
         }
     }
 }

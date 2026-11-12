@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
+import android.util.Log
 import com.googlecode.tesseract.android.TessBaseAPI
 import java.io.File
 import kotlin.concurrent.thread
@@ -32,6 +33,9 @@ object ReceiptsOcr {
 
     /** Um OCR de cada vez (cada instância do Tesseract ocupa dezenas de MB). Liberta-se no fim da thread. */
     private val gate = Semaphore(1)
+
+    /** A lib nativa não carregou neste aparelho: deixa de tentar (o formulário fica à mão). */
+    @Volatile private var unavailable = false
 
     /** Copia o modelo para filesDir uma vez (o Tesseract precisa de um caminho real). */
     @Synchronized
@@ -93,10 +97,19 @@ object ReceiptsOcr {
      * [onProgress] recebe 0–100 numa thread de fundo.
      */
     suspend fun read(context: Context, bitmap: Bitmap, onProgress: (Int) -> Unit = {}): String {
+        if (unavailable) throw IllegalStateException("ocr unavailable")
         gate.acquire()
         var handedOff = false
         try {
-            val (root, img) = withContext(Dispatchers.Default) { dataDir(context) to prepare(bitmap) }
+            val (root, img) = withContext(Dispatchers.Default) {
+                try {
+                    dataDir(context) to prepare(bitmap)
+                } catch (e: Throwable) {
+                    // OOM no prepare (ou modelo em falta) vira exceção normal: quem chama trata.
+                    Log.w("rc-ocr", "prepare", e)
+                    throw IllegalStateException("ocr prepare", e)
+                }
+            }
             // O Tesseract é bloqueante e nativo: init (carrega o modelo), setImage e o
             // reconhecimento correm numa thread própria, que é dona da API e da imagem
             // (recycle + gate no fim, mesmo depois de cancelado). Nada disto na main.
@@ -119,7 +132,10 @@ object ReceiptsOcr {
                     api.getHOCRText(0) // reconhece, com progresso
                     result.complete(api.utF8Text.orEmpty())
                 } catch (e: Throwable) {
-                    result.completeExceptionally(e)
+                    if (e is UnsatisfiedLinkError || e is ExceptionInInitializerError || e is NoClassDefFoundError) unavailable = true
+                    if (e !is CancellationException) Log.w("rc-ocr", "tesseract", e)
+                    // Error → exceção normal (um Error no await fechava a app).
+                    result.completeExceptionally(if (e is Error) IllegalStateException("ocr", e) else e)
                 } finally {
                     synchronized(lock) {
                         running = null

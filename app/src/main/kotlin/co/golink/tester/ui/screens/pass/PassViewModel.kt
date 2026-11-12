@@ -9,6 +9,7 @@ import co.golink.tester.data.pass.PassClipboard
 import co.golink.tester.data.pass.PassConflictException
 import co.golink.tester.data.pass.PassCrypto
 import co.golink.tester.data.pass.PassDraft
+import co.golink.tester.data.pass.PassHttpException
 import co.golink.tester.data.pass.PassImportException
 import co.golink.tester.data.pass.PassImporters
 import co.golink.tester.data.pass.PassItem
@@ -37,6 +38,13 @@ import kotlinx.serialization.json.contentOrNull
 sealed interface PassImportFile {
     data class Ready(val drafts: List<PassDraft>) : PassImportFile
     data class NeedsPassword(val json: JsonObject) : PassImportFile
+}
+
+/** 422 de quota do cofre (pelo `code`) → mensagem própria; null se não for. */
+fun passQuotaMessage(e: Throwable?): String? = when ((e as? PassHttpException)?.takeIf { it.status == 422 }?.code) {
+    "pass_quota" -> pt("quota_full")
+    "pass_item_too_large" -> pt("item_too_large")
+    else -> null
 }
 
 @HiltViewModel
@@ -78,7 +86,7 @@ class PassViewModel @Inject constructor(
 
     private fun fail(e: Throwable) {
         if (e is kotlinx.coroutines.CancellationException) throw e
-        toast(if (e is PassConflictException) pt("conflict") else pt("error"))
+        toast(if (e is PassConflictException) pt("conflict") else passQuotaMessage(e) ?: pt("error"))
     }
 
     private fun run(block: suspend () -> Unit) = viewModelScope.launch {
@@ -140,7 +148,7 @@ class PassViewModel @Inject constructor(
     fun restore(id: String) = run { repo.restore(id); toast(pt("restored")) }
     fun deleteForever(id: String) = run { repo.deleteForever(id) }
     fun emptyTrash() = run { repo.emptyTrash() }
-    fun recheckHealth() = run { repo.runHealth() }
+    fun recheckHealth(fresh: Boolean = false) = run { repo.runHealth(fresh) }
 
     suspend fun addFolder(name: String) = try { repo.addFolder(name) } catch (e: Exception) { fail(e); null }
     fun renameFolder(id: String, name: String) = run { repo.renameFolder(id, name) }
@@ -183,7 +191,7 @@ class PassViewModel @Inject constructor(
         } catch (e: PassLimitException) {
             toast(if (e.imported > 0) pt("import_partial", "done" to e.imported, "left" to drafts.size - e.imported) else pt("import_limit")); false
         } catch (e: PassImportException) {
-            toast(pt("import_partial", "done" to e.imported, "left" to drafts.size - e.imported)); false
+            toast(passQuotaMessage(e.cause) ?: pt("import_partial", "done" to e.imported, "left" to drafts.size - e.imported)); false
         } catch (e: Exception) {
             fail(e); false
         } finally {

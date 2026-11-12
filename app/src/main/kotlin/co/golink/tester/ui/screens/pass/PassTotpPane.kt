@@ -1,5 +1,7 @@
 package co.golink.tester.ui.screens.pass
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -11,6 +13,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,6 +23,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -39,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import co.golink.tester.data.pass.PassItem
 import co.golink.tester.data.pass.PassLogin
@@ -87,54 +94,80 @@ private fun decodeQr(context: android.content.Context, uri: Uri): String? {
         ?: runCatching { MultiFormatReader().decode(BinaryBitmap(HybridBinarizer(source.invert())), hints).text }.getOrNull()
 }
 
+/** Chave lida à espera do login, com o Emissor/Conta (do QR ou escritos no "Inserir chave"). */
+private data class PendingTotp(val raw: String, val issuer: String, val account: String)
+
 @Composable
 fun PassTotpPane(vm: PassViewModel, state: PassState, onNewWithKey: (PassPrefill) -> Unit, onOpenItem: (String) -> Unit) {
     val p = LocalPassPalette.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val now = rememberNowMs()
     val items = remember(state.items) { state.active.filter { it.type == "login" && it.totp != null }.sortedBy { it.name.lowercase() } }
     var chooser by remember { mutableStateOf(false) }
     var enterKey by remember { mutableStateOf(false) }
-    var pending by remember { mutableStateOf<String?>(null) } // chave lida, à espera do login
+    var pending by remember { mutableStateOf<PendingTotp?>(null) }
 
     val accept: (String?) -> Unit = { raw ->
+        val cfg = raw?.let { Totp.parse(it) }
         when {
-            raw != null && Totp.parse(raw) != null -> pending = raw.trim()
+            raw != null && cfg != null -> pending = PendingTotp(raw.trim(), cfg.issuer, cfg.account)
             raw != null && raw.startsWith("otpauth-migration:", ignoreCase = true) -> vm.toast(pt("totp_form.qr_migration"))
             else -> vm.toast(pt("qr_invalid"))
         }
     }
-    var photoUri by remember { mutableStateOf<Uri?>(null) }
+    var photoUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         val uri = photoUri
+        photoUri = null
         if (ok && uri != null) scope.launch {
             val text = withContext(Dispatchers.Default) { runCatching { decodeQr(context, uri) }.getOrNull() }
             runCatching { File(context.cacheDir, "camera/pass-qr.jpg").delete() }
             accept(text)
+        } else {
+            // Cancelado: a câmara pode ter deixado um ficheiro (vazio ou parcial).
+            runCatching { File(context.cacheDir, "camera/pass-qr.jpg").delete() }
         }
+    }
+    val launchCamera: () -> Unit = {
+        val file = File(context.cacheDir, "camera").apply { mkdirs() }.let { File(it, "pass-qr.jpg") }
+        val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+        photoUri = uri
+        vm.expectExternal()
+        runCatching { takePhoto.launch(uri) }.onFailure { vm.toast(pt("camera_denied")) }
+    }
+    // CAMERA está no manifest: sem a permissão dada o TakePicture dá SecurityException (como no ReceiptScan).
+    val askCamera = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) launchCamera() else vm.toast(pt("camera_denied"))
     }
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch { accept(withContext(Dispatchers.Default) { runCatching { decodeQr(context, uri) }.getOrNull() }) }
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
-        Text(pt("totp_local"), fontSize = 14.sp, color = p.muted, lineHeight = 20.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp))
-        Spacer(Modifier.height(10.dp))
-        if (items.isEmpty()) {
-            PassCard(padding = 20.dp) {
-                Text(pt("totp_empty"), fontWeight = FontWeight.SemiBold, color = p.text, fontSize = 15.sp)
-                Text(pt("totp_empty_text"), color = p.muted, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+    // Lista preguiçosa e o relógio lido dentro de cada cartão: o tique de 1 s só recompõe os cartões.
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
+        item(key = "intro") {
+            Column {
+                Text(pt("totp_local"), fontSize = 14.sp, color = p.muted, lineHeight = 20.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp))
+                Spacer(Modifier.height(10.dp))
+                if (items.isEmpty()) {
+                    PassCard(padding = 20.dp) {
+                        Text(pt("totp_empty"), fontWeight = FontWeight.SemiBold, color = p.text, fontSize = 15.sp)
+                        Text(pt("totp_empty_text"), color = p.muted, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+                    }
+                }
             }
         }
-        items.forEach { item ->
-            TotpCard(item, now, onCopy = { code -> vm.copy(pt("f.totp"), code) }, onOpen = { onOpenItem(item.id) })
-            Spacer(Modifier.height(10.dp))
+        items(items, key = { it.id }) { item ->
+            Column {
+                TotpCard(item, onCopy = { code -> vm.copy(pt("f.totp"), code) }, onOpen = { onOpenItem(item.id) })
+                Spacer(Modifier.height(10.dp))
+            }
         }
-        Spacer(Modifier.height(4.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            DashedButton(Icons.Outlined.QrCodeScanner, pt("scan_qr"), Modifier.weight(1f)) { chooser = true }
-            DashedButton(null, pt("enter_key"), Modifier.weight(1f)) { enterKey = true }
+        item(key = "actions") {
+            Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                DashedButton(Icons.Outlined.QrCodeScanner, pt("scan_qr"), Modifier.weight(1f)) { chooser = true }
+                DashedButton(null, pt("enter_key"), Modifier.weight(1f)) { enterKey = true }
+            }
         }
     }
 
@@ -148,11 +181,12 @@ fun PassTotpPane(vm: PassViewModel, state: PassState, onNewWithKey: (PassPrefill
                     Spacer(Modifier.height(8.dp))
                     ChooserRow(Icons.Outlined.CameraAlt, pt("scan_camera")) {
                         chooser = false
-                        val file = File(context.cacheDir, "camera").apply { mkdirs() }.let { File(it, "pass-qr.jpg") }
-                        val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
-                        photoUri = uri
-                        vm.expectExternal()
-                        runCatching { takePhoto.launch(uri) }.onFailure { vm.toast(pt("camera_denied")) }
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                            launchCamera()
+                        } else {
+                            vm.expectExternal()
+                            askCamera.launch(Manifest.permission.CAMERA)
+                        }
                     }
                     ChooserRow(Icons.Outlined.Image, pt("scan_image")) {
                         chooser = false
@@ -170,12 +204,12 @@ fun PassTotpPane(vm: PassViewModel, state: PassState, onNewWithKey: (PassPrefill
         TotpAddSheet(
             onDismiss = { enterKey = false },
             onScan = { enterKey = false; chooser = true },
-            onDone = { raw -> enterKey = false; pending = raw },
+            onDone = { raw, issuer, account -> enterKey = false; pending = PendingTotp(raw, issuer, account) },
         )
     }
 
-    pending?.let { raw ->
-        val cfg = Totp.parse(raw)
+    pending?.let { pk ->
+        val raw = pk.raw
         val candidates = remember(state.items) { state.active.filter { it.type == "login" && it.totp == null && !it.locked }.sortedBy { it.name.lowercase() } }
         AlertDialog(
             onDismissRequest = { pending = null },
@@ -185,8 +219,8 @@ fun PassTotpPane(vm: PassViewModel, state: PassState, onNewWithKey: (PassPrefill
                     // Só o 2FA, sem site/password (como o "Add account" dos autenticadores).
                     ChooserRow(Icons.Outlined.Key, pt("totp_form.save_only")) {
                         pending = null
-                        val account = cfg?.account.orEmpty()
-                        val name = cfg?.issuer?.ifEmpty { null } ?: account.ifEmpty { "2FA" }
+                        val account = pk.account
+                        val name = pk.issuer.ifEmpty { null } ?: account.ifEmpty { "2FA" }
                         scope.launch {
                             vm.save(
                                 null,
@@ -206,7 +240,7 @@ fun PassTotpPane(vm: PassViewModel, state: PassState, onNewWithKey: (PassPrefill
                     }
                     ChooserRow(Icons.Outlined.Add, pt("new_login")) {
                         pending = null
-                        onNewWithKey(PassPrefill(name = cfg?.issuer.orEmpty(), username = cfg?.account.orEmpty(), totp = raw))
+                        onNewWithKey(PassPrefill(name = pk.issuer, username = pk.account, totp = raw))
                     }
                     candidates.forEach { item ->
                         Row(
@@ -238,10 +272,10 @@ fun PassTotpPane(vm: PassViewModel, state: PassState, onNewWithKey: (PassPrefill
 }
 
 @Composable
-private fun TotpCard(item: PassItem, nowMs: Long, onCopy: (String) -> Unit, onOpen: () -> Unit) {
+private fun TotpCard(item: PassItem, onCopy: (String) -> Unit, onOpen: () -> Unit) {
     val p = LocalPassPalette.current
     val cfg = item.totp ?: return
-    val now = rememberTotp(cfg, nowMs) ?: return
+    val now = rememberTotp(cfg, rememberNowMs()) ?: return
     val ending = now.remaining <= 7
     PassCard {
         Row(

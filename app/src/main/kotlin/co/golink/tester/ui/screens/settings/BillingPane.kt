@@ -1,5 +1,17 @@
 package co.golink.tester.ui.screens.settings
 
+import android.Manifest
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -30,23 +43,28 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import co.golink.tester.domain.billing.BillingCard
 import co.golink.tester.domain.billing.BillingDetails
 import co.golink.tester.domain.billing.BillingSummary
 import co.golink.tester.domain.billing.Invoice
 import co.golink.tester.domain.billing.Plan
 import co.golink.tester.domain.user.User
+import co.golink.tester.ui.common.appLocale
 import co.golink.tester.ui.i18n.bt
 import co.golink.tester.ui.i18n.tr
 import java.time.OffsetDateTime
@@ -69,9 +87,13 @@ internal fun BillingPane(
     summary: BillingSummary?,
     plans: List<Plan>,
     isLoading: Boolean,
+    loadFailed: Boolean,
+    onRetry: () -> Unit,
     invoices: List<Invoice>,
     hasMoreInvoices: Boolean,
     isLoadingInvoices: Boolean,
+    invoicesFailed: Boolean,
+    onRetryInvoices: () -> Unit,
     downloadingInvoice: String?,
     onLoadMoreInvoices: () -> Unit,
     onDownload: (Invoice?) -> Unit,
@@ -79,6 +101,7 @@ internal fun BillingPane(
     detailsSavedAt: Long,
     onSaveDetails: (Map<String, String>) -> Unit,
 ) {
+    val download = rememberDownloadsPermission(invoices, onDownload)
     PaneColumn {
         if (user?.isPastDue == true || user?.isPaymentSuspended == true) {
             PaymentOverdueBanner(isSuspended = user.isPaymentSuspended, daysLeft = user.daysLeftToPay)
@@ -86,6 +109,12 @@ internal fun BillingPane(
         if (summary == null) {
             if (isLoading) {
                 Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            } else if (loadFailed) {
+                // Antes ficava só a nota da web, sem forma de voltar a tentar.
+                PaneCard {
+                    SettingsNotice(bt("load_failed"), SettingsColors.Red, Icons.Outlined.Info)
+                    SettingsPrimaryButton(text = bt("retry"), onClick = onRetry, modifier = Modifier.fillMaxWidth())
+                }
             }
             WebOnlyNote()
             return@PaneColumn
@@ -94,10 +123,77 @@ internal fun BillingPane(
         CurrentPlanCard(summary, plans)
         PlansSection(summary, plans)
         if (summary.cards.isNotEmpty()) CardsSection(summary.cards)
-        InvoicesSection(summary, invoices, hasMoreInvoices, isLoadingInvoices, downloadingInvoice, onLoadMoreInvoices, onDownload)
+        InvoicesSection(summary, invoices, hasMoreInvoices, isLoadingInvoices, invoicesFailed, onRetryInvoices, downloadingInvoice, onLoadMoreInvoices, download)
         BillingDetailsSection(summary.billing, isSavingDetails, detailsSavedAt, onSaveDetails)
         WebOnlyNote()
     }
+}
+
+/**
+ * API 26–28: gravar em Downloads público pede WRITE_EXTERNAL_STORAGE em runtime (no
+ * manifesto com maxSdkVersion 28; do Q em diante o MediaStore não pede nada). Sem isto
+ * a fatura falhava sempre nesses aparelhos. Recusada → toast e não descarrega; recusada
+ * de vez (o sistema já não pergunta) → diálogo que abre as definições da app.
+ */
+@Composable
+private fun rememberDownloadsPermission(invoices: List<Invoice>, onDownload: (Invoice?) -> Unit): (Invoice?) -> Unit {
+    if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) return onDownload
+    val context = LocalContext.current
+    // Id da fatura à espera da permissão ("all" = ZIP com todas). Saveable: o diálogo
+    // do sistema pode recriar a atividade (rotação, processo morto).
+    var pendingId by rememberSaveable { mutableStateOf<String?>(null) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val target = pendingId
+        pendingId = null
+        if (granted) {
+            when (target) {
+                null -> Unit
+                "all" -> onDownload(null)
+                else -> invoices.firstOrNull { it.id == target }?.let(onDownload)
+            }
+        } else {
+            val activity = context.findActivity()
+            // Sem "rationale" depois de uma recusa = "não voltar a perguntar".
+            if (activity != null && !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+                showSettings = true
+            } else {
+                Toast.makeText(context, bt("storage_denied"), Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    if (showSettings) {
+        AlertDialog(
+            onDismissRequest = { showSettings = false },
+            text = { Text(bt("storage_denied")) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showSettings = false
+                    runCatching {
+                        context.startActivity(
+                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }
+                }) { Text("Abrir definições".tr()) }
+            },
+            dismissButton = { TextButton(onClick = { showSettings = false }) { Text(bt("cancel")) } },
+        )
+    }
+    return { invoice ->
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
+            onDownload(invoice)
+        } else {
+            pendingId = invoice?.id ?: "all"
+            launcher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+    }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 // ── Plano atual + uso ───────────────────────────────────────────────────
@@ -158,6 +254,8 @@ private fun CurrentPlanCard(summary: BillingSummary, plans: List<Plan>) {
         if (plan != null) {
             val line = when {
                 plan.is_cancelled -> plan.ends_at?.let { bt("ends", "date" to day(it)) }
+                // Sem renovação automática (cripto): nada é cobrado no cartão.
+                !plan.auto_renews -> plan.renews_at?.let { bt("expires", "date" to day(it)) }
                 else -> plan.renews_at?.let { date ->
                     listOfNotNull(
                         bt("renews", "date" to day(date)),
@@ -341,6 +439,8 @@ private fun InvoicesSection(
     invoices: List<Invoice>,
     hasMore: Boolean,
     isLoading: Boolean,
+    failed: Boolean,
+    onRetry: () -> Unit,
     downloading: String?,
     onLoadMore: () -> Unit,
     onDownload: (Invoice?) -> Unit,
@@ -361,13 +461,27 @@ private fun InvoicesSection(
 
         when {
             invoices.isEmpty() && isLoading -> Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            // Falha ≠ "ainda não há faturas": mostra o erro e deixa repetir.
+            invoices.isEmpty() && failed -> {
+                SettingsNotice(bt("inv_load_failed"), SettingsColors.Red, Icons.Outlined.Info)
+                TextButton(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
+                    Text(bt("retry"), color = SettingsAccent, fontWeight = FontWeight.SemiBold)
+                }
+            }
             invoices.isEmpty() -> Text(bt("inv_empty"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             else -> Column {
                 invoices.forEachIndexed { i, inv ->
                     if (i > 0) HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
                     InvoiceRow(inv, downloading = downloading == inv.id, canDownload = downloading == null) { onDownload(inv) }
                 }
-                if (hasMore) {
+                // Falha com lista já mostrada (recarregar ou página seguinte): antes era invisível.
+                // O onRetry repete o pedido que falhou (reset ou página seguinte).
+                if (failed && !isLoading) {
+                    SettingsNotice(bt("inv_load_failed"), SettingsColors.Red, Icons.Outlined.Info)
+                    TextButton(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
+                        Text(bt("retry"), color = SettingsAccent, fontWeight = FontWeight.SemiBold)
+                    }
+                } else if (hasMore) {
                     TextButton(onClick = onLoadMore, enabled = !isLoading, modifier = Modifier.fillMaxWidth()) {
                         if (isLoading) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         else Text(bt("show_more"), color = SettingsAccent, fontWeight = FontWeight.SemiBold)
@@ -381,19 +495,28 @@ private fun InvoicesSection(
 @Composable
 private fun InvoiceRow(inv: Invoice, downloading: Boolean, canDownload: Boolean, onDownload: () -> Unit) {
     // Sem "Pagar agora" na app: uma fatura falhada só mostra o estado.
+    // O servidor só grava completed/error/cancelled; os outros ficam por segurança
+    // (drivers/versões futuras) e um estado desconhecido nunca sai cru nem vazio.
     val (label, color) = when {
         inv.refunded -> bt("st_refunded") to SettingsColors.Slate
-        inv.status == "completed" -> bt("st_paid") to SettingsColors.Green
-        inv.status == "error" -> bt("st_failed") to SettingsColors.Red
-        inv.status == "cancelled" -> bt("st_cancelled") to SettingsColors.Slate
-        else -> inv.status to SettingsColors.Slate
+        else -> when (inv.status.lowercase()) {
+            "completed", "paid" -> bt("st_paid") to SettingsColors.Green
+            "error", "failed" -> bt("st_failed") to SettingsColors.Red
+            "cancelled", "canceled", "void" -> bt("st_cancelled") to SettingsColors.Slate
+            "refunded" -> bt("st_refunded") to SettingsColors.Slate
+            "pending" -> bt("st_pending") to SettingsColors.Amber
+            "processing" -> bt("st_processing") to SettingsColors.Amber
+            "incomplete" -> bt("st_incomplete") to SettingsColors.Amber
+            else -> bt("st_unknown") to SettingsColors.Slate
+        }
     }
+    val subtitle = listOfNotNull(inv.createdAtIso?.let(::day) ?: inv.createdAt, inv.reference.ifBlank { null }).joinToString(" · ")
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
         Column(Modifier.weight(1f)) {
             Text(inv.title.ifBlank { bt("col_description") }, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(2.dp))
             Text(
-                listOfNotNull(inv.createdAtIso?.let(::day) ?: inv.createdAt, inv.reference.ifBlank { null }).joinToString(" · "),
+                subtitle,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -411,7 +534,12 @@ private fun InvoiceRow(inv: Invoice, downloading: Boolean, canDownload: Boolean,
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                 } else {
                     IconButton(onClick = onDownload, enabled = canDownload) {
-                        Icon(Icons.Outlined.Download, contentDescription = bt("download_pdf"), tint = SettingsAccent)
+                        // TalkBack: diz qual fatura (data · referência), não só "Descarregar PDF".
+                        Icon(
+                            Icons.Outlined.Download,
+                            contentDescription = if (subtitle.isBlank()) bt("download_pdf") else bt("download_pdf_of", "ref" to subtitle),
+                            tint = SettingsAccent,
+                        )
                     }
                 }
             }
@@ -529,8 +657,9 @@ private fun gbLabel(gb: Double): String = when {
     else -> "${trim(gb)} GB"
 }
 
+// Na língua da app (vírgula decimal em PT/FR/ES).
 private fun trim(v: Double): String =
-    if (v % 1.0 == 0.0) v.toLong().toString() else String.format(Locale.ROOT, "%.1f", v).trimEnd('0').trimEnd('.')
+    if (v % 1.0 == 0.0) v.toLong().toString() else String.format(appLocale(), "%.1f", v).trimEnd('0').trimEnd('.', ',')
 
 private fun bytesLabel(bytes: Long): String {
     val units = listOf("B", "KB", "MB", "GB", "TB")
@@ -569,14 +698,22 @@ private fun brandName(brand: String?): String = when (brand?.lowercase()) {
 
 private fun cardLabel(card: BillingCard): String = "${brandName(card.brand)} •••• ${card.last4.orEmpty()}"
 
+// Formatador em cache por língua (antes criava-se um por linha de fatura). Só no Main.
+private var dayFormatterCache: Pair<Locale, DateTimeFormatter>? = null
+
+private fun dayFormatter(): DateTimeFormatter {
+    val locale = appLocale()
+    dayFormatterCache?.let { (l, f) -> if (l == locale) return f }
+    return DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(locale).also { dayFormatterCache = locale to it }
+}
+
 private fun day(iso: String): String = runCatching {
     // Na língua da app (não na do sistema).
-    OffsetDateTime.parse(iso).atZoneSameInstant(ZoneId.systemDefault())
-        .format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(co.golink.tester.ui.common.appLocale()))
+    OffsetDateTime.parse(iso).atZoneSameInstant(ZoneId.systemDefault()).format(dayFormatter())
 }.getOrDefault(iso.take(10))
 
 private fun addressLines(d: BillingDetails): String? {
-    val country = d.country?.takeIf { it.length == 2 }?.let { Locale("", it).getDisplayCountry(co.golink.tester.ui.common.appLocale()) } ?: d.country
+    val country = d.country?.takeIf { it.length == 2 }?.let { Locale("", it).getDisplayCountry(appLocale()) } ?: d.country
     return listOf(
         d.address,
         listOfNotNull(d.postal_code?.ifBlank { null }, d.city?.ifBlank { null }).joinToString(" "),

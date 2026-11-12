@@ -59,8 +59,12 @@ class BillingRepository @Inject constructor(
         check(response.isSuccessful) { "HTTP ${response.code()}" }
         val body = response.body() ?: error("Resposta vazia")
         val name = fileName(response.headers()["Content-Disposition"]) ?: "GoLink-Invoices.zip"
-        downloader.writeToDownloads(name, "application/zip") { out ->
-            body.byteStream().use { it.copyTo(out) }
+        // Fecha o corpo mesmo que o insert/openOutputStream do MediaStore falhe
+        // (antes o bloco não corria e a ligação ficava aberta).
+        body.use {
+            downloader.writeToDownloads(name, "application/zip") { out ->
+                it.byteStream().copyTo(out)
+            }
         }
     }
 

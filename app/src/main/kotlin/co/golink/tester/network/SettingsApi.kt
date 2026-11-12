@@ -16,6 +16,7 @@ import retrofit2.http.GET
 import retrofit2.http.Multipart
 import retrofit2.http.PATCH
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
@@ -39,6 +40,20 @@ interface SettingsApi {
 
     @DELETE("api/user/sessions/{id}")
     suspend fun revokeSession(@Path("id") id: String): Response<ApiEnvelope<Unit>>
+
+    /** "Fui eu": o local novo passa a conhecido. */
+    @POST("api/user/sessions/{id}/confirm")
+    suspend fun confirmSession(@Path("id") id: String): Response<ApiEnvelope<Unit>>
+
+    /** Termina as sessões sem atividade há 30+ dias (nunca a atual). */
+    @DELETE("api/user/sessions/inactive")
+    suspend fun revokeInactiveSessions(): Response<ApiEnvelope<Unit>>
+
+    @PUT("api/user/sessions/settings")
+    suspend fun updateSessionSettings(@Body body: co.golink.tester.domain.settings.SessionAutoSignoutRequest): Response<ApiEnvelope<Unit>>
+
+    @DELETE("api/user/sessions/connections/{id}")
+    suspend fun revokeConnection(@Path("id") id: Long): Response<ApiEnvelope<Unit>>
 
     @GET("api/user/security-events")
     suspend fun securityEvents(@Query("page") page: Int = 1): Response<SecurityEventsResponse>

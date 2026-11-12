@@ -24,7 +24,10 @@ class PassHttpException(
     override val message: String?,
     val body: JsonObject? = null,
     val retryAfter: Int? = null,
-) : IOException(message)
+) : IOException(message) {
+    /** `code` do corpo (422 de quota: "pass_quota" / "pass_item_too_large"). */
+    val code: String? get() = (body?.get("code") as? JsonPrimitive)?.contentOrNull
+}
 
 /** Pedidos a /api/pass/… com o cliente autenticado (mesmo padrão de NotesHttp). */
 @Singleton

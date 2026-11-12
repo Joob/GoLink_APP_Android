@@ -53,7 +53,7 @@ class PassHealth(
 ) {
     companion object {
         val KINDS = listOf("reused", "weak", "breach", "twofa")
-        private const val MIN_GAP_MS = 120L
+        private const val MIN_GAP_MS = 210L // proxy /pass/breach: throttle 300/min
         private const val FAIL_TTL_MS = 10 * 60 * 1000L
 
         fun sha1Hex(text: String): String =
@@ -98,6 +98,11 @@ class PassHealth(
 
     fun clear() {
         breachCache.clear(); itemMemo.clear(); failedAt.clear(); inflight.clear(); breakerUntil = 0
+    }
+
+    /** "Recheck": volta a perguntar ao HIBP (esquece contagens, prefixos falhados e o disjuntor). */
+    suspend fun clearBreach() = cacheLock.withLock {
+        breachCache.clear(); failedAt.clear(); breakerUntil = 0
     }
 
     private suspend fun takeSlot() {

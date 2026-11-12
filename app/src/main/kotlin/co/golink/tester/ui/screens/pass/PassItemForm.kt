@@ -87,13 +87,14 @@ fun PassItemForm(
     var name by rememberSaveable { mutableStateOf(original?.name ?: prefill?.name.orEmpty()) }
     var url by rememberSaveable { mutableStateOf(original?.login?.url ?: prefill?.url.orEmpty()) }
     var username by rememberSaveable { mutableStateOf(original?.login?.username ?: prefill?.username.orEmpty()) }
-    var password by rememberSaveable { mutableStateOf(original?.login?.password ?: prefill?.password.orEmpty()) }
-    var totp by rememberSaveable { mutableStateOf(original?.login?.totp ?: prefill?.totp.orEmpty()) }
+    // Segredos fora do SavedState (Bundle); a rotação não recria a Activity (configChanges).
+    var password by remember { mutableStateOf(original?.login?.password ?: prefill?.password.orEmpty()) }
+    var totp by remember { mutableStateOf(original?.login?.totp ?: prefill?.totp.orEmpty()) }
     var holder by rememberSaveable { mutableStateOf(original?.card?.holder.orEmpty()) }
-    var number by rememberSaveable { mutableStateOf(original?.card?.number.orEmpty()) }
+    var number by remember { mutableStateOf(original?.card?.number.orEmpty()) }
     var expiry by rememberSaveable { mutableStateOf(original?.card?.expiry.orEmpty()) }
-    var cvv by rememberSaveable { mutableStateOf(original?.card?.cvv.orEmpty()) }
-    var pin by rememberSaveable { mutableStateOf(original?.card?.pin.orEmpty()) }
+    var cvv by remember { mutableStateOf(original?.card?.cvv.orEmpty()) }
+    var pin by remember { mutableStateOf(original?.card?.pin.orEmpty()) }
     var notes by rememberSaveable { mutableStateOf(original?.notes.orEmpty()) }
     var folder by rememberSaveable { mutableStateOf(original?.folder?.takeIf { f -> state.folders.any { it.id == f } }) }
     var favourite by rememberSaveable { mutableStateOf(original?.favourite ?: false) }
@@ -214,7 +215,7 @@ fun PassItemForm(
                     }
                     FormField(
                         "${pt("f.totp_key")} · ${pt("optional")}", totp, { totp = it; errors = errors - "totp" },
-                        placeholder = pt("ph.totp"), mono = true, capitalize = false, error = errors["totp"],
+                        placeholder = pt("ph.totp"), keyboard = KeyboardType.Password, mono = true, capitalize = false, error = errors["totp"],
                     )
                     Totp.parse(totp)?.let { cfg ->
                         val now = rememberTotp(cfg, rememberNowMs())

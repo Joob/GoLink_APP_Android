@@ -81,7 +81,7 @@ fun PassHealthPane(vm: PassViewModel, state: PassState, onEdit: (String) -> Unit
                         Icon(
                             Icons.Outlined.Refresh, pt("recheck"),
                             tint = if (state.healthRunning) p.soft else p.muted,
-                            modifier = Modifier.size(20.dp).clip(RoundedCornerShape(6.dp)).clickable(enabled = !state.healthRunning) { vm.recheckHealth() },
+                            modifier = Modifier.size(20.dp).clip(RoundedCornerShape(6.dp)).clickable(enabled = !state.healthRunning) { vm.recheckHealth(fresh = true) },
                         )
                     }
                     if (health != null) Text(pt("issues_in", "issues" to health.issues, "logins" to health.flagged), fontSize = 15.sp, color = p.muted, modifier = Modifier.padding(top = 2.dp))
@@ -95,7 +95,14 @@ fun PassHealthPane(vm: PassViewModel, state: PassState, onEdit: (String) -> Unit
         listOf(ORDER.take(2), ORDER.drop(2)).forEach { pair ->
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 pair.forEach { k ->
-                    HealthTile(k, health?.lists?.get(k)?.size ?: 0, k == selected, Modifier.weight(1f)) { kind = k }
+                    val n = health?.lists?.get(k)?.size ?: 0
+                    // Sem resultado → "–"; breach a 0 com verificações falhadas → "?" (não afirmar que está limpo).
+                    val label = when {
+                        health == null -> "–"
+                        k == "breach" && n == 0 && health.unchecked > 0 -> "?"
+                        else -> n.toString()
+                    }
+                    HealthTile(k, n, label, k == selected, Modifier.weight(1f)) { kind = k }
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -164,7 +171,7 @@ private fun ScoreRing(score: Int?, modifier: Modifier) {
 }
 
 @Composable
-private fun HealthTile(kind: String, count: Int, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun HealthTile(kind: String, count: Int, label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val p = LocalPassPalette.current
     val (icon: ImageVector, tint: Color, bg: Color) = when (kind) {
         "reused" -> Triple(Icons.Outlined.Repeat, Color(0xFFB45309), if (p.dark) Color(0x33F59E0B) else Color(0xFFFEF3C7))
@@ -172,6 +179,7 @@ private fun HealthTile(kind: String, count: Int, selected: Boolean, modifier: Mo
         else -> Triple(Icons.Outlined.WarningAmber, PassRose, if (p.dark) Color(0x33E11D48) else Color(0xFFFFE4E6))
     }
     val numberColor = when {
+        label == "?" -> PassAmber
         kind == "twofa" -> PassBlue
         count == 0 -> p.soft
         kind == "reused" -> Color(0xFFD97706)
@@ -190,7 +198,7 @@ private fun HealthTile(kind: String, count: Int, selected: Boolean, modifier: Mo
                 Icon(icon, null, tint = tint, modifier = Modifier.size(19.dp))
             }
             Spacer(Modifier.weight(1f))
-            Text(count.toString(), fontSize = 24.sp, fontWeight = FontWeight.Bold, color = numberColor)
+            Text(label, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = numberColor)
         }
         Spacer(Modifier.height(10.dp))
         Text(pt("h.$kind"), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = p.text)
