@@ -226,8 +226,6 @@ object I18nPass {
         "reprompt_text" to arrayOf("Introduz a tua frase-passe para mostrar ou copiar este segredo.", "Enter your passphrase to show or copy this secret.", "Saisissez votre phrase de chiffrement pour afficher ou copier ce secret.", "Introduce tu frase de cifrado para mostrar o copiar este secreto."),
         "autofill" to arrayOf("Preenchimento automático", "Autofill", "Remplissage auto", "Autocompletar"),
         "soon" to arrayOf("Em breve", "Coming soon", "Bientôt", "Próximamente"),
-        "af.extension" to arrayOf("Extensão do browser", "Browser extension", "Extension de navigateur", "Extensión del navegador"),
-        "af.extension_sub" to arrayOf("Chrome, Firefox, Edge, Safari", "Chrome, Firefox, Edge, Safari", "Chrome, Firefox, Edge, Safari", "Chrome, Firefox, Edge, Safari"),
         "af.android" to arrayOf("Preenchimento no Android", "Android autofill", "Remplissage Android", "Autocompletar en Android"),
         "af.android_sub" to arrayOf("Preenche logins nas apps do telemóvel", "Fill logins in apps on your phone", "Remplit les identifiants dans les apps du téléphone", "Rellena inicios de sesión en las apps del móvil"),
         "af.passkeys" to arrayOf("Passkeys", "Passkeys", "Clés d'accès", "Llaves de acceso"),
@@ -356,6 +354,7 @@ object I18nPass {
         "step_up_password" to arrayOf("A tua password", "Your password", "Votre mot de passe", "Tu contraseña"),
         "err_step_up_password" to arrayOf("A password está incorreta.", "The password is incorrect.", "Le mot de passe est incorrect.", "La contraseña es incorrecta."),
         "err_step_up_expired" to arrayOf("A confirmação com passkey expirou. Confirma de novo.", "The passkey confirmation expired. Confirm again.", "La confirmation par passkey a expiré. Confirmez à nouveau.", "La confirmación con passkey ha caducado. Confirma de nuevo."),
+        "export_sub_encrypted" to arrayOf("Ficheiro cifrado, protegido por uma password à tua escolha", "Encrypted file, protected by a password you choose", "Fichier chiffré, protégé par un mot de passe de votre choix", "Archivo cifrado, protegido por una contraseña que tú eliges"),
     )
 }
 

@@ -87,6 +87,7 @@ fun PassSettingsPane(vm: PassViewModel, state: PassState, bioAvailable: Boolean,
     var exportAsk by remember { mutableStateOf(false) }
     var folderEdit by remember { mutableStateOf<PassFolder?>(null) }
     var folderDelete by remember { mutableStateOf<PassFolder?>(null) }
+    var folderNew by remember { mutableStateOf(false) }
 
     val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) scope.launch {
@@ -103,7 +104,7 @@ fun PassSettingsPane(vm: PassViewModel, state: PassState, bioAvailable: Boolean,
     }
 
     Column(Modifier.fillMaxSize()) {
-        PassBackBar(pt("settings_title"), onBack)
+        PassBackBar(pt("import_settings"), onBack)
         Column(Modifier.fillMaxSize().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 32.dp)) {
             PassAutofillCard(onLeave = vm::expectExternal)
             PassSectionLabel(pt("unlock_section"))
@@ -167,16 +168,18 @@ fun PassSettingsPane(vm: PassViewModel, state: PassState, bioAvailable: Boolean,
             Text(pt("import_hint.$source"), fontSize = 12.sp, color = p.muted, modifier = Modifier.padding(top = 8.dp, start = 4.dp))
 
             PassSectionLabel(pt("export"))
+            // Só cifrado no Android (sem CSV em claro no armazenamento); cofre vazio → desativado, como na web.
+            val canExport = !busy && state.active.isNotEmpty()
             PassCard {
                 Row(
-                    Modifier.fillMaxWidth().clickable(enabled = !busy) { exportAsk = true }.padding(horizontal = 16.dp, vertical = 14.dp),
+                    Modifier.fillMaxWidth().clickable(enabled = canExport) { exportAsk = true }.padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(pt("export_encrypted"), fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = p.text)
-                        Text(pt("export_sub"), fontSize = 12.5.sp, color = p.muted)
+                        Text(pt("export_sub_encrypted"), fontSize = 12.5.sp, color = p.muted)
                     }
-                    Text(pt("export"), color = PassBlue, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    Text(pt("export"), color = if (canExport) PassBlue else p.muted, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                 }
             }
 
@@ -186,11 +189,20 @@ fun PassSettingsPane(vm: PassViewModel, state: PassState, bioAvailable: Boolean,
                     if (i > 0) PassDivider()
                     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(f.name, fontSize = 15.sp, color = p.text, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(state.active.count { it.folder == f.id }.toString(), fontSize = 12.5.sp, color = p.muted, modifier = Modifier.padding(horizontal = 4.dp))
                         IconButton(onClick = { folderEdit = f }) { Icon(Icons.Outlined.Edit, pt("rename"), tint = p.muted) }
                         IconButton(onClick = { folderDelete = f }) { Icon(Icons.Outlined.DeleteOutline, pt("delete_folder"), tint = p.muted) }
                     }
                 }
                 if (state.folders.isEmpty()) Text(pt("nothing_here"), color = p.muted, fontSize = 13.sp, modifier = Modifier.padding(16.dp))
+                PassDivider()
+                Text(
+                    "+ ${pt("new_folder")}",
+                    color = PassBlue,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                    modifier = Modifier.fillMaxWidth().clickable { folderNew = true }.padding(horizontal = 16.dp, vertical = 14.dp),
+                )
             }
             Text(pt("folders_sub"), fontSize = 12.sp, color = p.muted, modifier = Modifier.padding(top = 8.dp, start = 4.dp))
         }
@@ -298,6 +310,19 @@ fun PassSettingsPane(vm: PassViewModel, state: PassState, bioAvailable: Boolean,
             text = { OutlinedTextField(name, { name = it.take(40) }, singleLine = true, modifier = Modifier.fillMaxWidth()) },
             confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = { folderEdit = null; vm.renameFolder(f.id, name) }) { Text(pt("confirm")) } },
             dismissButton = { TextButton(onClick = { folderEdit = null }) { Text(pt("cancel")) } },
+        )
+    }
+
+    if (folderNew) {
+        var name by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { folderNew = false },
+            title = { Text(pt("new_folder")) },
+            text = { OutlinedTextField(name, { name = it.take(40) }, singleLine = true, placeholder = { Text(pt("folder_name")) }, modifier = Modifier.fillMaxWidth()) },
+            confirmButton = {
+                TextButton(enabled = name.isNotBlank(), onClick = { folderNew = false; scope.launch { vm.addFolder(name.trim()) } }) { Text(pt("confirm")) }
+            },
+            dismissButton = { TextButton(onClick = { folderNew = false }) { Text(pt("cancel")) } },
         )
     }
 
