@@ -53,7 +53,6 @@ import co.golink.tester.data.pass.Totp
 import co.golink.tester.data.pass.TotpConfig
 import co.golink.tester.data.pass.TotpNow
 import co.golink.tester.ui.common.relativeAgo
-import co.golink.tester.ui.components.dialogs.ConfirmDialog
 import co.golink.tester.ui.i18n.pt
 import kotlinx.coroutines.delay
 
@@ -202,22 +201,16 @@ fun PassItemDetail(vm: PassViewModel, state: PassState, id: String, onBack: () -
         }
     }
 
+    // Pede password ou passkey; só sai do item depois de o servidor aceitar.
     when (confirm) {
-        "trash" -> ConfirmDialog(
-            title = pt("trash_title"),
-            message = pt("trash_text", "name" to item.name, "days" to state.trashDays),
-            confirmText = pt("move_to_trash"),
-            destructive = true,
+        "trash", "forever" -> PassStepUpDialog(
+            op = if (confirm == "trash") PassDeleteOp.TRASH else PassDeleteOp.DELETE,
+            vm = vm,
+            itemId = item.id,
+            itemName = item.name,
+            trashDays = state.trashDays,
             onDismiss = { confirm = null },
-            onConfirm = { confirm = null; vm.trash(item.id); onBack() },
-        )
-        "forever" -> ConfirmDialog(
-            title = pt("delete_forever_title"),
-            message = pt("delete_forever_text", "name" to item.name),
-            confirmText = pt("delete_forever"),
-            destructive = true,
-            onDismiss = { confirm = null },
-            onConfirm = { confirm = null; vm.deleteForever(item.id); onBack() },
+            onDone = onBack,
         )
     }
 }

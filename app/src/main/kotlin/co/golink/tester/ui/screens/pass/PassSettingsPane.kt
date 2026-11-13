@@ -333,14 +333,7 @@ fun PassTrashPane(vm: PassViewModel, state: PassState, onBack: () -> Unit, onOpe
         }
     }
     if (confirmEmpty) {
-        ConfirmDialog(
-            title = pt("empty_trash_title"),
-            message = pt("empty_trash_text"),
-            confirmText = pt("empty_trash"),
-            destructive = true,
-            onDismiss = { confirmEmpty = false },
-            onConfirm = { confirmEmpty = false; vm.emptyTrash() },
-        )
+        PassStepUpDialog(op = PassDeleteOp.EMPTY, vm = vm, onDismiss = { confirmEmpty = false })
     }
 }
 

@@ -1843,6 +1843,10 @@ class BrowseViewModel @Inject constructor(
                 }
                 fillLinkedFolderName(firstPaged.root)
                 if (mode is BrowseMode.TeamFolder) clearTeamFolderNames(mode, all)
+                // Team Folder aberta: dá as chaves E2E em falta aos outros participantes.
+                firstPaged.root?.takeIf { it.isTeamFolder && !readOnly }?.let { root ->
+                    viewModelScope.launch { e2eShareService.healTeamFolderKeys(root.id) }
+                }
             }
             .onFailure { t ->
                 if (t.isFolderGone(mode)) return leaveGoneFolder()

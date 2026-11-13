@@ -187,7 +187,12 @@ fun PassItemForm(
                                 IconButton(onClick = { showPw = !showPw }) { Icon(if (showPw) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, null, tint = p.muted) }
                                 Row(
                                     Modifier.padding(end = 6.dp).clip(RoundedCornerShape(10.dp)).background(p.accentSoft)
-                                        .clickable { password = PassGenerator.random(vm.prefs.genRandom); showPw = true }
+                                        .clickable {
+                                            password = PassGenerator.random(vm.prefs.genRandom)
+                                            showPw = true
+                                            // Copia logo e avisa (respeita o "limpar clipboard" do cofre).
+                                            vm.copy(pt("f.password"), password)
+                                        }
                                         .padding(horizontal = 10.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {

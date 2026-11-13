@@ -352,6 +352,10 @@ object I18nPass {
         "scan_camera" to arrayOf("Tirar fotografia ao código", "Take a photo of the code", "Photographier le code", "Hacer una foto del código"),
         "scan_image" to arrayOf("Escolher uma imagem", "Choose an image", "Choisir une image", "Elegir una imagen"),
         "add_to_login" to arrayOf("Adicionado a {name}", "Added to {name}", "Ajouté à {name}", "Añadido a {name}"),
+        "step_up_text" to arrayOf("Confirma que és tu com a tua password ou uma passkey.", "Confirm it's you with your password or a passkey.", "Confirmez votre identité avec votre mot de passe ou une passkey.", "Confirma que eres tú con tu contraseña o una passkey."),
+        "step_up_password" to arrayOf("A tua password", "Your password", "Votre mot de passe", "Tu contraseña"),
+        "err_step_up_password" to arrayOf("A password está incorreta.", "The password is incorrect.", "Le mot de passe est incorrect.", "La contraseña es incorrecta."),
+        "err_step_up_expired" to arrayOf("A confirmação com passkey expirou. Confirma de novo.", "The passkey confirmation expired. Confirm again.", "La confirmation par passkey a expiré. Confirmez à nouveau.", "La confirmación con passkey ha caducado. Confirma de nuevo."),
     )
 }
 

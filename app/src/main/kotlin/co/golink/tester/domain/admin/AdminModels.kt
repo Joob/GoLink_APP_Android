@@ -397,7 +397,15 @@ data class UserStorageAttributes(
     val used_bytes: Long = 0,
     val capacity_bytes: Long = 0,
     val has_limit: Boolean = true,
+    /** Override do admin em GB (-1 = sem limite; null = segue o plano). */
+    val upload_limit_override: Double? = null,
+    val upload_limit_formatted: String? = null,
+    val plan_upload_limit_formatted: String? = null,
 )
+
+/** PATCH api/admin/users/{id}/upload-limit — null volta ao limite do plano. */
+@Serializable
+data class ChangeUploadLimitRequest(val max_upload_size: Double?)
 
 @Serializable
 data class UserStorageMeta(

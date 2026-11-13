@@ -112,6 +112,33 @@ data class FileIdsBody(
     val file_ids: List<String>,
 )
 
+/** GET api/folder/{id}/missing-keys — chaves E2E em falta numa Team Folder. */
+@Serializable
+data class TeamMissingKeysResponse(
+    val recipients: List<E2EKeyEntry> = emptyList(),
+    val files: List<TeamMissingKeysFile> = emptyList(),
+    val more: Boolean = false,
+)
+
+@Serializable
+data class TeamMissingKeysFile(
+    val file_id: String,
+    val user_ids: List<String> = emptyList(),
+)
+
+@Serializable
+data class TeamKeyEntry(
+    val file_id: String,
+    val recipient_id: String,
+    val wrapped_data_key: String,
+)
+
+@Serializable
+data class StoreTeamKeysBody(val keys: List<TeamKeyEntry>)
+
+@Serializable
+data class StoreTeamKeysResponse(val created: Int = 0)
+
 @Serializable
 data class FileEncryptionKeyRow(
     val file_id: String,

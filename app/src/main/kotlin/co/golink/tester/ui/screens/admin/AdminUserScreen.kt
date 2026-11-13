@@ -62,6 +62,7 @@ import co.golink.tester.ui.screens.settings.SettingsField
 import co.golink.tester.ui.screens.settings.SettingsNotice
 import co.golink.tester.ui.screens.settings.SettingsOutlinedButton
 import co.golink.tester.ui.screens.settings.SettingsPrimaryButton
+import co.golink.tester.ui.screens.settings.SettingsToggleRow
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -125,6 +126,10 @@ class AdminUserViewModel @Inject constructor(
 
     fun changeCapacity(gb: Int) = run("capacity", "Quota atualizada".tr()) {
         repository.changeCapacity(userId, gb).onSuccess { s -> _state.update { it.copy(storage = s) } }
+    }
+
+    fun changeUploadLimit(gb: Double?) = run("upload", "Limite de upload atualizado".tr()) {
+        repository.changeUploadLimit(userId, gb).onSuccess { s -> _state.update { it.copy(storage = s) } }
     }
 
     fun resetPassword() = run("reset", "Link de reposição enviado".tr()) { repository.resetPassword(userId) }
@@ -349,6 +354,33 @@ private fun StorageTab(state: AdminUserViewModel.UiState, vm: AdminUserViewModel
                 enabled = (gb.toIntOrNull() ?: 0) > 0, loading = state.busy == "capacity",
             )
         }
+    }
+    // Limite por ficheiro só deste utilizador: vazio = plano; -1 = sem limite.
+    val overrideGb = a.upload_limit_override
+    var upload by remember(overrideGb) {
+        mutableStateOf(overrideGb?.takeIf { it > 0 }?.let { if (it % 1.0 == 0.0) it.toLong().toString() else it.toString() } ?: "")
+    }
+    var noLimit by remember(overrideGb) { mutableStateOf(overrideGb == -1.0) }
+    val plan = a.plan_upload_limit_formatted ?: "Sem limite".tr()
+    val parsed = upload.replace(',', '.').toDoubleOrNull()
+    val valid = noLimit || upload.isBlank() || (parsed != null && parsed in 0.01..102400.0)
+    SettingsCard(
+        title = "Limite de upload por ficheiro".tr(), icon = Icons.Outlined.Tune,
+        description = "Em GB. Vazio = limite do plano ({plan}). Só para este utilizador.".tr().replace("{plan}", plan),
+    ) {
+        AdminInfoRow("Limite atual".tr(), a.upload_limit_formatted ?: "Sem limite".tr())
+        SettingsField(
+            "GB", if (noLimit) "" else upload, { v -> if (!noLimit) upload = v.filter { it.isDigit() || it == '.' || it == ',' }.take(10) },
+            keyboardType = KeyboardType.Decimal, placeholder = if (noLimit) "Sem limite".tr() else plan,
+            isError = !valid,
+        )
+        SettingsToggleRow("Sem limite".tr(), checked = noLimit, onCheckedChange = { noLimit = it })
+        ErrorNotice(state)
+        SettingsPrimaryButton(
+            "Guardar limite".tr(),
+            onClick = { vm.changeUploadLimit(if (noLimit) -1.0 else if (upload.isBlank()) null else parsed) },
+            enabled = valid && state.busy == null, loading = state.busy == "upload",
+        )
     }
 }
 

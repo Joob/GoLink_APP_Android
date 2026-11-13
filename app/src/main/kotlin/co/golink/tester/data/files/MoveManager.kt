@@ -39,6 +39,7 @@ data class MoveJob(
 class MoveManager @Inject constructor(
     private val filesRepository: FilesRepository,
     private val teamsRepository: TeamsRepository,
+    private val e2eShareService: co.golink.tester.data.encryption.E2EShareService,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var seq = 0
@@ -73,6 +74,9 @@ class MoveManager @Inject constructor(
                     teamsRepository.invalidateClearedNames()
                     update(id) { it.copy(state = MoveJob.State.Done) }
                     _completed.value = System.currentTimeMillis()
+                    // Movido para uma Team Folder: sela as chaves E2E aos participantes
+                    // (o servidor responde vazio se o destino não for de equipa).
+                    job.toId?.let { to -> launch { e2eShareService.healTeamFolderKeys(to, force = true) } }
                     delay(DONE_LINGER_MS)
                     if (_jobs.value.firstOrNull { it.id == id }?.state == MoveJob.State.Done) dismiss(id)
                 }

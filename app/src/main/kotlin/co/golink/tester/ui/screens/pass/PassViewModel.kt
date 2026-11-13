@@ -25,8 +25,13 @@ import javax.crypto.Cipher
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -55,8 +60,19 @@ class PassViewModel @Inject constructor(
     val prefs: PassPrefs,
     val bio: PassBiometricStore,
     private val lockManager: co.golink.tester.data.settings.AppLockManager,
+    session: co.golink.tester.data.auth.SessionManager,
 ) : ViewModel() {
     val state: StateFlow<PassState> = repo.state
+
+    /** O que a conta tem para o step-up: password (não social) e/ou passkeys. */
+    data class StepUpAccount(val socialite: Boolean = false, val hasPasskeys: Boolean = false)
+
+    val stepUpAccount: StateFlow<StepUpAccount> = session.state
+        .map { state ->
+            val user = (state as? co.golink.tester.data.auth.AuthState.Authenticated)?.user
+            StepUpAccount(socialite = user?.socialiteAccount == true, hasPasskeys = user?.hasPasskeys == true)
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, StepUpAccount())
 
     private val _toast = MutableStateFlow<String?>(null)
     val toast: StateFlow<String?> = _toast.asStateFlow()
@@ -144,10 +160,43 @@ class PassViewModel @Inject constructor(
 
     fun toggleFavourite(id: String) = run { repo.toggleFavourite(id) }
     fun markFixed(id: String, kind: String) = run { repo.markFixed(id, kind) }
-    fun trash(id: String) = run { repo.trash(id); toast(pt("moved_to_trash")) }
     fun restore(id: String) = run { repo.restore(id); toast(pt("restored")) }
-    fun deleteForever(id: String) = run { repo.deleteForever(id) }
-    fun emptyTrash() = run { repo.emptyTrash() }
+
+    /**
+     * Lixo / apagar de vez / esvaziar com step-up (password ou passkey). 422 em
+     * `password`/`passkey_token` → [onStepUpError] (o diálogo fica aberto); o resto
+     * fecha-o ([onFinished] false) e vai para o toast.
+     */
+    fun deleteWithStepUp(
+        op: PassDeleteOp,
+        id: String?,
+        password: String?,
+        passkeyToken: String?,
+        onStepUpError: (String) -> Unit,
+        onFinished: (Boolean) -> Unit,
+    ) = viewModelScope.launch {
+        val auth = buildJsonObject {
+            if (!passkeyToken.isNullOrBlank()) put("passkey_token", passkeyToken)
+            else if (!password.isNullOrEmpty()) put("password", password)
+        }
+        try {
+            when (op) {
+                PassDeleteOp.TRASH -> repo.trash(id ?: return@launch, auth)
+                PassDeleteOp.DELETE -> repo.deleteForever(id ?: return@launch, auth)
+                PassDeleteOp.EMPTY -> repo.emptyTrash(auth)
+            }
+            onFinished(true)
+            if (op == PassDeleteOp.TRASH) toast(pt("moved_to_trash"))
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            val errors = (e as? PassHttpException)?.takeIf { it.status == 422 }?.body?.get("errors") as? JsonObject
+            when {
+                errors?.containsKey("passkey_token") == true -> onStepUpError(pt("err_step_up_expired"))
+                errors?.containsKey("password") == true -> onStepUpError(pt("err_step_up_password"))
+                else -> { onFinished(false); fail(e) }
+            }
+        }
+    }
     fun recheckHealth(fresh: Boolean = false) = run { repo.runHealth(fresh) }
 
     suspend fun addFolder(name: String) = try { repo.addFolder(name) } catch (e: Exception) { fail(e); null }

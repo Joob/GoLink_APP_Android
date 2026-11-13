@@ -538,8 +538,9 @@ class PassRepository @Inject constructor(
         patch(id, "health_ignore" to ignore)
     }
 
-    suspend fun trash(id: String) {
-        http.delete("/items/$id")
+    /** `auth`: { password } ou { passkey_token } (PassStepUp no servidor). */
+    suspend fun trash(id: String, auth: JsonObject) {
+        http.delete("/items/$id", auth)
         markLocal(id)
         _state.value.item(id)?.let { upsert(it.copy(deletedAt = Instant.now().toString())) }
         scheduleHealth()
@@ -552,14 +553,14 @@ class PassRepository @Inject constructor(
         scheduleHealth()
     }
 
-    suspend fun deleteForever(id: String) {
-        http.delete("/items/$id/force")
+    suspend fun deleteForever(id: String, auth: JsonObject) {
+        http.delete("/items/$id/force", auth)
         markLocal(id)
         _state.update { s -> s.copy(items = s.items.filter { it.id != id }) }
     }
 
-    suspend fun emptyTrash() {
-        http.delete("/items/trash")
+    suspend fun emptyTrash(auth: JsonObject) {
+        http.delete("/items/trash", auth)
         val ids = _state.value.trash.map { it.id }
         markLocal(*ids.toTypedArray())
         _state.update { s -> s.copy(items = s.active) }

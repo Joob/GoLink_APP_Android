@@ -40,7 +40,7 @@ class PassHttp @Inject constructor(
     suspend fun get(path: String, query: Map<String, Any?> = emptyMap()): JsonObject = json("GET", path, null, query)
     suspend fun post(path: String, body: JsonObject? = null): JsonObject = json("POST", path, body)
     suspend fun patch(path: String, body: JsonObject? = null): JsonObject = json("PATCH", path, body)
-    suspend fun delete(path: String): JsonObject = json("DELETE", path, null)
+    suspend fun delete(path: String, body: JsonObject? = null): JsonObject = json("DELETE", path, body)
 
     /** Corpo em texto (o proxy de fugas devolve text/plain). */
     suspend fun getText(path: String): String = send("GET", path, null, emptyMap())

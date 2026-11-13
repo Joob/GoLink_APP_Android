@@ -188,15 +188,26 @@ class FileViewerViewModel @Inject constructor(
         dataKeys.clear()
     }
 
+    // Ficheiros sem chave para esta conta (404) e hora do último aviso: o pager
+    // pré-carrega as páginas vizinhas e cada uma repetia o mesmo toast.
+    private val noKeyIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    @Volatile private var lastNoKeyToast = 0L
+
     /** Data key do ficheiro (null se não cifrado ou E2E bloqueado). */
     private suspend fun dataKeyFor(file: BrowseItem.File): ByteArray? {
         if (!file.encrypted || !e2eKeyManager.isUnlocked) return null
         dataKeys[file.id]?.let { return it }
+        if (file.id in noKeyIds) return null
         val resp = runCatching { userEncryptionApi.fileKey(file.id) }.getOrNull()
         // Sem linha de chave para esta conta (ex.: membro de Team Folder a quem o
         // dono ainda não concedeu acesso): diz porquê em vez de ficar em branco.
         if (resp?.code() == 404) {
-            _state.update { it.copy(toast = "Ainda não tens a chave de encriptação deste ficheiro. Numa pasta de equipa, o dono tem de conceder o acesso de encriptação.".tr()) }
+            noKeyIds.add(file.id)
+            val now = System.currentTimeMillis()
+            if (now - lastNoKeyToast > 5_000) {
+                lastNoKeyToast = now
+                _state.update { it.copy(toast = "Ainda não tens a chave de encriptação deste ficheiro. Numa pasta de equipa, o dono tem de conceder o acesso de encriptação.".tr()) }
+            }
             return null
         }
         val wrapped = resp?.body()?.wrapped_data_key ?: return null

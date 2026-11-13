@@ -767,7 +767,7 @@ class UploadManager @Inject constructor(
                 for (r in recipients) {
                     try {
                         val sealed = e2eKeyManager.sealForPublicKey(dataKey, r.public_key!!)
-                        api.shareFileKey(fileId, co.golink.tester.domain.encryption.ShareKeyBody(r.user_id, sealed))
+                        shareKeyWithRetry(fileId, co.golink.tester.domain.encryption.ShareKeyBody(r.user_id, sealed))
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
                     } catch (e: Throwable) {
@@ -816,22 +816,50 @@ class UploadManager @Inject constructor(
 
     fun invalidateMemberKeys() = memberKeysCache.clear()
 
+    /** share-key com repetição em 429/5xx/rede; o que ainda falhar é reparado ao abrir a pasta. */
+    private suspend fun shareKeyWithRetry(fileId: String, body: co.golink.tester.domain.encryption.ShareKeyBody) {
+        for (attempt in 0 until 3) {
+            val code = try {
+                api.shareFileKey(fileId, body).code()
+            } catch (e: java.io.IOException) {
+                -1
+            }
+            if (code in 200..299 || (code in 400..499 && code != 429)) return
+            if (attempt < 2) kotlinx.coroutines.delay(1_000L * (attempt + 1))
+        }
+    }
+
     private suspend fun folderMemberKeys(folderId: String): co.golink.tester.domain.encryption.FolderMemberKeysResponse? {
         memberKeysCache[folderId]?.let { (at, keys) ->
             if (System.currentTimeMillis() - at < MEMBER_KEYS_TTL_MS) return keys
             memberKeysCache.remove(folderId)
         }
-        return try {
-            // Só cachear SUCESSO: numa team folder, uma falha cacheada faria selar
-            // ao próprio (fallback) → o dono não abriria o ficheiro. Falha
-            // transitória → tenta de novo no próximo upload.
-            api.folderMemberKeys(folderId).body()?.also { memberKeysCache[folderId] = System.currentTimeMillis() to it }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            // Cancelado (X): antes era engolido e o envio seguia selado ao próprio.
-            throw e
-        } catch (e: Throwable) {
-            null
+        // Sem fallback "selar ao próprio": numa team folder isso criava um ficheiro
+        // que nem o dono nem os membros abrem (a linha primária fica com o user_id
+        // do dono). Falha → exceção → o envio fica em erro/retoma e tenta de novo.
+        var last: java.io.IOException? = null
+        for (attempt in 0 until 3) {
+            val resp = try {
+                api.folderMemberKeys(folderId)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: java.io.IOException) {
+                last = e
+                null
+            }
+            if (resp != null) {
+                val body = resp.body()
+                if (resp.isSuccessful && body != null) {
+                    memberKeysCache[folderId] = System.currentTimeMillis() to body
+                    return body
+                }
+                last = java.io.IOException("member-keys HTTP ${resp.code()}")
+                // 403/404…: repetir não muda nada.
+                if (resp.code() in 400..499 && resp.code() != 429) throw last
+            }
+            if (attempt < 2) kotlinx.coroutines.delay(1_000L * (attempt + 1))
         }
+        throw last ?: java.io.IOException("member-keys indisponível")
     }
 
     private fun mediaTypeFor(mime: String): String = when {
@@ -1047,7 +1075,7 @@ class UploadManager @Inject constructor(
                 for (r in recipients) {
                     try {
                         val sealed = e2eKeyManager.sealForPublicKey(dataKey, r.public_key!!)
-                        api.shareFileKey(fileId, co.golink.tester.domain.encryption.ShareKeyBody(r.user_id, sealed))
+                        shareKeyWithRetry(fileId, co.golink.tester.domain.encryption.ShareKeyBody(r.user_id, sealed))
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
                     } catch (e: Throwable) {

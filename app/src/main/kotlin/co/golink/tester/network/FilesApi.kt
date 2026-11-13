@@ -141,6 +141,18 @@ interface FilesApi {
         @Path("id") id: String,
     ): Response<co.golink.tester.domain.encryption.FolderMemberKeysResponse>
 
+    // E2E Team Folder: ficheiros cujos participantes ainda não têm chave + registo em lote.
+    @GET("api/folder/{id}/missing-keys")
+    suspend fun teamMissingKeys(
+        @Path("id") id: String,
+    ): Response<co.golink.tester.domain.encryption.TeamMissingKeysResponse>
+
+    @POST("api/folder/{id}/missing-keys")
+    suspend fun storeTeamMissingKeys(
+        @Path("id") id: String,
+        @Body body: co.golink.tester.domain.encryption.StoreTeamKeysBody,
+    ): Response<co.golink.tester.domain.encryption.StoreTeamKeysResponse>
+
     // E2E: ids dos ficheiros cifrados sob uma pasta (recursivo).
     @GET("api/folder/{id}/encrypted-file-ids")
     suspend fun folderEncryptedFileIds(

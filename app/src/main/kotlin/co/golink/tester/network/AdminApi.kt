@@ -83,6 +83,9 @@ interface AdminApi {
     @PATCH("api/admin/users/{id}/capacity")
     suspend fun changeCapacity(@Path("id") id: String, @Body body: ChangeCapacityRequest): Response<UserStorageResponse>
 
+    @PATCH("api/admin/users/{id}/upload-limit")
+    suspend fun changeUploadLimit(@Path("id") id: String, @Body body: co.golink.tester.domain.admin.ChangeUploadLimitRequest): Response<UserStorageResponse>
+
     @POST("api/admin/users/{id}/reset-password")
     suspend fun resetPassword(@Path("id") id: String): Response<ResponseBody>
 

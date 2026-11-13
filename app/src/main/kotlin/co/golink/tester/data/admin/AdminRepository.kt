@@ -242,6 +242,13 @@ class AdminRepository @Inject constructor(
         response.body()?.data ?: error("Resposta vazia".tr())
     }
 
+    /** [gigabytes]: limite por ficheiro só deste utilizador (-1 = sem limite; null = plano). */
+    suspend fun changeUploadLimit(id: String, gigabytes: Double?): Result<UserStorageData> = runCatching {
+        val response = api.changeUploadLimit(id, co.golink.tester.domain.admin.ChangeUploadLimitRequest(gigabytes))
+        check(response.isSuccessful) { serverMessage(response) }
+        response.body()?.data ?: error("Resposta vazia".tr())
+    }
+
     suspend fun resetPassword(id: String): Result<Unit> = unit { api.resetPassword(id) }
 
     /** Passo 1: o código vai para o email do admin. */

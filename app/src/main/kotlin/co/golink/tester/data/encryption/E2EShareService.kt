@@ -19,6 +19,7 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
@@ -37,6 +38,54 @@ class E2EShareService @Inject constructor(
     private val json: Json,
 ) {
     val isUnlocked: Boolean get() = e2eKeyManager.isUnlocked
+
+    // Pasta → última reparação (ms) e exclusão mútua: uma de cada vez, 10 min por pasta.
+    private val healedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val healMutex = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * Auto-reparação numa Team Folder (espelha healTeamFolderKeys da web): quem
+     * consegue abrir os ficheiros (dono ou editor) sela as data keys em falta aos
+     * outros participantes e envia-as em lote. Silencioso; viewer → 403 → nada.
+     */
+    suspend fun healTeamFolderKeys(folderId: String, force: Boolean = false) = withContext(Dispatchers.IO) {
+        if (!e2eKeyManager.isUnlocked) return@withContext
+        healMutex.withLock {
+            val now = System.currentTimeMillis()
+            if (!force && now - (healedAt[folderId] ?: 0L) < 10 * 60 * 1000L) return@withLock
+            healedAt[folderId] = now
+            try {
+                for (round in 0 until 20) {
+                    val missing = filesApi.teamMissingKeys(folderId).takeIf { it.isSuccessful }?.body() ?: break
+                    if (missing.files.isEmpty()) break
+                    val publicKeys = missing.recipients.mapNotNull { r -> r.public_key?.let { r.user_id to it } }.toMap()
+                    val own = filesApi.fileEncryptionKeysBatch(FileIdsBody(missing.files.map { it.file_id }))
+                        .body()?.keys.orEmpty().associate { it.file_id to it.wrapped_data_key }
+                    val keys = mutableListOf<co.golink.tester.domain.encryption.TeamKeyEntry>()
+                    for (f in missing.files) {
+                        val wrapped = own[f.file_id] ?: continue
+                        val dataKey = runCatching { e2eKeyManager.openFileDataKey(wrapped) }.getOrNull() ?: continue
+                        try {
+                            for (uid in f.user_ids) {
+                                val pk = publicKeys[uid] ?: continue
+                                keys += co.golink.tester.domain.encryption.TeamKeyEntry(f.file_id, uid, e2eKeyManager.sealForPublicKey(dataKey, pk))
+                            }
+                        } finally {
+                            dataKey.fill(0)
+                        }
+                    }
+                    if (keys.isEmpty()) break
+                    val created = filesApi.storeTeamMissingKeys(folderId, co.golink.tester.domain.encryption.StoreTeamKeysBody(keys))
+                        .body()?.created ?: 0
+                    if (!missing.more || created == 0) break
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // Rede/403 (viewer): a próxima abertura tenta de novo.
+            }
+        }
+    }
 
     // Cache local da chave de partilha por token. A chave canónica vive no cofre do
     // servidor (selada à pública do dono): só com a cache, abrir a partilha noutro

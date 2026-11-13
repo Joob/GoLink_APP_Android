@@ -596,6 +596,12 @@ private fun NotesWebView(vm: NotesViewModel, visible: Boolean, onView: (WebView?
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 WebView(ctx).apply {
+                    // Sem layoutParams o AndroidView dá WRAP_CONTENT e a WebView fica com o viewport de layout
+                    // a 0 px de altura: vh/% valem 0 (folha Insert vazia) e há remedições ao deslizar.
+                    layoutParams = android.view.ViewGroup.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    )
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.allowFileAccess = false
