@@ -400,6 +400,7 @@ fun NotificationsScreen(
                                 onDelete = { viewModel.delete(n.id) },
                                 answering = n.id in answering,
                                 onAnswer = if (n.pendingAnswer) { yes -> viewModel.answer(n, yes) } else null,
+                                selected = n.id == openId,
                             )
                         }
                     }
@@ -454,6 +455,8 @@ private fun NotificationRow(
     answering: Boolean = false,
     /** Convite por responder: true = Aceitar, false = Recusar. */
     onAnswer: ((Boolean) -> Unit)? = null,
+    /** Linha aberta no popup: contorno verde, como no mockup. */
+    selected: Boolean = false,
 ) {
     val scheme = MaterialTheme.colorScheme
     val unread = !notification.isRead
@@ -466,6 +469,7 @@ private fun NotificationRow(
             .padding(bottom = 4.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(if (unread) scheme.primary.copy(alpha = 0.08f) else Color.Transparent)
+            .then(if (selected) Modifier.border(1.5.dp, scheme.primary, RoundedCornerShape(12.dp)) else Modifier)
             .combinedClickable(onClick = onTap, onLongClick = { menuOpen = true })
             .padding(start = 20.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
     ) {
