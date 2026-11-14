@@ -157,6 +157,8 @@ data class BrowseAttributes(
     // Raiz da Team Folder (os filhos herdam isTeamFolder) e dono; null = servidor antigo.
     val is_team_root: Boolean? = null,
     val owner_id: String? = null,
+    // Pesquisa/Recentes: posso editar (dono, dono da equipa ou membro can-edit); null = não enviado.
+    val can_edit: Boolean? = null,
     val items: Int? = null,
     val trashed_items: Int? = null,
     val parent_id: String? = null,

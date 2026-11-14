@@ -84,13 +84,20 @@ fun SearchSheet(
     onDismiss: () -> Unit,
 ) {
     val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
     var lockedHint by remember { mutableStateOf(false) }
 
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
+        // Foco + teclado dentro da janela do Dialog (fora dela o FocusRequester
+        // ainda não está ligado e o pedido falhava em silêncio).
+        val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+        LaunchedEffect(Unit) {
+            kotlinx.coroutines.delay(50)
+            runCatching { focusRequester.requestFocus() }
+            keyboard?.show()
+        }
         // Cartão centrado (como o Spotlight da web): altura fixa até 70% do espaço
         // livre (o teclado conta), tocar fora fecha.
         BoxWithConstraints(
@@ -144,8 +151,11 @@ fun SearchSheet(
                             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                             keyboardActions = KeyboardActions(onSearch = {
-                                (if (state.query.isBlank()) state.recents else state.results).firstOrNull()?.let {
-                                    onOpenItem(it, if (state.query.isBlank()) state.recents else state.results)
+                                // A carregar, os resultados ainda são da pesquisa anterior.
+                                val blank = state.query.isBlank()
+                                if (blank || !state.loading) {
+                                    val list = if (blank) state.recents else state.results
+                                    list.firstOrNull()?.let { onOpenItem(it, list) }
                                 }
                             }),
                             modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
@@ -234,18 +244,19 @@ fun SearchSheet(
                         verticalArrangement = Arrangement.Center,
                         modifier = Modifier.fillMaxSize().padding(24.dp),
                     ) {
+                        val emptyText = when {
+                            showRecents && state.tab != null -> "Sem itens recentes em %s".tr().format(tabLabel)
+                            showRecents -> "Sem itens recentes".tr()
+                            state.query.trim().length < 2 && state.chips.isEmpty() -> ""
+                            state.tab != null -> "Sem resultados em %s".tr().format(tabLabel)
+                            else -> "Nada encontrado".tr()
+                        }
                         Text(
-                            when {
-                                showRecents && state.tab != null -> "Sem itens recentes em %s".tr().format(tabLabel)
-                                showRecents -> "Sem itens recentes".tr()
-                                state.query.trim().length < 2 && state.chips.isEmpty() -> ""
-                                state.tab != null -> "Sem resultados em %s".tr().format(tabLabel)
-                                else -> "Nada encontrado".tr()
-                            },
+                            emptyText,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        if (state.tab != null) {
+                        if (state.tab != null && emptyText.isNotEmpty()) {
                             Spacer(Modifier.height(8.dp))
                             TextButton(onClick = { onTabChange(null) }) { Text("Pesquisar em tudo".tr()) }
                         }
@@ -268,6 +279,7 @@ fun SearchSheet(
                             BrowseItemRow(
                                 item = item,
                                 onClick = { onOpenItem(item, list) },
+                                showMore = false,
                             )
                         }
                     }

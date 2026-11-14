@@ -542,9 +542,20 @@ class BrowseViewModel @Inject constructor(
 
     fun setSheetTab(tab: String?) {
         if (_searchSheet.value.tab == tab) return
-        _searchSheet.update { it.copy(tab = tab, results = emptyList()) }
+        // Limpa também os recentes: os da tab anterior não podem ficar à vista.
+        _searchSheet.update { it.copy(tab = tab, results = emptyList(), recents = emptyList(), recentsLoading = true) }
         loadSheetRecents()
         runSheetSearch()
+    }
+
+    /** Nome por decifrar (chaves trancadas): "Protegido" em vez do placeholder "•" do servidor. */
+    private fun sheetItems(items: List<BrowseItem>): List<BrowseItem> = items.map { item ->
+        val enc = item.nameEncrypted
+        if (enc.isNullOrEmpty() || e2eKeys.openNameOrNull(enc) != null) item
+        else when (item) {
+            is BrowseItem.Folder -> item.copy(name = "Protegido".tr())
+            is BrowseItem.File -> item.copy(name = "Protegido".tr())
+        }
     }
 
     private fun runSheetSearch() {
@@ -558,19 +569,25 @@ class BrowseViewModel @Inject constructor(
             _searchSheet.update { it.copy(results = emptyList(), loading = false) }
             return
         }
+        // A carregar já durante o debounce: antes o "Nada encontrado" piscava 250 ms.
+        _searchSheet.update { it.copy(loading = true, indexTruncated = false) }
         sheetSearchJob = viewModelScope.launch {
             delay(250)
-            _searchSheet.update { it.copy(loading = true) }
             val current = { _searchSheet.value.let { it.query == query && it.tab == tab } }
+            var emitted = false
             try {
                 repository.searchProgressive(query, tab).collect { items ->
-                    if (current()) _searchSheet.update { it.copy(results = items) }
+                    emitted = true
+                    if (current()) _searchSheet.update { it.copy(results = sheetItems(items)) }
                 }
-                if (current()) _searchSheet.update { it.copy(loading = false, indexTruncated = repository.nameIndexTruncated) }
+                // O aviso dos 10 000 só vale para as tabs que usam o índice de nomes cifrados.
+                val usesIndex = tab == null || tab == "files" || tab == "folders"
+                if (current()) _searchSheet.update { it.copy(loading = false, indexTruncated = usesIndex && repository.nameIndexTruncated) }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (t: Throwable) {
-                if (current()) _searchSheet.update { it.copy(loading = false, results = emptyList()) }
+                // Erro do servidor: mantém o que o índice cifrado já encontrou.
+                if (current()) _searchSheet.update { it.copy(loading = false, results = if (emitted) it.results else emptyList()) }
             }
         }
     }
@@ -581,7 +598,10 @@ class BrowseViewModel @Inject constructor(
         sheetRecentsJob = viewModelScope.launch {
             _searchSheet.update { it.copy(recentsLoading = true) }
             val items = repository.recentOpened(tab).getOrDefault(emptyList())
-            if (_searchSheet.value.tab == tab) _searchSheet.update { it.copy(recents = items, recentsLoading = false) }
+            // O runCatching do repositório engole o cancelamento: sem isto, um pedido
+            // cancelado (troca rápida de tab) escrevia uma lista vazia por cima.
+            if (!isActive) return@launch
+            if (_searchSheet.value.tab == tab) _searchSheet.update { it.copy(recents = sheetItems(items), recentsLoading = false) }
         }
     }
 

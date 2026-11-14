@@ -169,6 +169,8 @@ fun BrowseItemRow(
     onLongClick: () -> Unit = {},
     onMoreClick: () -> Unit = onLongClick,
     onMembersClick: ((List<TeamMember>) -> Unit)? = null,
+    // false = sem o botão ⋮ (pesquisa: só abrir, como no Spotlight da web).
+    showMore: Boolean = true,
     selected: Boolean = false,
     selectionMode: Boolean = false,
     // Itens partilhados: botão de copiar link ao lado do ⋮ (null = sem botão).
@@ -246,7 +248,7 @@ fun BrowseItemRow(
             if (onCopyLinkClick != null && !selectionMode) {
                 CopyLinkButton(onCopyLinkClick, Modifier.size(40.dp), iconSize = 18.dp)
             }
-            if (!selectionMode) {
+            if (!selectionMode && showMore) {
                 IconButton(onClick = onMoreClick, modifier = Modifier.size(40.dp)) {
                     Icon(
                         Icons.Filled.MoreVert,

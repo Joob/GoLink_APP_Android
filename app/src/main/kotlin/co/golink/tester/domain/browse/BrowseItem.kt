@@ -123,6 +123,8 @@ sealed interface BrowseItem {
         val contentRevision: Int? = null,
         /** Dono do ficheiro; null = servidor antigo. */
         val ownerId: String? = null,
+        /** Pesquisa/Recentes: false = só ver (membro can-view); null = não enviado. */
+        val canEdit: Boolean? = null,
         /** Dimensões (EXIF) das imagens, quando o servidor as envia. */
         val imageWidth: Int? = null,
         val imageHeight: Int? = null,
@@ -227,6 +229,7 @@ fun BrowseEntry.toItem(): BrowseItem = if (type == "folder") {
         scanStatus = attributes.scan_status,
         contentRevision = attributes.content_revision,
         ownerId = attributes.owner_id,
+        canEdit = attributes.can_edit,
         imageWidth = relationships?.exif?.data?.attributes?.width.asIntOrNull(),
         imageHeight = relationships?.exif?.data?.attributes?.height.asIntOrNull(),
     )

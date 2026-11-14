@@ -116,6 +116,8 @@ data class SettingsAttributes(
     val date_format: String? = null,
     /** 0 = domingo, 1 = segunda, 6 = sábado. */
     val week_start: Int? = null,
+    /** Backup Mobile ligado na conta (qualquer aparelho) — o servidor decide a tab da pesquisa por isto. */
+    val mobile_backup_enabled: Boolean? = null,
     /** light | dark | system (Preferências, partilhado com a web). */
     val theme_mode: String? = null,
     val news_emails: Boolean? = null,
@@ -216,6 +218,8 @@ data class User(
     val newsEmails: Boolean = true,
     val tipsEmails: Boolean = false,
     val weeklySummary: Boolean = false,
+    /** Backup Mobile ligado na conta (settings.mobile_backup_enabled). */
+    val mobileBackupEnabled: Boolean = false,
 ) {
     companion object {
         fun fromResponse(response: UserResponse): User {
@@ -260,6 +264,7 @@ data class User(
                 newsEmails = settings?.news_emails ?: true,
                 tipsEmails = settings?.tips_emails ?: false,
                 weeklySummary = settings?.weekly_summary ?: false,
+                mobileBackupEnabled = settings?.mobile_backup_enabled ?: false,
                 state = settings?.state,
                 isPastDue = subscription?.attributes?.is_past_due == true,
                 isPaymentSuspended = subscription?.attributes?.is_suspended == true,

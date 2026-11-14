@@ -728,7 +728,9 @@ fun BrowseScreen(
         val searchSheet by viewModel.searchSheet.collectAsStateWithLifecycle()
         if (searchSheet.open) SearchSheet(
             state = searchSheet,
-            mobileBackupEnabled = autoBackupEnabled,
+            // Como o servidor: a flag da conta (backup ligado noutro aparelho conta).
+            // O local cobre o utilizador em cache ainda sem a flag depois de ligar aqui.
+            mobileBackupEnabled = user?.mobileBackupEnabled == true || autoBackupEnabled,
             onQueryChange = viewModel::setSheetQuery,
             onTabChange = viewModel::setSheetTab,
             onOpenItem = { item, list ->
@@ -737,13 +739,14 @@ fun BrowseScreen(
                     is BrowseItem.File -> {
                         viewModel.closeSearchSheet()
                         when {
+                            // can_edit por ficheiro (servidor): membro "só ver" abre sem editar/mover/apagar.
                             item.isOfficeFile() -> {
-                                viewModel.prepareViewer(listOf(item), item.id, fromTrash = false, readOnlyIds = emptySet())
+                                viewModel.prepareViewer(listOf(item), item.id, fromTrash = false, readOnlyIds = searchReadOnlyIds(listOf(item)))
                                 onOpenFile(item.id)
                             }
                             item.isViewable() -> {
                                 val viewable = list.filterIsInstance<BrowseItem.File>().filter { it.isViewable() }
-                                viewModel.prepareViewer(viewable, item.id, fromTrash = false, readOnlyIds = emptySet())
+                                viewModel.prepareViewer(viewable, item.id, fromTrash = false, readOnlyIds = searchReadOnlyIds(viewable))
                                 onOpenFile(item.id)
                             }
                             else -> sheetItem = item
@@ -2023,6 +2026,10 @@ private fun typeBreakdown(files: List<BrowseItem>): String {
 }
 
 // Estado do quadrado de uma secção (Pastas / Ficheiros / dia-mês-ano).
+/** Ficheiros da pesquisa que o servidor marcou como não editáveis (can_edit=false). */
+private fun searchReadOnlyIds(files: List<BrowseItem.File>): Set<String> =
+    files.filter { it.canEdit == false }.mapTo(HashSet()) { it.id }
+
 internal fun sectionSelectState(items: List<BrowseItem>, selectedIds: Set<String>): androidx.compose.ui.state.ToggleableState {
     val n = items.count { it.id in selectedIds }
     return when {
