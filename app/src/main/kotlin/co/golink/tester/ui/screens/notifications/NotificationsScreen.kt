@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -42,6 +43,9 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.MenuDefaults
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -258,7 +262,7 @@ fun NotificationsScreen(
     var openId by rememberSaveable { mutableStateOf<String?>(null) }
     val answering by viewModel.answering.collectAsStateWithLifecycle()
 
-    // Popup de detalhe (como na web): abrir já não marca como lida, o ✓ é que marca.
+    // Popup de detalhe: abrir marca como lida; no popup e no ⋮ fica "Marcar como não lida".
     items.firstOrNull { it.id == openId }?.let { n ->
         val target = actionOf(n)
         NotificationDetailDialog(
@@ -269,7 +273,6 @@ fun NotificationsScreen(
             onDelete = { viewModel.delete(n.id); openId = null },
             answering = n.id in answering,
             onAnswer = if (n.pendingAnswer) { yes -> viewModel.answer(n, yes) } else null,
-            // Seguir a ação conta como lida (abrir o popup não).
             onAction = target?.let { go -> { if (!n.isRead) viewModel.markRead(n.id); openId = null; go() } },
         )
     }
@@ -394,7 +397,10 @@ fun NotificationsScreen(
                             NotificationRow(
                                 notification = n,
                                 time = time,
-                                onTap = { openId = n.id },
+                                onTap = {
+                                    openId = n.id
+                                    if (!n.isRead) viewModel.markRead(n.id)
+                                },
                                 onAction = target?.let { go -> { if (!n.isRead) viewModel.markRead(n.id); go() } },
                                 onToggleRead = { viewModel.toggleRead(n) },
                                 onDelete = { viewModel.delete(n.id) },
@@ -552,23 +558,50 @@ private fun NotificationRow(
                         modifier = Modifier.size(18.dp),
                     )
                 }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text(if (unread) "Marcar como lida".tr() else "Marcar como não lida".tr()) },
-                        leadingIcon = {
-                            Icon(if (unread) Icons.Outlined.Done else Icons.Outlined.MarkEmailUnread, contentDescription = null)
-                        },
-                        onClick = { menuOpen = false; onToggleRead() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Eliminar".tr()) },
-                        leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null) },
-                        onClick = { menuOpen = false; onDelete() },
-                    )
+                // Menu no estilo da app: fundo da superfície (sem o lilás do M3), borda fina,
+                // itens compactos e "Eliminar" a vermelho.
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false },
+                    offset = DpOffset(x = 0.dp, y = 4.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    containerColor = scheme.surface,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 8.dp,
+                    border = BorderStroke(1.dp, scheme.outline),
+                    modifier = Modifier.widthIn(min = 200.dp),
+                ) {
+                    NotificationMenuItem(
+                        label = if (unread) "Marcar como lida".tr() else "Marcar como não lida".tr(),
+                        icon = if (unread) Icons.Outlined.Done else Icons.Outlined.MarkEmailUnread,
+                        color = scheme.onSurface,
+                    ) { menuOpen = false; onToggleRead() }
+                    NotificationMenuItem(
+                        label = "Eliminar".tr(),
+                        icon = Icons.Outlined.DeleteOutline,
+                        color = scheme.error,
+                    ) { menuOpen = false; onDelete() }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun NotificationMenuItem(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    color: Color,
+    onClick: () -> Unit,
+) {
+    DropdownMenuItem(
+        text = { Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium) },
+        leadingIcon = { Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
+        onClick = onClick,
+        colors = MenuDefaults.itemColors(textColor = color, leadingIconColor = color),
+        contentPadding = PaddingValues(horizontal = 14.dp),
+        modifier = Modifier.height(44.dp),
+    )
 }
 
 /** Botão da web: secundário (fundo claro com borda) ou primário (cheio, como "Aceitar"). */
