@@ -442,6 +442,8 @@ fun MobileBackupsScreen(
                                         co.golink.tester.ui.screens.browse.MonthHeader(
                                             section.title, section.count, Modifier.padding(top = 10.dp, bottom = 2.dp),
                                             collapsed = isCollapsed, onToggle = { toggle(section.key) },
+                                            selectState = if (state.selectMode) co.golink.tester.ui.screens.browse.sectionSelectState(section.items, state.selectedIds) else null,
+                                            onToggleSelect = { viewModel.toggleSectionSelection(section.items.map { it.id }) },
                                         )
                                     }
                                 }
@@ -491,6 +493,8 @@ fun MobileBackupsScreen(
                                             section.title, section.count, Modifier.padding(top = 8.dp, bottom = 2.dp),
                                             collapsed = isCollapsed, onToggle = { toggle(section.key) },
                                             size = section.size,
+                                            selectState = if (state.selectMode) co.golink.tester.ui.screens.browse.sectionSelectState(section.items, state.selectedIds) else null,
+                                            onToggleSelect = { viewModel.toggleSectionSelection(section.items.map { it.id }) },
                                         )
                                     }
                                 }

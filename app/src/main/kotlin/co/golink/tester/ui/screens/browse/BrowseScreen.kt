@@ -1151,6 +1151,8 @@ fun BrowseScreen(
                                                 Modifier.padding(top = 10.dp, bottom = 2.dp),
                                                 collapsed = isCollapsed,
                                                 onToggle = { toggleSection(section.key) },
+                                                selectState = if (state.selectMode) sectionSelectState(section.items, state.selectedIds) else null,
+                                                onToggleSelect = { viewModel.toggleSectionSelection(section.items.map { it.id }) },
                                             )
                                         }
                                     }
@@ -1220,6 +1222,8 @@ fun BrowseScreen(
                                                 collapsed = isCollapsed,
                                                 onToggle = { toggleSection(section.key) },
                                                 size = section.size,
+                                                selectState = if (state.selectMode) sectionSelectState(section.items, state.selectedIds) else null,
+                                                onToggleSelect = { viewModel.toggleSectionSelection(section.items.map { it.id }) },
                                             )
                                         }
                                     }
@@ -2018,6 +2022,16 @@ private fun typeBreakdown(files: List<BrowseItem>): String {
     }.joinToString(", ")
 }
 
+// Estado do quadrado de uma secção (Pastas / Ficheiros / dia-mês-ano).
+internal fun sectionSelectState(items: List<BrowseItem>, selectedIds: Set<String>): androidx.compose.ui.state.ToggleableState {
+    val n = items.count { it.id in selectedIds }
+    return when {
+        n == 0 -> androidx.compose.ui.state.ToggleableState.Off
+        n == items.size -> androidx.compose.ui.state.ToggleableState.On
+        else -> androidx.compose.ui.state.ToggleableState.Indeterminate
+    }
+}
+
 // Título de secção: chevron (recolher), título a negrito, contagem e uma linha.
 @Composable
 internal fun MonthHeader(
@@ -2027,6 +2041,9 @@ internal fun MonthHeader(
     collapsed: Boolean = false,
     onToggle: (() -> Unit)? = null,
     size: String? = null,
+    // Em modo de seleção: quadrado que marca/desmarca só esta secção.
+    selectState: androidx.compose.ui.state.ToggleableState? = null,
+    onToggleSelect: (() -> Unit)? = null,
 ) {
     val rotation by androidx.compose.animation.core.animateFloatAsState(if (collapsed) -90f else 0f, label = "sec-chevron")
     Row(
@@ -2037,6 +2054,14 @@ internal fun MonthHeader(
             .then(if (onToggle != null) Modifier.clickable(onClick = onToggle) else Modifier)
             .padding(horizontal = 4.dp, vertical = 4.dp),
     ) {
+        if (selectState != null && onToggleSelect != null) {
+            androidx.compose.material3.TriStateCheckbox(
+                state = selectState,
+                onClick = onToggleSelect,
+                modifier = Modifier.size(24.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+        }
         if (onToggle != null) {
             Icon(
                 Icons.Filled.KeyboardArrowDown,

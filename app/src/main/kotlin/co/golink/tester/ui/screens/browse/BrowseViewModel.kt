@@ -2022,6 +2022,14 @@ class BrowseViewModel @Inject constructor(
     fun clearSelection() = _state.update { it.copy(selectedIds = emptySet()) }
     fun enterSelectMode() = _state.update { it.copy(selectMode = true) }
     fun exitSelectMode() = _state.update { it.copy(selectMode = false, selectedIds = emptySet()) }
+    // Quadrado do título de uma secção: atua só sobre os ids dela. Nenhum
+    // selecionado → junta-os; algum → tira-os; seleção vazia → sai do modo.
+    fun toggleSectionSelection(ids: Collection<String>) = _state.update { st ->
+        if (ids.isEmpty()) return@update st
+        val next = if (ids.none { it in st.selectedIds }) st.selectedIds + ids else st.selectedIds - ids.toSet()
+        if (next.isEmpty()) st.copy(selectMode = false, selectedIds = emptySet())
+        else st.copy(selectMode = true, selectedIds = next)
+    }
     // Respeita o filtro "só ficheiros": antes selecionava também as pastas escondidas.
     fun selectAll() = _state.update { st ->
         val visible = if (st.filesOnly) st.items.filterIsInstance<BrowseItem.File>() else st.items

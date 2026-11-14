@@ -274,6 +274,13 @@ class MobileBackupsViewModel @Inject constructor(
     fun enterSelectMode() = _state.update { it.copy(selectMode = true) }
     fun exitSelectMode() = _state.update { it.copy(selectMode = false, selectedIds = emptySet()) }
     fun selectAll() = _state.update { it.copy(selectedIds = it.items.map { item -> item.id }.toSet()) }
+    // Quadrado do título de uma secção: atua só sobre os ids dela (ver BrowseViewModel).
+    fun toggleSectionSelection(ids: Collection<String>) = _state.update { st ->
+        if (ids.isEmpty()) return@update st
+        val next = if (ids.none { it in st.selectedIds }) st.selectedIds + ids else st.selectedIds - ids.toSet()
+        if (next.isEmpty()) st.copy(selectMode = false, selectedIds = emptySet())
+        else st.copy(selectMode = true, selectedIds = next)
+    }
     fun toggleSelect(id: String) = _state.update {
         it.copy(selectedIds = if (id in it.selectedIds) it.selectedIds - id else it.selectedIds + id)
     }
