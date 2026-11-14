@@ -130,6 +130,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -325,6 +326,7 @@ fun SettingsScreen(
                     storage = state.storage,
                     activeSessions = state.sessionsCount ?: 0,
                     twoFactorEnabled = state.twoFactorEnabled,
+                    appLockOff = !state.pinEnabled && !state.biometricEnabled,
                     backup = backupState,
                     onNavigate = { route = it },
                     onOpenAutoBackup = onOpenAutoBackup,
@@ -508,6 +510,7 @@ private fun MenuPane(
     storage: co.golink.tester.domain.settings.StorageUsage?,
     activeSessions: Int,
     twoFactorEnabled: Boolean,
+    appLockOff: Boolean,
     backup: AutoBackupState,
     onNavigate: (SettingsRoute) -> Unit,
     onOpenAutoBackup: () -> Unit,
@@ -704,7 +707,12 @@ private fun MenuPane(
                 badge = if (activeSessions > 0) { { SettingsBadge(activeSessions.toString(), SettingsColors.Amber, round = true) } } else null,
             ) { onNavigate(SettingsRoute.Sessions) }
             SettingsNavRow(Icons.Outlined.Shield, sec, "Atividade de segurança".tr(), "Inícios de sessão e alterações".tr()) { onNavigate(SettingsRoute.SecurityActivity) }
-            SettingsNavRow(Icons.Outlined.Fingerprint, sec, "Bloqueio da app".tr(), "Impressão digital e PIN".tr()) { onNavigate(SettingsRoute.AppSecurity) }
+            // A chave E2E e o Pass ficam abertos neste telemóvel (sem bloqueio por inatividade, por
+            // causa dos alertas do calendário): o bloqueio da app é a proteção recomendada.
+            SettingsNavRow(
+                Icons.Outlined.Fingerprint, sec, "Bloqueio da app".tr(), "Impressão digital e PIN".tr(),
+                badge = if (appLockOff) { { SettingsBadge("Recomendado".tr(), SettingsColors.Amber) } } else null,
+            ) { onNavigate(SettingsRoute.AppSecurity) }
             SettingsNavRow(Icons.Outlined.Code, sec, "Tokens API".tr(), "Chaves de acesso pessoal".tr(), showDivider = false) { onNavigate(SettingsRoute.ApiTokens) }
         }
 
@@ -1462,6 +1470,11 @@ private fun ApiTokensPane(
         PaneSection("Tokens de acesso pessoal".tr(), action = "+ " + "Criar".tr(), onAction = { showCreateTokenDialog = true })
         // Token novo: mostrado uma única vez.
         newTokenPlaintext?.let { token ->
+            // Token visível: fora das capturas e da miniatura dos recentes.
+            DisposableEffect(Unit) {
+                co.golink.tester.data.settings.SecureScreens.acquire()
+                onDispose { co.golink.tester.data.settings.SecureScreens.release() }
+            }
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = SettingsAccent.copy(alpha = 0.08f),
@@ -2388,6 +2401,14 @@ private fun AppSecurityPane(
                 icon = Icons.Outlined.Fingerprint,
                 iconColor = SettingsAccent,
                 bold = true,
+            )
+        }
+        if (!lockOn) {
+            Text(
+                "Recomendado: a chave de encriptação e o Pass ficam abertos neste telemóvel. Com o bloqueio, só tu os abres se alguém pegar no telemóvel desbloqueado.".tr(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
             )
         }
 

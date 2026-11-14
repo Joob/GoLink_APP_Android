@@ -539,7 +539,8 @@ class E2EKeyManager @Inject constructor(
         pinVerified = false
         pinPrefs.edit().remove(PIN_KEY).apply()
         // Chaves #k= das partilhas (cache; a canónica está no cofre do servidor): não ficam no aparelho.
-        context.getSharedPreferences(E2EShareService.SHARE_KEYS_PREFS, android.content.Context.MODE_PRIVATE).edit().clear().apply()
+        context.getSharedPreferences(E2EShareService.SHARE_KEYS_PREFS_LEGACY, android.content.Context.MODE_PRIVATE).edit().clear().apply()
+        runCatching { co.golink.tester.data.settings.EncryptedPrefs.create(context, E2EShareService.SHARE_KEYS_PREFS).edit().clear().apply() }
         _unlocked.value = false
         _configured.value = false
         onLockCallbacks.forEach { runCatching { it() } }

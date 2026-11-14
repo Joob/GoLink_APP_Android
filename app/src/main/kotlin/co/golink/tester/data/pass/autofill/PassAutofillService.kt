@@ -10,6 +10,7 @@ import android.service.autofill.SaveCallback
 import android.service.autofill.SaveRequest
 import android.util.Log
 import co.golink.tester.data.pass.PassRepository
+import co.golink.tester.data.settings.AppLockManager
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -22,14 +23,19 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class PassAutofillService : AutofillService() {
     @Inject lateinit var repo: PassRepository
+    @Inject lateinit var appLock: AppLockManager
 
     override fun onFillRequest(request: FillRequest, cancellationSignal: CancellationSignal, callback: FillCallback) {
         try {
             val structure = request.fillContexts.lastOrNull()?.structure ?: return callback.onSuccess(null)
-            val target = PassAutofillParser.parse(structure)
+            val pkg = structure.activityComponent?.packageName
+            val target = PassAutofillParser.parse(structure, PassTrustedBrowsers.isVerified(this, pkg))
             if (target.isEmpty || target.packageName == packageName) return callback.onSuccess(null)
             val inline = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) request.inlineSuggestionsRequest else null
-            val response = if (repo.isOpen) {
+            // O ticker do auto-lock não corre com o processo congelado: aplicar o lock_after já.
+            repo.checkIdle()
+            // Bloqueio da app (PIN/biometria) ativo: nada de sugestões sem desbloquear.
+            val response = if (repo.isOpen && !appLock.lockedForAutofill()) {
                 repo.touchFromAutofill()
                 PassAutofillResponses.fill(this, target, repo.state.value, repo.state.value.settings.reprompt && !repo.repromptValid(), inline)
             } else {
@@ -45,7 +51,9 @@ class PassAutofillService : AutofillService() {
     override fun onSaveRequest(request: SaveRequest, callback: SaveCallback) {
         try {
             // Juntar todos os ecrãs do fluxo (utilizador num ecrã, password no seguinte).
-            val parsed = request.fillContexts.map { PassAutofillParser.parse(it.structure, withValues = true) }
+            val parsed = request.fillContexts.map {
+                PassAutofillParser.parse(it.structure, PassTrustedBrowsers.isVerified(this, it.structure.activityComponent?.packageName), withValues = true)
+            }
             val last = parsed.lastOrNull() ?: return callback.onSuccess()
             val password = parsed.lastOrNull { it.passwordValue != null }?.passwordValue ?: return callback.onSuccess()
             val username = parsed.lastOrNull { it.usernameValue != null }?.usernameValue

@@ -55,29 +55,23 @@ object PassAutofillParser {
     }
 
     /**
-     * Browsers em que o `webDomain` é de confiança (setWebDomain é público: qualquer app o pode
-     * declarar). Mesma lista que os compatibility-package de pass_autofill_service.xml + browsers
-     * com autofill nativo. Fora desta lista o pedido é tratado como app.
+     * Nome de um browser conhecido (sem verificar a assinatura). Serve só para decisões que
+     * restringem (não tratar o browser como "app", não usar heurísticas pelo pacote); o
+     * `webDomain` só é aceite com [PassTrustedBrowsers.isVerified].
      */
-    val TRUSTED_BROWSERS = setOf(
-        "com.android.chrome", "com.chrome.beta", "com.chrome.dev", "com.chrome.canary", "org.chromium.chrome",
-        "com.brave.browser", "com.brave.browser_beta", "com.brave.browser_nightly",
-        "com.microsoft.emmx", "com.microsoft.emmx.beta", "com.microsoft.emmx.dev", "com.microsoft.emmx.canary",
-        "com.opera.browser", "com.opera.browser.beta", "com.opera.mini.native", "com.opera.gx",
-        "com.sec.android.app.sbrowser", "com.sec.android.app.sbrowser.beta",
-        "com.vivaldi.browser", "com.vivaldi.browser.snapshot",
-        "com.duckduckgo.mobile.android", "com.kiwibrowser.browser", "com.ecosia.android",
-        "org.mozilla.firefox", "org.mozilla.firefox_beta", "org.mozilla.fenix", "org.mozilla.focus", "org.mozilla.klar",
-        "org.mozilla.fennec_fdroid", "org.torproject.torbrowser", "us.spotco.fennec_dos", "io.github.forkmaintainers.iceraven",
-        "org.cromite.cromite", "org.bromite.bromite",
-    )
+    fun isTrustedBrowser(pkg: String?): Boolean = PassTrustedBrowsers.isKnown(pkg)
 
-    fun isTrustedBrowser(pkg: String?): Boolean = pkg != null && pkg in TRUSTED_BROWSERS
-
-    fun parse(structure: AssistStructure, withValues: Boolean = false): PassAutofillTarget {
+    /**
+     * @param trustDomain o pacote é um browser verificado pela assinatura
+     *  ([PassTrustedBrowsers.isVerified]); senão o `webDomain` é ignorado (setWebDomain é
+     *  público: qualquer app o pode declarar).
+     */
+    fun parse(structure: AssistStructure, trustDomain: Boolean, withValues: Boolean = false): PassAutofillTarget {
         val pkg = structure.activityComponent?.packageName.orEmpty()
-        val trustDomain = isTrustedBrowser(pkg)
-        var domain: String? = null
+        var firstDomain: String? = null
+        // Domínio do frame do campo focado: numa página com iframes de outra origem, os
+        // campos do iframe não recebem os logins do domínio de topo.
+        var focusedDomain: String? = null
         val users = mutableListOf<AutofillId>()
         val passwords = mutableListOf<AutofillId>()
         var userValue: String? = null
@@ -85,8 +79,12 @@ object PassAutofillParser {
         // Campo de texto visível imediatamente antes da password (username sem pistas).
         var lastText: AssistStructure.ViewNode? = null
 
-        fun walk(node: AssistStructure.ViewNode) {
-            if (trustDomain) node.webDomain?.takeIf { it.isNotBlank() }?.let { if (domain == null) domain = it }
+        fun walk(node: AssistStructure.ViewNode, inherited: String?) {
+            val nodeDomain = if (trustDomain) node.webDomain?.takeIf { it.isNotBlank() } ?: inherited else null
+            if (nodeDomain != null) {
+                if (firstDomain == null) firstDomain = nodeDomain
+                if (node.isFocused && focusedDomain == null) focusedDomain = nodeDomain
+            }
             val id = node.autofillId
             if (id != null && node.autofillType == View.AUTOFILL_TYPE_TEXT && node.visibility == View.VISIBLE) {
                 val html = node.htmlInfo
@@ -113,10 +111,11 @@ object PassAutofillParser {
                 }
                 if (kind == null) lastText = node
             }
-            for (i in 0 until node.childCount) walk(node.getChildAt(i))
+            for (i in 0 until node.childCount) walk(node.getChildAt(i), nodeDomain)
         }
-        for (i in 0 until structure.windowNodeCount) walk(structure.getWindowNodeAt(i).rootViewNode)
+        for (i in 0 until structure.windowNodeCount) walk(structure.getWindowNodeAt(i).rootViewNode, null)
+        val domain = focusedDomain ?: firstDomain
         // Sem password à vista e sem pistas claras não é um formulário de login.
-        return PassAutofillTarget(pkg, domain, users.distinct(), passwords.distinct(), userValue?.takeIf { it.isNotBlank() }, passValue?.takeIf { it.isNotEmpty() })
+        return PassAutofillTarget(pkg, domain,users.distinct(), passwords.distinct(), userValue?.takeIf { it.isNotBlank() }, passValue?.takeIf { it.isNotEmpty() })
     }
 }

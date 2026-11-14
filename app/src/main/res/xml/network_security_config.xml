@@ -1,10 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Release: só https, CAs do sistema. O cleartext para servidores locais está só
-     no build debug (src/debug/res/xml/network_security_config.xml). -->
+     no build debug (src/debug/res/xml/network_security_config.xml), que também não tem pins. -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
+
+    <!-- Certificate pinning da API (OkHttp/HttpURLConnection; o WebView não aplica isto).
+         Só golink.co e www (sem subdomínios: um host de storage/CDN com outra CA não parte).
+         Cadeia observada em 2026-11-14: golink.co ← Let's Encrypt YR1 ← ISRG Root YR
+         (cruzada por ISRG Root X1). Fixam-se as RAÍZES (SPKI sha256), não as
+         intermédias, que a Let's Encrypt roda. Reserva de outra CA: Google Trust
+         Services R1/R4 (para mudar de CA sem nova versão da app).
+         Ao expirar, os pins deixam de se aplicar (volta a confiar só nas CAs do
+         sistema): renovar a data numa versão antes de 2027-11-14. -->
+    <domain-config>
+        <domain includeSubdomains="false">golink.co</domain>
+        <domain includeSubdomains="false">www.golink.co</domain>
+        <pin-set expiration="2027-11-14">
+            <!-- ISRG Root YR (RSA, geração Y; mesma chave na versão cruzada por X1) -->
+            <pin digest="SHA-256">fk6IOKit1ild5647BH06ujSIq5XbCgqlbYl6ANhhi88=</pin>
+            <!-- ISRG Root YE (ECDSA, geração Y) -->
+            <pin digest="SHA-256">sCkq5UWXjg+7mKu9lMhhYF5bGLsy7VI/UNW3tccdR7w=</pin>
+            <!-- ISRG Root X1 -->
+            <pin digest="SHA-256">C5+lpZ7tcVwmwQIMcRtPbsQtWLABXhQzejna0wHFr8M=</pin>
+            <!-- ISRG Root X2 -->
+            <pin digest="SHA-256">diGVwiVYbubAI3RW4hB9xU8e/CH2GnkuvVFZE8zmgzI=</pin>
+            <!-- Reserva: GTS Root R1 e GTS Root R4 (Google Trust Services) -->
+            <pin digest="SHA-256">hxqRlPTu1bMS/0DITB1SSu0vd4u/8l8TjPgfaAp63Gc=</pin>
+            <pin digest="SHA-256">mEflZT5enoR1FuXLgYYGqnVEoZvmf9c2bVBpiOjYQ0c=</pin>
+        </pin-set>
+    </domain-config>
 </network-security-config>

@@ -24,8 +24,8 @@ android {
         applicationId = "co.golink.tester"
         minSdk = 26
         targetSdk = 36
-        versionCode = 183
-        versionName = "3.95.3"
+        versionCode = 185
+        versionName = "4.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -111,6 +111,9 @@ dependencies {
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
+    // Hilt 2.58 traz um kotlin-metadata-jvm que só lê metadados até 2.3; o Kotlin 2.3.x escreve 2.4.
+    // (O Hilt 2.59+ já o resolve, mas exige o AGP 9.) Remover ao passar para o AGP 9 + Hilt novo.
+    ksp("org.jetbrains.kotlin:kotlin-metadata-jvm:${libs.versions.kotlin.get()}")
     implementation(libs.hilt.navigation.compose)
     implementation(libs.androidx.hilt.work)
     ksp(libs.androidx.hilt.compiler)
@@ -160,6 +163,15 @@ dependencies {
     implementation(libs.quickjs.wrapper.android)
 
     testImplementation(libs.junit)
+}
+
+// OkHttp 5: a variante Android lê a lista de sufixos públicos (topPrivateDomain) dos assets,
+// via androidx.startup — nos testes na JVM não há Context; usar a variante JVM só nos testes.
+configurations.matching { it.name.endsWith("UnitTestRuntimeClasspath") }.configureEach {
+    resolutionStrategy.dependencySubstitution {
+        substitute(module("com.squareup.okhttp3:okhttp-android"))
+            .using(module("com.squareup.okhttp3:okhttp-jvm:${libs.versions.okhttp.get()}"))
+    }
 }
 
 kotlin {

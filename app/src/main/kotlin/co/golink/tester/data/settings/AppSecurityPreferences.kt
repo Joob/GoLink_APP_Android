@@ -1,6 +1,8 @@
 package co.golink.tester.data.settings
 
 import android.content.Context
+import android.os.SystemClock
+import android.provider.Settings
 import android.util.Base64
 import androidx.core.content.edit
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -23,17 +25,51 @@ class AppSecurityPreferences @Inject constructor(
 
     @Volatile private var pinSetCache: Boolean? = null
 
+    @Volatile private var bioSecureCache: Boolean? = null
+
     /** Chamar fora da main thread: cria a chave/Tink e lê se há PIN. */
     fun warmUp() {
-        runCatching { hasPinSet }
+        runCatching {
+            hasPinSet
+            migrateToSecure()
+            bioSecure
+        }
     }
 
-    var biometricEnabled: Boolean
-        get() = prefs.getBoolean("biometric_enabled", false)
-        set(value) = prefs.edit { putBoolean("biometric_enabled", value) }
+    /**
+     * Falhas/espera do PIN e o espelho da biometria passaram para o ficheiro cifrado: em
+     * claro, quem tivesse acesso aos ficheiros da app (root/forense) desligava o bloqueio
+     * ou zerava o contador. Migra uma vez a partir de "app_security".
+     */
+    private fun migrateToSecure() {
+        if (prefs.contains("pin_failures") || prefs.contains("pin_lockout_until")) {
+            encryptedPrefs.edit()
+                .putInt(K_FAILURES, maxOf(prefs.getInt("pin_failures", 0), encryptedPrefs.getInt(K_FAILURES, 0)))
+                .putLong(K_LOCKOUT_WALL, maxOf(prefs.getLong("pin_lockout_until", 0L), encryptedPrefs.getLong(K_LOCKOUT_WALL, 0L)))
+                .commit()
+            prefs.edit { remove("pin_failures"); remove("pin_lockout_until") }
+        }
+        if (prefs.getBoolean("biometric_enabled", false) && !encryptedPrefs.getBoolean(K_BIO, false)) {
+            encryptedPrefs.edit().putBoolean(K_BIO, true).commit()
+            bioSecureCache = true
+        }
+    }
 
+    private val bioSecure: Boolean
+        get() = bioSecureCache ?: encryptedPrefs.getBoolean(K_BIO, false).also { bioSecureCache = it }
+
+    /** Ligada em qualquer das cópias: apagar só a de texto simples não desliga a biometria. */
+    var biometricEnabled: Boolean
+        get() = prefs.getBoolean("biometric_enabled", false) || bioSecure
+        set(value) {
+            prefs.edit { putBoolean("biometric_enabled", value) }
+            encryptedPrefs.edit().putBoolean(K_BIO, value).apply()
+            bioSecureCache = value
+        }
+
+    /** Com um PIN gravado (ficheiro cifrado) o bloqueio conta como ligado, seja qual for a flag em claro. */
     var pinEnabled: Boolean
-        get() = prefs.getBoolean("pin_enabled", false)
+        get() = prefs.getBoolean("pin_enabled", false) || hasPinSet
         set(value) = prefs.edit { putBoolean("pin_enabled", value) }
 
     /** Tempo em segundo plano antes de voltar a pedir o desbloqueio (0 = logo). */
@@ -85,37 +121,54 @@ class AppSecurityPreferences @Inject constructor(
 
     // --- PIN errado no ecrã de bloqueio (sobrevive a reiniciar a app) ---
 
-    val failedAttempts: Int get() = prefs.getInt("pin_failures", 0)
+    val failedAttempts: Int get() = encryptedPrefs.getInt(K_FAILURES, 0)
 
     /**
-     * Tempo que falta da espera atual (0 = livre). Relógio mudado para trás:
-     * nunca mais do que a espera máxima (e fica gravado assim).
+     * Tempo que falta da espera atual (0 = livre). No mesmo arranque do aparelho conta pelo
+     * relógio monótono (adiantar a hora não salta a espera); depois de reiniciar, pelo relógio
+     * de parede, e um relógio mudado para trás nunca dá mais do que a espera máxima.
      */
-    fun lockoutRemainingMs(now: Long = System.currentTimeMillis()): Long {
-        val left = prefs.getLong("pin_lockout_until", 0L) - now
+    fun lockoutRemainingMs(
+        now: Long = System.currentTimeMillis(),
+        elapsed: Long = SystemClock.elapsedRealtime(),
+        boot: Int = bootCount(),
+    ): Long {
         val max = lockoutFor(MAX_FAILURES)
+        val sameBoot = boot >= 0 && encryptedPrefs.getInt(K_LOCKOUT_BOOT, -1) == boot
+        val left = if (sameBoot) encryptedPrefs.getLong(K_LOCKOUT_ELAPSED, 0L) - elapsed
+        else encryptedPrefs.getLong(K_LOCKOUT_WALL, 0L) - now
         if (left > max) {
-            prefs.edit { putLong("pin_lockout_until", now + max) }
+            encryptedPrefs.edit().putLong(K_LOCKOUT_WALL, now + max).putLong(K_LOCKOUT_ELAPSED, elapsed + max).apply()
             return max
         }
         return left.coerceAtLeast(0L)
     }
 
     /** Regista um PIN errado e devolve o novo total de falhas. */
-    fun registerFailure(now: Long = System.currentTimeMillis()): Int {
+    fun registerFailure(
+        now: Long = System.currentTimeMillis(),
+        elapsed: Long = SystemClock.elapsedRealtime(),
+        boot: Int = bootCount(),
+    ): Int {
         val n = failedAttempts + 1
         val wait = lockoutFor(n)
-        prefs.edit {
-            putInt("pin_failures", n)
-            putLong("pin_lockout_until", if (wait > 0) now + wait else 0L)
-        }
+        encryptedPrefs.edit()
+            .putInt(K_FAILURES, n)
+            .putLong(K_LOCKOUT_WALL, if (wait > 0) now + wait else 0L)
+            .putLong(K_LOCKOUT_ELAPSED, if (wait > 0) elapsed + wait else 0L)
+            .putInt(K_LOCKOUT_BOOT, boot)
+            .commit()
         return n
     }
 
-    fun resetFailures() = prefs.edit {
-        remove("pin_failures")
-        remove("pin_lockout_until")
+    fun resetFailures() {
+        encryptedPrefs.edit().remove(K_FAILURES).remove(K_LOCKOUT_WALL).remove(K_LOCKOUT_ELAPSED).remove(K_LOCKOUT_BOOT).apply()
+        prefs.edit { remove("pin_failures"); remove("pin_lockout_until") }
     }
+
+    /** Contador de arranques do aparelho (-1 se indisponível): o relógio monótono recomeça em cada um. */
+    private fun bootCount(): Int =
+        runCatching { Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT) }.getOrDefault(-1)
 
     private fun pbkdf2(pin: String, salt: ByteArray): ByteArray {
         val spec = PBEKeySpec(pin.toCharArray(), salt, PBKDF2_ITERATIONS, 256)
@@ -137,6 +190,11 @@ class AppSecurityPreferences @Inject constructor(
         private const val KEY_V2 = "pin_pbkdf2"
         private const val KEY_LEGACY = "pin_hash"
         private const val PBKDF2_ITERATIONS = 20_000
+        private const val K_FAILURES = "pin_failures"
+        private const val K_LOCKOUT_WALL = "pin_lockout_until"
+        private const val K_LOCKOUT_ELAPSED = "pin_lockout_elapsed_until"
+        private const val K_LOCKOUT_BOOT = "pin_lockout_boot"
+        private const val K_BIO = "biometric_enabled"
 
         /** Ao fim de tantas falhas a sessão é terminada. */
         const val MAX_FAILURES = 10

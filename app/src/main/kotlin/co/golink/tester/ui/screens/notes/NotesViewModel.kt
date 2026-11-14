@@ -303,6 +303,8 @@ class NotesViewModel @Inject constructor(
         val segments = target.pathSegments
         if (target.host != backend.host || target.port != backend.port || target.scheme != backend.scheme ||
             !target.encodedPath.startsWith("/api/notes/") ||
+            // Barras codificadas (%2F/%5C) contam como separadores noutros servidores/proxies.
+            target.encodedPath.contains("%2f", ignoreCase = true) || target.encodedPath.contains("%5c", ignoreCase = true) ||
             segments.dropLast(1).any { it.isEmpty() || it == "." || it == ".." } || segments.last() == ".."
         ) throw BridgeError(403, "forbidden_path")
         val verb = method.uppercase()

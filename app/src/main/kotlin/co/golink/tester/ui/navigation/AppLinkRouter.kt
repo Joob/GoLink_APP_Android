@@ -35,7 +35,8 @@ object AppLinkRouter {
     }
 
     private const val TTL_MS = 10 * 60_000L
-    private val HOSTS = setOf("golink.co", "tester.golink.co")
+    /** Release: só golink.co (a MainActivity é exported; um intent explícito salta a verificação dos App Links). */
+    private val HOSTS = if (co.golink.tester.BuildConfig.DEBUG) setOf("golink.co", "tester.golink.co") else setOf("golink.co")
     /** Ids/painéis vindos do link: só caracteres seguros (UUID, numérico, token). */
     private val SAFE_ID = Regex("[A-Za-z0-9_-]{1,128}")
     private val NAV_PREFIXES = listOf("/create-new-password", "/register/", "/legacy-open/", "/legacy-invite/", "/legacy-checkin/")
@@ -91,7 +92,11 @@ object AppLinkRouter {
             at(0) == "admin" && at(1) == "support" && at(2) == "tickets" && at(3) != null -> Target.Ticket(at(3)!!, admin = true)
             at(0) == "user" && at(1) == "settings" && at(2) == "billing" -> Target.Billing
             at(0) == "legacy" -> Target.Legacy(at(1) ?: "overview")
-            at(0) == "notes" -> Target.Notes(uri.pathSegments.drop(1).joinToString("/"))
+            // Rota passada à página das Notes: só segmentos simples (nada de "..", "%2F" ou URLs absolutos).
+            at(0) == "notes" -> Target.Notes(
+                s.drop(1).takeIf { segs -> segs.all { SAFE_ID.matches(it) } && !uri.encodedPath.orEmpty().contains('%') }
+                    ?.joinToString("/").orEmpty()
+            )
             at(0) == "pass" -> Target.Pass(passPane(at(1)))
             at(0) == "receipts" -> Target.Receipts(receiptsPane(uri))
             else -> null

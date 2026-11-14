@@ -227,7 +227,8 @@ private fun RowGroup(rows: List<VaultRow>, health: co.golink.tester.data.pass.Pa
         rows.forEachIndexed { i, r ->
             if (i > 0) PassDivider()
             PassItemRow(r.item, r.name, r.sub, health, onClick = { onOpen(r.item.id) }, onCopy = quickCopy(r.item)?.let { (label, value) ->
-                { guard { vm.copy(label, value, sensitive = r.item.type != "note") } }
+                // Notas seguras guardam muitas vezes códigos de recuperação: sempre sensível (como no detalhe).
+                { guard { vm.copy(label, value, sensitive = true) } }
             })
         }
     }

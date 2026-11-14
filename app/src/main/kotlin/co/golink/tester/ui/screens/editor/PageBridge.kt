@@ -1,7 +1,6 @@
 package co.golink.tester.ui.screens.editor
 
 import android.net.Uri
-import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -31,8 +30,8 @@ internal interface PageBridgeHost {
  * existe nos frames da origem do site da página (com e sem www), por isso um iframe de
  * outra origem não o vê; e cada mensagem tem de vir do frame principal desse site.
  *
- * Devolve false quando a WebView não suporta WEB_MESSAGE_LISTENER: aí fica a
- * [LegacyPageBridge] (addJavascriptInterface), que só responde ao frame principal no mesmo site.
+ * Devolve false quando a WebView não suporta WEB_MESSAGE_LISTENER ([pageBridgeSupported]): a
+ * interface antiga (addJavascriptInterface) foi retirada porque ficava visível a todos os frames.
  */
 internal fun installMessageBridge(view: WebView, name: String, page: Uri, host: PageBridgeHost): Boolean {
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return false
@@ -77,40 +76,7 @@ private fun siteOrigins(page: Uri): Set<String> {
     return setOf("$scheme://$host$port", "$scheme://www.$host$port")
 }
 
-/**
- * Interface antiga (window.GoLinkEditor / window.GoLinkNotesHost), só para WebViews sem
- * WEB_MESSAGE_LISTENER. Os métodos correm numa thread do WebView; a resposta volta pela
- * principal (window.[resolver](id)) e a página lê-a com take(id).
- */
-internal class LegacyPageBridge(
-    private val host: PageBridgeHost,
-    private val resolver: String,
-    private val webView: () -> WebView?,
-) {
-    /** Frame principal na página deste servidor (onPageStarted); fora disso não responde. */
-    @Volatile var trusted: Boolean = false
+/** A WebView suporta a ponte por mensagens; sem ela o editor e as Notes não abrem (pedir atualização). */
+internal fun pageBridgeSupported(): Boolean = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
 
-    @JavascriptInterface
-    fun info(): String = if (trusted) host.info() else "null"
-
-    @JavascriptInterface
-    fun request(id: Int, method: String, args: String) {
-        if (!trusted) return
-        host.request(id, method, args) { done ->
-            webView()?.post { webView()?.evaluateJavascript("window.$resolver && window.$resolver($done)", null) }
-        }
-    }
-
-    @JavascriptInterface
-    fun take(id: Int): String = if (trusted) host.take(id) else """{"ok":false,"status":403}"""
-
-    @JavascriptInterface
-    fun toast(message: String) {
-        if (trusted) host.toast(message)
-    }
-
-    @JavascriptInterface
-    fun close() {
-        if (trusted) host.close()
-    }
-}
+internal const val WEBVIEW_UPDATE_MSG = "Atualiza o Android System WebView (Play Store) para abrir esta página"

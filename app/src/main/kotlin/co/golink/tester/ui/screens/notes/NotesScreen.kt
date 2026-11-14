@@ -413,6 +413,9 @@ fun NotesScreen(
                     Button(onClick = gateVm::reopen, shape = RoundedCornerShape(12.dp)) { Text("Desbloquear".tr()) }
                 }
                 !e2eUnlocked -> CenterMessage(Icons.Outlined.Lock, nt("no_e2e_title"), nt("no_e2e_text"), onMenu = { scope.launch { drawerState.open() } })
+                // WebView sem WEB_MESSAGE_LISTENER: a ponte antiga ficava visível a iframes de outra origem.
+                !co.golink.tester.ui.screens.editor.pageBridgeSupported() ->
+                    CenterMessage(Icons.Outlined.Lock, nt("title"), co.golink.tester.ui.screens.editor.WEBVIEW_UPDATE_MSG.tr(), onMenu = { scope.launch { drawerState.open() } })
                 // Este ramo só existe desbloqueado: um lock tira a WebView da composição
                 // e o desbloqueio seguinte cria outra (nada do estado anterior sobrevive).
                 else -> Box(Modifier.fillMaxSize()) {
@@ -611,12 +614,9 @@ private fun NotesWebView(vm: NotesViewModel, visible: Boolean, onView: (WebView?
                     settings.offscreenPreRaster = true
                     setBackgroundColor(if (dark) 0xFF151515.toInt() else 0xFFFFFFFF.toInt())
 
-                    // Ponte só para a origem do servidor (mensagens); sem suporte na WebView, a interface antiga.
+                    // Ponte só para a origem do servidor (mensagens).
                     val bridge = NotesBridge(vm, { darkNow }, this)
-                    if (!co.golink.tester.ui.screens.editor.installMessageBridge(this, "GoLinkNotesPort", pageUri, bridge)) {
-                        bridge.legacy = co.golink.tester.ui.screens.editor.LegacyPageBridge(bridge, "__glnResolve") { bridge.view }
-                            .also { addJavascriptInterface(it, "GoLinkNotesHost") }
-                    }
+                    co.golink.tester.ui.screens.editor.installMessageBridge(this, "GoLinkNotesPort", pageUri, bridge)
                     tag = bridge
 
                     // Erros de JS da página no Logcat (tag NotesWebView).
@@ -643,11 +643,6 @@ private fun NotesWebView(vm: NotesViewModel, visible: Boolean, onView: (WebView?
                                 runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                             }
                             return true
-                        }
-
-                        override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
-                            // A ponte antiga só responde à página das Notes deste servidor (frame principal).
-                            (view.tag as? NotesBridge)?.legacy?.trusted = sameSite(Uri.parse(url), pageUri)
                         }
 
                         override fun onPageFinished(view: WebView, url: String) {
@@ -885,7 +880,6 @@ private class NotesBridge(
     @Volatile var onFlushed: (() -> Unit)? = null
 
     /** Só quando a WebView não suporta mensagens. */
-    var legacy: co.golink.tester.ui.screens.editor.LegacyPageBridge? = null
 
     override fun info(): String = vm.infoJson(dark())
 

@@ -94,6 +94,7 @@ class CalendarViewModel @Inject constructor(
     private val viewerSession: co.golink.tester.ui.screens.viewer.FileViewerSession,
     private val userRepository: co.golink.tester.data.user.UserRepository,
     private val noteTasksRepo: co.golink.tester.data.notes.NotesTasksRepository,
+    private val backendUrlHolder: co.golink.tester.data.config.BackendUrlHolder,
 ) : ViewModel() {
     private val prefs = context.getSharedPreferences("calendar", Context.MODE_PRIVATE)
 
@@ -564,9 +565,17 @@ class CalendarViewModel @Inject constructor(
                 viewerSession.notOwnedIds = foreign
                 _state.update { it.copy(openFileId = file.id) }
             }
-            !a.share_url.isNullOrBlank() -> _state.update { it.copy(openUrl = a.share_url) }
+            // O anexo vem de quem partilha o calendário ou do convite: só links /share/ deste servidor
+            // (nada de phishing nem esquemas de outras apps, como market: ou deep links).
+            !a.share_url.isNullOrBlank() && isOwnShareUrl(a.share_url) -> _state.update { it.copy(openUrl = a.share_url) }
             else -> _state.update { it.copy(toast = "Sem acesso a este ficheiro.".tr()) }
         }
+    }
+
+    private fun isOwnShareUrl(url: String): Boolean {
+        val u = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val backend = android.net.Uri.parse(backendUrlHolder.current)
+        return u.scheme == "https" && u.host == backend.host && u.path.orEmpty().startsWith("/share/")
     }
 
     fun consumeOpenFile() = _state.update { it.copy(openFileId = null, openUrl = null, openNoteId = null) }

@@ -107,11 +107,37 @@ class AppLockManager @Inject constructor(
 
     fun unlock() { _locked.value = false }
 
+    // Desbloqueio feito no ecrã do preenchimento (Pass): vale uns minutos para os pedidos
+    // seguintes, sem destrancar a app em si.
+    @Volatile private var autofillGraceUntil = 0L
+
+    /**
+     * Preenchimento automático noutra app: o bloqueio conta como ativo se a app está
+     * bloqueada ou se já passou o atraso desde que foi para segundo plano (o onForeground
+     * que o aplicaria ainda não correu). Arranque a frio pelo serviço: [_locked] = [enabled].
+     */
+    fun lockedForAutofill(): Boolean {
+        if (!enabled) return false
+        val now = SystemClock.elapsedRealtime()
+        if (!_locked.value) {
+            val since = backgroundedAt
+            val limit = if (externalOnBackground) EXTERNAL_GRACE_MS else securityPrefs.lockDelayMs
+            if (since > 0L && now - since >= limit) _locked.value = true
+        }
+        return _locked.value && now >= autofillGraceUntil
+    }
+
+    fun grantAutofill() {
+        if (enabled) autofillGraceUntil = SystemClock.elapsedRealtime() + AUTOFILL_GRACE_MS
+    }
+
     private fun canUseBiometric(): Boolean =
         BiometricManager.from(context)
             .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
 
     private companion object {
-        const val EXTERNAL_GRACE_MS = 10 * 60_000L
+        // Câmara/seletor abertos pela app: 2 min (antes 10) para voltar sem PIN.
+        const val EXTERNAL_GRACE_MS = 2 * 60_000L
+        const val AUTOFILL_GRACE_MS = 2 * 60_000L
     }
 }

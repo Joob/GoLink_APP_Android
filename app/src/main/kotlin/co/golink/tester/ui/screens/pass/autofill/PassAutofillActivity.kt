@@ -77,6 +77,7 @@ import co.golink.tester.data.pass.autofill.PassAutofillMatch
 import co.golink.tester.data.pass.autofill.PassAutofillParser
 import co.golink.tester.data.pass.autofill.PassAutofillResponses
 import co.golink.tester.data.pass.autofill.PassAutofillTarget
+import co.golink.tester.data.settings.AppLockManager
 import co.golink.tester.ui.i18n.pt
 import co.golink.tester.ui.screens.pass.LocalPassPalette
 import co.golink.tester.ui.screens.pass.PassAvatar
@@ -121,6 +122,7 @@ class PassAutofillActivity : FragmentActivity() {
     @Inject lateinit var repo: PassRepository
     @Inject lateinit var bio: PassBiometricStore
     @Inject lateinit var prefs: PassPrefs
+    @Inject lateinit var appLock: AppLockManager
 
     private lateinit var mode: String
     private lateinit var target: PassAutofillTarget
@@ -224,13 +226,21 @@ class PassAutofillActivity : FragmentActivity() {
         val p = LocalPassPalette.current
         var phase by remember { mutableStateOf(Phase.Loading) }
         LaunchedEffect(Unit) {
+            // lock_after já passado (o ticker não corre com o processo congelado): trancar já.
+            repo.checkIdle()
             if (!repo.isOpen && !repo.state.value.locked) runCatching { repo.load() }
-            phase = if (repo.isOpen) afterOpen(false) ?: return@LaunchedEffect else Phase.Lock
+            phase = when {
+                !repo.isOpen -> Phase.Lock
+                // Cofre aberto mas a app bloqueada (PIN/biometria): confirmar antes de entregar.
+                appLock.lockedForAutofill() -> Phase.Confirm
+                else -> afterOpen(false) ?: return@LaunchedEffect
+            }
         }
         Box(Modifier.fillMaxSize().background(p.bg).safeDrawingPadding().imePadding()) {
             when (phase) {
                 Phase.Loading -> CircularProgressIndicator(Modifier.align(Alignment.Center), color = PassBlue)
                 Phase.Lock, Phase.Confirm -> LockView(confirm = phase == Phase.Confirm) {
+                    appLock.grantAutofill()
                     repo.markReprompted()
                     repo.touch()
                     val pick = pendingPick

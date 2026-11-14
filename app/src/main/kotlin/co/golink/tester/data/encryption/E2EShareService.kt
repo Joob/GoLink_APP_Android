@@ -92,7 +92,14 @@ class E2EShareService @Inject constructor(
     // dispositivo (ou na web) cunhava uma chave nova e matava em silêncio os links
     // já distribuídos. (Espelha o localStorage 'share_key_<token>' da web.)
     // Fora do backup/transferência (data_extraction_rules) e apagada no logout (E2EKeyManager.lock).
-    private val shareKeyPrefs = context.getSharedPreferences(SHARE_KEYS_PREFS, Context.MODE_PRIVATE)
+    // Cifrada (AES-GCM, Keystore). Antes ficava em claro em "e2e_share_keys": é só cache,
+    // por isso o ficheiro antigo apaga-se sem migrar (a chave volta do cofre do servidor).
+    private val shareKeyPrefs by lazy {
+        context.getSharedPreferences(SHARE_KEYS_PREFS_LEGACY, Context.MODE_PRIVATE).let { old ->
+            if (old.all.isNotEmpty()) old.edit().clear().apply()
+        }
+        co.golink.tester.data.settings.EncryptedPrefs.create(context, SHARE_KEYS_PREFS)
+    }
 
     private fun cachedShareKey(token: String): ByteArray? =
         shareKeyPrefs.getString(token, null)?.let { runCatching { Envelope.unb64(it) }.getOrNull() }
@@ -363,7 +370,8 @@ class E2EShareService @Inject constructor(
     }
 
     companion object {
-        const val SHARE_KEYS_PREFS = "e2e_share_keys"
+        const val SHARE_KEYS_PREFS = "e2e_share_keys_sec"
+        const val SHARE_KEYS_PREFS_LEGACY = "e2e_share_keys"
 
         fun get(context: Context): E2EShareService =
             EntryPointAccessors.fromApplication(

@@ -130,6 +130,13 @@ fun OfficeEditorScreen(
             return@Box
         }
 
+        // WebView sem WEB_MESSAGE_LISTENER (anterior a 2020): a ponte antiga
+        // (addJavascriptInterface) ficava visível a iframes de outra origem; pede-se a atualização.
+        if (!pageBridgeSupported()) {
+            EditorMessage(WEBVIEW_UPDATE_MSG.tr(), onRetry = null, onClose = onClose)
+            return@Box
+        }
+
         if (!rendererGone) AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
@@ -149,12 +156,9 @@ fun OfficeEditorScreen(
                     settings.offscreenPreRaster = true
                     setBackgroundColor(if (dark) 0xFF151515.toInt() else 0xFFFFFFFF.toInt())
 
-                    // Ponte só para a origem do servidor (mensagens); sem suporte na WebView, a interface antiga.
+                    // Ponte só para a origem do servidor (mensagens).
                     val bridge = EditorBridge(viewModel, dark)
-                    if (!installMessageBridge(this, "GoLinkEditorPort", editorUri, bridge)) {
-                        bridge.legacy = LegacyPageBridge(bridge, "__glkResolve") { webView }
-                            .also { addJavascriptInterface(it, "GoLinkEditor") }
-                    }
+                    installMessageBridge(this, "GoLinkEditorPort", editorUri, bridge)
                     tag = bridge
 
                     webViewClient = object : WebViewClient() {
@@ -168,11 +172,6 @@ fun OfficeEditorScreen(
                                 runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                             }
                             return true
-                        }
-
-                        override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
-                            // A ponte antiga só responde à página do editor deste servidor (frame principal).
-                            (view.tag as? EditorBridge)?.legacy?.trusted = co.golink.tester.ui.screens.notes.sameSite(Uri.parse(url), editorUri)
                         }
 
                         override fun onPageFinished(view: WebView, url: String) {
@@ -275,7 +274,6 @@ private class EditorBridge(
     private val dark: Boolean,
 ) : PageBridgeHost {
     /** Só quando a WebView não suporta mensagens. */
-    var legacy: LegacyPageBridge? = null
 
     override fun info(): String = viewModel.infoJson(dark)
 

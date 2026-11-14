@@ -1056,6 +1056,9 @@ object I18nDict {
         r("Guardado em Transferências", "Saved to Downloads", "Enregistré dans Téléchargements", "Guardado en Descargas"),
         r("Desbloqueia a encriptação para abrir este ficheiro", "Unlock encryption to open this file", "Déverrouillez le chiffrement pour ouvrir ce fichier", "Desbloquea el cifrado para abrir este archivo"),
         r("O ficheiro já não está disponível", "The file is no longer available", "Le fichier n'est plus disponible", "El archivo ya no está disponible"),
+        r("Recomendado", "Recommended", "Recommandé", "Recomendado"),
+        r("Recomendado: a chave de encriptação e o Pass ficam abertos neste telemóvel. Com o bloqueio, só tu os abres se alguém pegar no telemóvel desbloqueado.", "Recommended: your encryption key and Pass stay open on this phone. With the lock, only you can open them if someone picks up your unlocked phone.", "Recommandé : votre clé de chiffrement et Pass restent ouverts sur ce téléphone. Avec le verrouillage, vous seul pouvez les ouvrir si quelqu'un prend votre téléphone déverrouillé.", "Recomendado: tu clave de cifrado y Pass quedan abiertos en este teléfono. Con el bloqueo, solo tú puedes abrirlos si alguien coge tu teléfono desbloqueado."),
+        r("Atualiza o Android System WebView (Play Store) para abrir esta página", "Update Android System WebView (Play Store) to open this page", "Mettez à jour Android System WebView (Play Store) pour ouvrir cette page", "Actualiza Android System WebView (Play Store) para abrir esta página"),
         r("Não foi possível abrir o editor. Verifica a ligação.", "Could not open the editor. Check your connection.", "Impossible d'ouvrir l'éditeur. Vérifiez la connexion.", "No se pudo abrir el editor. Comprueba la conexión."),
 
         // Ficheiros: viewer e envios (review A04, 2026-11-10)

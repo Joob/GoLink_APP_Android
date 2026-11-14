@@ -344,8 +344,7 @@ fun AppNavHost(
 
     fun legacyLinks(path: String) = listOf(
         navDeepLink { uriPattern = "https://golink.co/$path" },
-        navDeepLink { uriPattern = "https://tester.golink.co/$path" },
-    )
+    ) + debugDeepLinks("https://tester.golink.co/$path")
 
     // Bloqueada: o LockScreen é opaco até ter a captura desfocada da janela principal.
     val lockedNow = locked && top == TopState.Authenticated
@@ -454,8 +453,7 @@ fun AppNavHost(
             }),
             deepLinks = listOf(
                 navDeepLink { uriPattern = "https://golink.co/create-new-password?token={token}" },
-                navDeepLink { uriPattern = "https://tester.golink.co/create-new-password?token={token}" },
-            ),
+            ) + debugDeepLinks("https://tester.golink.co/create-new-password?token={token}"),
         ) { backStackEntry ->
             val token = backStackEntry.arguments?.getString("token").orEmpty()
             // Gesto de voltar num deep link: a entrada anterior é o splash.
@@ -471,8 +469,7 @@ fun AppNavHost(
             arguments = listOf(navArgument("invitation") { type = NavType.StringType }),
             deepLinks = listOf(
                 navDeepLink { uriPattern = "https://golink.co/register/{invitation}" },
-                navDeepLink { uriPattern = "https://tester.golink.co/register/{invitation}" },
-            ),
+            ) + debugDeepLinks("https://tester.golink.co/register/{invitation}"),
         ) { backStackEntry ->
             val invitation = backStackEntry.arguments?.getString("invitation").orEmpty()
             // Gesto de voltar num deep link: a entrada anterior é o splash.
@@ -1013,3 +1010,7 @@ private tailrec fun android.content.Context.findActivity(): android.app.Activity
     is android.content.ContextWrapper -> baseContext.findActivity()
     else -> null
 }
+
+/** tester.golink.co só no debug: no release a MainActivity (exported) não aceita esse host. */
+private fun debugDeepLinks(pattern: String) =
+    if (co.golink.tester.BuildConfig.DEBUG) listOf(navDeepLink { uriPattern = pattern }) else emptyList()

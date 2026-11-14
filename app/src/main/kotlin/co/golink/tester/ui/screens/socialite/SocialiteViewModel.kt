@@ -79,7 +79,8 @@ class SocialiteViewModel @Inject constructor(
         viewModelScope.launch {
             authRepository.socialiteAppRedirectUrl(provider, st, challengeFor(cv), OAuthRedirects.scheme)
                 .onSuccess { url ->
-                    if (url == null) {
+                    // Só https: o Custom Tab não deve abrir esquemas de outras apps vindos da resposta.
+                    if (url == null || !(url.startsWith("https://", ignoreCase = true) || (co.golink.tester.BuildConfig.DEBUG && url.startsWith("http://", ignoreCase = true)))) {
                         _state.update { it.copy(loadingUrl = false, error = "Login social indisponível. Tenta mais tarde.".tr()) }
                     } else {
                         lastUrl = url
@@ -109,11 +110,9 @@ class SocialiteViewModel @Inject constructor(
         val cv = verifier
         OAuthRedirects.consume(uri)
         if (expected == null || cv == null || _state.value.finishingAuth || _state.value.tokenAdopted) return
-        // O state tem de ser o deste pedido: um regresso forjado ou antigo é recusado.
-        if (uri.getQueryParameter("state") != expected) {
-            fail("Pedido de login inválido ou expirado. Tenta novamente.".tr())
-            return
-        }
+        // O state tem de ser o deste pedido: um regresso forjado ou antigo é ignorado, sem
+        // apagar o verifier (senão qualquer app abortava um login em curso com um state errado).
+        if (uri.getQueryParameter("state") != expected) return
         val error = uri.getQueryParameter("error")
         val code = uri.getQueryParameter("code")
         if (error != null || code.isNullOrBlank()) {
