@@ -47,7 +47,6 @@
         <package android:name="com.chrome.dev" />
         <package android:name="com.chrome.canary" />
         <package android:name="org.chromium.chrome" />
-        <package android:name="com.google.android.apps.chrome" />
         <package android:name="org.mozilla.firefox" />
         <package android:name="org.mozilla.firefox_beta" />
         <package android:name="org.mozilla.focus" />
@@ -86,11 +85,9 @@
         <package android:name="io.island.Island" />
         <package android:name="io.island.IslandCanary" />
         <package android:name="io.island.IslandBeta" />
-        <package android:name="io.island.IslandDev" />
         <package android:name="io.island.island.intune" />
         <package android:name="io.island.island.canary.intune" />
         <package android:name="io.island.island.beta.intune" />
-        <package android:name="io.island.island.dev.intune" />
         <package android:name="net.quetta.browser" />
         <package android:name="cz.seznam.sbrowser" />
         <package android:name="com.opera.mini.native" />

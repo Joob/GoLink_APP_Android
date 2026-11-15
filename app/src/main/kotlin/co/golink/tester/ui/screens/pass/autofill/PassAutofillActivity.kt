@@ -366,7 +366,8 @@ class PassAutofillActivity : FragmentActivity() {
         val scope = rememberCoroutineScope()
         val state by repo.state.collectAsState()
         var query by remember { mutableStateOf("") }
-        // Browser sem domínio não é "app": não ligar o pacote do browser a um login.
+        // Browser sem domínio (ou conhecido mas sem assinatura verificada) não é "app": não
+        // ligar o pacote do browser a um login nem oferecer "lembrar" (PassTrustedBrowsers.KNOWN).
         val isApp = target.webDomain == null && !PassAutofillParser.isTrustedBrowser(target.packageName)
         var remember by remember { mutableStateOf(isApp) }
         var busy by remember { mutableStateOf(false) }

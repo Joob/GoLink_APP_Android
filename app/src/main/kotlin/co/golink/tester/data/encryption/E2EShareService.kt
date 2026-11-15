@@ -92,13 +92,12 @@ class E2EShareService @Inject constructor(
     // dispositivo (ou na web) cunhava uma chave nova e matava em silêncio os links
     // já distribuídos. (Espelha o localStorage 'share_key_<token>' da web.)
     // Fora do backup/transferência (data_extraction_rules) e apagada no logout (E2EKeyManager.lock).
-    // Cifrada (AES-GCM, Keystore). Antes ficava em claro em "e2e_share_keys": é só cache,
-    // por isso o ficheiro antigo apaga-se sem migrar (a chave volta do cofre do servidor).
+    // Cifrada (AES-GCM, Keystore). Antes ficava em claro em "e2e_share_keys": migra-se uma
+    // vez (ver migrateLegacyShareKeys), porque numa partilha anterior ao cofre do servidor
+    // que nunca voltou a ser aberta a cópia local é a única que existe.
     private val shareKeyPrefs by lazy {
-        context.getSharedPreferences(SHARE_KEYS_PREFS_LEGACY, Context.MODE_PRIVATE).let { old ->
-            if (old.all.isNotEmpty()) old.edit().clear().apply()
-        }
         co.golink.tester.data.settings.EncryptedPrefs.create(context, SHARE_KEYS_PREFS)
+            .also { migrateLegacyShareKeys(context, it) }
     }
 
     private fun cachedShareKey(token: String): ByteArray? =
@@ -372,6 +371,34 @@ class E2EShareService @Inject constructor(
     companion object {
         const val SHARE_KEYS_PREFS = "e2e_share_keys_sec"
         const val SHARE_KEYS_PREFS_LEGACY = "e2e_share_keys"
+
+        /**
+         * Copia as chaves do ficheiro antigo em claro para o cifrado e só depois apaga o
+         * antigo (mesmo padrão do SecurePrefsMigrator): gravar com commit() → verificar a
+         * leitura a partir do disco → apagar. Idempotente: se for interrompida, o antigo
+         * fica e repete-se na próxima abertura; uma chave que já esteja no ficheiro novo
+         * (veio do cofre do servidor) não é sobreposta. Com a Keystore indisponível
+         * (MemoryPrefs) as chaves servem esta execução mas o antigo não se apaga.
+         */
+        private fun migrateLegacyShareKeys(context: Context, dest: android.content.SharedPreferences) {
+            if (!java.io.File(context.dataDir, "shared_prefs/$SHARE_KEYS_PREFS_LEGACY.xml").exists()) return
+            runCatching {
+                val old = context.getSharedPreferences(SHARE_KEYS_PREFS_LEGACY, Context.MODE_PRIVATE)
+                val entries = old.all.mapNotNull { (k, v) -> (v as? String)?.let { k to it } }.toMap()
+                val missing = entries.filterKeys { !dest.contains(it) }
+                if (missing.isNotEmpty()) {
+                    val edit = dest.edit()
+                    missing.forEach { (k, v) -> edit.putString(k, v) }
+                    if (!edit.commit()) return
+                }
+                // Só se apaga com o destino persistente e todas as chaves legíveis do disco.
+                val secure = dest as? co.golink.tester.data.settings.SecurePrefs ?: return
+                val onDisk = secure.readAll()
+                if (entries.keys.any { onDisk[it] == null }) return
+                old.edit().clear().commit()
+                context.deleteSharedPreferences(SHARE_KEYS_PREFS_LEGACY)
+            }
+        }
 
         fun get(context: Context): E2EShareService =
             EntryPointAccessors.fromApplication(
