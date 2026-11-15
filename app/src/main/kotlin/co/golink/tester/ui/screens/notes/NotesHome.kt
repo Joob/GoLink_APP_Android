@@ -51,6 +51,15 @@ import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.DeleteForever
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.material3.Surface
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import co.golink.tester.ui.components.SelectionAction
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -178,6 +187,21 @@ fun NotesHome(
     val state by vm.state.collectAsStateWithLifecycle()
     var actionsFor by remember { mutableStateOf<NoteItem?>(null) }
     var confirmDelete by remember { mutableStateOf<NoteItem?>(null) }
+    val selection by vm.selection.collectAsStateWithLifecycle()
+    val trash by vm.trash.collectAsStateWithLifecycle()
+    val history by vm.history.collectAsStateWithLifecycle()
+    // Seleção múltipla (como no Drive): só vale no ecrã onde começou.
+    val sel = selection?.takeIf {
+        (it.scope == "list" && section.isList) || (it.scope == "trash" && section == NotesSection.History && history.tab == "trash")
+    }
+    val selOrder = when (sel?.scope) {
+        "list" -> visibleNotes(state.notes, section).map { it.id }
+        "trash" -> trash.orEmpty().map { it.id }
+        else -> emptyList()
+    }
+    val selIds = sel?.ids.orEmpty()
+    var confirmBulk by remember { mutableStateOf<String?>(null) }
+    BackHandler(enabled = sel != null) { vm.clearSelection() }
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         val title = when (val s = section) {
@@ -190,7 +214,22 @@ fun NotesHome(
             NotesSection.Search -> nt("search")
             NotesSection.History -> nt("history")
         }
-        TopBar(title, showMenuButton, onMenu, onSearch = if (section.isList) ({ vm.open(NotesSection.Search) }) else null)
+        if (sel != null) {
+            val single = if (sel.scope == "list" && sel.ids.size == 1) state.notes.firstOrNull { it.id in sel.ids } else null
+            SelectionTopBar(
+                count = sel.ids.size,
+                allSelected = selOrder.isNotEmpty() && sel.ids.containsAll(selOrder),
+                onClose = vm::clearSelection,
+                onToggleAll = { if (selOrder.isNotEmpty() && sel.ids.containsAll(selOrder)) vm.clearSelection() else vm.selectAll(selOrder) },
+                onMore = single?.let { n -> { vm.clearSelection(); actionsFor = n } },
+            )
+        } else {
+            TopBar(
+                title, showMenuButton, onMenu,
+                onSearch = if (section.isList) ({ vm.open(NotesSection.Search) }) else null,
+                onSelect = if (section.isList && visibleNotes(state.notes, section).isNotEmpty()) ({ vm.startSelection("list") }) else null,
+            )
+        }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (section) {
@@ -198,17 +237,56 @@ fun NotesHome(
                 NotesSection.Search -> SearchPage(vm, onOpenNote)
                 NotesSection.History -> HistoryPage(vm)
                 else -> {
-                    NotesListPage(vm, section, state.loaded, state.notes, state.notebooks, onOpenNote, onLongPress = { actionsFor = it }, onNewNote = {
+                    NotesListPage(vm, section, state.loaded, state.notes, state.notebooks, sel?.ids, onOpenNote, onNewNote = {
                         onNewNote((section as? NotesSection.Notebook)?.id)
                     })
-                    Fab(
-                        Modifier.align(Alignment.BottomEnd).padding(16.dp),
-                        onClick = { onNewNote((section as? NotesSection.Notebook)?.id) },
-                    )
+                    if (sel == null) {
+                        Fab(
+                            Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                            onClick = { onNewNote((section as? NotesSection.Notebook)?.id) },
+                        )
+                    }
                 }
             }
         }
-        TabBar(section, vm::open)
+        when (sel?.scope) {
+            "list" -> SelectionDock {
+                SelectionAction(Icons.Outlined.DeleteOutline, nt("delete"), { confirmBulk = "delete" }, danger = true, enabled = selIds.isNotEmpty())
+            }
+            "trash" -> SelectionDock {
+                SelectionAction(Icons.Outlined.Restore, nt("restore"), vm::restoreSelected, enabled = selIds.isNotEmpty())
+                SelectionAction(Icons.Outlined.DeleteForever, nt("delete_forever"), { confirmBulk = "force" }, danger = true, enabled = selIds.isNotEmpty())
+            }
+            else -> TabBar(section, vm::open)
+        }
+    }
+
+    when (confirmBulk) {
+        "delete" -> {
+            val ids = selIds
+            val n = ids.size
+            val t = state.notes.count { it.id in ids && it.isOwner }
+            val l = n - t
+            ConfirmDialog(
+                title = when { l == 0 -> ntp("trash_many_title", n); t == 0 -> ntp("leave_many_title", n); else -> ntp("bulk_delete_title", n) },
+                message = when { l == 0 -> nt("trash_many_text", "days" to state.trashDays); t == 0 -> nt("leave_many_text"); else -> nt("bulk_delete_mixed_text", "t" to t, "l" to l, "days" to state.trashDays) },
+                confirmText = when { l == 0 -> nt("move_to_trash"); t == 0 -> nt("leave_note"); else -> nt("delete") },
+                destructive = true,
+                onDismiss = { confirmBulk = null },
+                onConfirm = { vm.deleteSelected(); confirmBulk = null },
+            )
+        }
+        "force" -> {
+            val n = selIds.size
+            ConfirmDialog(
+                title = ntp("delete_forever_many_title", n),
+                message = nt("delete_forever_many_text"),
+                confirmText = nt("delete_forever"),
+                destructive = true,
+                onDismiss = { confirmBulk = null },
+                onConfirm = { vm.forceSelected(); confirmBulk = null },
+            )
+        }
     }
 
     actionsFor?.let { note ->
@@ -240,7 +318,7 @@ sealed interface NotebookAction {
 }
 
 @Composable
-private fun TopBar(title: String, showMenu: Boolean, onMenu: () -> Unit, onSearch: (() -> Unit)?) {
+private fun TopBar(title: String, showMenu: Boolean, onMenu: () -> Unit, onSearch: (() -> Unit)?, onSelect: (() -> Unit)? = null) {
     Row(
         Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -255,9 +333,81 @@ private fun TopBar(title: String, showMenu: Boolean, onMenu: () -> Unit, onSearc
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).padding(start = 4.dp),
         )
+        if (onSelect != null) IconButton(onClick = onSelect) { Icon(Icons.Outlined.CheckBox, contentDescription = nt("select")) }
         if (onSearch != null) IconButton(onClick = onSearch) { Icon(Icons.Outlined.Search, contentDescription = nt("search")) }
     }
 }
+
+/** Topo em modo seleção: ✕, contagem, Selecionar tudo/Desmarcar e ⋮ (só com 1 nota). */
+@Composable
+private fun SelectionTopBar(count: Int, allSelected: Boolean, onClose: () -> Unit, onToggleAll: () -> Unit, onMore: (() -> Unit)?) {
+    Row(
+        Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, contentDescription = nt("cancel_selection")) }
+        Text(
+            ntp("n_selected", count),
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(start = 4.dp),
+        )
+        Text(
+            if (allSelected) nt("deselect_all") else nt("select_all"),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Color(0xFFB45309),
+            modifier = Modifier.padding(end = 4.dp).clip(RoundedCornerShape(50)).background(NotesAmber.copy(alpha = 0.14f)).clickable(onClick = onToggleAll).padding(horizontal = 14.dp, vertical = 8.dp),
+        )
+        if (onMore != null) IconButton(onClick = onMore) { Icon(Icons.Outlined.MoreVert, contentDescription = nt("more")) }
+    }
+}
+
+/** Doca escura da seleção (a mesma do Drive), no lugar da barra inferior. */
+@Composable
+private fun SelectionDock(actions: @Composable RowScope.() -> Unit) {
+    Surface(
+        color = Color(0xFF111827),
+        shape = RoundedCornerShape(18.dp),
+        shadowElevation = 10.dp,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceAround,
+            verticalAlignment = Alignment.CenterVertically,
+            content = actions,
+        )
+    }
+}
+
+/** Círculo de seleção dos cartões. */
+@Composable
+private fun SelectCircle(checked: Boolean) {
+    Box(
+        Modifier.size(22.dp).clip(CircleShape)
+            .background(if (checked) NotesAmber else Color.Transparent)
+            .border(1.5.dp, if (checked) NotesAmber else MaterialTheme.colorScheme.outline, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (checked) Icon(Icons.Outlined.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+    }
+}
+
+/** Notas da secção, pela ordem do ecrã (a seleção usa a mesma ordem). */
+private fun visibleNotes(all: List<NoteItem>, section: NotesSection): List<NoteItem> = when (section) {
+    NotesSection.Pinned -> all.filter { it.pinned }
+    NotesSection.Shared -> all.filter { it.shared }
+    is NotesSection.Notebook -> all.filter { it.notebookId == section.id }
+    is NotesSection.Tag -> all.filter { section.name in it.meta.tags }
+    else -> all
+}.sortedByDescending { it.updatedAt }
+
+private fun Modifier.selectedCard(selected: Boolean, shape: RoundedCornerShape) =
+    if (selected) this.border(2.dp, NotesAmber, shape).background(NotesAmber.copy(alpha = 0.08f), shape) else this
 
 @Composable
 private fun Fab(modifier: Modifier, onClick: () -> Unit) {
@@ -312,19 +462,18 @@ private fun NotesListPage(
     loaded: Boolean,
     all: List<NoteItem>,
     notebooks: List<NoteNotebook>,
+    selected: Set<String>?,
     onOpen: (NoteItem) -> Unit,
-    onLongPress: (NoteItem) -> Unit,
     onNewNote: () -> Unit,
 ) {
     val refreshing by vm.refreshing.collectAsStateWithLifecycle()
-    val visible = remember(all, section) {
-        when (section) {
-            NotesSection.Pinned -> all.filter { it.pinned }
-            NotesSection.Shared -> all.filter { it.shared }
-            is NotesSection.Notebook -> all.filter { it.notebookId == section.id }
-            is NotesSection.Tag -> all.filter { section.name in it.meta.tags }
-            else -> all
-        }.sortedByDescending { it.updatedAt }
+    val haptic = LocalHapticFeedback.current
+    val visible = remember(all, section) { visibleNotes(all, section) }
+    // Seleção: toque alterna; pressão longa entra em seleção (já não abre a folha de ações).
+    val tap: (NoteItem) -> Unit = { n -> if (selected != null) vm.toggleSelected("list", n.id) else onOpen(n) }
+    val long: (NoteItem) -> Unit = { n ->
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        if (selected != null) vm.toggleSelected("list", n.id) else vm.startSelection("list", n.id)
     }
     val pinned = if (section == NotesSection.Pinned) emptyList() else visible.filter { it.pinned }
     val recent = if (section == NotesSection.Pinned) visible else visible.filterNot { it.pinned }
@@ -350,7 +499,7 @@ private fun NotesListPage(
                             item { SectionLabel(nt("pinned"), amber = true) }
                             item {
                                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 6.dp)) {
-                                    items(pinned, key = { it.id }) { n -> PinCard(n, nbById[n.notebookId], { onOpen(n) }, { onLongPress(n) }) }
+                                    items(pinned, key = { it.id }) { n -> PinCard(n, nbById[n.notebookId], selected?.contains(n.id), { tap(n) }, { long(n) }) }
                                 }
                             }
                         }
@@ -365,7 +514,7 @@ private fun NotesListPage(
                                 }
                                 SectionLabel(label, count = ntp("n_notes", recent.size))
                             }
-                            items(recent, key = { it.id }) { n -> RecentCard(n, nbById[n.notebookId], { onOpen(n) }, { onLongPress(n) }) }
+                            items(recent, key = { it.id }) { n -> RecentCard(n, nbById[n.notebookId], selected?.contains(n.id), { tap(n) }, { long(n) }) }
                         }
                     }
                 }
@@ -424,7 +573,7 @@ private fun SectionLabel(text: String, amber: Boolean = false, count: String? = 
 private fun cardModifier(onClick: () -> Unit, onLong: () -> Unit) = @OptIn(ExperimentalFoundationApi::class) Modifier.combinedClickable(onClick = onClick, onLongClick = onLong)
 
 @Composable
-private fun PinCard(n: NoteItem, nb: NoteNotebook?, onClick: () -> Unit, onLong: () -> Unit) {
+private fun PinCard(n: NoteItem, nb: NoteNotebook?, selected: Boolean?, onClick: () -> Unit, onLong: () -> Unit) {
     val stripe = nb?.let { nbColor(it.color) } ?: NotesAmber
     Column(
         Modifier
@@ -433,11 +582,15 @@ private fun PinCard(n: NoteItem, nb: NoteNotebook?, onClick: () -> Unit, onLong:
             .clip(RoundedCornerShape(14.dp))
             .background(nb?.let { nbColor(it.color).copy(alpha = 0.10f) } ?: MaterialTheme.colorScheme.surface)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), RoundedCornerShape(14.dp))
+            .selectedCard(selected == true, RoundedCornerShape(14.dp))
             .then(cardModifier(onClick, onLong))
             .drawBehind { drawRect(stripe, size = androidx.compose.ui.geometry.Size(size.width, 3.dp.toPx())) }
             .padding(12.dp),
     ) {
-        Text(n.meta.title.ifBlank { nt("untitled") }, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(n.meta.title.ifBlank { nt("untitled") }, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+            if (selected != null) Box(Modifier.padding(start = 6.dp)) { SelectCircle(selected) }
+        }
         Text(n.meta.snippet.ifBlank { "—" }, fontSize = 12.sp, lineHeight = 15.sp, maxLines = 3, minLines = 3, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
         if (n.meta.taskTotal > 0) {
             Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -458,7 +611,7 @@ private fun PinCard(n: NoteItem, nb: NoteNotebook?, onClick: () -> Unit, onLong:
 }
 
 @Composable
-private fun RecentCard(n: NoteItem, nb: NoteNotebook?, onClick: () -> Unit, onLong: () -> Unit) {
+private fun RecentCard(n: NoteItem, nb: NoteNotebook?, selected: Boolean?, onClick: () -> Unit, onLong: () -> Unit) {
     Column(
         Modifier
             .padding(vertical = 4.dp)
@@ -466,6 +619,7 @@ private fun RecentCard(n: NoteItem, nb: NoteNotebook?, onClick: () -> Unit, onLo
             .clip(RoundedCornerShape(14.dp))
             .background(MaterialTheme.colorScheme.surface)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), RoundedCornerShape(14.dp))
+            .selectedCard(selected == true, RoundedCornerShape(14.dp))
             .then(cardModifier(onClick, onLong))
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
@@ -474,6 +628,7 @@ private fun RecentCard(n: NoteItem, nb: NoteNotebook?, onClick: () -> Unit, onLo
             if (n.locked) Icon(Icons.Outlined.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(13.dp).padding(end = 3.dp))
             Text(n.meta.title.ifBlank { nt("untitled") }, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
             Text(notesAgo(n.updatedAt), fontSize = 11.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(start = 8.dp))
+            if (selected != null) Box(Modifier.padding(start = 8.dp)) { SelectCircle(selected) }
         }
         Text(n.meta.snippet.ifBlank { "—" }, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
         val hasBadges = nb != null || n.meta.taskTotal > 0 || n.shared || n.commentsCount > 0 || n.meta.hasFiles || n.filesCount > 0
@@ -1076,6 +1231,9 @@ private fun TrashTab(vm: NotesHomeViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
     var confirmForever by remember { mutableStateOf<NoteItem?>(null) }
     var confirmEmpty by remember { mutableStateOf(false) }
+    val selection by vm.selection.collectAsStateWithLifecycle()
+    val selected = selection?.takeIf { it.scope == "trash" }?.ids
+    val haptic = LocalHapticFeedback.current
     val list = trash
     val keep = state.trashDays
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp)) {
@@ -1087,7 +1245,11 @@ private fun TrashTab(vm: NotesHomeViewModel) {
         }
         item {
             GroupLabel(ntp("n_notes", list?.size ?: 0)) {
-                if (!list.isNullOrEmpty()) Text(nt("empty_trash"), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Rose, modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { confirmEmpty = true }.padding(horizontal = 4.dp, vertical = 2.dp))
+                if (!list.isNullOrEmpty() && selected == null) Text(
+                    nt("select"), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFB45309),
+                    modifier = Modifier.padding(end = 10.dp).clip(RoundedCornerShape(6.dp)).clickable { vm.startSelection("trash") }.padding(horizontal = 4.dp, vertical = 2.dp),
+                )
+                if (!list.isNullOrEmpty() && selected == null) Text(nt("empty_trash"), fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = Rose, modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { confirmEmpty = true }.padding(horizontal = 4.dp, vertical = 2.dp))
             }
         }
         when {
@@ -1101,10 +1263,25 @@ private fun TrashTab(vm: NotesHomeViewModel) {
                 val left = (keep - days).coerceAtLeast(0)
                 val urgent = left <= 7
                 val tone = if (urgent) Rose else NotesAmber
-                Column(Modifier.padding(vertical = 4.dp).fillMaxWidth().notesCard().padding(horizontal = 14.dp, vertical = 12.dp)) {
+                val isSel = selected?.contains(n.id)
+                Column(
+                    Modifier.padding(vertical = 4.dp).fillMaxWidth().notesCard()
+                        .selectedCard(isSel == true, RoundedCornerShape(14.dp))
+                        .then(
+                            cardModifier(
+                                onClick = { if (selected != null) vm.toggleSelected("trash", n.id) },
+                                onLong = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    if (selected != null) vm.toggleSelected("trash", n.id) else vm.startSelection("trash", n.id)
+                                },
+                            ),
+                        )
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(n.meta.title.ifBlank { nt("untitled") }, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                         Text(ntp("days_left", left), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = tone, modifier = Modifier.padding(start = 8.dp))
+                        if (isSel != null) Box(Modifier.padding(start = 8.dp)) { SelectCircle(isSel) }
                     }
                     Text(n.meta.snippet.ifBlank { "—" }, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
                     Box(Modifier.padding(top = 10.dp).fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))) {
@@ -1112,11 +1289,11 @@ private fun TrashTab(vm: NotesHomeViewModel) {
                     }
                     Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(ntp("deleted_days_ago", days), fontSize = 11.5.sp, color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                        Text(
+                        if (selected == null) Text(
                             nt("delete"), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Rose,
                             modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { confirmForever = n }.padding(horizontal = 10.dp, vertical = 6.dp),
                         )
-                        Text(
+                        if (selected == null) Text(
                             nt("restore"), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFB45309),
                             modifier = Modifier.padding(start = 6.dp).clip(RoundedCornerShape(8.dp)).background(NotesAmber.copy(alpha = 0.16f)).clickable { vm.restore(n) }.padding(horizontal = 12.dp, vertical = 6.dp),
                         )

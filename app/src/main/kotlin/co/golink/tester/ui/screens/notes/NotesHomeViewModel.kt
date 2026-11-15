@@ -146,6 +146,7 @@ class NotesHomeViewModel @Inject constructor(
     }
 
     fun open(section: NotesSection) {
+        _selection.value = null
         _section.value = section
         when (section) {
             NotesSection.Checklists -> loadTasks()
@@ -370,6 +371,7 @@ class NotesHomeViewModel @Inject constructor(
     private var diffJob: Job? = null
 
     fun setHistoryTab(tab: String) {
+        _selection.value = null
         _history.value = _history.value.copy(tab = tab)
         if (tab == "trash") loadTrash()
     }
@@ -444,18 +446,72 @@ class NotesHomeViewModel @Inject constructor(
 
     /** Uma falha não pára as restantes: conta-as e recarrega o lixo no fim. */
     fun emptyTrash() = act {
-        val items = repo.trash.value.orEmpty()
-        var failed = 0
-        items.forEach { n ->
-            try {
-                repo.forceDelete(n.id)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (_: Throwable) {
-                failed++
-            }
-        }
+        val ids = repo.trash.value.orEmpty().map { it.id }
+        if (ids.isEmpty()) return@act
+        _selection.value = null
+        val r = repo.bulk("force", ids)
         repo.loadTrash()
-        if (failed > 0) toast(nt("empty_trash_failed", "n" to failed))
+        if (r.failed.isNotEmpty()) toast(nt("empty_trash_failed", "n" to r.failed.size))
+    }
+
+    // ---- seleção múltipla (como no Drive) ----------------------------------------
+
+    /** scope = "list" (notas) ou "trash" (lixo). ids vazio = modo seleção sem nada marcado. */
+    data class Selection(val scope: String, val ids: Set<String>)
+
+    private val _selection = MutableStateFlow<Selection?>(null)
+    val selection: StateFlow<Selection?> = _selection.asStateFlow()
+
+    fun startSelection(scope: String, id: String? = null) {
+        _selection.value = Selection(scope, setOfNotNull(id))
+    }
+
+    /** Desmarcar a última sai do modo seleção. */
+    fun toggleSelected(scope: String, id: String) {
+        val s = _selection.value
+        if (s == null || s.scope != scope) {
+            _selection.value = Selection(scope, setOf(id))
+            return
+        }
+        val ids = if (id in s.ids) s.ids - id else s.ids + id
+        _selection.value = if (ids.isEmpty()) null else s.copy(ids = ids)
+    }
+
+    fun selectAll(ids: List<String>) {
+        _selection.update { it?.copy(ids = ids.toSet()) }
+    }
+
+    fun clearSelection() {
+        _selection.value = null
+    }
+
+    /** Ids ainda existentes (a lista muda com o /sync). */
+    private fun takeSelection(scope: String): List<String> {
+        val s = _selection.value?.takeIf { it.scope == scope } ?: return emptyList()
+        val pool = if (scope == "trash") repo.trash.value.orEmpty() else repo.state.value.notes
+        _selection.value = null
+        return pool.filter { it.id in s.ids }.map { it.id }
+    }
+
+    /** Lista: as minhas vão para o lixo, das partilhadas comigo saio. */
+    fun deleteSelected() {
+        val ids = takeSelection("list")
+        if (ids.isNotEmpty()) bulkAct("delete", ids, "bulk_deleted")
+    }
+
+    fun restoreSelected() {
+        val ids = takeSelection("trash")
+        if (ids.isNotEmpty()) bulkAct("restore", ids, "restored_many")
+    }
+
+    fun forceSelected() {
+        val ids = takeSelection("trash")
+        if (ids.isNotEmpty()) bulkAct("force", ids, "bulk_deleted")
+    }
+
+    private fun bulkAct(action: String, ids: List<String>, doneKey: String) = act {
+        val r = repo.bulk(action, ids)
+        if (r.done.isNotEmpty()) toast(ntp(doneKey, r.done.size))
+        if (r.failed.isNotEmpty()) toast(ntp("bulk_failed", r.failed.size))
     }
 }

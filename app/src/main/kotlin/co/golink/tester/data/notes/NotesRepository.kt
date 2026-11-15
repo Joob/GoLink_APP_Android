@@ -398,6 +398,38 @@ class NotesRepository @Inject constructor(
         _trash.update { it?.filterNot { n -> n.id == id } }
     }
 
+    /** Resultado da seleção múltipla: ids tratados, falhados, e (delete) quantas foram p/ lixo vs. saídas. */
+    data class BulkResult(val done: List<String>, val failed: List<String>, val trashed: Int, val left: Int)
+
+    /** Seleção múltipla: action = delete (dono → lixo, membro → sai) | restore | force. Um só pedido. */
+    suspend fun bulk(action: String, ids: List<String>): BulkResult {
+        var out = BulkResult(emptyList(), emptyList(), 0, 0)
+        // O servidor aceita até 500 por pedido.
+        ids.chunked(500).forEach { chunk ->
+            val res = http.post("/notes/bulk", buildJsonObject {
+                put("action", action)
+                put("ids", buildJsonArray { chunk.forEach { add(JsonPrimitive(it)) } })
+            })
+            fun list(key: String) = (res[key] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+            out = BulkResult(
+                done = out.done + list("done"),
+                failed = out.failed + list("failed"),
+                trashed = out.trashed + (res["trashed"]?.jsonPrimitive?.intOrNull ?: 0),
+                left = out.left + (res["left"]?.jsonPrimitive?.intOrNull ?: 0),
+            )
+        }
+        val done = out.done.toSet()
+        when (action) {
+            "delete" -> {
+                _state.update { s -> s.copy(notes = s.notes.filterNot { it.id in done }) }
+                _trash.value = null
+            }
+            else -> _trash.update { it?.filterNot { n -> n.id in done } }
+        }
+        if (action == "restore" && done.isNotEmpty()) refresh()
+        return out
+    }
+
     // ---- cadernos --------------------------------------------------------------
 
     suspend fun createNotebook(name: String, color: String): String? {
