@@ -619,7 +619,7 @@ private fun LinkReadyView(
         ) {
             Text(
                 if (keyPending) "A preparar a chave de encriptação…".tr()
-                else link.ifBlank { "(sem URL)" }.removePrefix("https://").removePrefix("http://"),
+                else link.ifBlank { "(sem URL)".tr() }.removePrefix("https://").removePrefix("http://"),
                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

@@ -485,7 +485,7 @@ fun FileViewerScreen(
         )
         ViewerDialog.Delete -> ConfirmDialog(
             title = "Mover para o lixo?".tr(),
-            message = "${current.name} ficará no lixo e podes restaurar depois.",
+            message = "%s ficará no lixo e podes restaurar depois.".tr().format(current.name),
             confirmText = "Mover para o lixo".tr(),
             destructive = true,
             onDismiss = { dialog = ViewerDialog.None },
@@ -1212,7 +1212,7 @@ private fun PdfPage(
     if (bmp != null) {
         Image(
             bitmap = bmp.asImageBitmap(),
-            contentDescription = "Página ${index + 1}",
+            contentDescription = "Página %d".tr().format(index + 1),
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(bmp.width.toFloat() / bmp.height.toFloat())

@@ -203,7 +203,7 @@ object SearchQueryParser {
             val resolvedYear = y ?: if (m > today.monthValue) today.year - 1 else today.year
             val first = LocalDate.of(resolvedYear, m, 1)
             dateFrom = first; dateTo = first.withDayOfMonth(first.lengthOfMonth())
-            chips += first.month.getDisplayName(TextStyle.FULL, Locale.getDefault()) + " $resolvedYear"
+            chips += first.month.getDisplayName(TextStyle.FULL, Locale.forLanguageTag(co.golink.tester.ui.i18n.I18n.lang)) + " $resolvedYear"
         } else if (y != null && (yearFromPreposition || otherFilters)) {
             dateFrom = LocalDate.of(y, 1, 1); dateTo = LocalDate.of(y, 12, 31)
             chips += y.toString()

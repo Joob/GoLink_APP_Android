@@ -137,7 +137,7 @@ class DashboardViewModel @Inject constructor(
         viewModelScope.launch {
             repository.dashboard(_state.value.days)
                 .onSuccess { d -> _state.update { it.copy(data = d, isLoading = false) } }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (${t.message})") } }
+                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "${"Não foi possível carregar".tr()} (${t.message})") } }
         }
     }
 
@@ -198,7 +198,7 @@ class AnalyticsViewModel @Inject constructor(
         viewModelScope.launch {
             repository.analytics(_state.value.range)
                 .onSuccess { d -> _state.update { it.copy(data = d, isLoading = false) } }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (${t.message})") } }
+                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "${"Não foi possível carregar".tr()} (${t.message})") } }
         }
     }
 
@@ -246,7 +246,7 @@ class InviteRegistersViewModel @Inject constructor(
         viewModelScope.launch {
             repository.inviteRegisters(1)
                 .onSuccess { (list, _) -> _state.update { it.copy(invites = list, isLoading = false) } }
-                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "Não foi possível carregar (${t.message})") } }
+                .onFailure { t -> _state.update { it.copy(isLoading = false, error = "${"Não foi possível carregar".tr()} (${t.message})") } }
         }
     }
 
@@ -275,7 +275,7 @@ class InviteRegistersViewModel @Inject constructor(
     fun deleteInvite(id: String) = viewModelScope.launch {
         repository.deleteInvite(id)
             .onSuccess { _state.update { it.copy(invites = it.invites.filterNot { i -> i.id == id }, feedback = "Convite removido".tr()) } }
-            .onFailure { t -> _state.update { it.copy(feedback = "Erro ao remover: ${t.message}") } }
+            .onFailure { t -> _state.update { it.copy(feedback = "Erro ao remover: %s".tr().format(t.message.orEmpty())) } }
     }
 
     private fun reload() {

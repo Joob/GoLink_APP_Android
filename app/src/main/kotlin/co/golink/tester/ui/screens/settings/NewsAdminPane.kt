@@ -109,7 +109,7 @@ class NewsAdminViewModel @Inject constructor(
                 .onSuccess {
                     _state.value = _state.value.copy(isSaving = false, savedMessage = s.message.trim(), savedAllowed = s.allowed, feedback = "Notícia guardada".tr())
                 }
-                .onFailure { _state.value = _state.value.copy(isSaving = false, feedback = "Erro ao guardar: ${it.message}") }
+                .onFailure { _state.value = _state.value.copy(isSaving = false, feedback = "Erro ao guardar: %s".tr().format(it.message.orEmpty())) }
         }
     }
 

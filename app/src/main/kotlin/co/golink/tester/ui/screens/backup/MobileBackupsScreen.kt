@@ -624,8 +624,8 @@ fun MobileBackupsScreen(
             if (count > 0) {
                 ConfirmDialog(
                     title = "Eliminar ficheiro".tr(),
-                    message = if (target == null) "Mover $count itens para o lixo?"
-                              else "Mover \"${target.name}\" para o lixo?",
+                    message = if (target == null) "Mover %d itens para o lixo?".tr().format(count)
+                              else "Mover \"%s\" para o lixo?".tr().format(target.name),
                     confirmText = "Eliminar".tr(),
                     destructive = true,
                     onDismiss = { activeDialog = BackupItemDialog.None; dialogTarget = null },

@@ -610,7 +610,7 @@ private fun SubscriptionTypeCard(state: SystemSettingsViewModel.UiState, vm: Sys
             TextButton(onClick = { locked = !locked }) {
                 Icon(if (locked) Icons.Outlined.Lock else Icons.Outlined.LockOpen, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text(if (locked) "Desbloquear".tr() else "Bloquear".tr())
+                Text(if (locked) "Desbloquear".tr() else "Bloquear§definição".tr())
             }
         },
     ) {

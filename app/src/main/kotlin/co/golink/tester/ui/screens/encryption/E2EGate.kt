@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +48,7 @@ enum class GateMode { Checking, Prompt, ShowRecovery, Recover, ResetCode, Reset,
 @HiltViewModel
 class E2EGateViewModel @Inject constructor(
     private val keys: E2EKeyManager,
+    appLock: co.golink.tester.data.settings.AppLockManager,
 ) : ViewModel() {
     companion object {
         /** Mínimo da passphrase no setup e no reset (igual à web, E2EKeyGate.vue). */
@@ -54,6 +56,8 @@ class E2EGateViewModel @Inject constructor(
     }
 
     val unlocked: StateFlow<Boolean> = keys.unlocked
+    /** Bloqueio da app (PIN/biometria) ativo: o pedido da passphrase espera por ele. */
+    val appLocked: StateFlow<Boolean> = appLock.locked
     // Configurado no servidor — usado para saber se escondemos a tabela/navegação.
     val configuredFlow: StateFlow<Boolean> = keys.configured
 
@@ -248,6 +252,10 @@ fun E2EGate(viewModel: E2EGateViewModel = hiltViewModel()) {
 
     val mode = viewModel.mode
     if (mode == GateMode.Checking || mode == GateMode.Done) return
+    // O Dialog é uma janela própria: criado depois do bloqueio ficava por cima do PIN.
+    // Só aparece depois de desbloquear a app (o estado do VM mantém-se entretanto).
+    val appLocked by viewModel.appLocked.collectAsState()
+    if (appLocked) return
 
     // Só é dismissível no unlock de uma conta já configurada; setup/recovery/reset
     // mantêm-se obrigatórios (dismiss() faz a verificação).

@@ -1023,7 +1023,7 @@ fun BrowseScreen(
                             EmptyState(
                                 title = (if (state.mode == BrowseMode.Shared) "Sem links públicos" else "Sem conteúdo").tr(),
                                 subtitle = when (state.mode) {
-                                    is BrowseMode.SearchResults -> "Sem resultados para \"${(state.mode as BrowseMode.SearchResults).query}\""
+                                    is BrowseMode.SearchResults -> "Sem resultados para \"%s\"".tr().format((state.mode as BrowseMode.SearchResults).query)
                                     BrowseMode.Trash -> "O lixo está vazio".tr()
                                     BrowseMode.Shared -> "Abre o menu de um ficheiro ou pasta e toca em Partilhar para criar um link.".tr()
                                     else -> "Esta pasta está vazia".tr()

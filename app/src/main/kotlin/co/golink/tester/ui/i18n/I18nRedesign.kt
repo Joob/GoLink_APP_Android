@@ -796,7 +796,7 @@ object I18nRedesign {
         r("Nada para mostrar nesta vista.", "Nothing to show in this view.", "Rien à afficher ici.", "Nada que mostrar en esta vista."),
         r("Local novo", "New location", "Nouveau lieu", "Ubicación nueva"),
         r("Browser", "Browser", "Navigateur", "Navegador"),
-        r("Ligação", "Connection", "Connexion", "Conexión"),
+        r("Ligação§sessão", "Connection", "Connexion", "Conexión"),
         r("GoLink para Android", "GoLink for Android", "GoLink pour Android", "GoLink para Android"),
         r("Browser não reconhecido", "Unrecognised browser", "Navigateur non reconnu", "Navegador no reconocido"),
         r("Não conseguimos ler o nome do browser", "We couldn't read the browser name", "Impossible de lire le nom du navigateur", "No pudimos leer el nombre del navegador"),

@@ -58,13 +58,19 @@ object I18n {
         lang = code
     }
 
+    /**
+     * A mesma frase PT pode ter traduções diferentes consoante o ecrã ("Ligação" =
+     * link ou ligação de sessão). Nesses casos a chave leva um contexto depois de
+     * [CTX] ("Ligação§sessão"): procura-se a chave inteira e mostra-se só o PT.
+     */
+    const val CTX = '§'
+
     fun t(pt: String): String = when (lang) {
-        PT -> pt
-        EN -> en[pt] ?: I18nDict.en[pt] ?: I18nRedesign.en[pt] ?: I18nAdmin.en[pt] ?: I18nCalendar.en[pt] ?: I18nPasskeys.en[pt] ?: I18nPrefs.en[pt] ?: pt
-        FR -> fr[pt] ?: I18nDict.fr[pt] ?: I18nRedesign.fr[pt] ?: I18nAdmin.fr[pt] ?: I18nCalendar.fr[pt] ?: I18nPasskeys.fr[pt] ?: I18nPrefs.fr[pt] ?: pt
-        ES -> es[pt] ?: I18nDict.es[pt] ?: I18nRedesign.es[pt] ?: I18nAdmin.es[pt] ?: I18nCalendar.es[pt] ?: I18nPasskeys.es[pt] ?: I18nPrefs.es[pt] ?: pt
-        else -> pt
-    }
+        EN -> en[pt] ?: I18nDict.en[pt] ?: I18nRedesign.en[pt] ?: I18nAdmin.en[pt] ?: I18nCalendar.en[pt] ?: I18nPasskeys.en[pt] ?: I18nPrefs.en[pt]
+        FR -> fr[pt] ?: I18nDict.fr[pt] ?: I18nRedesign.fr[pt] ?: I18nAdmin.fr[pt] ?: I18nCalendar.fr[pt] ?: I18nPasskeys.fr[pt] ?: I18nPrefs.fr[pt]
+        ES -> es[pt] ?: I18nDict.es[pt] ?: I18nRedesign.es[pt] ?: I18nAdmin.es[pt] ?: I18nCalendar.es[pt] ?: I18nPasskeys.es[pt] ?: I18nPrefs.es[pt]
+        else -> null
+    } ?: pt.substringBefore(CTX)
 
     private fun prefs(context: Context) =
         context.getSharedPreferences("app_language", Context.MODE_PRIVATE)

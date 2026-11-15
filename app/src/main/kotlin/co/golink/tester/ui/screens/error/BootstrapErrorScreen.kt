@@ -111,7 +111,7 @@ fun BootstrapErrorScreen(
                 Spacer(Modifier.height(10.dp))
 
                 Text(
-                    text = "Não conseguimos contactar o servidor.\nVerifica a tua ligação e tenta novamente.",
+                    text = "Não conseguimos contactar o servidor.\nVerifica a tua ligação e tenta novamente.".tr(),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,

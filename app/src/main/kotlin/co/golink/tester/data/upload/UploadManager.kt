@@ -467,7 +467,7 @@ class UploadManager @Inject constructor(
                         // O utilizador pediu "Substituir" e o servidor voltou a
                         // responder 409 — voltar a Conflict fazia o botão parecer
                         // morto. Mostrar a falha com causa.
-                        update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Failed, errorMessage = "O servidor recusou substituir o ficheiro (409)") else it } }
+                        update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Failed, errorMessage = "O servidor recusou substituir o ficheiro (409)".tr()) else it } }
                     } else {
                         update { list -> list.map { if (it.id == taskId) it.copy(state = UploadTask.State.Conflict, errorMessage = null) else it } }
                     }

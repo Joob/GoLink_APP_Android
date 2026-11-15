@@ -7,6 +7,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.ui.graphics.graphicsLayer
 import co.golink.tester.ui.i18n.tr
+import co.golink.tester.ui.i18n.trPlural
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -250,21 +251,18 @@ private fun BannerHeader(
         BannerState.Uploading -> "A carregar %d de %d".tr().format((done + 1).coerceAtMost(total), total)
         BannerState.Failed -> when {
             failed == 0 -> "%d parado(s)".tr().format(stalled)
-            failed == 1 -> "1 ficheiro falhou"
-            else -> "$failed ficheiros falharam"
+            else -> trPlural("%d ficheiro falhou", "%d ficheiros falharam", failed)
         }
-        BannerState.Done -> if (total == 1) "1 ficheiro carregado" else "$total ficheiros carregados"
-        BannerState.Empty -> "Carregamento"
+        BannerState.Done -> trPlural("%d ficheiro carregado", "%d ficheiros carregados", total)
+        BannerState.Empty -> "Carregamento".tr()
     }
     val subtitle = when (state) {
         BannerState.Uploading -> buildString {
-            append(humanBytes(uploadedBytes))
-            append(" de ")
-            append(humanBytes(totalBytes))
+            append("%s de %s".tr().format(humanBytes(uploadedBytes), humanBytes(totalBytes)))
             etaSeconds?.let { append(" · ~${humanEta(it)}") }
         }
-        BannerState.Failed -> "$done de $total concluídos"
-        BannerState.Done -> "${humanBytes(totalBytes)} · concluído"
+        BannerState.Failed -> "%d de %d concluídos".tr().format(done, total)
+        BannerState.Done -> "${humanBytes(totalBytes)} · ${"concluído".tr()}"
         BannerState.Empty -> ""
     }
     Row(
@@ -324,7 +322,7 @@ private fun BannerHeader(
             IconButton(onClick = onToggleExpand, modifier = Modifier.size(32.dp)) {
                 Icon(
                     if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = if (expanded) "Encolher" else "Expandir",
+                    contentDescription = if (expanded) "Encolher".tr() else "Expandir".tr(),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -485,7 +483,7 @@ private fun UploadRow(
                 }
             }
             UploadTask.State.Cancelled -> Text(
-                "Cancelado",
+                "Cancelado".tr(),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -551,8 +549,8 @@ private fun BannerFooter(
 }
 
 private fun rowSubtitle(task: UploadTask): String = when (task.state) {
-    UploadTask.State.Completed -> "Concluído · ${humanBytes(task.sizeBytes)}"
-    UploadTask.State.Failed -> task.errorMessage?.takeIf { it.isNotBlank() }?.let { "Falhou · $it" } ?: "Falhou · tentar de novo".tr()
+    UploadTask.State.Completed -> "${"Concluído".tr()} · ${humanBytes(task.sizeBytes)}"
+    UploadTask.State.Failed -> task.errorMessage?.takeIf { it.isNotBlank() }?.let { "${"Falhou".tr()} · $it" } ?: "Falhou · tentar de novo".tr()
     UploadTask.State.Conflict -> "Já existe · substituir?".tr()
     UploadTask.State.Uploading -> if (task.waitingForNetwork) {
         "Sem ligação · retoma automaticamente".tr()
@@ -562,10 +560,10 @@ private fun rowSubtitle(task: UploadTask): String = when (task.state) {
         "%s · %d%%".format("A encriptar".tr(), (task.encryptProgress * 100).toInt())
     } else {
         val uploaded = (task.progress.toDouble() * task.sizeBytes).roundToLong()
-        "${humanBytes(uploaded)} de ${humanBytes(task.sizeBytes)}"
+        "%s de %s".tr().format(humanBytes(uploaded), humanBytes(task.sizeBytes))
     }
-    UploadTask.State.Queued -> "Em espera · ${humanBytes(task.sizeBytes)}"
-    UploadTask.State.Cancelled -> "Cancelado"
+    UploadTask.State.Queued -> "${"Em espera".tr()} · ${humanBytes(task.sizeBytes)}"
+    UploadTask.State.Cancelled -> "Cancelado".tr()
     UploadTask.State.Stalled -> "%s · %s".format("Parado — sem progresso".tr(), humanBytes(task.sizeBytes))
 }
 

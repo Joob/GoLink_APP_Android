@@ -347,7 +347,7 @@ object I18nAdmin {
         r("As imagens são gravadas logo, fora do rascunho.", "Images are saved immediately, outside the draft.", "Les images sont enregistrées immédiatement, hors brouillon.", "Las imágenes se guardan de inmediato, fuera del borrador."),
         r("Atualizar credenciais", "Update credentials", "Mettre à jour les identifiants", "Actualizar credenciales"),
         r("Baixo", "Low", "Bas", "Bajo"),
-        r("Bloquear", "Lock", "Verrouiller", "Bloquear"),
+        r("Bloquear§definição", "Lock", "Verrouiller", "Bloquear"),
         r("Cache", "Cache", "Cache", "Caché"),
         r("Cache limpa", "Cache cleared", "Cache vidé", "Caché borrada"),
         r("Caixas de funcionalidades", "Feature boxes", "Encadrés de fonctionnalités", "Cajas de funciones"),
