@@ -19,8 +19,32 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationState
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.AnimationVector2D
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.animateDecay
+import androidx.compose.animation.core.exponentialDecay
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.center
+import androidx.compose.ui.geometry.isSpecified
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.toSize
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.coroutineScope
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -269,9 +293,10 @@ fun FileViewerScreen(
                             }
                             // PDF: o zoom está na barra flutuante do leitor.
                             if (current.isImageLike()) {
+                            // Os botões só mudam o VM; o visualizador anima até lá.
                             IconButton(
-                                onClick = { viewModel.setZoom((state.zoom / 1.25f).coerceAtLeast(0.2f)) },
-                                enabled = state.zoom > 0.25f,
+                                onClick = { viewModel.setZoom(state.zoom / 1.25f) },
+                                enabled = state.zoom > 1.01f,
                             ) {
                                 Icon(Icons.Outlined.ZoomOut, contentDescription = "Reduzir zoom".tr())
                             }
@@ -361,13 +386,18 @@ fun FileViewerScreen(
                         pagerState.animateScrollToPage(state.currentIndex)
                     }
                 }
+                // A página ativa diz só se está ampliada (ao cruzar 1,01×): o zoom
+                // contínuo fica local ao visualizador e não recompõe o ecrã.
+                var pageZoomed by remember { mutableStateOf(false) }
+                LaunchedEffect(state.currentIndex) { pageZoomed = false }
                 androidx.compose.foundation.pager.HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.fillMaxSize(),
                     // Pré-carrega a página de cada lado: ao começar o swipe a
                     // imagem seguinte já está descodificada.
                     beyondViewportPageCount = 1,
-                    userScrollEnabled = state.zoom <= 1.01f,
+                    userScrollEnabled = !pageZoomed,
+                    key = { state.files[it].id },
                 ) { page ->
                     val file = state.files[page]
                     when {
@@ -377,7 +407,9 @@ fun FileViewerScreen(
                             token = viewModel.authToken(),
                             zoom = if (page == state.currentIndex) state.zoom else 1f,
                             rotation = if (page == state.currentIndex) state.rotation else 0f,
+                            active = page == state.currentIndex,
                             onZoomChange = { if (page == state.currentIndex) viewModel.setZoom(it) },
+                            onZoomedChange = { pageZoomed = it },
                             decrypt = if (file.encrypted) { { c -> viewModel.decryptImageBytes(file, c) } } else null,
                             cache = viewModel.bitmapCache,
                         )
@@ -387,7 +419,9 @@ fun FileViewerScreen(
                             fileKey = file.id,
                             zoom = if (page == state.currentIndex) state.zoom else 1f,
                             rotation = if (page == state.currentIndex) state.rotation else 0f,
+                            active = page == state.currentIndex,
                             onZoomChange = { if (page == state.currentIndex) viewModel.setZoom(it) },
+                            onZoomedChange = { pageZoomed = it },
                             decrypt = if (file.encrypted) { { c -> viewModel.decryptImageBytes(file, c) } } else null,
                         )
                         file.isTextLike() -> TextReader(
@@ -555,7 +589,9 @@ private fun ImageViewer(
     token: String?,
     zoom: Float,
     rotation: Float,
+    active: Boolean,
     onZoomChange: (Float) -> Unit,
+    onZoomedChange: (Boolean) -> Unit,
     decrypt: (suspend (ByteArray) -> ByteArray?)? = null,
     cache: android.util.LruCache<String, Bitmap>? = null,
 ) {
@@ -600,16 +636,23 @@ private fun ImageViewer(
                         ?: error("Imagem demasiado grande para pré-visualizar. Descarrega-a para a ver.".tr())
                     // E2E: se cifrado, decifra os bytes antes de descodificar.
                     val bytes = if (decrypt != null) (decrypt(raw) ?: error("Falha ao decifrar".tr())) else raw
-                    val bmp = decodeSampled(bytes, maxSide)
-                        ?: error("Falha na descodificação".tr())
-                    val orientation = runCatching {
-                        android.media.ExifInterface(java.io.ByteArrayInputStream(bytes))
-                            .getAttributeInt(
-                                android.media.ExifInterface.TAG_ORIENTATION,
-                                android.media.ExifInterface.ORIENTATION_NORMAL,
-                            )
-                    }.getOrDefault(android.media.ExifInterface.ORIENTATION_NORMAL)
-                    applyExifOrientation(bmp, orientation)
+                    // A decifra devolve um array novo: o cifrado já não faz falta.
+                    if (bytes !== raw) raw.fill(0)
+                    try {
+                        val bmp = decodeSampled(bytes, maxSide)
+                            ?: error("Falha na descodificação".tr())
+                        val orientation = runCatching {
+                            android.media.ExifInterface(java.io.ByteArrayInputStream(bytes))
+                                .getAttributeInt(
+                                    android.media.ExifInterface.TAG_ORIENTATION,
+                                    android.media.ExifInterface.ORIENTATION_NORMAL,
+                                )
+                        }.getOrDefault(android.media.ExifInterface.ORIENTATION_NORMAL)
+                        applyExifOrientation(bmp, orientation)
+                    } finally {
+                        // Cópia em claro: apaga-a logo depois de descodificar.
+                        if (bytes !== raw) bytes.fill(0)
+                    }
                 }
             }
         }
@@ -617,59 +660,99 @@ private fun ImageViewer(
             .onFailure { t -> error = t.message ?: "erro"; loading = false }
     }
 
-    var offsetX by remember(file.id) { mutableStateOf(0f) }
-    var offsetY by remember(file.id) { mutableStateOf(0f) }
-    LaunchedEffect(zoom) { if (zoom <= 1.01f) { offsetX = 0f; offsetY = 0f } }
+    // Zoom e posição locais: a pinça só mexe na fase de desenho (sem recompor o
+    // ecrã a cada evento); o VM recebe o valor final, para a percentagem e os botões.
+    val scope = rememberCoroutineScope()
+    val scale = remember(file.id) { Animatable(1f) }
+    val offset = remember(file.id) { Animatable(Offset.Zero, Offset.VectorConverter) }
+    var boxSize by remember { mutableStateOf(Size.Zero) }
+    val rotationState = rememberUpdatedState(rotation)
+    val onZoomChangeState = rememberUpdatedState(onZoomChange)
+    val onZoomedChangeState = rememberUpdatedState(onZoomedChange)
+    // Tamanho da imagem no ecrã (Fit + rotação): é isto que limita o pan, não a caixa.
+    val contentSize: (Size) -> Size = { box -> bitmap?.let { fitSize(it.width, it.height, box, rotationState.value) } ?: box }
 
-    val zoomState = androidx.compose.runtime.rememberUpdatedState(zoom)
-    val onZoomChangeState = androidx.compose.runtime.rememberUpdatedState(onZoomChange)
+    // Zoom vindo dos botões (VM): anima a partir do centro. No fim de um gesto o
+    // VM já recebe o valor local, por isso aqui não acontece nada.
+    LaunchedEffect(file.id, zoom) {
+        val from = scale.value
+        if (abs(from - zoom) < 0.001f) return@LaunchedEffect
+        val box = boxSize
+        val to = if (zoom <= 1.001f) Offset.Zero else clampOffset(offset.value * (zoom / from), contentSize(box), box, zoom)
+        animateView(scale, offset, zoom, to)
+    }
+    // Rodar muda as dimensões: volta a limitar o pan.
+    LaunchedEffect(file.id, rotation) { offset.snapTo(clampOffset(offset.value, contentSize(boxSize), boxSize, scale.value)) }
+    // O pai só sabe se está ampliada (para bloquear o swipe do pager).
+    val zoomed by remember(file.id) { derivedStateOf { scale.value > 1.01f } }
+    LaunchedEffect(zoomed, active) { if (active) onZoomedChangeState.value(zoomed) }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Transparent)
             .clipToBounds()
+            .onSizeChanged { boxSize = it.toSize() }
             .pointerInput(file.id) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
+                    // Um toque novo para a animação em curso (duplo toque/botões).
+                    stopView(scope, scale, offset)
+                    var started = false
+                    var panning = false
+                    var slop = 0f
+                    var s = 1f
+                    var o = Offset.Zero
                     do {
                         val event = awaitPointerEvent()
                         val pressedCount = event.changes.count { it.pressed }
-                        val currentZoom = zoomState.value
+                        if (!started) { s = scale.value; o = offset.value }
+                        val box = Size(size.width.toFloat(), size.height.toFloat())
                         if (pressedCount >= 2) {
-                            val z = event.calculateZoom()
-                            val p = event.calculatePan()
-                            if (z != 1f) {
-                                onZoomChangeState.value((currentZoom * z).coerceIn(1f, 8f))
-                                event.changes.forEach { it.consume() }
+                            started = true
+                            panning = true
+                            val ns = (s * event.calculateZoom()).coerceIn(1f, 8f)
+                            val c = event.calculateCentroid(useCurrent = true).takeIf { it.isSpecified } ?: box.center
+                            // Amplia no centróide: o ponto entre os dedos fica parado.
+                            val cc = c - box.center
+                            o = clampOffset((o - cc) * (ns / s) + cc + event.calculatePan(), contentSize(box), box, ns)
+                            s = ns
+                            snapView(scope, scale, offset, s, o)
+                            // Com 2 dedos consome sempre: a pinça não muda de página.
+                            event.changes.forEach { it.consume() }
+                        } else if (pressedCount == 1 && s > 1.01f) {
+                            // A 1× não faz nada: o swipe é do pager.
+                            val change = event.changes.first { it.pressed }
+                            if (change.isConsumed) continue
+                            val delta = change.position - change.previousPosition
+                            // Só depois do touch slop (senão um tremor anulava o duplo toque).
+                            if (!panning) {
+                                slop += delta.getDistance()
+                                panning = slop > viewConfiguration.touchSlop
                             }
-                            if (currentZoom > 1.01f && (p.x != 0f || p.y != 0f)) {
-                                offsetX = clampPan(offsetX + p.x, size.width, currentZoom)
-                                offsetY = clampPan(offsetY + p.y, size.height, currentZoom)
-                                event.changes.forEach { it.consume() }
-                            }
-                        } else if (pressedCount == 1 && currentZoom > 1.01f) {
-                            val change = event.changes.first()
-                            val delta = change.positionChange()
-                            if (delta.x != 0f || delta.y != 0f) {
-                                offsetX = clampPan(offsetX + delta.x, size.width, currentZoom)
-                                offsetY = clampPan(offsetY + delta.y, size.height, currentZoom)
+                            if (panning && delta != Offset.Zero) {
+                                started = true
+                                o = clampOffset(o + delta, contentSize(box), box, s)
+                                snapView(scope, null, offset, s, o)
                                 change.consume()
                             }
                         }
                     } while (event.changes.any { it.pressed })
+                    // Fim do gesto: o VM fica com o valor final.
+                    onZoomChangeState.value(if (started) s else scale.value)
                 }
             }
-            // Duplo toque: amplia 2,5× no ponto tocado; se já ampliada, volta a 1×.
+            // Duplo toque: amplia 2× no ponto tocado; se já ampliada, volta a 1×.
             .pointerInput(file.id) {
                 detectTapGestures(onDoubleTap = { tap ->
-                    if (zoomState.value > 1.01f) {
-                        onZoomChangeState.value(1f)
-                    } else {
-                        val target = 2.5f
-                        offsetX = clampPan((size.width / 2f - tap.x) * (target - 1f), size.width, target)
-                        offsetY = clampPan((size.height / 2f - tap.y) * (target - 1f), size.height, target)
-                        onZoomChangeState.value(target)
+                    val box = Size(size.width.toFloat(), size.height.toFloat())
+                    scope.launch {
+                        val target = if (scale.value > 1.01f) 1f else 2f
+                        val to = if (target == 1f) Offset.Zero
+                        else clampOffset((box.center - tap) * (target - 1f), contentSize(box), box, target)
+                        animateView(scale, offset, target, to)
+                        // Interrompida por um toque: o fim desse gesto já informa o VM.
+                        if (abs(scale.value - target) < 0.001f) onZoomChangeState.value(target)
                     }
                 })
             },
@@ -695,13 +778,14 @@ private fun ImageViewer(
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer(
-                        scaleX = zoom,
-                        scaleY = zoom,
-                        rotationZ = rotation,
-                        translationX = offsetX,
-                        translationY = offsetY,
-                    ),
+                    // Versão lambda: zoom/pan só são lidos no desenho.
+                    .graphicsLayer {
+                        scaleX = scale.value
+                        scaleY = scale.value
+                        translationX = offset.value.x
+                        translationY = offset.value.y
+                        rotationZ = rotation
+                    },
             )
         }
     }
@@ -728,10 +812,53 @@ private suspend fun loadPlainImage(context: android.content.Context, file: Brows
     }
 }
 
-// Pan limitado às bordas do conteúdo ampliado (antes podia arrastar-se para fora).
-private fun clampPan(value: Float, extent: Int, zoom: Float): Float {
-    val max = extent * (zoom - 1f) / 2f
-    return value.coerceIn(-max, max)
+// Pan limitado às bordas do conteúdo [content] (já ajustado à caixa) ampliado [s] vezes.
+private fun clampOffset(o: Offset, content: Size, box: Size, s: Float): Offset {
+    val mx = maxOf(0f, (content.width * s - box.width) / 2f)
+    val my = maxOf(0f, (content.height * s - box.height) / 2f)
+    return Offset(o.x.coerceIn(-mx, mx), o.y.coerceIn(-my, my))
+}
+
+private fun isQuarterTurn(rotation: Float): Boolean = (rotation / 90f).roundToInt() % 2 != 0
+
+// Tamanho da imagem com ContentScale.Fit na caixa; a 90/270° troca largura e altura.
+private fun fitSize(bw: Int, bh: Int, box: Size, rotation: Float): Size {
+    if (bw <= 0 || bh <= 0 || box.width <= 0f || box.height <= 0f) return box
+    val k = minOf(box.width / bw, box.height / bh)
+    return if (isQuarterTurn(rotation)) Size(bh * k, bw * k) else Size(bw * k, bh * k)
+}
+
+// Escala e offset animados em paralelo (duplo toque e botões).
+private suspend fun animateView(
+    scale: Animatable<Float, AnimationVector1D>,
+    offset: Animatable<Offset, AnimationVector2D>,
+    s: Float,
+    o: Offset,
+) = coroutineScope {
+    launch { scale.animateTo(s, tween(250, easing = FastOutSlowInEasing)) }
+    launch { offset.animateTo(o, tween(250, easing = FastOutSlowInEasing)) }
+}
+
+// Durante o gesto: aplica já (UNDISPATCHED) — um snap novo cancela o anterior,
+// por isso o último valor ganha sempre e não se perdem incrementos.
+private fun snapView(
+    scope: kotlinx.coroutines.CoroutineScope,
+    scale: Animatable<Float, AnimationVector1D>?,
+    offset: Animatable<Offset, AnimationVector2D>,
+    s: Float,
+    o: Offset,
+) {
+    if (scale != null) scope.launch(start = CoroutineStart.UNDISPATCHED) { scale.snapTo(s) }
+    scope.launch(start = CoroutineStart.UNDISPATCHED) { offset.snapTo(o) }
+}
+
+private fun stopView(
+    scope: kotlinx.coroutines.CoroutineScope,
+    scale: Animatable<Float, AnimationVector1D>,
+    offset: Animatable<Offset, AnimationVector2D>,
+) {
+    scope.launch(start = CoroutineStart.UNDISPATCHED) { scale.stop() }
+    scope.launch(start = CoroutineStart.UNDISPATCHED) { offset.stop() }
 }
 
 // Descodifica com inSampleSize (potência de 2) para o lado maior ficar perto
@@ -981,11 +1108,19 @@ private fun PdfViewer(
     fileKey: String,
     zoom: Float,
     rotation: Float,
+    active: Boolean,
     onZoomChange: (Float) -> Unit,
+    onZoomedChange: (Boolean) -> Unit,
     decrypt: (suspend (ByteArray) -> ByteArray?)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // Páginas já renderizadas deste documento (voltar atrás no scroll é imediato).
+    val pageCache = remember(fileKey) {
+        object : android.util.LruCache<Int, Bitmap>((Runtime.getRuntime().maxMemory() / 10).coerceAtMost(48L shl 20).toInt()) {
+            override fun sizeOf(key: Int, value: Bitmap) = value.byteCount
+        }
+    }
     var pageCount by remember(fileKey) { mutableStateOf(0) }
     // O PdfRenderer só deixa ter uma página aberta de cada vez.
     val renderLock = remember(fileKey) { kotlinx.coroutines.sync.Mutex() }
@@ -1055,6 +1190,9 @@ private fun PdfViewer(
         }
         onDispose {
             job.cancel()
+            // Ao sair do documento liberta já os bitmaps da cache (sem esperar pelo GC).
+            pageCache.snapshot().values.forEach { it.recycle() }
+            pageCache.evictAll()
             val r = renderer
             val d = pfd
             // Fecha depois de qualquer página que esteja a meio de renderizar
@@ -1069,9 +1207,31 @@ private fun PdfViewer(
         }
     }
 
-    var offsetX by remember(fileKey) { mutableStateOf(0f) }
-    var offsetY by remember(fileKey) { mutableStateOf(0f) }
-    LaunchedEffect(zoom) { if (zoom == 1f) { offsetX = 0f; offsetY = 0f } }
+    // Zoom e posição locais, como na imagem (o VM só recebe o valor final).
+    val scale = remember(fileKey) { Animatable(1f) }
+    val offset = remember(fileKey) { Animatable(Offset.Zero, Offset.VectorConverter) }
+    var boxSize by remember { mutableStateOf(Size.Zero) }
+    val rotationState = rememberUpdatedState(rotation)
+    val onZoomChangeState = rememberUpdatedState(onZoomChange)
+    val onZoomedChangeState = rememberUpdatedState(onZoomedChange)
+    // Altura da PdfReaderBar (padding de baixo da lista): a área visível acaba aí.
+    val barPx = with(LocalDensity.current) { 88.dp.toPx() }
+
+    // Zoom vindo da barra (VM): anima com o pivô no centro da área visível.
+    LaunchedEffect(fileKey, zoom) {
+        val from = scale.value
+        if (abs(from - zoom) < 0.001f) return@LaunchedEffect
+        val box = boxSize
+        val pc = Offset(0f, -barPx / 2f)
+        val to = if (zoom <= 1.001f) Offset.Zero
+        else clampOffset((offset.value - pc) * (zoom / from) + pc, pdfContentSize(box, rotation), box, zoom)
+        animateView(scale, offset, zoom, to)
+    }
+    LaunchedEffect(fileKey, rotation) { offset.snapTo(clampOffset(offset.value, pdfContentSize(boxSize, rotation), boxSize, scale.value)) }
+    val zoomed by remember(fileKey) { derivedStateOf { scale.value > 1.01f } }
+    LaunchedEffect(zoomed, active) { if (active) onZoomedChangeState.value(zoomed) }
+    // Acima de 2× as páginas voltam a ser renderizadas mais finas (só no fim do gesto).
+    val hiRes = zoom > 2f
 
     // Leitor (como na web): página atual, miniaturas e fundo de leitura.
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -1079,9 +1239,6 @@ private fun PdfViewer(
     var readingTheme by remember { mutableStateOf(PdfReaderPrefs.theme(context)) }
     var showPages by remember(fileKey) { mutableStateOf(false) }
     val pageFilter = remember(readingTheme) { pdfThemeFilter(readingTheme) }
-
-    val zoomState = androidx.compose.runtime.rememberUpdatedState(zoom)
-    val onZoomChangeState = androidx.compose.runtime.rememberUpdatedState(onZoomChange)
 
     Box(
         modifier = Modifier
@@ -1094,36 +1251,98 @@ private fun PdfViewer(
                 },
             )
             .clipToBounds()
+            .onSizeChanged { boxSize = it.toSize() }
             .pointerInput(fileKey) {
+                var flingJob: kotlinx.coroutines.Job? = null
                 awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
+                    // Passagem Initial: com zoom (ou 2 dedos) o leitor trata do gesto antes
+                    // do LazyColumn — antes o pan somava-se ao scroll da lista.
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    flingJob?.cancel()
+                    stopView(scope, scale, offset)
+                    var started = false
+                    var panning = false
+                    var oneFinger = false
+                    var slop = 0f
+                    var s = 1f
+                    var o = Offset.Zero
+                    val velocity = VelocityTracker()
                     do {
-                        val event = awaitPointerEvent()
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
                         val pressedCount = event.changes.count { it.pressed }
-                        val currentZoom = zoomState.value
+                        if (!started) { s = scale.value; o = offset.value }
+                        val box = Size(size.width.toFloat(), size.height.toFloat())
+                        val content = pdfContentSize(box, rotationState.value)
                         if (pressedCount >= 2) {
-                            val z = event.calculateZoom()
-                            val p = event.calculatePan()
-                            if (z != 1f) {
-                                onZoomChangeState.value((currentZoom * z).coerceIn(1f, 8f))
-                                event.changes.forEach { it.consume() }
+                            started = true
+                            panning = true
+                            oneFinger = false
+                            velocity.resetTracking()
+                            val ns = (s * event.calculateZoom()).coerceIn(1f, 8f)
+                            val c = event.calculateCentroid(useCurrent = true).takeIf { it.isSpecified } ?: box.center
+                            val cc = c - box.center
+                            o = clampOffset((o - cc) * (ns / s) + cc + event.calculatePan(), content, box, ns)
+                            s = ns
+                            snapView(scope, scale, offset, s, o)
+                            event.changes.forEach { it.consume() }
+                        } else if (pressedCount == 1 && s > 1.01f) {
+                            // A 1× o scroll é do LazyColumn (nada a fazer aqui).
+                            val change = event.changes.first { it.pressed }
+                            if (change.isConsumed) continue
+                            val delta = change.position - change.previousPosition
+                            velocity.addPosition(change.uptimeMillis, change.position)
+                            if (!panning) {
+                                slop += delta.getDistance()
+                                panning = slop > viewConfiguration.touchSlop
                             }
-                            if (currentZoom > 1.01f && (p.x != 0f || p.y != 0f)) {
-                                offsetX = clampPan(offsetX + p.x, size.width, currentZoom)
-                                offsetY = clampPan(offsetY + p.y, size.height, currentZoom)
-                                event.changes.forEach { it.consume() }
-                            }
-                        } else if (pressedCount == 1 && currentZoom > 1.01f) {
-                            val change = event.changes.first()
-                            val delta = change.positionChange()
-                            if (delta.x != 0f || delta.y != 0f) {
-                                offsetX = clampPan(offsetX + delta.x, size.width, currentZoom)
-                                offsetY = clampPan(offsetY + delta.y, size.height, currentZoom)
+                            if (panning && delta != Offset.Zero) {
+                                started = true
+                                oneFinger = true
+                                // No eixo da lista o movimento vai primeiro para o scroll
+                                // (em px da lista: ÷ escala); o que sobrar move o pan.
+                                val axis = pdfListAxis(rotationState.value)
+                                val along = delta.x * axis.x + delta.y * axis.y
+                                val used = if (along != 0f) listState.dispatchRawDelta(-along / s) else 0f
+                                o = clampOffset(o + delta + axis * (used * s), content, box, s)
+                                snapView(scope, null, offset, s, o)
                                 change.consume()
                             }
                         }
                     } while (event.changes.any { it.pressed })
+                    onZoomChangeState.value(if (started) s else scale.value)
+                    // Inércia do scroll com zoom (o LazyColumn já não recebe o gesto).
+                    if (oneFinger) {
+                        val v = velocity.calculateVelocity()
+                        val axis = pdfListAxis(rotationState.value)
+                        val along = (v.x * axis.x + v.y * axis.y) / s
+                        if (abs(along) > 50f) flingJob = scope.launch {
+                            listState.scroll {
+                                var prev = 0f
+                                AnimationState(0f, -along).animateDecay(exponentialDecay<Float>()) {
+                                    val d = value - prev
+                                    prev = value
+                                    if (abs(scrollBy(d) - d) > 0.5f) cancelAnimation()
+                                }
+                            }
+                        }
+                    }
                 }
+            }
+            // Duplo toque: 1× ↔ 2× no ponto tocado, dentro da área visível.
+            .pointerInput(fileKey) {
+                detectTapGestures(onDoubleTap = { tap ->
+                    val box = Size(size.width.toFloat(), size.height.toFloat())
+                    scope.launch {
+                        val target = if (scale.value > 1.01f) 1f else 2f
+                        val to = if (target == 1f) Offset.Zero else {
+                            // Abaixo do limite fica a PdfReaderBar: o pivô não desce dali.
+                            val p = Offset(tap.x, tap.y.coerceAtMost(box.height - barPx))
+                            clampOffset((box.center - p) * (target - 1f), pdfContentSize(box, rotationState.value), box, target)
+                        }
+                        animateView(scale, offset, target, to)
+                        if (abs(scale.value - target) < 0.001f) onZoomChangeState.value(target)
+                    }
+                })
             },
         contentAlignment = Alignment.Center,
     ) {
@@ -1136,26 +1355,28 @@ private fun PdfViewer(
                     state = listState,
                     modifier = Modifier
                         .fillMaxSize()
-                        .graphicsLayer(
-                            scaleX = zoom,
-                            scaleY = zoom,
-                            rotationZ = rotation,
-                            translationX = offsetX,
-                            translationY = offsetY,
-                        ),
+                        // Versão lambda: zoom/pan só são lidos no desenho.
+                        .graphicsLayer {
+                            scaleX = scale.value
+                            scaleY = scale.value
+                            translationX = offset.value.x
+                            translationY = offset.value.y
+                            rotationZ = rotation
+                        },
                     contentPadding = PaddingValues(start = 10.dp, end = 10.dp, top = 10.dp, bottom = 88.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(pageCount) { idx ->
                         val r = renderer
-                        if (r != null) PdfPage(r, renderLock, idx, filter = pageFilter)
+                        if (r != null) PdfPage(r, renderLock, idx, filter = pageFilter, cache = pageCache, hiRes = hiRes)
                     }
                 }
                 // Barra flutuante: páginas · ⌃ 2 de 6 ⌄ · − % + · fundo de leitura.
                 PdfReaderBar(
                     page = currentPage,
                     total = pageCount,
-                    zoom = zoom,
+                    // Lido só na barra: a percentagem acompanha a pinça sem recompor o leitor.
+                    zoom = { scale.value },
                     theme = readingTheme,
                     onPages = { showPages = true },
                     onGoTo = { n -> scope.launch { listState.animateScrollToItem((n - 1).coerceIn(0, pageCount - 1)) } },
@@ -1189,26 +1410,23 @@ private fun PdfPage(
     filter: androidx.compose.ui.graphics.ColorFilter? = null,
     // Miniaturas: renderiza pequeno (bem mais leve).
     targetWidthPx: Int? = null,
+    // Cache por documento das páginas já renderizadas (só no leitor, não nas miniaturas).
+    cache: android.util.LruCache<Int, Bitmap>? = null,
+    // Zoom > 2×: renderiza também uma versão mais fina por cima da base.
+    hiRes: Boolean = false,
 ) {
-    val width = targetWidthPx ?: LocalContext.current.resources.displayMetrics.widthPixels
-    val bitmap by androidx.compose.runtime.produceState<Bitmap?>(null, renderer, index) {
-        value = withContext(Dispatchers.IO) {
-            lock.withLock {
-                runCatching {
-                    renderer.openPage(index).use { page ->
-                        // Largura do ecrã ×2 (nitidez com zoom), limitada ao dobro da página.
-                        val w = (if (targetWidthPx != null) width else minOf(width * 2, page.width * 3)).coerceAtLeast(1)
-                        val h = (w.toLong() * page.height / page.width).toInt().coerceAtLeast(1)
-                        Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { bmp ->
-                            bmp.eraseColor(android.graphics.Color.WHITE)
-                            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                        }
-                    }
-                }.getOrNull()
-            }
-        }
+    val screenW = LocalContext.current.resources.displayMetrics.widthPixels
+    val thumb = targetWidthPx != null
+    // 1,5× a largura do ecrã chega até 2× de zoom (antes 2×, sem cache).
+    val baseW = targetWidthPx ?: (screenW * 1.5f).toInt()
+    val base by androidx.compose.runtime.produceState(cache?.get(index), renderer, index) {
+        if (value == null) value = renderPdfPage(renderer, lock, index, baseW, thumb)?.also { cache?.put(index, it) }
     }
-    val bmp = bitmap
+    val wantHi = hiRes && !thumb
+    val hi by androidx.compose.runtime.produceState<Bitmap?>(null, renderer, index, wantHi) {
+        value = if (wantHi) renderPdfPage(renderer, lock, index, screenW * 3, false, PDF_HIRES_MAX_PIXELS) else null
+    }
+    val bmp = hi ?: base
     if (bmp != null) {
         Image(
             bitmap = bmp.asImageBitmap(),
@@ -1234,6 +1452,48 @@ private fun PdfPage(
 
 
 
+
+// Teto da versão fina (~32 MB por página em ARGB_8888).
+private const val PDF_HIRES_MAX_PIXELS = 8_000_000L
+
+private suspend fun renderPdfPage(
+    renderer: PdfRenderer,
+    lock: kotlinx.coroutines.sync.Mutex,
+    index: Int,
+    wantW: Int,
+    thumb: Boolean,
+    maxPixels: Long = Long.MAX_VALUE,
+): Bitmap? = withContext(Dispatchers.IO) {
+    // O PdfRenderer só deixa ter uma página aberta de cada vez.
+    lock.withLock {
+        runCatching {
+            renderer.openPage(index).use { page ->
+                val ratio = page.height.toDouble() / page.width.coerceAtLeast(1)
+                // Limitada a 3× a página e ao teto de píxeis (memória).
+                var w = if (thumb) wantW else minOf(wantW, page.width * 3)
+                if (w.toDouble() * w * ratio > maxPixels) w = kotlin.math.sqrt(maxPixels / ratio).toInt()
+                w = w.coerceAtLeast(1)
+                val h = (w * ratio).toInt().coerceAtLeast(1)
+                Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { bmp ->
+                    bmp.eraseColor(android.graphics.Color.WHITE)
+                    page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                }
+            }
+        }.getOrNull()
+    }
+}
+
+// Tamanho do conteúdo do PDF (a lista ocupa a caixa); a 90/270° troca os lados.
+private fun pdfContentSize(box: Size, rotation: Float): Size =
+    if (isQuarterTurn(rotation)) Size(box.height, box.width) else box
+
+// Direção "para baixo" da lista no ecrã (rotationZ roda no sentido horário).
+private fun pdfListAxis(rotation: Float): Offset = when (((rotation / 90f).roundToInt() % 4 + 4) % 4) {
+    1 -> Offset(-1f, 0f)
+    2 -> Offset(0f, -1f)
+    3 -> Offset(1f, 0f)
+    else -> Offset(0f, 1f)
+}
 
 /** Faixa do modo Lixo: o ficheiro só pode ser visto; restaurar ou eliminar de vez. */
 @Composable
@@ -1348,7 +1608,7 @@ private fun pdfThemeFilter(theme: String): androidx.compose.ui.graphics.ColorFil
 private fun PdfReaderBar(
     page: Int,
     total: Int,
-    zoom: Float,
+    zoom: () -> Float,
     theme: String,
     onPages: () -> Unit,
     onGoTo: (Int) -> Unit,
@@ -1357,6 +1617,7 @@ private fun PdfReaderBar(
     modifier: Modifier = Modifier,
 ) {
     val fg = Color(0xFFE5E7EB)
+    val zoom = zoom()
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
