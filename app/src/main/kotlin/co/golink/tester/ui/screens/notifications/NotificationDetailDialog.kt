@@ -216,7 +216,7 @@ fun NotificationDetailDialog(
 
             Spacer(Modifier.height(16.dp))
             Text(
-                n.title.ifBlank { "Notificação".tr() },
+                n.title.ifBlank { groupLabel },
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.ExtraBold,
                 lineHeight = 28.sp,

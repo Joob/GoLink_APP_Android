@@ -52,6 +52,15 @@ class NotificationsRepository @Inject constructor(
 
     private val authenticated = MutableStateFlow(false)
 
+    // "Carregar mais": o GET só traz as READ_CAP lidas mais recentes. As que vêm
+    // do /older ficam na mesma lista; o poll junta-as (por id) em vez de as largar.
+    private val _hasMoreOlder = MutableStateFlow(false)
+    val hasMoreOlder: StateFlow<Boolean> = _hasMoreOlder.asStateFlow()
+    @Volatile private var olderLoaded = false
+    // Segundo da lida mais antiga quando o /older disse que não há mais (null: não disse).
+    @Volatile private var exhaustedAt: Long? = null
+    private val olderLock = Mutex()
+
     // Até ao primeiro refresh da sessão a lista vazia não quer dizer "0 por ler":
     // o badge do arranque anterior fica (offline pode ficar assim muito tempo).
     private val loaded = MutableStateFlow(false)
@@ -119,6 +128,9 @@ class NotificationsRepository @Inject constructor(
                     generation.incrementAndGet()
                     loaded.value = false
                     _items.value = emptyList()
+                    olderLoaded = false
+                    exhaustedAt = null
+                    _hasMoreOlder.value = false
                     // O contador de outra conta não pode ficar no ícone.
                     NotificationBadge.clear(context)
                 }
@@ -207,17 +219,119 @@ class NotificationsRepository @Inject constructor(
         // O servidor junta duas queries (não lidas + lidas): uma lida entre as
         // duas vem repetida, e vale a segunda. O LazyColumn não aceita ids iguais.
         val list = body.data.map { Notification.fromEnvelope(it) }.associateBy { it.id }.values.toList()
+        val read = list.filter { it.isRead }
+        // Menos de READ_CAP lidas: o servidor não tem mais nenhuma (as antigas que
+        // houvesse cá foram apagadas noutro lado).
+        val full = read.size >= READ_CAP
+        val cutoff = read.mapNotNull { it.createdAtInstant?.epochSecond }.minOrNull()
         // Houve uma ação entretanto (ou está a decorrer): esta resposta está velha.
         // Verificar e escrever no mesmo update: uma ação a meio não é pisada.
         var applied = false
         _items.update { current ->
             applied = gen == generation.get() && pending.get() == 0
-            if (applied) list else current
+            if (applied) mergeOlder(list, read, current, full) else current
         }
         if (applied) {
             needsResync = false
             loaded.value = true
+            if (!full) {
+                olderLoaded = false
+                exhaustedAt = null
+                _hasMoreOlder.value = false
+            } else if (!olderLoaded) {
+                // Já se pediu e não havia mais; só volta a haver se a janela das
+                // lidas avançou (lidas novas empurraram outras para fora dela).
+                val done = exhaustedAt
+                _hasMoreOlder.value = done == null || cutoff == null || cutoff > done
+            }
         }
+    }
+
+    /**
+     * Junta ao poll as lidas mais antigas já carregadas (só depois de um
+     * "Carregar mais"): ficam as que não vieram no poll e são do segundo da lida
+     * mais antiga do poll ou anteriores. As mais recentes que faltam no poll
+     * foram apagadas (ou passaram a não lidas e vêm no poll).
+     */
+    private fun mergeOlder(list: List<Notification>, read: List<Notification>, current: List<Notification>, full: Boolean): List<Notification> {
+        if (!olderLoaded || !full) return list
+        val cutoff = read.mapNotNull { it.createdAtInstant?.epochSecond }.minOrNull() ?: return list
+        val ids = list.mapTo(HashSet()) { it.id }
+        val kept = current.filter { n ->
+            n.isRead && n.id !in ids && (n.createdAtInstant?.epochSecond ?: Long.MAX_VALUE) <= cutoff
+        }
+        return list + kept
+    }
+
+    /** "Carregar mais": lidas anteriores à lida mais antiga que já cá está. */
+    suspend fun loadOlder(): Result<Unit> = runCatching {
+        if (!olderLock.tryLock()) return@runCatching
+        try {
+            val read = _items.value.filter { it.isRead && it.createdAtInstant != null }
+            val oldest = read.minByOrNull { it.createdAtInstant!! }
+            if (oldest == null) {
+                _hasMoreOlder.value = false
+                return@runCatching
+            }
+            val second = oldest.createdAtInstant!!.epochSecond
+            val seen = read.filter { it.createdAtInstant!!.epochSecond == second }.map { it.id }
+            val response = api.older(oldest.createdAtIso!!, seen.take(500), OLDER_PAGE)
+            if (!response.isSuccessful) error("HTTP ${response.code()}")
+            val body = response.body() ?: error("Resposta vazia")
+            val more = body.data.map { Notification.fromEnvelope(it) }
+            // Antes de escrever: um refresh que escreva a seguir já as mantém.
+            if (more.isNotEmpty()) olderLoaded = true
+            _items.update { current ->
+                val have = current.mapTo(HashSet()) { it.id }
+                current + more.filter { it.id !in have }
+            }
+            exhaustedAt = if (body.has_more) null else (more.mapNotNull { it.createdAtInstant?.epochSecond }.minOrNull() ?: second)
+            _hasMoreOlder.value = body.has_more
+        } finally {
+            olderLock.unlock()
+        }
+    }
+
+    suspend fun stats(): Result<co.golink.tester.domain.notifications.NotificationStats> = runCatching {
+        val response = api.stats()
+        if (!response.isSuccessful) error("HTTP ${response.code()}")
+        response.body() ?: error("Resposta vazia")
+    }
+
+    /** Efeito local de uma ação em massa (otimista). */
+    private fun applyLocal(action: String, list: List<Notification>, hit: (Notification) -> Boolean): List<Notification> = when (action) {
+        "delete" -> list.filterNot(hit)
+        "read" -> list.map { if (hit(it)) it.copy(isRead = true) else it }
+        "unread" -> list.map { if (hit(it)) it.copy(isRead = false) else it }
+        else -> list
+    }
+
+    /** Ação sobre os ids escolhidos (pedidos de 500 em 500, pela fila). */
+    suspend fun bulk(action: String, ids: Collection<String>): Result<Unit> = runCatching {
+        if (ids.isEmpty()) return@runCatching
+        val set = ids.toHashSet()
+        mutate({ list -> applyLocal(action, list) { it.id in set } }) {
+            var last: retrofit2.Response<*>? = null
+            for (chunk in set.chunked(500)) {
+                last = api.bulk(co.golink.tester.domain.notifications.BulkNotificationsRequest(action = action, ids = chunk))
+                if (!last.isSuccessful) break
+            }
+            last!!
+        }
+    }
+
+    /**
+     * Ação sobre todas as do filtro no servidor (também as não carregadas), até à
+     * mais recente que o cliente viu. [matches]: as do filtro que já cá estão.
+     */
+    suspend fun bulkScope(action: String, filter: String, matches: (Notification) -> Boolean): Result<Unit> = runCatching {
+        val (before, ids) = latestSeen() ?: return@runCatching
+        val scope = co.golink.tester.domain.notifications.BulkScope(filter = filter, before = before, ids = ids.take(500))
+        mutate({ list -> applyLocal(action, list, matches) }) {
+            api.bulk(co.golink.tester.domain.notifications.BulkNotificationsRequest(action = action, scope = scope))
+        }
+        // Mexeu também nas que não estavam carregadas: recarregar.
+        refreshInBackground()
     }
 
     suspend fun markAllRead(): Result<Unit> = runCatching {
@@ -237,6 +351,11 @@ class NotificationsRepository @Inject constructor(
         mutate({ list -> list.filterNot { it.id == id } }) { api.delete(id) }
     }
 
+    /** Eliminar fora de um ecrã (ViewModel a fechar com um "Desfazer" no ar). */
+    fun deleteDetached(id: String) {
+        scope.launch { delete(id) }
+    }
+
     /** "Limpar lidas": apaga só as já lidas (e só as que o cliente já viu). */
     suspend fun deleteRead(): Result<Unit> = runCatching {
         val (before, ids) = latestSeen() ?: return@runCatching
@@ -247,5 +366,8 @@ class NotificationsRepository @Inject constructor(
         const val FOREGROUND_POLL_MS = 60_000L
         const val BACKGROUND_POLL_MS = 15 * 60_000L
         const val UNREAD_CAP = 500
+        // GetUserNotificationsController: as 50 lidas mais recentes.
+        const val READ_CAP = 50
+        const val OLDER_PAGE = 50
     }
 }

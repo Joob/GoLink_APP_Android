@@ -12,7 +12,7 @@ import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
 import java.security.GeneralSecurityException
-import okhttp3.OkHttpClient
+import okhttp3.Call
 import okhttp3.Request
 import okhttp3.Response
 
@@ -25,7 +25,8 @@ import okhttp3.Response
 class EncryptedMediaDataSource private constructor(private val source: Factory) : BaseDataSource(/* isNetwork = */ true) {
 
     class Factory(
-        private val client: OkHttpClient,
+        // Call.Factory (não OkHttpClient): o viewer passa uma que cancela tudo ao sair.
+        private val client: Call.Factory,
         internal val url: String,
         private val token: String?,
         private val dataKey: ByteArray,
@@ -124,6 +125,9 @@ class EncryptedMediaDataSource private constructor(private val source: Factory) 
             l.open(ct, block)
         } catch (e: GeneralSecurityException) {
             throw IOException(e)
+        } catch (e: IllegalArgumentException) {
+            // Bloco malformado (ex.: último bloco menor que a tag): erro de leitura, não de programa.
+            throw IOException(e)
         }
         plainOff = skip
         skip = 0
@@ -148,6 +152,8 @@ class EncryptedMediaDataSource private constructor(private val source: Factory) 
 
     override fun close() {
         closeWindow()
+        // Bloco em claro: apaga-o antes de o largar.
+        plain.fill(0)
         plain = ByteArray(0)
         plainOff = 0
         layout = null

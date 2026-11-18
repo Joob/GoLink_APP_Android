@@ -149,8 +149,13 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 private enum class ViewerDialog { None, Rename, Delete, DeleteForever, Details, Move }
@@ -185,15 +190,18 @@ fun FileViewerScreen(
         viewModel.consumeToast()
     }
 
+    // Apagar/mover o último ficheiro liga os dois sinais ao mesmo tempo: fecha uma vez só
+    // (dois onClose() faziam popBackStack duas vezes).
+    var closed by remember { mutableStateOf(false) }
     LaunchedEffect(state.closeRequested) {
         if (state.closeRequested) {
             viewModel.acknowledgeClose()
-            onClose()
+            if (!closed) { closed = true; onClose() }
         }
     }
 
     LaunchedEffect(state.files.isEmpty()) {
-        if (state.files.isEmpty()) onClose()
+        if (state.files.isEmpty() && !closed) { closed = true; onClose() }
     }
 
     if (current == null) return
@@ -396,11 +404,18 @@ fun FileViewerScreen(
                     // Pré-carrega a página de cada lado: ao começar o swipe a
                     // imagem seguinte já está descodificada.
                     beyondViewportPageCount = 1,
-                    userScrollEnabled = !pageZoomed,
+                    // A editar texto não se muda de página: o goTo descartava o rascunho.
+                    userScrollEnabled = !pageZoomed && !state.editing,
                     key = { state.files[it].id },
                 ) { page ->
-                    val file = state.files[page]
+                    val file = state.files.getOrNull(page) ?: return@HorizontalPager
+                    val isCurrent = page == state.currentIndex
                     when {
+                        // Vizinhos pesados não pré-carregam: cada um tinha o ficheiro inteiro
+                        // (cifrado + claro) em memória e, num swipe rápido, as cargas somavam-se (OOM).
+                        file.isImageLike() && file.encrypted && !isCurrent && file.filesizeBytes > NEIGHBOR_E2E_PRELOAD_MAX ->
+                            MediaLoadingBox(showSpinner = false)
+                        file.isPdfLike() && !isCurrent -> MediaLoadingBox(showSpinner = false)
                         file.isImageLike() -> ImageViewer(
                             file = file,
                             url = viewModel.authedUrlFor(file),
@@ -422,7 +437,7 @@ fun FileViewerScreen(
                             active = page == state.currentIndex,
                             onZoomChange = { if (page == state.currentIndex) viewModel.setZoom(it) },
                             onZoomedChange = { pageZoomed = it },
-                            decrypt = if (file.encrypted) { { c -> viewModel.decryptImageBytes(file, c) } } else null,
+                            decryptTo = if (file.encrypted) { { input, out -> viewModel.decryptStreamTo(file, input, out) } } else null,
                         )
                         file.isTextLike() -> TextReader(
                             name = file.name,
@@ -609,12 +624,16 @@ private fun ImageViewer(
         if (bitmap != null) return@LaunchedEffect
         loading = true
         error = null
-        runCatching {
+        runCatchingNonCancel {
             // Em claro: pelo Coil, com cache em disco própria (reabrir não volta a descarregar),
             // descodificado ao tamanho do ecrã a partir do ficheiro (sem o original em memória).
-            if (decrypt == null) return@runCatching loadPlainImage(appContext, file, url, token, maxSide)
-            withContext(Dispatchers.IO) {
+            if (decrypt == null) return@runCatchingNonCancel loadPlainImage(appContext, file, url, token, maxSide)
+            // No máximo 2 cargas E2E em paralelo (cada uma tem o ficheiro 2–3× em memória).
+            e2eLoadGate.withPermit { withContext(Dispatchers.IO) {
                 val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                // Ao sair da página o download pára mesmo (a leitura bloqueante
+                // ignorava o cancelamento e continuava até 64 MiB).
+                withDisconnectOnCancel(conn) {
                 conn.instanceFollowRedirects = true
                 conn.setRequestProperty("Accept", "*/*")
                 if (!token.isNullOrBlank()) conn.setRequestProperty("Authorization", "Bearer $token")
@@ -632,7 +651,7 @@ private fun ImageViewer(
                     // do mesmo conteúdo. Sem isto as fotos apareciam de lado (o
                     // BitmapFactory ignora a orientação; o Coil, usado nas
                     // miniaturas, aplica-a — daí a diferença).
-                    val raw = readAtMost(input, IMAGE_PREVIEW_MAX_BYTES)
+                    val raw = readAtMost(input, IMAGE_PREVIEW_MAX_BYTES, currentCoroutineContext().job)
                         ?: error("Imagem demasiado grande para pré-visualizar. Descarrega-a para a ver.".tr())
                     // E2E: se cifrado, decifra os bytes antes de descodificar.
                     val bytes = if (decrypt != null) (decrypt(raw) ?: error("Falha ao decifrar".tr())) else raw
@@ -654,7 +673,8 @@ private fun ImageViewer(
                         if (bytes !== raw) bytes.fill(0)
                     }
                 }
-            }
+                }
+            } }
         }
             .onSuccess { bmp -> cache?.put(file.id, bmp); bitmap = bmp; loading = false }
             .onFailure { t -> error = t.message ?: "erro"; loading = false }
@@ -863,14 +883,30 @@ private fun stopView(
 
 // Descodifica com inSampleSize (potência de 2) para o lado maior ficar perto
 // de maxSide — muito menos memória e descodificação mais rápida.
+// O inSampleSize só divide por potências de 2: uma foto de 26–30 MP ficava inteira
+// (>100 MB) e o Canvas recusa desenhá-la ("trying to draw too large bitmap" → crash).
+// Depois do sample, reduz-se ao tamanho exato e nunca acima de IMAGE_MAX_PIXELS.
 private fun decodeSampled(bytes: ByteArray, maxSide: Int): Bitmap? {
     val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
     android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    val w0 = bounds.outWidth
+    val h0 = bounds.outHeight
+    if (w0 <= 0 || h0 <= 0) return null
+    val longest = maxOf(w0, h0)
+    // Escala final: lado maior ≤ maxSide e área ≤ IMAGE_MAX_PIXELS.
+    var scale = if (maxSide in 1 until longest) maxSide.toDouble() / longest else 1.0
+    val area = w0.toDouble() * h0 * scale * scale
+    if (area > IMAGE_MAX_PIXELS) scale *= kotlin.math.sqrt(IMAGE_MAX_PIXELS / area)
     var sample = 1
-    val longest = maxOf(bounds.outWidth, bounds.outHeight)
-    if (maxSide > 0) while (longest / (sample * 2) >= maxSide) sample *= 2
+    while (scale * sample * 2 <= 1.0) sample *= 2
     val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
-    return android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+    val decoded = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return null
+    val tw = (w0 * scale).toInt().coerceAtLeast(1)
+    val th = (h0 * scale).toInt().coerceAtLeast(1)
+    if (decoded.width <= tw && decoded.height <= th) return decoded
+    val scaled = Bitmap.createScaledBitmap(decoded, tw, th, true)
+    if (scaled !== decoded) decoded.recycle()
+    return scaled
 }
 
 // Roda/espelha o bitmap segundo a orientação EXIF para a foto aparecer direita.
@@ -886,9 +922,12 @@ private fun applyExifOrientation(bmp: android.graphics.Bitmap, orientation: Int)
         android.media.ExifInterface.ORIENTATION_TRANSVERSE -> { m.postRotate(270f); m.postScale(-1f, 1f) }
         else -> return bmp
     }
-    return runCatching {
+    val rotated = runCatching {
         android.graphics.Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
     }.getOrDefault(bmp)
+    // A cópia rodada substitui a original: liberta já a original (era mais uma do mesmo tamanho).
+    if (rotated !== bmp) bmp.recycle()
+    return rotated
 }
 
 // null enquanto a data key do media E2E abre (mostra loading).
@@ -908,17 +947,30 @@ private fun rememberMediaPlayer(media: PlayableMedia, fileKey: String, playWhenR
     val player = remember(fileKey) {
         // Arranca com 1 s em buffer (2,5 s por omissão): o loading nota-se mais
         // do que uma eventual pausa em redes más, que pede sempre mais.
+        // Teto em bytes (32 MiB) e 20 s no máximo: por omissão o buffer de vídeo ia até
+        // ~125 MiB no heap, e um vídeo 4K enchia-o em segundos (OOM ao passar de ficheiro).
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
-                DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
+                15_000,
+                20_000,
                 1_000,
                 DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS,
             )
+            .setTargetBufferBytes(32 * 1024 * 1024)
+            .setPrioritizeTimeOverSizeThresholds(false)
             .build()
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(media.dataSourceFactory))
             .setLoadControl(loadControl)
+            // Foco de áudio (pausa com chamadas/outra app) e pausa ao desligar os auscultadores.
+            .setAudioAttributes(
+                androidx.media3.common.AudioAttributes.Builder()
+                    .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+                    .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                true,
+            )
+            .setHandleAudioBecomingNoisy(true)
             .build().apply {
                 setMediaItem(MediaItem.fromUri(media.url))
                 this.playWhenReady = playWhenReady
@@ -926,7 +978,18 @@ private fun rememberMediaPlayer(media: PlayableMedia, fileKey: String, playWhenR
             }
     }
     DisposableEffect(fileKey) {
-        onDispose { player.release() }
+        onDispose {
+            // Larga a surface antes: release() com a surface ainda presa bloqueava a main thread.
+            player.clearVideoSurface()
+            // Fecha já os sockets: o loader deixa de ficar preso no read() (até 60 s).
+            media.cancelRequests()
+            player.release()
+        }
+    }
+    // App em segundo plano / ecrã desligado: pausa (o áudio continuava a tocar e o
+    // vídeo a carregar e descodificar sem ninguém a ver).
+    androidx.lifecycle.compose.LifecycleStartEffect(player) {
+        onStopOrDispose { player.pause() }
     }
     return player
 }
@@ -1007,6 +1070,8 @@ private fun VideoViewer(media: PlayableMedia, fileKey: String, isActive: Boolean
                     setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
                 }
             },
+            // Solta o player (já libertado) da view ao sair da composição.
+            onRelease = { it.player = null },
             modifier = Modifier.fillMaxSize(),
         )
     }
@@ -1066,6 +1131,7 @@ private fun AudioViewer(
                         setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
                     }
                 },
+                onRelease = { it.player = null },
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -1086,12 +1152,44 @@ private fun AudioViewer(
 
 private const val IMAGE_PREVIEW_MAX_BYTES = 64L * 1024 * 1024
 
+// Teto do bitmap da imagem (~64 MB em ARGB_8888): bem abaixo dos 100 MB que o Canvas aceita.
+private const val IMAGE_MAX_PIXELS = 16_000_000.0
+
+// Imagens E2E acima disto não são pré-carregadas como página vizinha (só quando ficam ativas).
+private const val NEIGHBOR_E2E_PRELOAD_MAX = 16L * 1024 * 1024
+
+// Teto de um PDF E2E: decifra em stream para disco, mas o pdfium ainda o mapeia.
+private const val PDF_E2E_MAX_BYTES = 200L * 1024 * 1024
+
+/** Cargas E2E (imagem/PDF) em paralelo, no processo todo: cada uma pesa 2–3× o ficheiro. */
+private val e2eLoadGate = kotlinx.coroutines.sync.Semaphore(2)
+
+/**
+ * Corre [block] e fecha a ligação se a coroutine for cancelada a meio: o read() do
+ * HttpURLConnection bloqueia a thread e ignora o cancelamento (o download continuava
+ * até ao fim). Um vigia suspenso fecha o socket, e o read() lança logo.
+ */
+private suspend fun <T> withDisconnectOnCancel(conn: java.net.HttpURLConnection, block: suspend () -> T): T = coroutineScope {
+    val watcher = launch(start = CoroutineStart.UNDISPATCHED) {
+        try { kotlinx.coroutines.awaitCancellation() } finally { runCatching { conn.disconnect() } }
+    }
+    try { block() } finally { watcher.cancel() }
+}
+
+private suspend inline fun <T> kotlinx.coroutines.sync.Semaphore?.withPermitIfAny(action: () -> T): T =
+    if (this == null) action() else withPermit(action)
+
+/** runCatching que deixa passar o cancelamento (senão a coroutine cancelada continuava como "erro"). */
+private inline fun <T> runCatchingNonCancel(block: () -> T): Result<T> =
+    try { Result.success(block()) } catch (c: kotlinx.coroutines.CancellationException) { throw c } catch (t: Throwable) { Result.failure(t) }
+
 /** Lê o stream inteiro, ou null se passar de [max] bytes (sem o carregar todo). */
-private fun readAtMost(input: java.io.InputStream, max: Long): ByteArray? {
+private fun readAtMost(input: java.io.InputStream, max: Long, job: kotlinx.coroutines.Job? = null): ByteArray? {
     val out = java.io.ByteArrayOutputStream()
     val buf = ByteArray(64 * 1024)
     var total = 0L
     while (true) {
+        job?.ensureActive()
         val r = input.read(buf)
         if (r < 0) break
         total += r
@@ -1111,7 +1209,8 @@ private fun PdfViewer(
     active: Boolean,
     onZoomChange: (Float) -> Unit,
     onZoomedChange: (Boolean) -> Unit,
-    decrypt: (suspend (ByteArray) -> ByteArray?)? = null,
+    // E2E: decifra em stream do download para o ficheiro (false = sem chave / E2E bloqueado).
+    decryptTo: (suspend (java.io.InputStream, java.io.OutputStream) -> Boolean)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1134,27 +1233,34 @@ private fun PdfViewer(
         error = null
         pageCount = 0
         val job = scope.launch {
-            val cacheFile = File(context.cacheDir, "viewer_pdf_${fileKey}.pdf")
+            // Nome único por carga: voltar ao mesmo PDF com a carga anterior ainda a
+            // terminar fazia as duas escreverem (e apagarem) o mesmo ficheiro.
+            val cacheFile = File.createTempFile("viewer_pdf_", ".pdf", context.cacheDir)
             // Saiu da composição a meio: o bloco IO acaba de escrever e só depois
             // lança o cancelamento — o finally abaixo garante que o claro não fica.
             var unlinked = false
             try {
-                val file = withContext(Dispatchers.IO) {
+                val file = (if (decryptTo != null) e2eLoadGate else null).withPermitIfAny { withContext(Dispatchers.IO) {
                     val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
                     if (!token.isNullOrBlank()) conn.setRequestProperty("Authorization", "Bearer $token")
                     conn.connectTimeout = 20_000
                     conn.readTimeout = 60_000
                     try {
-                        if (decrypt != null) {
-                            // E2E: o download é ciphertext — decifrar antes de dar ao PdfRenderer
-                            // (senão: "Unable to load the document").
-                            val cipher = conn.inputStream.use { it.readBytes() }
-                            val plain = decrypt(cipher) ?: error("decifra falhou (E2E bloqueado ou sem chave)")
-                            cacheFile.writeBytes(plain)
-                            plain.fill(0)
-                        } else {
-                            conn.inputStream.use { input ->
-                                cacheFile.outputStream().use { out -> input.copyTo(out) }
+                        withDisconnectOnCancel(conn) {
+                            if (decryptTo != null) {
+                                // E2E: o download é ciphertext — decifra em stream para o ficheiro
+                                // (antes: cifrado + claro inteiros em memória, sem teto → OOM).
+                                if (conn.contentLengthLong > PDF_E2E_MAX_BYTES) {
+                                    error("PDF demasiado grande para pré-visualizar. Descarrega-o para o ver.".tr())
+                                }
+                                val ok = conn.inputStream.use { input ->
+                                    cacheFile.outputStream().use { out -> decryptTo(input, out) }
+                                }
+                                if (!ok) error("decifra falhou (E2E bloqueado ou sem chave)")
+                            } else {
+                                conn.inputStream.use { input ->
+                                    cacheFile.outputStream().use { out -> input.copyTo(out) }
+                                }
                             }
                         }
                     } catch (t: Throwable) {
@@ -1162,7 +1268,7 @@ private fun PdfViewer(
                         throw t
                     }
                     cacheFile
-                }
+                } }
                 val openedPfd = try {
                     ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
                 } finally {
@@ -1172,13 +1278,39 @@ private fun PdfViewer(
                     withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { file.delete() }
                     unlinked = true
                 }
-                val r = PdfRenderer(openedPfd)
                 pfd = openedPfd
+                // O pdfium faz o parse do documento no construtor (e partilha um lock
+                // global com os outros PdfRenderer): fora da main thread, senão ANR.
+                // NonCancellable: o renderer criado tem de chegar aqui para ser fechado
+                // (se a página saiu entretanto, o onDispose ainda não o conhecia).
+                val (r, count) = withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                    renderLock.withLock {
+                        val created = try {
+                            PdfRenderer(openedPfd)
+                        } catch (t: Throwable) {
+                            // PDF com palavra-passe/corrompido: o descritor não ficava aberto.
+                            runCatching { openedPfd.close() }
+                            throw t
+                        }
+                        created to created.pageCount
+                    }
+                }
+                if (!currentCoroutineContext().isActive) {
+                    withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                        renderLock.withLock {
+                            runCatching { r.close() }
+                            runCatching { openedPfd.close() }
+                        }
+                    }
+                    return@launch
+                }
                 renderer = r
                 // As páginas são renderizadas à medida que aparecem (PdfPage),
                 // não todas antes de mostrar a primeira.
-                pageCount = r.pageCount
+                pageCount = count
                 loading = false
+            } catch (c: kotlinx.coroutines.CancellationException) {
+                throw c
             } catch (t: Throwable) {
                 error = t.message ?: "erro"
                 loading = false
@@ -1420,7 +1552,8 @@ private fun PdfPage(
     // 1,5× a largura do ecrã chega até 2× de zoom (antes 2×, sem cache).
     val baseW = targetWidthPx ?: (screenW * 1.5f).toInt()
     val base by androidx.compose.runtime.produceState(cache?.get(index), renderer, index) {
-        if (value == null) value = renderPdfPage(renderer, lock, index, baseW, thumb)?.also { cache?.put(index, it) }
+        // Com teto: uma página muito comprida (talão, página web) dava >100 MB → crash ao desenhar.
+        if (value == null) value = renderPdfPage(renderer, lock, index, baseW, thumb, PDF_BASE_MAX_PIXELS)?.also { cache?.put(index, it) }
     }
     val wantHi = hiRes && !thumb
     val hi by androidx.compose.runtime.produceState<Bitmap?>(null, renderer, index, wantHi) {
@@ -1455,6 +1588,9 @@ private fun PdfPage(
 
 // Teto da versão fina (~32 MB por página em ARGB_8888).
 private const val PDF_HIRES_MAX_PIXELS = 8_000_000L
+
+// Teto da renderização base (~24 MB por página).
+private const val PDF_BASE_MAX_PIXELS = 6_000_000L
 
 private suspend fun renderPdfPage(
     renderer: PdfRenderer,

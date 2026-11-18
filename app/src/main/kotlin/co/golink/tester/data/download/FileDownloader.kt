@@ -122,17 +122,14 @@ class FileDownloader @Inject constructor(
                 // último recurso (item sem nome).
                 val serverName = parseContentDispositionFilename(response.header("Content-Disposition"))
                 val resolvedName = when {
-                    name.isNotBlank() && name != "•" -> {
-                        val ext = basename?.substringAfterLast('.', "").orEmpty()
-                        if (!name.contains('.') && ext.isNotBlank() && ext.length <= 5) "$name.$ext" else name
-                    }
+                    name.isNotBlank() && name != "•" -> name
                     serverName != null -> serverName
                     else -> "download"
                 }
-                // Garantir SEMPRE a extensão correta a partir do mimetype (que
-                // guarda a extensão, ex.: "MP4") — o nome/Content-Disposition
-                // podia vir sem extensão e o ficheiro saía como .txt/.bin.
-                val named = ensureExtension(resolvedName, mimetype ?: basename?.substringAfterLast('.', ""))
+                // Ficheiros antigos guardavam o nome sem extensão: recupera-a do
+                // mimetype (que guarda a extensão, ex.: "MP4") ou do basename.
+                // Sem extensão guardada fica sem extensão (README, Makefile).
+                val named = ensureExtension(resolvedName, mimetype?.takeIf { it.isNotBlank() } ?: co.golink.tester.domain.files.extOf(basename))
                 val finalName = uniqueDestination(sanitize(named))
                 writeToDownloads(finalName, mimeTypeFor(finalName), input, dataKey)
                 _events.tryEmit(Event.Completed(finalName))
@@ -184,9 +181,11 @@ class FileDownloader @Inject constructor(
         downloadFile(file.id, file.name, file.basename, file.encrypted, file.mimetype)
 
     // Acrescenta a extensão do mimetype se o nome ainda não a tiver (case-insensitive).
+    // Nada quando o "mimetype" é o próprio nome (uploads antigos sem extensão).
     private fun ensureExtension(name: String, ext: String?): String {
-        val clean = ext?.trim()?.removePrefix(".")?.lowercase()
-            ?.takeIf { it.isNotBlank() && it.length <= 6 && it.all { c -> c.isLetterOrDigit() } }
+        val clean = co.golink.tester.domain.files.storedExt(name.substringAfterLast('/'), ext)
+            .removePrefix(".").lowercase()
+            .takeIf { it.isNotBlank() && it.length <= 6 && it.all { c -> c.isLetterOrDigit() } }
             ?: return name
         return if (name.endsWith(".$clean", ignoreCase = true)) name else "$name.$clean"
     }

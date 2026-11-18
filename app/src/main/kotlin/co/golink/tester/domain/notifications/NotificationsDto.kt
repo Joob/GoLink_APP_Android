@@ -10,6 +10,44 @@ data class NotificationsResponse(
     val data: List<NotificationEnvelope> = emptyList(),
 )
 
+/** GET api/notifications/older — lidas mais antigas ("Carregar mais"). */
+@Serializable
+data class OlderNotificationsResponse(
+    val data: List<NotificationEnvelope> = emptyList(),
+    val has_more: Boolean = false,
+)
+
+/** POST api/notifications/bulk: [ids] escolhidos ou [scope] (todas as do filtro). */
+@Serializable
+data class BulkNotificationsRequest(
+    val action: String,
+    val ids: List<String>? = null,
+    val scope: BulkScope? = null,
+)
+
+/** Todas as do filtro até [before] (+ os [ids] desse segundo que o cliente viu). */
+@Serializable
+data class BulkScope(
+    val filter: String,
+    val before: String,
+    val ids: List<String> = emptyList(),
+)
+
+@Serializable
+data class BulkNotificationsResponse(val done: Int = 0)
+
+/** GET api/notifications/stats — totais visíveis (sem snooze), para o "Selecionar todas as N". */
+@Serializable
+data class NotificationStats(
+    val total: Int = 0,
+    val unread: Int = 0,
+    val snoozed: Int = 0,
+    val groups: Map<String, GroupStats> = emptyMap(),
+) {
+    @Serializable
+    data class GroupStats(val total: Int = 0, val unread: Int = 0)
+}
+
 /** GET api/notifications/unread-count — sondagem leve do badge. */
 @Serializable
 data class UnreadCountResponse(
@@ -37,6 +75,8 @@ data class NotificationAttributes(
     val action: JsonElement? = null,
     val created_at: String? = null,
     val created_at_iso: String? = null,
+    /** Ordem da lista (fim do snooze quando acordou; senão = created_at). */
+    val sort_at: String? = null,
     val read_at: String? = null,
     val details: List<NotificationDetail> = emptyList(),
     val sender: String? = null,
@@ -69,6 +109,8 @@ data class Notification(
     val createdAtIso: String? = null,
     /** [createdAtIso] já lido (uma vez, aqui); null sem ISO ou se não for válido. */
     val createdAtInstant: java.time.Instant? = null,
+    /** Instante de ordenação (sort_at; sem ele, o created_at). */
+    val sortAtInstant: java.time.Instant? = null,
     val isRead: Boolean,
     val details: List<NotificationDetail> = emptyList(),
     val sender: String? = null,
@@ -97,7 +139,8 @@ data class Notification(
                 actionUrl = actionParam(attrs.action, "url"),
                 createdAt = attrs.created_at,
                 createdAtIso = attrs.created_at_iso,
-                createdAtInstant = attrs.created_at_iso?.let { runCatching { java.time.OffsetDateTime.parse(it).toInstant() }.getOrNull() },
+                createdAtInstant = parseIso(attrs.created_at_iso),
+                sortAtInstant = parseIso(attrs.sort_at) ?: parseIso(attrs.created_at_iso),
                 isRead = attrs.read_at != null,
                 details = attrs.details,
                 sender = attrs.sender,
@@ -107,6 +150,9 @@ data class Notification(
                 rsvpStatus = (attrs.rsvp as? JsonObject)?.get("status")?.let { it as? JsonPrimitive }?.takeIf { it.isString }?.content,
             )
         }
+
+        private fun parseIso(iso: String?): java.time.Instant? =
+            iso?.let { runCatching { java.time.OffsetDateTime.parse(it).toInstant() }.getOrNull() }
 
         private fun actionParam(action: JsonElement?, key: String): String? =
             ((action as? JsonObject)?.get("params") as? JsonObject)?.get(key)

@@ -64,9 +64,13 @@ class SessionTerminator @Inject constructor(
         // Síncrono: tem de acontecer antes de outra conta poder entrar.
         runCatching { e2eKeyManager.get().lock() }
         runCatching { imageLoader.get().memoryCache?.clear() }
+        runCatching { co.golink.tester.ui.components.EncryptedThumbnailLoader.get(context).clear() }
         Thread {
             runCatching { imageLoader.get().diskCache?.clear() }
             co.golink.tester.data.files.ViewerImageCache.clear(context)
+            // Temporários em claro ainda em curso (PDF do viewer, newtext_/newdoc_)
+            // sobreviviam ao logout até ao próximo arranque.
+            runCatching { co.golink.tester.data.encryption.PlaintextCache.sweep(context) }
         }.start()
         // A WebView só pode ser usada na main thread.
         Handler(Looper.getMainLooper()).post {

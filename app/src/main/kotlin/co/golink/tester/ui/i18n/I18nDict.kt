@@ -476,6 +476,24 @@ object I18nDict {
         r("Criado por", "Created by", "Créé par", "Creado por"),
         r("Alterado por", "Changed by", "Modifié par", "Modificado por"),
         r("Aceite por", "Accepted by", "Accepté par", "Aceptado por"),
+        // Inbox: seleção múltipla, deslizar, desfazer
+        r("Notificação eliminada", "Notification deleted", "Notification supprimée", "Notificación eliminada"),
+        r("Desfazer", "Undo", "Annuler", "Deshacer"),
+        r("Eliminar %d notificações?", "Delete %d notifications?", "Supprimer %d notifications ?", "¿Eliminar %d notificaciones?"),
+        r("Limpar as notificações lidas?", "Clear read notifications?", "Effacer les notifications lues ?", "¿Borrar las notificaciones leídas?"),
+        r("Todas as notificações já lidas são eliminadas.", "All notifications you have already read will be deleted.", "Toutes les notifications déjà lues seront supprimées.", "Se eliminarán todas las notificaciones ya leídas."),
+        r("As notificações lidas de %s são eliminadas.", "Read notifications in %s will be deleted.", "Les notifications lues de %s seront supprimées.", "Se eliminarán las notificaciones leídas de %s."),
+        r("1 selecionada", "1 selected", "1 sélectionnée", "1 seleccionada"),
+        r("%d selecionadas", "%d selected", "%d sélectionnées", "%d seleccionadas"),
+        r("Desmarcar", "Deselect all", "Tout désélectionner", "Deseleccionar todo"),
+        r("Cancelar seleção", "Cancel selection", "Annuler la sélection", "Cancelar selección"),
+        r("Selecionadas %d.", "%d selected.", "%d sélectionnées.", "%d seleccionadas."),
+        r("Selecionar todas as %d", "Select all %d", "Sélectionner les %d", "Seleccionar las %d"),
+        r("Todas as %d selecionadas.", "All %d selected.", "Les %d sont sélectionnées.", "Las %d están seleccionadas."),
+        r("Limpar seleção", "Clear selection", "Effacer la sélection", "Borrar selección"),
+        r("Marcar como lidas", "Mark as read", "Marquer comme lues", "Marcar como leídas"),
+        r("Marcar como não lidas", "Mark as unread", "Marquer comme non lues", "Marcar como no leídas"),
+        r("Não foi possível carregar as notificações.", "Couldn't load notifications.", "Impossible de charger les notifications.", "No se pudieron cargar las notificaciones."),
         r("Abrir", "Open", "Ouvrir", "Abrir"),
 
         // Admin / notícias / equipas
@@ -972,7 +990,7 @@ object I18nDict {
         r("Por prioridade", "By priority", "Par priorité", "Por prioridad"),
         r("Sem resposta há mais de 24h", "No reply for over 24h", "Sans réponse depuis plus de 24 h", "Sin respuesta desde hace más de 24 h"),
         r("Equipa", "Team", "Équipe", "Equipo"),
-        r("Por ler", "Unread", "Non lus", "Sin leer"),
+        r("Por ler§tickets", "Unread", "Non lus", "Sin leer"),
         r("Prioridade alta", "High priority", "Priorité haute", "Prioridad alta"),
         r("Sem resposta há +24h", "No reply +24h", "Sans réponse +24 h", "Sin respuesta +24 h"),
         r("Criados hoje", "Created today", "Créés aujourd'hui", "Creados hoy"),
@@ -1064,6 +1082,8 @@ object I18nDict {
         // Ficheiros: viewer e envios (review A04, 2026-11-10)
         r("Pré-visualização parcial: o ficheiro é demasiado grande para ser mostrado ou editado aqui.", "Partial preview: the file is too large to be shown or edited here.", "Aperçu partiel : le fichier est trop volumineux pour être affiché ou modifié ici.", "Vista previa parcial: el archivo es demasiado grande para mostrarse o editarse aquí."),
         r("Imagem demasiado grande para pré-visualizar. Descarrega-a para a ver.", "Image too large to preview. Download it to view it.", "Image trop volumineuse pour l'aperçu. Téléchargez-la pour la voir.", "Imagen demasiado grande para la vista previa. Descárgala para verla."),
+        r("PDF demasiado grande para pré-visualizar. Descarrega-o para o ver.", "PDF too large to preview. Download it to view it.", "PDF trop volumineux pour l'aperçu. Téléchargez-le pour le voir.", "PDF demasiado grande para la vista previa. Descárgalo para verlo."),
+        r("Demasiado grande", "Too large", "Trop volumineux", "Demasiado grande"),
         r("Sem espaço de armazenamento disponível", "No storage space available", "Aucun espace de stockage disponible", "No hay espacio de almacenamiento disponible"),
 
         // Ficheiros: 2.ª ronda do review A04/A10 (2026-11-11)

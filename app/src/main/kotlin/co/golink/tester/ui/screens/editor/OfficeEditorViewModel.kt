@@ -110,7 +110,7 @@ class OfficeEditorViewModel @Inject constructor(
         }.getOrNull()
     }
 
-    /** Corre na thread da ponte (não na principal): pode esperar pela resposta. */
+    /** Corre numa thread da ponte (PageBridge tira o "info" da principal): pode esperar pela resposta. */
     private fun awaitPermission() {
         if (resolvedCanEdit != null) return
         resolvedCanEdit = runCatching { runBlocking { withTimeoutOrNull(4_000) { permission.await() } } }.getOrNull()
@@ -326,6 +326,8 @@ class OfficeEditorViewModel @Inject constructor(
     /** Passa a editar [copy]; o viewer (partilhar, reabrir) também segue a cópia. */
     private fun switchTo(original: BrowseItem.File, copy: BrowseItem.File) {
         file = copy
+        // Apaga a chave do original da memória antes de a largar.
+        dataKey?.fill(0)
         dataKey = null
         session.files = session.files.map { if (it.id == original.id) copy else it }
         if (session.startId == original.id) session.startId = copy.id

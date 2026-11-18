@@ -19,6 +19,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import javax.inject.Named
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,6 +33,8 @@ import okhttp3.Request
 data class PlayableMedia(
     val url: String,
     val dataSourceFactory: androidx.media3.datasource.DataSource.Factory,
+    // Cancela os pedidos de rede em curso (ao sair do ficheiro, antes do release()).
+    val cancelRequests: () -> Unit = {},
 )
 
 @HiltViewModel
@@ -84,9 +87,10 @@ class FileViewerViewModel @Inject constructor(
 
     // Documentos abrem-se sozinhos no editor: um csv na lista de um txt, ao deslizar,
     // punha o editor a abrir o ficheiro inicial (o editor lê o startId).
+    // distinctBy: um id repetido rebentava o pager e a tira (chaves duplicadas).
     private val browsable = session.files.filterNot {
         it.id != session.startId && it.isOfficeFile()
-    }
+    }.distinctBy { it.id }
 
     private val _state = MutableStateFlow(
         UiState(
@@ -131,23 +135,57 @@ class FileViewerViewModel @Inject constructor(
     fun goTo(index: Int) {
         val s = _state.value
         if (index < 0 || index >= s.files.size || index == s.currentIndex) return
-        _state.update { it.copy(currentIndex = index, zoom = 1f, rotation = 0f, textContent = null, textError = null, textTruncated = false, editing = false, draft = "") }
-        maybeLoadText()
+        switchTo(index)
     }
 
     fun next() {
         val s = _state.value
-        if (s.currentIndex < s.files.lastIndex) {
-            _state.update { it.copy(currentIndex = it.currentIndex + 1, zoom = 1f, rotation = 0f, textContent = null, textError = null, textTruncated = false, editing = false, draft = "") }
-            maybeLoadText()
-        }
+        if (s.currentIndex < s.files.lastIndex) switchTo(s.currentIndex + 1)
     }
 
     fun prev() {
         val s = _state.value
-        if (s.currentIndex > 0) {
-            _state.update { it.copy(currentIndex = it.currentIndex - 1, zoom = 1f, rotation = 0f, textContent = null, textError = null, textTruncated = false, editing = false, draft = "") }
-            maybeLoadText()
+        if (s.currentIndex > 0) switchTo(s.currentIndex - 1)
+    }
+
+    /** Leitura do texto em curso: cancelada ao mudar de ficheiro. */
+    private var textJob: Job? = null
+
+    // Muda de página e larga o texto da anterior. Antes o textLoading ficava a true:
+    // o load do ficheiro novo não arrancava e o texto do anterior aparecia (e era gravado) nele.
+    private fun switchTo(index: Int, toast: String? = null, files: List<BrowseItem.File>? = null) {
+        textJob?.cancel()
+        textJob = null
+        _state.update {
+            it.copy(
+                files = files ?: it.files,
+                currentIndex = index,
+                zoom = 1f, rotation = 0f,
+                textContent = null, textLoading = false, textError = null, textTruncated = false,
+                editing = false, draft = "",
+                toast = toast ?: it.toast,
+            )
+        }
+        maybeLoadText()
+    }
+
+    /**
+     * Tira [file] da lista depois de mover/apagar. Procura-o pelo id: se entretanto houve
+     * swipe, o índice atual já é de outro ficheiro (saía o ficheiro errado da lista).
+     */
+    private fun removeFromList(file: BrowseItem.File, toast: String) {
+        val s = _state.value
+        val idx = s.files.indexOfFirst { it.id == file.id }
+        if (idx < 0) { _state.update { it.copy(toast = toast) }; return }
+        val newList = s.files.toMutableList().also { it.removeAt(idx) }
+        session.files = newList
+        when {
+            newList.isEmpty() -> _state.update { it.copy(files = newList, toast = toast, closeRequested = true) }
+            idx == s.currentIndex -> switchTo(idx.coerceAtMost(newList.lastIndex), toast, newList)
+            // Já está noutro ficheiro: fica nele (o índice desce se o removido vinha antes).
+            else -> _state.update {
+                it.copy(files = newList, currentIndex = if (idx < s.currentIndex) s.currentIndex - 1 else s.currentIndex, toast = toast)
+            }
         }
     }
 
@@ -198,7 +236,7 @@ class FileViewerViewModel @Inject constructor(
         if (!file.encrypted || !e2eKeyManager.isUnlocked) return null
         dataKeys[file.id]?.let { return it }
         if (file.id in noKeyIds) return null
-        val resp = runCatching { userEncryptionApi.fileKey(file.id) }.getOrNull()
+        val resp = try { userEncryptionApi.fileKey(file.id) } catch (c: kotlinx.coroutines.CancellationException) { throw c } catch (_: Throwable) { null }
         // Sem linha de chave para esta conta (ex.: membro de Team Folder a quem o
         // dono ainda não concedeu acesso): diz porquê em vez de ficar em branco.
         if (resp?.code() == 404) {
@@ -222,23 +260,37 @@ class FileViewerViewModel @Inject constructor(
         runCatching { co.golink.tester.data.encryption.EncryptedFileCodec.decryptFull(cipher, key) }.getOrNull()
     }
 
+    /** Decifra em stream [input] (ciphertext) para [output] — PDF E2E sem o ficheiro em memória. */
+    suspend fun decryptStreamTo(file: BrowseItem.File, input: java.io.InputStream, output: java.io.OutputStream): Boolean {
+        val key = dataKeyFor(file) ?: return false
+        withContext(Dispatchers.IO) {
+            co.golink.tester.data.encryption.EncryptedFileCodec.decryptStream(input, output, key)
+        }
+        return true
+    }
+
     /** URL + origem de dados para o ExoPlayer. null se a data key não abrir (E2E bloqueado). */
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     suspend fun playableMedia(file: BrowseItem.File): PlayableMedia? {
         val token = tokenStore.token
+        // Uma por player: ao sair do ficheiro os pedidos em curso são cancelados (sem isto,
+        // com rede lenta, o loader ficava até 60 s preso no read() com a ligação aberta).
+        val calls = co.golink.tester.data.network.CancellableCallFactory(httpClient)
         if (!file.encrypted) {
             val headers = if (!token.isNullOrBlank()) mapOf("Authorization" to "Bearer $token") else emptyMap()
             return PlayableMedia(
                 url = authedUrlFor(file),
-                dataSourceFactory = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(httpClient)
+                dataSourceFactory = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(calls)
                     .setDefaultRequestProperties(headers),
+                cancelRequests = calls::cancelAll,
             )
         }
         val key = withContext(Dispatchers.IO) { dataKeyFor(file) } ?: return null
         val url = authedUrlForDownload(file)
         return PlayableMedia(
             url = url,
-            dataSourceFactory = co.golink.tester.data.encryption.EncryptedMediaDataSource.Factory(httpClient, url, token, key),
+            dataSourceFactory = co.golink.tester.data.encryption.EncryptedMediaDataSource.Factory(calls, url, token, key),
+            cancelRequests = calls::cancelAll,
         )
     }
 
@@ -376,17 +428,7 @@ class FileViewerViewModel @Inject constructor(
         val file = current ?: return
         viewModelScope.launch {
             filesRepository.move(listOf(file), toFolderId)
-                .onSuccess {
-                    val newList = _state.value.files.toMutableList().also { it.removeAt(_state.value.currentIndex) }
-                    session.files = newList
-                    if (newList.isEmpty()) {
-                        _state.update { it.copy(files = newList, toast = "Movido".tr(), closeRequested = true) }
-                    } else {
-                        val newIdx = _state.value.currentIndex.coerceAtMost(newList.lastIndex)
-                        _state.update { it.copy(files = newList, currentIndex = newIdx, toast = "Movido".tr(), zoom = 1f, rotation = 0f, textContent = null, textTruncated = false, editing = false, draft = "") }
-                        maybeLoadText()
-                    }
-                }
+                .onSuccess { removeFromList(file, "Movido".tr()) }
                 .onFailure { t ->
                     val (message, retryable) = co.golink.tester.data.files.MoveManager.describeFailure(t)
                     _state.update { it.copy(toast = if (retryable) "Falha: %s".tr().format(message) else message.tr()) }
@@ -407,9 +449,12 @@ class FileViewerViewModel @Inject constructor(
         viewModelScope.launch {
             filesRepository.rename(file, newName.trim())
                 .onSuccess { updated ->
-                    if (updated is BrowseItem.File) {
+                    // Pelo id: com swipe a meio, o índice atual já era de outro ficheiro
+                    // (ficava o mesmo id duas vezes e o pager rebentava com "Key … was already used").
+                    val idx = _state.value.files.indexOfFirst { it.id == file.id }
+                    if (updated is BrowseItem.File && idx >= 0) {
                         val newList = _state.value.files.toMutableList()
-                        newList[_state.value.currentIndex] = updated
+                        newList[idx] = updated
                         _state.update { it.copy(files = newList, toast = "Renomeado".tr()) }
                         session.files = newList
                     } else {
@@ -447,17 +492,7 @@ class FileViewerViewModel @Inject constructor(
         val file = current ?: return
         viewModelScope.launch {
             filesRepository.delete(listOf(file), permanent = false)
-                .onSuccess {
-                    val newList = _state.value.files.toMutableList().also { it.removeAt(_state.value.currentIndex) }
-                    session.files = newList
-                    if (newList.isEmpty()) {
-                        _state.update { it.copy(files = newList, toast = "Movido para o lixo".tr(), closeRequested = true) }
-                    } else {
-                        val newIdx = _state.value.currentIndex.coerceAtMost(newList.lastIndex)
-                        _state.update { it.copy(files = newList, currentIndex = newIdx, toast = "Movido para o lixo".tr(), zoom = 1f, rotation = 0f, textContent = null, textTruncated = false, editing = false, draft = "") }
-                        maybeLoadText()
-                    }
-                }
+                .onSuccess { removeFromList(file, "Movido para o lixo".tr()) }
                 .onFailure { t -> _state.update { it.copy(toast = "Falha: %s".tr().format(t.message.orEmpty())) } }
         }
     }
@@ -499,14 +534,16 @@ class FileViewerViewModel @Inject constructor(
         viewModelScope.launch {
             filesRepository.updateTextContent(file, text)
                 .onSuccess {
+                    // Só repõe o conteúdo se ainda for o mesmo ficheiro no ecrã.
+                    val same = current?.id == file.id
                     _state.update {
-                        it.copy(
+                        if (same) it.copy(
                             saving = false,
                             editing = false,
                             draft = "",
                             textContent = text,
                             toast = "Ficheiro guardado".tr(),
-                        )
+                        ) else it.copy(saving = false, toast = "Ficheiro guardado".tr())
                     }
                 }
                 .onFailure { t ->
@@ -522,7 +559,8 @@ class FileViewerViewModel @Inject constructor(
         val url = authedUrlFor(file)
         val token = tokenStore.token
         _state.update { it.copy(textLoading = true, textError = null) }
-        viewModelScope.launch {
+        textJob?.cancel()
+        textJob = viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val req = Request.Builder().url(url).apply {
@@ -559,6 +597,8 @@ class FileViewerViewModel @Inject constructor(
                     }
                 }
             }
+            // Entretanto mudou de ficheiro: o resultado é de outro (não o pôr neste).
+            if (current?.id != file.id) return@launch
             result
                 .onSuccess { (txt, truncated) ->
                     _state.update { it.copy(textContent = txt, textTruncated = truncated, textLoading = false) }

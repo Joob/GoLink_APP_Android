@@ -283,7 +283,7 @@ class UploadManager @Inject constructor(
         return FileMetadata(
             displayName = r.name,
             baseName = if (dot > 0) r.name.substring(0, dot) else r.name,
-            extension = if (dot in 0 until r.name.lastIndex) r.name.substring(dot + 1) else "",
+            extension = co.golink.tester.domain.files.extOf(r.name),
             mimeType = r.mime ?: "application/octet-stream",
             // O tamanho do registo escolhe o mesmo caminho (chunks) que fez a cópia.
             size = r.size,
@@ -324,8 +324,9 @@ class UploadManager @Inject constructor(
 
     /** [trackCreated]: guarda o ficheiro criado para [takeCreated]. */
     fun createDocument(name: String, bytes: ByteArray, mimeType: String, parentId: String?, trackCreated: Boolean = false): Pair<String, Job> {
-        val ext = name.substringAfterLast('.', "bin")
-        val temp = File.createTempFile("newdoc_", ".$ext", context.cacheDir)
+        // Sem extensão no nome fica sem extensão (antes assumia "bin").
+        val ext = co.golink.tester.domain.files.extOf(name)
+        val temp = File.createTempFile("newdoc_", if (ext.isNotEmpty()) ".$ext" else null, context.cacheDir)
         temp.writeBytes(bytes)
         return createFromTemp(temp, name, ext, mimeType, parentId, trackCreated)
     }
@@ -335,7 +336,7 @@ class UploadManager @Inject constructor(
         val metadata = FileMetadata(
             displayName = name,
             baseName = if (dot > 0) name.substring(0, dot) else name,
-            extension = if (dot in 0 until name.lastIndex) name.substring(dot + 1) else defaultExtension,
+            extension = co.golink.tester.domain.files.extOf(name).ifEmpty { defaultExtension },
             mimeType = mimeType,
             size = temp.length(),
         )
@@ -1774,7 +1775,7 @@ class UploadManager @Inject constructor(
         }
         val dot = displayName.lastIndexOf('.')
         val baseName = if (dot > 0) displayName.substring(0, dot) else displayName
-        val extension = if (dot in 0 until displayName.lastIndex) displayName.substring(dot + 1) else ""
+        val extension = co.golink.tester.domain.files.extOf(displayName)
         val mimeType = resolver.getType(uri) ?: "application/octet-stream"
         return FileMetadata(displayName, baseName, extension, mimeType, size)
     }

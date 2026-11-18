@@ -41,7 +41,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -90,10 +89,12 @@ private fun highlightJson(line: String, c: CodeColors): AnnotatedString = buildA
 }
 
 private fun markMatches(line: String, q: String): AnnotatedString = buildAnnotatedString {
-    val lower = line.lowercase()
+    // indexOf com ignoreCase: o lowercase() pode mudar o comprimento ("İ" → 2 chars)
+    // e os índices deixavam de bater certo com a linha original (crash).
+    if (q.isEmpty()) { append(line); return@buildAnnotatedString }
     var last = 0
     while (true) {
-        val idx = lower.indexOf(q, last)
+        val idx = line.indexOf(q, last, ignoreCase = true)
         if (idx < 0) break
         append(line.substring(last, idx))
         withStyle(SpanStyle(background = Color(0x8CFACC15))) { append(line.substring(idx, idx + q.length)) }
@@ -101,6 +102,8 @@ private fun markMatches(line: String, q: String): AnnotatedString = buildAnnotat
     }
     append(line.substring(last))
 }
+
+private const val CLIPBOARD_MAX_CHARS = 200_000
 
 private fun formatJsonOrNull(text: String): String? = runCatching {
     prettyJson.encodeToString(JsonElement.serializer(), Json.parseToJsonElement(text))
@@ -129,14 +132,23 @@ internal fun TextReader(
     var wrap by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable(name) { mutableStateOf("") }
     var formatted by remember(name, content) { mutableStateOf<String?>(null) }
-    var copied by remember { mutableStateOf(false) }
-    val clipboard = LocalClipboardManager.current
+    // null = nada; true = copiado; false = demasiado grande para copiar.
+    var copied by remember { mutableStateOf<Boolean?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
     androidx.compose.runtime.LaunchedEffect(copied) {
-        if (copied) { kotlinx.coroutines.delay(1500); copied = false }
+        if (copied != null) { kotlinx.coroutines.delay(1500); copied = null }
     }
 
     val shown = if (editing) draft else formatted ?: content.orEmpty()
-    val jsonValid = remember(shown, isJson) { !isJson || runCatching { Json.parseToJsonElement(shown) }.isSuccess }
+    // Validação do JSON fora da main thread e com debounce: corria a cada tecla
+    // sobre até 1 MiB de texto (bloqueava a escrita).
+    val jsonValid by androidx.compose.runtime.produceState(initialValue = true, shown, isJson) {
+        if (!isJson) { value = true; return@produceState }
+        kotlinx.coroutines.delay(if (editing) 400 else 0)
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            runCatching { Json.parseToJsonElement(shown) }.isSuccess
+        }
+    }
     val lines = remember(shown) { shown.split('\n') }
 
     Box(
@@ -172,9 +184,17 @@ internal fun TextReader(
                             }
                         }
                         Tool("Quebrar linhas".tr(), active = wrap) { wrap = !wrap }
-                        Tool(if (copied) "Copiado".tr() else "Copiar".tr()) {
-                            clipboard.setText(AnnotatedString(shown))
-                            copied = true
+                        Tool(
+                            when (copied) {
+                                true -> "Copiado".tr()
+                                false -> "Demasiado grande".tr()
+                                null -> "Copiar".tr()
+                            },
+                        ) {
+                            // Acima de ~200 mil caracteres o clip passa o limite do Binder
+                            // (TransactionTooLargeException → crash). E2E: clip marcado como sensível.
+                            copied = shown.length <= CLIPBOARD_MAX_CHARS &&
+                                co.golink.tester.ui.common.copyTextToClipboard(context, name, shown, sensitive = encrypted)
                         }
                         if (!editing) {
                             Spacer(Modifier.width(6.dp))

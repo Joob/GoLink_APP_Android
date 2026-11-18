@@ -190,7 +190,7 @@ fun itemLook(item: LegacyItem): ItemLook {
         password -> look(Icons.Outlined.Key, Color(0xFFD97706))
         item.dto.type == "folder" -> look(Icons.Outlined.Folder, Color(0xFF2563EB))
         item.dto.type == "note" -> look(Icons.Outlined.Description, Color(0xFF7C3AED))
-        mime.startsWith("image/") || name.substringAfterLast('.') in setOf("jpg", "jpeg", "png", "heic", "webp", "gif") -> look(Icons.Outlined.Image, Color(0xFF059669))
+        mime.startsWith("image/") || name.substringAfterLast('.', "").lowercase() in setOf("jpg", "jpeg", "png", "heic", "webp", "gif") -> look(Icons.Outlined.Image, Color(0xFF059669))
         mime == "application/pdf" || name.endsWith(".pdf") -> look(Icons.Outlined.PictureAsPdf, Color(0xFFDC2626))
         else -> look(Icons.Outlined.InsertDriveFile, Color(0xFF0891B2))
     }

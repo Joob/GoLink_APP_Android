@@ -43,12 +43,21 @@ class EncryptedThumbnailLoader @Inject constructor(
     private val userEncryptionApi: UserEncryptionApi,
     private val e2eKeyManager: E2EKeyManager,
 ) {
-    private val cache = LruCache<String, ImageBitmap>(80)
+    // Orçamento em bytes (1/16 do heap): 80 entradas de até 960 px eram ~290 MB possíveis.
+    private val cache = object : LruCache<String, ImageBitmap>(
+        (Runtime.getRuntime().maxMemory() / 16 / 1024).toInt(),
+    ) {
+        override fun sizeOf(key: String, value: ImageBitmap): Int = (value.width * value.height * 4) / 1024
+    }
     private val failed = Collections.synchronizedSet(HashSet<String>())
 
     suspend fun load(fileId: String): ImageBitmap? = withContext(Dispatchers.IO) {
+        // E2E trancado: não serve miniaturas decifradas da memória e larga-as.
+        if (!e2eKeyManager.isUnlocked) {
+            cache.evictAll()
+            return@withContext null
+        }
         cache.get(fileId)?.let { return@withContext it }
-        if (!e2eKeyManager.isUnlocked) return@withContext null
         if (failed.contains(fileId)) return@withContext null
 
         // No máximo 4 miniaturas a descarregar/decifrar ao mesmo tempo (uma
@@ -67,7 +76,13 @@ class EncryptedThumbnailLoader @Inject constructor(
             }
             val cipher = resp.body()?.bytes() ?: return@withContext null
             val plain = EncryptedFileCodec.decryptFull(cipher, dataKey)
-            val bmp = BitmapFactory.decodeByteArray(plain, 0, plain.size)
+            // Descodifica perto do tamanho mostrado (≤ 512 px), não aos 960 px gerados no upload.
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(plain, 0, plain.size, bounds)
+            var sample = 1
+            while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= THUMB_MAX_SIDE) sample *= 2
+            val bmp = BitmapFactory.decodeByteArray(plain, 0, plain.size, BitmapFactory.Options().apply { inSampleSize = sample })
+                .also { plain.fill(0) }
                 ?: return@withContext null.also { failed.add(fileId) }
             bmp.asImageBitmap().also { cache.put(fileId, it) }
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -83,6 +98,12 @@ class EncryptedThumbnailLoader @Inject constructor(
 
     private val permits = kotlinx.coroutines.sync.Semaphore(4)
 
+    /** Larga as miniaturas decifradas (fim de sessão). */
+    fun clear() {
+        cache.evictAll()
+        failed.clear()
+    }
+
     @EntryPoint
     @InstallIn(SingletonComponent::class)
     interface Accessor {
@@ -90,6 +111,8 @@ class EncryptedThumbnailLoader @Inject constructor(
     }
 
     companion object {
+        private const val THUMB_MAX_SIDE = 512
+
         fun get(context: Context): EncryptedThumbnailLoader =
             EntryPointAccessors.fromApplication(
                 context.applicationContext,

@@ -43,8 +43,8 @@ private val DEFAULT_COLOR = Color(0xFF94A3B8)
  */
 internal fun fileExtension(name: String, mimetype: String?): String {
     val fromName = Regex("\\.([a-z0-9]{1,8})$", RegexOption.IGNORE_CASE).find(name)?.groupValues?.get(1)
-    val fromMime = mimetype?.split('/', '.', '+', '-')?.lastOrNull()
-    return (fromName ?: fromMime ?: "").lowercase()
+    val fromMime = co.golink.tester.domain.files.storedExt(name, mimetype).split('/', '.', '+', '-').lastOrNull()
+    return (fromName ?: fromMime.orEmpty()).lowercase()
 }
 
 /**

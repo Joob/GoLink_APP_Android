@@ -3,6 +3,7 @@ package co.golink.tester.network
 import co.golink.tester.domain.auth.ApiEnvelope
 import co.golink.tester.domain.notifications.NotificationsResponse
 import retrofit2.Response
+import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
@@ -41,4 +42,19 @@ interface NotificationsApi {
         @Query("before") before: String? = null,
         @Query("ids[]") ids: List<String>? = null,
     ): Response<ApiEnvelope<Unit>>
+
+    /** Ações em massa (ids ou "todas as do filtro"); até 500 ids por pedido. */
+    @POST("api/notifications/bulk")
+    suspend fun bulk(@Body body: co.golink.tester.domain.notifications.BulkNotificationsRequest): Response<co.golink.tester.domain.notifications.BulkNotificationsResponse>
+
+    @GET("api/notifications/stats")
+    suspend fun stats(): Response<co.golink.tester.domain.notifications.NotificationStats>
+
+    /** Lidas antes de [before] (a lida mais antiga que o cliente tem); [ids]: as desse segundo já vistas. */
+    @GET("api/notifications/older")
+    suspend fun older(
+        @Query("before") before: String,
+        @Query("ids[]") ids: List<String>,
+        @Query("limit") limit: Int = 50,
+    ): Response<co.golink.tester.domain.notifications.OlderNotificationsResponse>
 }

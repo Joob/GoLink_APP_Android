@@ -60,6 +60,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import co.golink.tester.ui.components.SelectionAction
+import co.golink.tester.ui.components.SelectCircle
+import co.golink.tester.ui.components.SelectionDock
+import co.golink.tester.ui.components.SelectionTopBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -217,11 +220,17 @@ fun NotesHome(
         if (sel != null) {
             val single = if (sel.scope == "list" && sel.ids.size == 1) state.notes.firstOrNull { it.id in sel.ids } else null
             SelectionTopBar(
-                count = sel.ids.size,
+                title = ntp("n_selected", sel.ids.size),
                 allSelected = selOrder.isNotEmpty() && sel.ids.containsAll(selOrder),
                 onClose = vm::clearSelection,
                 onToggleAll = { if (selOrder.isNotEmpty() && sel.ids.containsAll(selOrder)) vm.clearSelection() else vm.selectAll(selOrder) },
+                selectAllLabel = nt("select_all"),
+                deselectAllLabel = nt("deselect_all"),
+                closeLabel = nt("cancel_selection"),
+                accent = Color(0xFFB45309),
+                accentBg = NotesAmber.copy(alpha = 0.14f),
                 onMore = single?.let { n -> { vm.clearSelection(); actionsFor = n } },
+                moreLabel = nt("more"),
             )
         } else {
             TopBar(
@@ -335,65 +344,6 @@ private fun TopBar(title: String, showMenu: Boolean, onMenu: () -> Unit, onSearc
         )
         if (onSelect != null) IconButton(onClick = onSelect) { Icon(Icons.Outlined.CheckBox, contentDescription = nt("select")) }
         if (onSearch != null) IconButton(onClick = onSearch) { Icon(Icons.Outlined.Search, contentDescription = nt("search")) }
-    }
-}
-
-/** Topo em modo seleção: ✕, contagem, Selecionar tudo/Desmarcar e ⋮ (só com 1 nota). */
-@Composable
-private fun SelectionTopBar(count: Int, allSelected: Boolean, onClose: () -> Unit, onToggleAll: () -> Unit, onMore: (() -> Unit)?) {
-    Row(
-        Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, contentDescription = nt("cancel_selection")) }
-        Text(
-            ntp("n_selected", count),
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onBackground,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).padding(start = 4.dp),
-        )
-        Text(
-            if (allSelected) nt("deselect_all") else nt("select_all"),
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color(0xFFB45309),
-            modifier = Modifier.padding(end = 4.dp).clip(RoundedCornerShape(50)).background(NotesAmber.copy(alpha = 0.14f)).clickable(onClick = onToggleAll).padding(horizontal = 14.dp, vertical = 8.dp),
-        )
-        if (onMore != null) IconButton(onClick = onMore) { Icon(Icons.Outlined.MoreVert, contentDescription = nt("more")) }
-    }
-}
-
-/** Doca escura da seleção (a mesma do Drive), no lugar da barra inferior. */
-@Composable
-private fun SelectionDock(actions: @Composable RowScope.() -> Unit) {
-    Surface(
-        color = Color(0xFF111827),
-        shape = RoundedCornerShape(18.dp),
-        shadowElevation = 10.dp,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceAround,
-            verticalAlignment = Alignment.CenterVertically,
-            content = actions,
-        )
-    }
-}
-
-/** Círculo de seleção dos cartões. */
-@Composable
-private fun SelectCircle(checked: Boolean) {
-    Box(
-        Modifier.size(22.dp).clip(CircleShape)
-            .background(if (checked) NotesAmber else Color.Transparent)
-            .border(1.5.dp, if (checked) NotesAmber else MaterialTheme.colorScheme.outline, CircleShape),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (checked) Icon(Icons.Outlined.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
     }
 }
 
@@ -589,7 +539,7 @@ private fun PinCard(n: NoteItem, nb: NoteNotebook?, selected: Boolean?, onClick:
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(n.meta.title.ifBlank { nt("untitled") }, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
-            if (selected != null) Box(Modifier.padding(start = 6.dp)) { SelectCircle(selected) }
+            if (selected != null) Box(Modifier.padding(start = 6.dp)) { SelectCircle(color = NotesAmber, checked = selected) }
         }
         Text(n.meta.snippet.ifBlank { "—" }, fontSize = 12.sp, lineHeight = 15.sp, maxLines = 3, minLines = 3, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
         if (n.meta.taskTotal > 0) {
@@ -628,7 +578,7 @@ private fun RecentCard(n: NoteItem, nb: NoteNotebook?, selected: Boolean?, onCli
             if (n.locked) Icon(Icons.Outlined.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(13.dp).padding(end = 3.dp))
             Text(n.meta.title.ifBlank { nt("untitled") }, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
             Text(notesAgo(n.updatedAt), fontSize = 11.sp, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(start = 8.dp))
-            if (selected != null) Box(Modifier.padding(start = 8.dp)) { SelectCircle(selected) }
+            if (selected != null) Box(Modifier.padding(start = 8.dp)) { SelectCircle(color = NotesAmber, checked = selected) }
         }
         Text(n.meta.snippet.ifBlank { "—" }, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
         val hasBadges = nb != null || n.meta.taskTotal > 0 || n.shared || n.commentsCount > 0 || n.meta.hasFiles || n.filesCount > 0
@@ -1281,7 +1231,7 @@ private fun TrashTab(vm: NotesHomeViewModel) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(n.meta.title.ifBlank { nt("untitled") }, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                         Text(ntp("days_left", left), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = tone, modifier = Modifier.padding(start = 8.dp))
-                        if (isSel != null) Box(Modifier.padding(start = 8.dp)) { SelectCircle(isSel) }
+                        if (isSel != null) Box(Modifier.padding(start = 8.dp)) { SelectCircle(isSel, NotesAmber) }
                     }
                     Text(n.meta.snippet.ifBlank { "—" }, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
                     Box(Modifier.padding(top = 10.dp).fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))) {

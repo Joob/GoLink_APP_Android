@@ -27,6 +27,23 @@ fun copyLinkToClipboard(context: Context, label: String, text: String) {
 }
 
 /**
+ * Copia texto; [sensitive] (conteúdo E2E) marca o clip como sensível. Devolve false
+ * se o sistema recusar (ex.: texto grande demais para o Binder).
+ */
+fun copyTextToClipboard(context: Context, label: String, text: String, sensitive: Boolean): Boolean =
+    runCatching {
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText(label, text)
+        if (sensitive) {
+            clip.description.extras = PersistableBundle().apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                else putBoolean("android.content.extra.IS_SENSITIVE", true)
+            }
+        }
+        cm.setPrimaryClip(clip)
+    }.isSuccess
+
+/**
  * Copia um segredo (ex.: token de API): clip marcado como sensível e limpo ao fim de
  * [clearAfterMs] se ainda for o nosso (mesma marca que o Pass usa).
  */

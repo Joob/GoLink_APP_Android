@@ -44,7 +44,12 @@ internal fun installMessageBridge(view: WebView, name: String, page: Uri, host: 
             // Os resultados chegam de outras threads; o reply tem de sair pela principal.
             val send = { text: String -> webView.post { runCatching { reply.postMessage(text) } } }
             when (msg.optString("t")) {
-                "info" -> send("""{"t":"info","data":${host.info()}}""")
+                // O listener corre na main thread e o info() pode esperar pela rede (o editor
+                // espera até 4 s pela permissão): fora dela, para não bloquear a UI (ANR).
+                "info" -> kotlin.concurrent.thread(isDaemon = true, name = "page-bridge-info") {
+                    val data = runCatching { host.info() }.getOrDefault("null")
+                    send("""{"t":"info","data":$data}""")
+                }
                 "req" -> {
                     val id = msg.optInt("id", Int.MIN_VALUE)
                     val method = msg.optString("method")

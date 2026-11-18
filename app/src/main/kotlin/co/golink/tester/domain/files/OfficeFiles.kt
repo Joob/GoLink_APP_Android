@@ -52,8 +52,9 @@ fun officeMimeFor(name: String): String = when (val ext = name.substringAfterLas
 
 /** Extensão real: a do basename (o nome pode vir cifrado). */
 fun BrowseItem.File.officeExtension(): String? =
-    listOf(basename, name, mimetype.orEmpty())
-        .map { it.lowercase().substringAfterLast('.') }
+    // Nome sem extensão ("csv") não conta; o mimetype guarda a extensão do upload.
+    listOf(extOf(basename), extOf(name), storedExt(name, mimetype))
+        .map { it.lowercase() }
         .firstOrNull { it in OFFICE_EXTENSIONS }
 
 /** Abre no editor; odt/doc/rtf cifrados não (a conversão no servidor veria o conteúdo). */

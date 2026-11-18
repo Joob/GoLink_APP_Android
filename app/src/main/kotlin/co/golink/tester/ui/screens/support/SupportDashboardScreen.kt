@@ -174,7 +174,7 @@ private fun Kpis(data: SupportDashboard, onOpenList: (String?, String?, String?)
         Triple("Aguarda utilizador".tr(), k.awaiting_user) { onOpenList("pending", null, null) },
         Triple("Sem responsável".tr(), k.unassigned) { onOpenList("open", "unassigned", null) },
         Triple("Atribuídos a mim".tr(), k.mine) { onOpenList("open", "me", null) },
-        Triple("Por ler".tr(), k.unread) { onOpenList("open", null, null) },
+        Triple("Por ler§tickets".tr(), k.unread) { onOpenList("open", null, null) },
         Triple("Prioridade alta".tr(), k.high_priority) { onOpenList("open", null, "high") },
         Triple("Sem resposta há +24h".tr(), k.stale) { onOpenList("open", null, null) },
         Triple("Criados hoje".tr(), k.created_today) { onOpenList("open", null, null) },

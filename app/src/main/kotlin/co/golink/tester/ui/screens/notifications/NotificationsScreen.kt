@@ -40,7 +40,25 @@ import androidx.compose.material.icons.outlined.Done
 import androidx.compose.material.icons.outlined.MarkEmailUnread
 import androidx.compose.material.icons.outlined.NotificationsOff
 import androidx.compose.material.icons.outlined.Settings
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.TriStateCheckbox
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.state.ToggleableState
+import co.golink.tester.ui.components.SelectCircle
+import co.golink.tester.ui.components.SelectionAction
+import co.golink.tester.ui.components.SelectionDock
+import co.golink.tester.ui.components.SelectionTopBar
+import co.golink.tester.ui.components.dialogs.ConfirmDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MenuDefaults
@@ -110,7 +128,7 @@ private fun timeLabel(n: Notification, t: ZonedDateTime?, today: LocalDate, days
 private data class FilterChip(val key: String, val label: String, val count: Int)
 
 /** Notificação já com a data lida uma vez (o parse não se repete a cada recomposição). */
-private class Entry(val n: Notification, val time: ZonedDateTime?)
+private class Entry(val n: Notification, val time: ZonedDateTime?, val sortTime: ZonedDateTime?)
 
 private data class LocalClock(val today: LocalDate, val zone: ZoneId)
 
@@ -161,6 +179,7 @@ private fun rememberLocalClock(): LocalClock {
     return clock
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NotificationsScreen(
     onBack: () -> Unit,
@@ -176,16 +195,32 @@ fun NotificationsScreen(
 ) {
     val items by viewModel.items.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val selection by viewModel.selection.collectAsStateWithLifecycle()
+    val stats by viewModel.stats.collectAsStateWithLifecycle()
+    val hasMoreOlder by viewModel.hasMoreOlder.collectAsStateWithLifecycle()
+    val undoable by viewModel.undoable.collectAsStateWithLifecycle()
     val snackbarHost = remember { SnackbarHostState() }
     LaunchedEffect(state.toast) {
         state.toast?.let { snackbarHost.showSnackbar(it); viewModel.consumeToast() }
+    }
+    // Eliminar com "Desfazer": o pedido só sai quando o aviso fecha sem desfazer.
+    LaunchedEffect(undoable) {
+        val id = undoable ?: return@LaunchedEffect
+        val result = snackbarHost.showSnackbar(
+            "Notificação eliminada".tr(),
+            actionLabel = "Desfazer".tr(),
+            duration = SnackbarDuration.Short,
+        )
+        if (result == SnackbarResult.ActionPerformed) viewModel.undoDelete(id) else viewModel.commitDelete(id)
     }
 
     val clock = rememberLocalClock()
     val today = clock.today
     val dayFormats = remember(I18n.lang) { DayFormats(Locale.forLanguageTag(I18n.lang)) }
+    // Ordem pelo sort_at (uma acordada do snooze volta ao topo); a hora mostrada é a de criação.
     val sorted = remember(items, clock.zone) {
-        items.map { Entry(it, it.localTime(clock.zone)) }.sortedByDescending { it.time?.toInstant() }
+        items.map { Entry(it, it.localTime(clock.zone), it.sortAtInstant?.atZone(clock.zone)) }
+            .sortedByDescending { it.sortTime?.toInstant() }
     }
     val unreadCount = items.count { !it.isRead }
     val hasRead = items.any { it.isRead }
@@ -210,6 +245,14 @@ fun NotificationsScreen(
     // o chip guardado não pode ser trocado por Todas no primeiro frame.
     val loaded = items.isNotEmpty() && !state.isLoading
     LaunchedEffect(filter, loaded) { if (loaded && chosen != filter) chosen = filter }
+    // As do filtro que já cá estão (efeito local das ações "todas as do filtro").
+    val matches: (Notification) -> Boolean = remember(filter) {
+        when (filter) {
+            "all" -> { _: Notification -> true }
+            "unread" -> { n: Notification -> !n.isRead }
+            else -> { n: Notification -> groupOf(n.category) == filter }
+        }
+    }
 
     // Destinos das ações calculados uma vez por lista (não em cada linha a cada
     // recomposição), com os callbacks de navegação sempre atuais.
@@ -240,15 +283,12 @@ fun NotificationsScreen(
         }
     }
 
-    val sections = remember(sorted, filter, today) {
-        val visible = when (filter) {
-            "all" -> sorted
-            "unread" -> sorted.filter { !it.n.isRead }
-            else -> sorted.filter { groupOf(it.n.category) == filter }
-        }
+    // As do chip ativo, pela ordem do ecrã (a seleção usa a mesma lista).
+    val visible = remember(sorted, filter) { sorted.filter { matches(it.n) } }
+    val sections = remember(visible, today) {
         visible
             .groupBy { e ->
-                val d = e.time?.toLocalDate()
+                val d = e.sortTime?.toLocalDate()
                 when {
                     d == null -> 2
                     !d.isBefore(today) -> 0
@@ -257,6 +297,50 @@ fun NotificationsScreen(
                 }
             }
             .toSortedMap()
+    }
+    val visibleIds = remember(visible) { visible.map { it.n.id } }
+    val filterUnread = if (filter == "all" || filter == "unread") unreadCount > 0 else visible.any { !it.n.isRead }
+    val filterReadIds = remember(visible) { visible.filter { it.n.isRead }.map { it.n.id } }
+    // "Limpar lidas": em Todas/Não lidas apaga todas as lidas; num grupo, as dele.
+    val canClearRead = if (filter == "all" || filter == "unread") hasRead else filterReadIds.isNotEmpty()
+
+    // Seleção: tira as que desapareceram; Voltar sai da seleção.
+    val sel = selection
+    LaunchedEffect(items) { viewModel.pruneSelection(items.mapTo(HashSet()) { it.id }) }
+    BackHandler(enabled = sel != null) { viewModel.clearSelection() }
+    val allLoadedSelected = sel != null && visibleIds.isNotEmpty() && sel.ids.containsAll(visibleIds)
+    // Total do filtro no servidor (o GET só traz 50 lidas): "Selecionar todas as N".
+    val serverTotal = stats?.let { st ->
+        when (filter) {
+            "all" -> st.total
+            "unread" -> st.unread
+            else -> st.groups[filter]?.total ?: 0
+        }
+    }
+    val selectedCount = if (sel?.allInFilter == true) (serverTotal ?: sel.ids.size) else sel?.ids?.size ?: 0
+    val selectedItems = remember(items, sel) { sel?.let { s -> items.filter { it.id in s.ids } }.orEmpty() }
+    val canMarkRead = sel?.allInFilter == true || selectedItems.any { !it.isRead }
+    val canMarkUnread = sel?.allInFilter == true || selectedItems.any { it.isRead }
+
+    var confirm by remember { mutableStateOf<String?>(null) }
+    when (confirm) {
+        "bulk-delete" -> ConfirmDialog(
+            title = if (selectedCount == 1) "Eliminar esta notificação?".tr() else "Eliminar %d notificações?".tr().format(selectedCount),
+            message = "Esta ação não elimina o pedido nem a atividade a que se refere.".tr(),
+            confirmText = "Eliminar".tr(),
+            destructive = true,
+            onDismiss = { confirm = null },
+            onConfirm = { confirm = null; viewModel.bulkSelected("delete", filter, matches) },
+        )
+        "clear-read" -> ConfirmDialog(
+            title = "Limpar as notificações lidas?".tr(),
+            message = if (filter == "all" || filter == "unread") "Todas as notificações já lidas são eliminadas.".tr()
+            else "As notificações lidas de %s são eliminadas.".tr().format(groupLabel(filter)),
+            confirmText = "Limpar lidas".tr(),
+            destructive = true,
+            onDismiss = { confirm = null },
+            onConfirm = { confirm = null; viewModel.clearRead(filter, filterReadIds) },
+        )
     }
 
     var openId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -277,10 +361,25 @@ fun NotificationsScreen(
         )
     }
 
+    val haptic = LocalHapticFeedback.current
+    val accent = MaterialTheme.colorScheme.primary
+
     Scaffold(
         topBar = {
             Column(Modifier.statusBarsPadding()) {
-                Row(
+                if (sel != null) {
+                    SelectionTopBar(
+                        title = if (selectedCount == 1) "1 selecionada".tr() else "%d selecionadas".tr().format(selectedCount),
+                        allSelected = allLoadedSelected,
+                        onClose = viewModel::clearSelection,
+                        onToggleAll = { if (allLoadedSelected) viewModel.clearSelection() else viewModel.selectAll(visibleIds) },
+                        selectAllLabel = "Selecionar tudo".tr(),
+                        deselectAllLabel = "Desmarcar".tr(),
+                        closeLabel = "Cancelar seleção".tr(),
+                        accent = accent,
+                        accentBg = accent.copy(alpha = 0.12f),
+                    )
+                } else Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 8.dp),
                 ) {
@@ -300,7 +399,8 @@ fun NotificationsScreen(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f),
                     )
-                    IconButton(onClick = viewModel::markAllRead, enabled = unreadCount > 0) {
+                    // Respeita o chip ativo (num grupo, só as desse grupo).
+                    IconButton(onClick = { viewModel.markAllRead(filter, matches) }, enabled = filterUnread) {
                         Icon(Icons.Filled.DoneAll, contentDescription = "Marcar todas lidas".tr(), modifier = Modifier.size(20.dp))
                     }
                     IconButton(onClick = onOpenSettings) {
@@ -317,22 +417,41 @@ fun NotificationsScreen(
                         modifier = Modifier.padding(top = 8.dp, bottom = 12.dp),
                     ) {
                         items(chips, key = { it.key }) { chip ->
-                            ChipButton(chip, selected = filter == chip.key) { chosen = chip.key }
+                            // Trocar de chip larga a seleção (era de outro filtro).
+                            ChipButton(chip, selected = filter == chip.key) {
+                                if (chip.key != filter) viewModel.clearSelection()
+                                chosen = chip.key
+                            }
                         }
                     }
+                }
+                // Gmail: todas as carregadas escolhidas e o servidor tem mais no filtro.
+                if (sel != null && serverTotal != null && serverTotal > visibleIds.size && (sel.allInFilter || allLoadedSelected)) {
+                    SelectAllBanner(
+                        text = if (sel.allInFilter) "Todas as %d selecionadas.".tr().format(serverTotal)
+                        else "Selecionadas %d.".tr().format(sel.ids.size),
+                        action = if (sel.allInFilter) "Limpar seleção".tr() else "Selecionar todas as %d".tr().format(serverTotal),
+                        onAction = { if (sel.allInFilter) viewModel.clearSelection() else viewModel.selectAllInFilter() },
+                    )
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             }
         },
         bottomBar = {
-            if (hasRead) {
+            if (sel != null) {
+                SelectionDock(Modifier.navigationBarsPadding()) {
+                    SelectionAction(Icons.Outlined.Done, "Marcar como lidas".tr(), { viewModel.bulkSelected("read", filter, matches) }, enabled = canMarkRead)
+                    SelectionAction(Icons.Outlined.MarkEmailUnread, "Marcar como não lidas".tr(), { viewModel.bulkSelected("unread", filter, matches) }, enabled = canMarkUnread)
+                    SelectionAction(Icons.Outlined.DeleteOutline, "Eliminar".tr(), { confirm = "bulk-delete" }, danger = true, enabled = selectedCount > 0)
+                }
+            } else if (canClearRead) {
                 Column(Modifier.navigationBarsPadding()) {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline)
                     Row(
                         horizontalArrangement = Arrangement.End,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
                     ) {
-                        TextButton(onClick = viewModel::clearRead) {
+                        TextButton(onClick = { confirm = "clear-read" }) {
                             Text(
                                 "Limpar lidas".tr(),
                                 fontSize = 13.sp,
@@ -347,46 +466,75 @@ fun NotificationsScreen(
         snackbarHost = { SnackbarHost(snackbarHost) },
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            when {
-                state.isLoading && items.isEmpty() -> Box(
+            if (state.isLoading && items.isEmpty()) {
+                Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) { CircularProgressIndicator(color = MaterialTheme.colorScheme.primary) }
-                sections.isEmpty() -> Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp, horizontal = 16.dp),
-                ) {
-                    Icon(
-                        Icons.Outlined.NotificationsOff,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.outline,
-                        modifier = Modifier.size(24.dp),
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        if (items.isEmpty()) "Sem notificações".tr() else "Ainda não há nada aqui.".tr(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                    )
-                }
-                else -> LazyColumn(
+            } else PullToRefreshBox(
+                isRefreshing = state.refreshing,
+                onRefresh = viewModel::pullRefresh,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                LazyColumn(
                     contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = 8.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
+                    if (sections.isEmpty()) {
+                        // Dentro da lista: assim o puxar para atualizar também funciona aqui.
+                        item(key = "empty") {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp, horizontal = 16.dp),
+                            ) {
+                                val failed = state.loadFailed && items.isEmpty()
+                                Icon(
+                                    if (failed) Icons.Outlined.CloudOff else Icons.Outlined.NotificationsOff,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.outline,
+                                    modifier = Modifier.size(24.dp),
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    when {
+                                        failed -> "Não foi possível carregar as notificações.".tr()
+                                        items.isEmpty() -> "Sem notificações".tr()
+                                        else -> "Ainda não há nada aqui.".tr()
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                )
+                                if (failed) {
+                                    Spacer(Modifier.height(8.dp))
+                                    TextButton(onClick = viewModel::refresh) {
+                                        Text("Tentar de novo".tr(), fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+                            }
+                        }
+                    }
                     sections.forEach { (bucket, list) ->
                         item(key = "h$bucket") {
-                            Text(
-                                when (bucket) {
+                            val ids = list.map { it.n.id }
+                            SectionHeader(
+                                title = when (bucket) {
                                     0 -> "Hoje".tr()
                                     1 -> "Ontem".tr()
                                     else -> "Anteriores".tr()
-                                }.uppercase(),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                letterSpacing = 0.8.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                modifier = Modifier.padding(start = 12.dp, top = 16.dp, bottom = 8.dp),
+                                },
+                                selectState = sel?.let { s ->
+                                    val n = ids.count { it in s.ids }
+                                    when {
+                                        s.allInFilter || n == ids.size -> ToggleableState.On
+                                        n == 0 -> ToggleableState.Off
+                                        else -> ToggleableState.Indeterminate
+                                    }
+                                },
+                                onToggleSelect = {
+                                    val s = selection
+                                    viewModel.setSelected(ids, select = s == null || s.allInFilter.not() && !s.ids.containsAll(ids))
+                                },
                             )
                         }
                         items(list, key = { it.n.id }) { entry ->
@@ -394,20 +542,51 @@ fun NotificationsScreen(
                             // Por linha e não por lista: só as visíveis pagam isto.
                             val time = remember(n, today, dayFormats) { timeLabel(n, entry.time, today, dayFormats) }
                             val target = remember(n) { actionOf(n) }
-                            NotificationRow(
+                            val selecting = sel != null
+                            SwipeableRow(
                                 notification = n,
-                                time = time,
-                                onTap = {
-                                    openId = n.id
-                                    if (!n.isRead) viewModel.markRead(n.id)
-                                },
-                                onAction = target?.let { go -> { if (!n.isRead) viewModel.markRead(n.id); go() } },
+                                enabled = !selecting,
                                 onToggleRead = { viewModel.toggleRead(n) },
-                                onDelete = { viewModel.delete(n.id) },
-                                answering = n.id in answering,
-                                onAnswer = if (n.pendingAnswer) { yes -> viewModel.answer(n, yes) } else null,
-                                selected = n.id == openId,
-                            )
+                                onDelete = { viewModel.deleteWithUndo(n.id) },
+                            ) {
+                                NotificationRow(
+                                    notification = n,
+                                    time = time,
+                                    onTap = {
+                                        if (selecting) viewModel.toggleSelected(n.id)
+                                        else {
+                                            openId = n.id
+                                            if (!n.isRead) viewModel.markRead(n.id)
+                                        }
+                                    },
+                                    onLongPress = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        if (selecting) viewModel.toggleSelected(n.id) else viewModel.startSelection(n.id)
+                                    },
+                                    onAction = target?.let { go -> { if (!n.isRead) viewModel.markRead(n.id); go() } },
+                                    onToggleRead = { viewModel.toggleRead(n) },
+                                    onDelete = { viewModel.deleteWithUndo(n.id) },
+                                    answering = n.id in answering,
+                                    onAnswer = if (n.pendingAnswer) { yes -> viewModel.answer(n, yes) } else null,
+                                    selected = n.id == openId,
+                                    selectionMode = selecting,
+                                    checked = sel?.let { it.allInFilter || n.id in it.ids } == true,
+                                )
+                            }
+                        }
+                    }
+                    // As lidas antigas não vêm no GET (só as 50 mais recentes): "Carregar mais".
+                    if (hasMoreOlder && filter != "unread" && sections.isNotEmpty()) {
+                        item(key = "older") {
+                            Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                                if (state.loadingOlder) {
+                                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                } else {
+                                    TextButton(onClick = viewModel::loadOlder) {
+                                        Text("Carregar mais".tr(), fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -418,6 +597,107 @@ fun NotificationsScreen(
             )
         }
     }
+}
+
+/** Título de secção (Hoje/Ontem/Anteriores); em seleção, a caixa marca/desmarca a secção. */
+@Composable
+private fun SectionHeader(title: String, selectState: ToggleableState?, onToggleSelect: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(start = if (selectState != null) 4.dp else 12.dp, top = if (selectState != null) 8.dp else 16.dp, bottom = if (selectState != null) 0.dp else 8.dp),
+    ) {
+        if (selectState != null) {
+            TriStateCheckbox(state = selectState, onClick = onToggleSelect)
+        }
+        Text(
+            title.uppercase(),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.8.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+        )
+    }
+}
+
+/** Faixa do "Selecionar todas as N" (como no Gmail). */
+@Composable
+private fun SelectAllBanner(text: String, action: String, onAction: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .padding(bottom = 8.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(scheme.primary.copy(alpha = 0.08f))
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+    ) {
+        Text(text, fontSize = 13.sp, color = scheme.onSurface, modifier = Modifier.weight(1f, fill = false))
+        TextButton(onClick = onAction) {
+            Text(action, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = scheme.primary)
+        }
+    }
+}
+
+/**
+ * Deslizar: para a esquerda elimina (com "Desfazer"); para a direita alterna
+ * lida/não lida e a linha volta ao sítio. Desligado em modo seleção.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SwipeableRow(
+    notification: Notification,
+    enabled: Boolean,
+    onToggleRead: () -> Unit,
+    onDelete: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val swipe = rememberSwipeToDismissBoxState()
+    val toggle by rememberUpdatedState(onToggleRead)
+    val delete by rememberUpdatedState(onDelete)
+    LaunchedEffect(swipe.currentValue) {
+        when (swipe.currentValue) {
+            SwipeToDismissBoxValue.StartToEnd -> { toggle(); swipe.reset() }
+            SwipeToDismissBoxValue.EndToStart -> delete()
+            SwipeToDismissBoxValue.Settled -> Unit
+        }
+    }
+    val scheme = MaterialTheme.colorScheme
+    SwipeToDismissBox(
+        state = swipe,
+        enableDismissFromStartToEnd = enabled,
+        enableDismissFromEndToStart = enabled,
+        modifier = Modifier.padding(bottom = 4.dp),
+        backgroundContent = {
+            val direction = swipe.dismissDirection
+            val toEnd = direction == SwipeToDismissBoxValue.StartToEnd
+            // Parada (Settled) sem cor: a linha lida é transparente por cima.
+            val bg = when (direction) {
+                SwipeToDismissBoxValue.EndToStart -> scheme.error
+                SwipeToDismissBoxValue.StartToEnd -> scheme.primary
+                else -> Color.Transparent
+            }
+            Box(
+                contentAlignment = if (toEnd) Alignment.CenterStart else Alignment.CenterEnd,
+                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)).background(bg).padding(horizontal = 20.dp),
+            ) {
+                if (direction != SwipeToDismissBoxValue.Settled) {
+                    Icon(
+                        when {
+                            !toEnd -> Icons.Outlined.DeleteOutline
+                            notification.isRead -> Icons.Outlined.MarkEmailUnread
+                            else -> Icons.Outlined.Done
+                        },
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
+        },
+    ) { content() }
 }
 
 /** Chip de filtro: ativo preenchido escuro, inativo com borda (como na web). */
@@ -455,6 +735,7 @@ private fun NotificationRow(
     notification: Notification,
     time: String,
     onTap: () -> Unit,
+    onLongPress: () -> Unit,
     onAction: (() -> Unit)?,
     onToggleRead: () -> Unit,
     onDelete: () -> Unit,
@@ -463,6 +744,9 @@ private fun NotificationRow(
     onAnswer: ((Boolean) -> Unit)? = null,
     /** Linha aberta no popup: contorno verde, como no mockup. */
     selected: Boolean = false,
+    /** Modo seleção: círculo no lugar do ícone e sem ⋮. */
+    selectionMode: Boolean = false,
+    checked: Boolean = false,
 ) {
     val scheme = MaterialTheme.colorScheme
     val unread = !notification.isRead
@@ -472,11 +756,18 @@ private fun NotificationRow(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 4.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(if (unread) scheme.primary.copy(alpha = 0.08f) else Color.Transparent)
+            // Base opaca: ao deslizar, a cor do fundo não aparece através da linha.
+            .background(scheme.background)
+            .background(
+                when {
+                    checked -> scheme.primary.copy(alpha = 0.16f)
+                    unread -> scheme.primary.copy(alpha = 0.08f)
+                    else -> Color.Transparent
+                },
+            )
             .then(if (selected) Modifier.border(1.5.dp, scheme.primary, RoundedCornerShape(12.dp)) else Modifier)
-            .combinedClickable(onClick = onTap, onLongClick = { menuOpen = true })
+            .combinedClickable(onClick = onTap, onLongClick = onLongPress)
             .padding(start = 20.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
     ) {
         if (unread) {
@@ -496,15 +787,16 @@ private fun NotificationRow(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(style.bg),
+                    .background(if (selectionMode) Color.Transparent else style.bg),
             ) {
-                Icon(style.icon, contentDescription = null, tint = style.fg, modifier = Modifier.size(18.dp))
+                if (selectionMode) SelectCircle(checked, scheme.primary)
+                else Icon(style.icon, contentDescription = null, tint = style.fg, modifier = Modifier.size(18.dp))
             }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.Top) {
                     Text(
-                        notification.title.ifBlank { notification.category ?: "Notificação".tr() },
+                        notification.title.ifBlank { groupLabel(groupOf(notification.category)) },
                         fontSize = 14.sp,
                         lineHeight = 18.sp,
                         fontWeight = if (unread) FontWeight.Bold else FontWeight.SemiBold,
@@ -549,7 +841,7 @@ private fun NotificationRow(
                     }
                 }
             }
-            Box {
+            if (!selectionMode) Box {
                 IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(32.dp)) {
                     Icon(
                         Icons.Filled.MoreVert,
